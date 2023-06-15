@@ -1,5 +1,4 @@
-from lex_grammar import *
-import ply.lex as lex
+from ply import lex
 
 NO_INDENT = 0
 MAY_INDENT = 1
@@ -116,52 +115,30 @@ def indentation_filter(tokens):
             yield _new_token("DEDENT", token.lineno, token.lexpos)
 
 
-def filter(lexer, add_endmarker=True):
-    token = None
-    tokens = iter(lexer.token, None)
-    tokens = track_tokens_filter(lexer, tokens)
-    for token in indentation_filter(tokens):
-        yield token
-
-    if add_endmarker:
-        yield _new_token(
-            "ENDMARKER", *(token.lineno, token.lexpos) if token else (1, 0)
-        )
-
-
 class IndentLexer:
-    def __init__(self, **lex_args):
-        self.lexer = lex.lex(**lex_args)
+    def __init__(self, ply_lexer):
+        self.lexer = ply_lexer
         self.token_stream = None
 
-    def input(self, s, add_endmarker=True):
+    def _indent_filter(self, add_endmarker=True):
+        token = None
+        tokens = iter(self.lexer.token, None)
+        tokens = track_tokens_filter(self.lexer, tokens)
+        for token in indentation_filter(tokens):
+            yield token
+
+        if add_endmarker:
+            yield _new_token(
+                "ENDMARKER", *(token.lineno, token.lexpos) if token else (1, 0)
+            )
+
+    def input(self, source, add_endmarker=True):
         self.lexer.paren_count = 0
-        self.lexer.input(s)
-        self.token_stream = filter(self.lexer, add_endmarker)
+        self.lexer.input(source)
+        self.token_stream = self._indent_filter(add_endmarker)
 
     def token(self):
         try:
             return next(self.token_stream)
         except StopIteration:
             return None
-
-
-# Lexer
-lexer = IndentLexer()
-
-code = """
-// This is a comment
-fn addEven x, y:
-    if x % 2 == 0:
-        x + y
-
-add(2, 5)
-"""
-
-lexer.input(code)
-
-while True:
-    tok = lexer.token()
-    if not tok:
-        break
-    print(tok)

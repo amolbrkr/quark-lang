@@ -1,6 +1,33 @@
-add x, y:
-    x or y
+//Python lambda expression to Quark anonymous functions
+// add = lambda x, y: x + y
 
-add(2, 5)
+add = fn x, y: x + y
+
+// Python operator chaining to Quark pipes
+// fn parse(): inputDF.message.apply((m): &._parse(m)).toNumpy().toList()
+
+fn parse(&):
+	inputDF.message
+		| apply m: &._parse m
+		| toNumpy
+		| toList
+
+// Python dict representation to Quark dict using atoms
+// &.utils.meta.push({"key": "key", "start": match.start, "end": match.end})
+
+&.utils.meta({key, start: match.start, end: match.end})
 
 
+// Python conditional list comprehension with self to Quark pipes and maps
+// params = [
+// 	self._interpret_params(param.strip())
+// 	for param in val[val.find('(') + 1 : val.find(')')].split(',')
+// 	if bool(param)
+// ]
+
+//ISSUE: Currently not possible because the lexer accepts only colon newline for MUST_INDENT 
+params = val[val.find '(' + 1 : val.find ')']
+			| split ','
+			| filter c: bool c 
+			| map p: p.strip
+			| map p: &.interpretParams p

@@ -1,0 +1,6 @@
+add x, y:
+    x or y
+
+add(2, 5)
+
+

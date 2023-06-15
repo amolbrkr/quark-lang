@@ -20,6 +20,7 @@ tokens = (
     "MULTIPLY",  # *
     "DIVIDE",  # /
     "MODULO",  # %
+    "AMPER", # &
     "NOT",  # ~
     "EQUALS",  # =
     "LT",  # <
@@ -48,7 +49,7 @@ tokens = (
     "NEWLINE",  # \n
     "INDENT",   # + Indent
     "DEDENT",   # - Indent
-    "ENDMARKER" # To be used by parser to know when a block has ended
+    "EOF"
 )
 
 t_PLUS = r"\+"
@@ -56,6 +57,7 @@ t_MINUS = r"-"
 t_MULTIPLY = r"\*"
 t_DIVIDE = r"/"
 t_MODULO = r"%"
+t_AMPER= r"&"
 
 t_NOT = r"\~"
 t_EQUALS = r"\="

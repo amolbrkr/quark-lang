@@ -138,4 +138,3 @@ def t_error(t):
 
 
 t_ignore_COMMENT = r"\//.*"
-# t_ignore = r" \t"

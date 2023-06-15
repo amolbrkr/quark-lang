@@ -1,23 +1,18 @@
-from lex_grammar import *
+import sys
 import ply.lex as lex
+from lex_grammar import *
 from indent_lexer import IndentLexer
 
 # Lexer
 lexer = IndentLexer(lex.lex())
 
-code = """
-// This is a comment
-fn addEven x, y:
-    if x % 2 == 0:
-        x + y
 
-add(2, 5)
-"""
+if __name__ == "__main__":
+    with open(sys.argv[1], "r") as inputf:
+        lexer.input(inputf.read())
 
-lexer.input(code)
-
-while True:
-    tok = lexer.token()
-    if not tok:
-        break
-    print(tok)
+        while True:
+            tok = lexer.token()
+            if not tok:
+                break
+            print(tok)

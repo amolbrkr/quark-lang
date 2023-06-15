@@ -120,7 +120,7 @@ class IndentLexer:
 
         if add_endmarker:
             yield self._new_token(
-                "ENDMARKER", *(token.lineno, token.column) if token else (1, 0)
+                "EOF", *(token.lineno, token.column) if token else (1, 0)
             )
 
     def input(self, source, add_endmarker=True):

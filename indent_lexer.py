@@ -6,9 +6,9 @@ class IndentLexer:
         self.lexer = ply_lexer
         self.token_stream = None
 
-    def _new_token(self, type, lineno, column):
+    def _new_token(self, type, lineno, pos):
         tok = lex.Token()
-        tok.type, tok.value, tok.lineno, tok.column = type, None, lineno, column
+        tok.type, tok.value, tok.lineno, tok.pos = type, None, lineno, pos
         return tok
 
     def _track_tokens_filter(self, tokens):
@@ -84,7 +84,7 @@ class IndentLexer:
                     raise IndentationError("expected an indented block")
 
                 levels.append(depth)
-                yield self._new_token("INDENT", token.lineno, token.column)
+                yield self._new_token("INDENT", token.lineno, token.pos)
 
             elif token.at_line_start:
                 # Must be on the same level or one of the previous levels
@@ -100,7 +100,7 @@ class IndentLexer:
                     except ValueError:
                         raise IndentationError("inconsistent indentation")
                     for _ in range(i + 1, len(levels)):
-                        yield self._new_token("DEDENT", token.lineno, token.column)
+                        yield self._new_token("DEDENT", token.lineno, token.pos)
                         levels.pop()
 
             yield token
@@ -109,7 +109,7 @@ class IndentLexer:
         if len(levels) > 1:
             assert token is not None
             for _ in range(1, len(levels)):
-                yield self._new_token("DEDENT", token.lineno, token.column)
+                yield self._new_token("DEDENT", token.lineno, token.pos)
 
     def _indent_filter(self, add_endmarker=True):
         token = None
@@ -120,7 +120,7 @@ class IndentLexer:
 
         if add_endmarker:
             yield self._new_token(
-                "EOF", *(token.lineno, token.column) if token else (1, 0)
+                "EOF", *(token.lineno, token.pos) if token else (1, 0)
             )
 
     def input(self, source, add_endmarker=True):

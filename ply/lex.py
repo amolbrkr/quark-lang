@@ -56,7 +56,7 @@ class LexError(Exception):
 # Token class.  This class is used to represent the tokens produced.
 class Token(object):
     def __repr__(self):
-        return f'Token(type: {self.type}, value: {self.value!r}, line: {self.lineno}, column: {self.column})'
+        return f'Token(type: {self.type}, value: {self.value!r}, line: {self.lineno}, pos: {self.pos})'
 
 # This object is a stand-in for a logging object created by the
 # logging module.
@@ -88,7 +88,7 @@ class PlyLogger(object):
 #    clone()          -  Clone the lexer
 #
 #    lineno           -  Current line number
-#    column           -  Current position in the input string
+#    pos           -  Current position in the input string
 # -----------------------------------------------------------------------------
 
 class Lexer:
@@ -109,7 +109,7 @@ class Lexer:
         self.lexstateeoff = {}        # Dictionary of eof functions for each state
         self.lexreflags = 0           # Optional re compile flags
         self.lexdata = None           # Actual input data (as a string)
-        self.column = 0               # Current position in input text
+        self.pos = 0               # Current position in input text
         self.lexlen = 0               # Length of the input text
         self.lexerrorf = None         # Error rule (if any)
         self.lexeoff = None           # EOF rule (if any)
@@ -152,7 +152,7 @@ class Lexer:
     # ------------------------------------------------------------
     def input(self, s):
         self.lexdata = s
-        self.column = 0
+        self.pos = 0
         self.lexlen = len(s)
 
     # ------------------------------------------------------------
@@ -191,7 +191,7 @@ class Lexer:
     # skip() - Skip ahead n characters
     # ------------------------------------------------------------
     def skip(self, n):
-        self.column += n
+        self.pos += n
 
     # ------------------------------------------------------------
     # token() - Return the next token from the Lexer
@@ -202,20 +202,20 @@ class Lexer:
     # ------------------------------------------------------------
     def token(self):
         # Make local copies of frequently referenced attributes
-        column    = self.column
+        pos    = self.pos
         lexlen    = self.lexlen
         lexignore = self.lexignore
         lexdata   = self.lexdata
 
-        while column < lexlen:
+        while pos < lexlen:
             # This code provides some short-circuit code for whitespace, tabs, and other ignored characters
-            if lexdata[column] in lexignore:
-                column += 1
+            if lexdata[pos] in lexignore:
+                pos += 1
                 continue
 
             # Look for a regular expression match
             for lexre, lexindexfunc in self.lexre:
-                m = lexre.match(lexdata, column)
+                m = lexre.match(lexdata, pos)
                 if not m:
                     continue
 
@@ -223,7 +223,7 @@ class Lexer:
                 tok = Token()
                 tok.value = m.group()
                 tok.lineno = self.lineno
-                tok.column = column
+                tok.pos = pos
 
                 i = m.lastindex
                 func, tok.type = lexindexfunc[i]
@@ -231,75 +231,75 @@ class Lexer:
                 if not func:
                     # If no token type was set, it's an ignored token
                     if tok.type:
-                        self.column = m.end()
+                        self.pos = m.end()
                         return tok
                     else:
-                        column = m.end()
+                        pos = m.end()
                         break
 
-                column = m.end()
+                pos = m.end()
 
                 # If token is processed by a function, call it
 
                 tok.lexer = self      # Set additional attributes useful in token rules
                 self.lexmatch = m
-                self.column = column
+                self.pos = pos
                 newtok = func(tok)
                 del tok.lexer
                 del self.lexmatch
 
                 # Every function must return a token, if nothing, we just move to next token
                 if not newtok:
-                    column    = self.column         # This is here in case user has updated column.
+                    pos    = self.pos         # This is here in case user has updated pos.
                     lexignore = self.lexignore      # This is here in case there was a state change
                     break
                 return newtok
             else:
                 # No match, see if in literals
-                if lexdata[column] in self.lexliterals:
+                if lexdata[pos] in self.lexliterals:
                     tok = Token()
-                    tok.value = lexdata[column]
+                    tok.value = lexdata[pos]
                     tok.lineno = self.lineno
                     tok.type = tok.value
-                    tok.column = column
-                    self.column = column + 1
+                    tok.pos = pos
+                    self.pos = pos + 1
                     return tok
 
                 # No match. Call t_error() if defined.
                 if self.lexerrorf:
                     tok = Token()
-                    tok.value = self.lexdata[column:]
+                    tok.value = self.lexdata[pos:]
                     tok.lineno = self.lineno
                     tok.type = 'error'
                     tok.lexer = self
-                    tok.column = column
-                    self.column = column
+                    tok.pos = pos
+                    self.pos = pos
                     newtok = self.lexerrorf(tok)
-                    if column == self.column:
+                    if pos == self.pos:
                         # Error method didn't change text position at all. This is an error.
-                        raise LexError(f"Scanning error. Illegal character {lexdata[column]!r}",
-                                       lexdata[column:])
-                    column = self.column
+                        raise LexError(f"Scanning error. Illegal character {lexdata[pos]!r}",
+                                       lexdata[pos:])
+                    pos = self.pos
                     if not newtok:
                         continue
                     return newtok
 
-                self.column = column
-                raise LexError(f"Illegal character {lexdata[column]!r} at index {column}",
-                               lexdata[column:])
+                self.pos = pos
+                raise LexError(f"Illegal character {lexdata[pos]!r} at index {pos}",
+                               lexdata[pos:])
 
         if self.lexeoff:
             tok = Token()
             tok.type = 'eof'
             tok.value = ''
             tok.lineno = self.lineno
-            tok.column = column
+            tok.pos = pos
             tok.lexer = self
-            self.column = column
+            self.pos = pos
             newtok = self.lexeoff(tok)
             return newtok
 
-        self.column = column + 1
+        self.pos = pos + 1
         if self.lexdata is None:
             raise RuntimeError('No input string given with input()')
         return None
@@ -883,7 +883,7 @@ def runmain(lexer=None, data=None):
         tok = _token()
         if not tok:
             break
-        sys.stdout.write(f'({tok.type},{tok.value!r},{tok.lineno},{tok.column})\n')
+        sys.stdout.write(f'({tok.type},{tok.value!r},{tok.lineno},{tok.pos})\n')
 
 # -----------------------------------------------------------------------------
 # @TOKEN(regex)

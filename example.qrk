@@ -1,3 +1,9 @@
+//Python for loops to Quark
+// for i in range(0, limit):
+		yeild i
+
+for i to limit: yeild i
+
 //Python lambda expression to Quark anonymous functions
 // add = lambda x, y: x + y
 
@@ -25,7 +31,7 @@ it.utils.meta {key, start: match.start, end: match.end}
 // 	if bool(param)
 // ]
 
-//ISSUE: Currently not possible because the lexer accepts only colon newline for MUST_INDENT 
+//ISSUE: Currently not possible because the lexer accepts only colon newline for MUST_INDENT condition
 params = val[val.find '(' + 1 : val.find ')']
 	| split ','
 	| filter c: bool c 

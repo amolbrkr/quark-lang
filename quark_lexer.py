@@ -1,7 +1,7 @@
 from ply import lex
 
 
-class IndentLexer:
+class QuarkLexer:
     def __init__(self, ply_lexer):
         self.lexer = ply_lexer
         self.token_stream = None

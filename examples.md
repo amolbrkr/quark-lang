@@ -2,6 +2,8 @@
 
 ## Variable Declarations
 	name = 'Amol'
+	pi = 3.1415926535
+	fruits = ['orange', 'apple', 'banana']
 
 ## Conditionals
 
@@ -45,9 +47,9 @@
 		| split ','
 		| filter c: bool c 
 		| map p: p.strip
-		| map p: &.interpretParams p
+		| map p: interpretParams p
 
 ## Pushing new value to a HashMap
-	it.utils.meta.push {key, start: match.start, end: match.end}
+	utils.meta.push {key, start: match.start, end: match.end}
 
 

@@ -6,13 +6,29 @@ This file defines the grammar for the Quark language as it stands now, contrary 
     CompilationUnit ::= { Statement }
 
 ## Statement
-    Statement ::= <Identifier> '=' Expression
-              |   Function
+    Statement ::= 
+              |   'if' Condition ':' Statement
+              |   'if' Condition ':' Statement 'else:' Statement
+              |   Expression
+              |   { Function }
 
 ## Expression
-    Expression ::= <Literal> ('+' | '-') Expression
-               |   <Literal> ('*' | '/') Expression
-               |   <Literal> 
+    Expression ::= Assignment
+               |   MathExpression
+               |   Condition
+
+## Assignment
+    Assignment ::= <Identifier> '=' Term
+               |   <Identifier> '=' Expression
+               |   <Identifier> '=' Function
+
+## MathExpression
+    MathExpression ::= Term ( '+' | '-' ) Expression
+                   |   Term ( '*' | '/' ) Expression
+                   |   Term
+
+## Condition
+    Condition ::= Term ( '<' | '>' ) MathExpression
 
 ## Function
     Function ::= 'fn' <Identifier> ' ' Arguments ':' { Statement }
@@ -22,8 +38,8 @@ This file defines the grammar for the Quark language as it stands now, contrary 
              | '(' <Identifier> ' ' Arguments ')'
 
 ## Arugments
-    Arguments ::= Argument { ',' Arguemnt }
+    Arguments ::= Term { ',' Term }
 
-## Argument
-    Argument ::= <Identifier>
+## Term
+    Term ::= <Identifier>
              |   <Literal>

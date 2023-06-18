@@ -1,21 +1,19 @@
 from ply.lex import Token
-from quark_lexer import QuarkLexer
 from dataclasses import dataclass
 
 
 (
-    CompilationUnit,
-    Statement,
-    Expression,
-    Condition,
-    Function,
-    Assignement,
-    MathExpression,
-    Argument,
-    Identifier,
-    Literal,
-    Operator,
-) = range(11)
+    CompilationUnit,  # 0
+    Statement,  # 1
+    Expression,  # 2
+    Condition,  # 3
+    Function,  # 4
+    Argument,  # 5
+    Identifier,  # 6
+    Literal,  # 7
+    Assignment,  # 8
+    Operator,  # 9
+) = range(10)
 
 
 @dataclass
@@ -43,7 +41,14 @@ class QuarkParser:
         print(f"parse_statement: {self.tok}")
         n = None
 
-        if self.tok.type == "IF":
+        if self.tok.type == "ID":
+            id = self.parse_term()
+            self.next_token()
+            if self.tok.type == "EQUALS":
+                n = TreeNode(Assignment, self.tok, left=id)
+                self.next_token()
+                n.mid = self.parse_term()
+        elif self.tok.type == "IF":
             n = TreeNode(Statement, self.tok)
             self.next_token()
             n.left = self.parse_expr()
@@ -59,16 +64,14 @@ class QuarkParser:
         print(f"Node: {n}")
         return n
 
+    def parse_term(self):
+        if self.tok.type in ["ID", "INT", "FLOAT", "STR"]:
+            return TreeNode(Identifier if self.tok.type == "ID" else Literal, self.tok)
+        else:
+            self.error(f"Expected Identifier or Literal got {self.tok.value}")
+
     def parse_expr(self):
         print(f"parse_expr: {self.tok}")
-        n = None
-
-        if self.tok.type == "ID":
-            self.next_token()
-            if self.tok.type == 'EQUALS':
-                    
-            else:
-                self.parse_cond()
 
     def parse_asgn(self):
         print(f"parse_asgn: {self.tok}")
@@ -80,5 +83,6 @@ class QuarkParser:
         self.next_token()
         self.tree = TreeNode(CompilationUnit, self.tok, left=self.parse_stat())
 
+        self.next_token()
         if self.tok.type != "EOF":
             self.error(f"Expected EOF but got {self.tok.value}")

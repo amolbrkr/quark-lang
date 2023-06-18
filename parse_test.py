@@ -1,5 +1,6 @@
 import sys
 import ply.lex as lex
+from utils import treeviz
 from lex_grammar import *
 from quark_lexer import QuarkLexer
 from quark_parser import QuarkParser
@@ -12,4 +13,7 @@ if __name__ == "__main__":
         lexer.input(inputf.read())
         parser = QuarkParser(lexer)
 
-        print(parser.parse())
+        parser.parse()
+        viz = treeviz.TreeViz()
+        viz.generate(parser.tree)
+        viz.save()

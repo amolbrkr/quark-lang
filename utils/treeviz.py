@@ -8,7 +8,11 @@ class TreeViz:
         self.graph.styleDefaultAppend("shape", "rectangle")
 
     def _new(self, tree):
-        val = tree.t.value.replace('"', "").replace(",", "")
+        val = (
+            tree.t.value.replace('"', "").replace(",", "")
+            if type(tree.t.value) == str
+            else tree.t.value
+        )
         return self.graph.newItem(f"{tree.type} - {tree.t.type} ({val})")
 
     def _link(self, node1, node2):

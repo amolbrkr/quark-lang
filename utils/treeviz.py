@@ -13,7 +13,7 @@ class TreeViz:
             if type(tree.t.value) == str
             else tree.t.value
         )
-        return self.graph.newItem(f"{tree.type} - {tree.t.type} ({val})")
+        return self.graph.newItem(f"{tree} ({val})")
 
     def _link(self, node1, node2):
         self.graph.newLink(node1, node2)

@@ -6,7 +6,9 @@
 //         | map p: p.strip
 //         | map p: &.interpretParams p
 
-if age < 18:
-    youCantDrive
-else:
-    enjoyTheRide
+// if age < 18:
+//     youCantDrive
+// else:
+//     enjoyTheRide
+
+name = "Amol borkar"

@@ -1,14 +1,4 @@
-// add = fn x, y: x + y
-
-// params = val[val.find '(' + 1 : val.find ')']:
-//         | split ','
-//         | filter c: bool c 
-//         | map p: p.strip
-//         | map p: &.interpretParams p
-
-// if age < 18:
-//     youCantDrive
-// else:
-//     enjoyTheRide
-
-name = "Amol borkar"
+if age < 18:
+    youCantDrive
+else:
+    enjoyYourRide

@@ -27,7 +27,7 @@ tokens = (
     "GT",  # >
     "LTE",  # <=
     "GTE",  # >=
-    "DOUBLEEQUAL",  # ==
+    "DEQ",  # ==
     "NE",  # #
     "LPAR",  # (
     "RPAR",  # )
@@ -41,7 +41,7 @@ tokens = (
     "DOT",  # .
     "COMMA",  # ,
     "QUOTES",  # '
-    "DOUBLEQUOTES",  # "
+    "DQUOTES",  # "
     "PIPE",
     "COLON",  # :
     "COMMENT",  # //
@@ -66,7 +66,7 @@ t_LT = r"\<"
 t_GT = r"\>"
 t_LTE = r"\<\="
 t_GTE = r"\>\="
-t_DOUBLEEQUAL = r"\=\="
+t_DEQ = r"\=\="
 t_NE = r"\!\="
 
 t_LBRACE = r"\["
@@ -75,7 +75,7 @@ t_RBRACE = r"\]"
 t_DOT = r"\."
 t_COMMA = r"\,"
 t_QUOTES = r"\'"
-t_DOUBLEQUOTES = r'"'
+t_DQUOTES = r'"'
 t_PIPE = r"\|"
 t_COLON = r":"
 

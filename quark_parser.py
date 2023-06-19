@@ -31,6 +31,7 @@ class QuarkParser:
     def __init__(self, lexer):
         self.tok = None
         self.tree = None
+        self.errors = []
         self.lexer = lexer
 
     def _is_term(self):
@@ -40,7 +41,7 @@ class QuarkParser:
         self.tok = self.lexer.token()
 
     def _error(self, msg):
-        raise Exception(f"ParseError: {msg}")
+        self.errors.append(f"ParseError: {msg} at {self.tok.lineno}")
 
     def _parse_bloc(self):
         print(f"parse_bloc: {self.tok}")
@@ -112,7 +113,7 @@ class QuarkParser:
                 n = lterm
         elif self.tok.type == "LPAR":
             self._next()
-            self.parse_expr()
+            n = self._parse_expr()
         else:
             self.error(f"Expected Term or '(' but got '{self.tok.value}'")
 
@@ -127,7 +128,8 @@ class QuarkParser:
     def _print_all(self, nodes):
         for node in nodes:
             print(node)
-            self._print_all(node.children)
+            if node and len(node.children) > 0:
+                self._print_all(node.children)
 
     def parse(self):
         self._next()

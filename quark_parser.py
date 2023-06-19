@@ -28,17 +28,34 @@ class TreeNode:
 
 
 class QuarkParser:
-    def __init__(self, lexer):
-        self.tok = None
+    def __init__(self, token_stream):
         self.tree = None
         self.errors = []
-        self.lexer = lexer
+        self.tokens = list(token_stream)
+
+    def _peek(self):
+        return self.tokens[0]
+
+    def _next(self):
+        return self.tokens.pop(0)
+
+    def _is_operator(self):
+        return self.tok.type in [
+            "PLUS",
+            "MINUS",
+            "MULTIPLY",
+            "DIVIDE",
+            "GT",
+            "LT",
+            "GTE",
+            "LTE",
+            "DEQ",
+            "NE",
+            "EQUALS",
+        ]
 
     def _is_term(self):
         return self.tok.type in ["ID", "INT", "FLOAT", "STR"]
-
-    def _next(self):
-        self.tok = self.lexer.token()
 
     def _error(self, msg):
         self.errors.append(f"ParseError: {msg} at {self.tok.lineno}")
@@ -92,19 +109,7 @@ class QuarkParser:
         if self._is_term():
             lterm = self._parse_term()
             self._next()
-            if self.tok.type in [
-                "PLUS",
-                "MINUS",
-                "MULTIPLY",
-                "DIVIDE",
-                "GT",
-                "LT",
-                "GTE",
-                "LTE",
-                "DEQ",
-                "NE",
-                "EQUALS",
-            ]:
+            if self._is_operator():
                 n = TreeNode(NodeType.Operator, self.tok)
                 n.children.append(lterm)
                 self._next()
@@ -114,6 +119,9 @@ class QuarkParser:
         elif self.tok.type == "LPAR":
             self._next()
             n = self._parse_expr()
+            self._next()
+            if self.tok.type != "RPAR":
+                self._error(f"Expected ')' but got {self.tok.value}")
         else:
             self.error(f"Expected Term or '(' but got '{self.tok.value}'")
 
@@ -136,6 +144,8 @@ class QuarkParser:
         self.tree = TreeNode(NodeType.CompilationUnit, self.tok)
         self.tree.children.append(self._parse_bloc())
         self._print_all([self.tree])
+        for error in self.errors:
+            print(error)
 
         if self.tok.type != "EOF":
             self._error(f"Expected EOF but got {self.tok.value}")

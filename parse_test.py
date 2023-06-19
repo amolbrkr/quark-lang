@@ -11,7 +11,7 @@ lexer = QuarkLexer(lex.lex())
 if __name__ == "__main__":
     with open(sys.argv[1], "r") as inputf:
         lexer.input(inputf.read())
-        parser = QuarkParser(lexer)
+        parser = QuarkParser(lexer.token_stream)
 
         parser.parse()
         viz = treeviz.TreeViz()

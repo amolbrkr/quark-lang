@@ -26,7 +26,7 @@ This file defines the grammar for the Quark language as it stands now, contrary 
 
 ## Function
     Function ::= 'fn' <Identifier> ' ' Arguments ':' { 'NEWLINE' } Block
-             |   'fn' ' ' Arguments ':' { 'NEWLINE' } Block
+             |   <Identifier> '=' fn' ' ' Arguments ':' { 'NEWLINE' } Block
              | <Identifier> ' ' Arguments
              | { <Identifier> '.' } Arguments
              | '(' <Identifier> ' ' Arguments ')'

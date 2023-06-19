@@ -54,6 +54,10 @@ class QuarkParser:
 
             while self.tok.type in ["NEWLINE", "DEDENT"]:
                 self._next()
+            else:
+                self._error(
+                    f"Expected newline but got {self.tok.value}, did you forgot to add a new line?"
+                )
 
         return n
 
@@ -61,13 +65,7 @@ class QuarkParser:
         print(f"parse_stat: {self.tok}")
         n = None
 
-        if self.tok.type == "ID":
-            n = TreeNode(NodeType.Identifier, self.tok)
-            self._next()
-            if self.tok.type == "=":
-                self._next()
-                n.children.append(self._parse_expr())
-        elif self.tok.type == "if":
+        if self.tok.type == "if":
             pass
         elif self.tok.type == "fn":
             pass
@@ -91,7 +89,7 @@ class QuarkParser:
         n = None
 
         if self._is_term():
-            lterm = self.parse_term()
+            lterm = self._parse_term()
             self._next()
             if self.tok.type in [
                 "PLUS",
@@ -104,11 +102,12 @@ class QuarkParser:
                 "LTE",
                 "DEQ",
                 "NE",
+                "EQUALS",
             ]:
                 n = TreeNode(NodeType.Operator, self.tok)
                 n.children.append(lterm)
                 self._next()
-                n.children.append(self._parse_term())
+                n.children.append(self._parse_expr())
             else:
                 n = lterm
         elif self.tok.type == "LPAR":
@@ -125,11 +124,16 @@ class QuarkParser:
     def _parse_func(self):
         print(f"parse_func: {self.tok}")
 
+    def _print_all(self, nodes):
+        for node in nodes:
+            print(node)
+            self._print_all(node.children)
+
     def parse(self):
         self._next()
         self.tree = TreeNode(NodeType.CompilationUnit, self.tok)
         self.tree.children.append(self._parse_bloc())
+        self._print_all([self.tree])
 
-        self._next()
         if self.tok.type != "EOF":
             self._error(f"Expected EOF but got {self.tok.value}")

@@ -1,43 +1,32 @@
+from enum import Enum
 from ply.lex import Token
 from dataclasses import dataclass
 
 
-(
-    CompilationUnit,  # 0
-    Statement,  # 1
-    Expression,  # 2
-    Condition,  # 3
-    Function,  # 4
-    Argument,  # 5
-    Identifier,  # 6
-    Literal,  # 7
-    Assignment,  # 8
-    Operator,  # 9
-) = range(10)
+class NodeType(Enum):
+    CompilationUnit = 0
+    Block = 1
+    Statement = 2
+    Expression = 3
+    Condition = 4
+    Function = 5
+    Argument = 6
+    Identifier = 7
+    Literal = 8
+    Assignment = 9
+    Operator = 10
 
 
 @dataclass
 class TreeNode:
-    type: int
+    type: NodeType
     t: Token
     left: any = None
     mid: any = None
     right: any = None
 
     def __str__(self):
-        tmp = (
-            "CompilationUnit",  # 0
-            "Statement",  # 1
-            "Expression",  # 2
-            "Condition",  # 3
-            "Function",  # 4
-            "Argument",  # 5
-            "Identifier",  # 6
-            "Literal",  # 7
-            "Assignment",  # 8
-            "Operator",  # 9
-        )[self.type]
-        return f"{tmp}[{self.t.type}]"
+        return f"{self.type}[{self.t.type}]"
 
 
 class QuarkParser:
@@ -63,11 +52,11 @@ class QuarkParser:
             id = self.parse_term()
             self.next_token()
             if self.tok.type == "EQUALS":
-                n = TreeNode(Assignment, self.tok, left=id)
+                n = TreeNode(NodeType.Assignment, self.tok, left=id)
                 self.next_token()
                 n.mid = self.parse_expr()
         elif self.tok.type == "IF":
-            n = TreeNode(Statement, self.tok)
+            n = TreeNode(NodeType.Statement, self.tok)
             self.next_token()
             n.left = self.parse_expr()
             self.next_token()
@@ -88,9 +77,9 @@ class QuarkParser:
                         self.next_token()
                     n.right = self.parse_stat()
         elif self.tok.type == "FN":
-            n = TreeNode(Function, self.tok, left=self.parse_func())
+            n = TreeNode(NodeType.Function, self.tok, left=self.parse_func())
         else:
-            n = TreeNode(Expression, self.tok, left=self.parse_expr())
+            n = TreeNode(NodeType.Expression, self.tok, left=self.parse_expr())
 
         print(f"Node: {n}")
         return n
@@ -99,7 +88,9 @@ class QuarkParser:
         if not self._is_term():
             self.error(f"Expected Identifier or Literal got '{self.tok.value}'")
 
-        return TreeNode(Identifier if self.tok.type == "ID" else Literal, self.tok)
+        return TreeNode(
+            NodeType.Identifier if self.tok.type == "ID" else NodeType.Literal, self.tok
+        )
 
     def parse_expr(self):
         print(f"parse_expr: {self.tok}")
@@ -120,7 +111,7 @@ class QuarkParser:
                 "DEQ",
                 "NE",
             ]:
-                n = TreeNode(Operator, self.tok, left=lterm)
+                n = TreeNode(NodeType.Operator, self.tok, left=lterm)
                 self.next_token()
                 n.mid = self.parse_term()
             else:
@@ -141,7 +132,7 @@ class QuarkParser:
 
     def parse(self):
         self.next_token()
-        self.tree = TreeNode(CompilationUnit, self.tok, left=self.parse_stat())
+        self.tree = TreeNode(NodeType.CompilationUnit, self.tok, left=self.parse_stat())
 
         self.next_token()
         # if self.tok.type != "EOF":

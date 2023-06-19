@@ -11,8 +11,7 @@ This file defines the grammar for the Quark language as it stands now, contrary 
           |   'NEWLINE' { 'INDENT' } Statment 'NEWLINE' { 'DEDENT' }
 
 ## Statement
-    Statement ::= 'if' Expression ':' Block
-              |   'if' Expression ':' Block 'else:' Block
+    Statement ::= IfStatement
               |   Function
               |   Expression
 
@@ -24,12 +23,18 @@ This file defines the grammar for the Quark language as it stands now, contrary 
                |   '(' Expression ')'
                |   Term
 
+## IfStatement
+    IfStatement ::= 'if' Expression ':' Block { ElseStatement }
+
+## ElseStatement
+    ElseStatement ::= 'else' ':' Block
+
 ## Function
     Function ::= 'fn' <Identifier> ' ' Arguments ':' Block
              |   <Identifier> '=' fn' ' ' Arguments ':' Block
-             | <Identifier> ' ' Arguments
-             | { <Identifier> '.' } Arguments
-             | '(' <Identifier> ' ' Arguments ')'
+             |   <Identifier> ' ' Arguments
+             |   { <Identifier> '.' } Arguments
+             |   '(' <Identifier> ' ' Arguments ')'
 
 ## Arugments
     Arguments ::= Expression { ',' Expression }

@@ -9,9 +9,9 @@ class TreeViz:
 
     def _new(self, tree):
         val = (
-            tree.t.value.replace('"', "").replace(",", "")
-            if type(tree.t.value) == str
-            else tree.t.value
+            tree.tok.value.replace('"', "").replace(",", "")
+            if type(tree.tok.value) == str
+            else tree.tok.value
         )
         return self.graph.newItem(f"{tree} ({val})")
 
@@ -21,7 +21,7 @@ class TreeViz:
     def generate(self, tree, parent=None):
         if tree:
             node = self._new(tree) if not parent else parent
-            for child in [tree.left, tree.mid, tree.right]:
+            for child in tree.children:
                 if child:
                     node1 = self._new(child)
                     self._link(node, node1)

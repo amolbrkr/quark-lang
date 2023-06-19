@@ -11,14 +11,14 @@ This file defines the grammar for the Quark language as it stands now, contrary 
           |   'NEWLINE' { 'INDENT' } Statment 'NEWLINE' { 'DEDENT' }
 
 ## Statement
-    Statement ::= <Identifier> '=' Expression
-              |   'if' Expression ':' Block
+    Statement ::= 'if' Expression ':' Block
               |   'if' Expression ':' Block 'else:' Block
               |   Function
               |   Expression
 
 ## Expression
-    Expression ::= Term ( '+' | '-' | '*' | '/' ) Expression
+    Expression ::= <Identifier> '=' Expression
+               |   Term ( '+' | '-' | '*' | '/' ) Expression
                |   Term ( '<' | '>' | '<=' | '>=' ) Expression 
                |   ('!' | '-' ) Expression
                |   '(' Expression ')'

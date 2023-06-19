@@ -1,4 +1,1 @@
-if age < 18:
-    youCantDrive
-else:
-    enjoyYourRide
+x = y

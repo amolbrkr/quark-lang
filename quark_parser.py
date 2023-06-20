@@ -20,11 +20,11 @@ class NodeType(Enum):
 @dataclass
 class TreeNode:
     type: NodeType
-    tok: Token
+    tok: Token = None
     children: list = field(default_factory=list)
 
     def __str__(self):
-        return f"{self.type}[{self.tok.type}]"
+        return f"{self.type}[{self.tok.value if self.tok else 'None'}]"
 
 
 class QuarkParser:
@@ -33,119 +33,82 @@ class QuarkParser:
         self.errors = []
         self.tokens = list(token_stream)
 
-    def _peek(self):
-        return self.tokens[0]
+    ## Util functions
+    def cur(self):
+        t = self.tokens[0]
+        print("cur", t)
+        return t
 
-    def _next(self):
-        return self.tokens.pop(0)
+    def peek(self, index=1):
+        t = self.tokens[index] if index < len(self.tokens) else None
+        print("peek", t)
+        return t
 
-    def _is_operator(self):
-        return self.tok.type in [
-            "PLUS",
-            "MINUS",
-            "MULTIPLY",
-            "DIVIDE",
-            "GT",
-            "LT",
-            "GTE",
-            "LTE",
-            "DEQ",
-            "NE",
-            "EQUALS",
-        ]
+    def consume(self):
+        t = self.tokens.pop(0)
+        print("cons", t)
+        return t
 
-    def _is_term(self):
-        return self.tok.type in ["ID", "INT", "FLOAT", "STR"]
+    def is_term(self, token):
+        return token.type in ["ID", "INT", "FLOAT", "STR"]
 
-    def _error(self, msg):
-        self.errors.append(f"ParseError: {msg} at {self.tok.lineno}")
+    def error(self, msg):
+        self.errors.append(f"ParseError: {msg}")
 
-    def _parse_bloc(self):
-        print(f"parse_bloc: {self.tok}")
-        n = None
+    ## Parsing functions
+    def block(self):
+        print(f"Block: {self.peek()}")
+        node = None
 
-        while self.tok.type in ["NEWLINE", "INDENT"]:
-            self._next()
+        while self.cur().type in ["NEWLINE", "INDENT"]:
+            self.consume()
         else:
-            n = self._parse_stat()
-            self._next()
+            node = self.statement()
 
-            while self.tok.type in ["NEWLINE", "DEDENT"]:
-                self._next()
-            else:
-                self._error(
-                    f"Expected newline but got {self.tok.value}, did you forgot to add a new line?"
-                )
+            while self.cur().type in ["NEWLINE", "DEDENT"]:
+                self.consume()
 
-        return n
+        return node
 
-    def _parse_stat(self):
-        print(f"parse_stat: {self.tok}")
-        n = None
+    def statement(self):
+        print(f"Statement: {self.peek()}")
+        node = None
 
-        if self.tok.type == "if":
-            pass
-        elif self.tok.type == "fn":
-            pass
-        elif self._is_term():
-            n = self._parse_expr()
-        else:
-            self._error(f"Unexpected token: {self.tok.value}")
+        match self.cur().type:
+            case "if":
+                node = self.ifelse()
+            case "fn":
+                node = self.function()
+            case _:
+                node = self.expression()
 
-        return n
+        return node
 
-    def _parse_term(self):
-        if not self._is_term():
-            self.error(f"Expected Identifier or Literal got '{self.tok.value}'")
+    def expression(self):
+        print(f"Expression: {self.peek()}")
+        node = None
 
-        return TreeNode(
-            NodeType.Identifier if self.tok.type == "ID" else NodeType.Literal, self.tok
-        )
+        if self.cur().type == "ID" and self.peek().type == "EQUALS":
+            lterm = TreeNode(NodeType.Identifier, self.consume())
+            node = TreeNode(NodeType.Operator, self.consume())
+            node.children.extend([lterm, self.expression()])
+        elif self.is_term(self.cur()):
+            node = TreeNode(
+                NodeType.Identifier if self.cur().type == "ID" else NodeType.Literal,
+                self.consume(),
+            )
 
-    def _parse_expr(self):
-        print(f"parse_expr: {self.tok}")
-        n = None
+        return node
 
-        if self._is_term():
-            lterm = self._parse_term()
-            self._next()
-            if self._is_operator():
-                n = TreeNode(NodeType.Operator, self.tok)
-                n.children.append(lterm)
-                self._next()
-                n.children.append(self._parse_expr())
-            else:
-                n = lterm
-        elif self.tok.type == "LPAR":
-            self._next()
-            n = self._parse_expr()
-            self._next()
-            if self.tok.type != "RPAR":
-                self._error(f"Expected ')' but got {self.tok.value}")
-        else:
-            self.error(f"Expected Term or '(' but got '{self.tok.value}'")
+    def function(self):
+        pass
 
-        return n
-
-    def _parse_asgn(self):
-        print(f"parse_asgn: {self.tok}")
-
-    def _parse_func(self):
-        print(f"parse_func: {self.tok}")
-
-    def _print_all(self, nodes):
-        for node in nodes:
-            print(node)
-            if node and len(node.children) > 0:
-                self._print_all(node.children)
+    def ifelse(sefl):
+        pass
 
     def parse(self):
-        self._next()
-        self.tree = TreeNode(NodeType.CompilationUnit, self.tok)
-        self.tree.children.append(self._parse_bloc())
-        self._print_all([self.tree])
-        for error in self.errors:
-            print(error)
+        self.tree = TreeNode(NodeType.CompilationUnit)
+        self.tree.children.append(self.block())
 
-        if self.tok.type != "EOF":
-            self._error(f"Expected EOF but got {self.tok.value}")
+        if self.cur().type != "EOF":
+            self.error(f"Expected EOF but got {self.cur().value}")

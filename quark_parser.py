@@ -35,29 +35,30 @@ class QuarkParser:
 
     ## Util functions
     def cur(self):
-        t = self.tokens[0]
-        print("cur", t)
-        return t
+        return self.tokens[0]
 
     def peek(self, index=1):
-        t = self.tokens[index] if index < len(self.tokens) else None
-        print("peek", t)
-        return t
+        return self.tokens[index] if index < len(self.tokens) else None
 
     def consume(self):
-        t = self.tokens.pop(0)
-        print("cons", t)
-        return t
+        return self.tokens.pop(0)
 
     def is_term(self, token):
         return token.type in ["ID", "INT", "FLOAT", "STR"]
 
     def error(self, msg):
         self.errors.append(f"ParseError: {msg}")
+    
+    def expect(self, type):
+        if self.cur().type == type:
+            return self.consume()
+        else:
+            raise Exception(f"Expected {type} but got {self.cur().type}.")
+
 
     ## Parsing functions
     def block(self):
-        print(f"Block: {self.peek()}")
+        print(f"Block: {self.cur()}")
         node = None
 
         while self.cur().type in ["NEWLINE", "INDENT"]:
@@ -71,7 +72,7 @@ class QuarkParser:
         return node
 
     def statement(self):
-        print(f"Statement: {self.peek()}")
+        print(f"Statement: {self.cur()}")
         node = None
 
         match self.cur().type:
@@ -85,7 +86,7 @@ class QuarkParser:
         return node
 
     def expression(self):
-        print(f"Expression: {self.peek()}")
+        print(f"Expression: {self.cur()}")
         node = None
 
         if self.cur().type == "ID" and self.peek().type == "EQUALS":
@@ -93,18 +94,53 @@ class QuarkParser:
             node = TreeNode(NodeType.Operator, self.consume())
             node.children.extend([lterm, self.expression()])
         elif self.is_term(self.cur()):
-            node = TreeNode(
-                NodeType.Identifier if self.cur().type == "ID" else NodeType.Literal,
-                self.consume(),
-            )
-
+            node = self.term()
         return node
 
     def function(self):
+        print(f"Funciton: {self.cur()}")
+        node = None
+
+        # fn - root
+        # id, args, block - children
+        if self.cur().type == "FN":
+            node = TreeNode(NodeType.Function, self.consume())
+            node.children.extend([self.expect("ID"), self.arguments()])
+            self.expect('COLON')
+            node.children.append(self.block)
+        elif self.peek(2).type == "FN":
+            id = self.expect("ID")
+            self.expect("EQUALS")
+            node = self.consume()
+            node.children.extend([id, self.arguments()])
+            self.expect("COLON")
+            node.children.append(self.block())
+        elif self.cur().type == "ID":
+            pass
+        elif self.cur().type == "LPAR":
+            pass
+
+        return node
+
+    def arguments(self):
+        print(f"Arguments: {self.cur()}")
+        node = None
+
+        if self.peek().type == "COLON":
+            node = TreeNode(NodeType.Argument)
+        else:
+            arg = self.expression()
+            if self.cur().type == "COMMA":
+            # Think through this
+
+    def ifelse(self):
         pass
 
-    def ifelse(sefl):
-        pass
+    def term(self):
+        return TreeNode(
+            NodeType.Identifier if self.cur().type == "ID" else NodeType.Literal, self.consume()
+        )
+
 
     def parse(self):
         self.tree = TreeNode(NodeType.CompilationUnit)

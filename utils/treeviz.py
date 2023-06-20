@@ -12,8 +12,8 @@ class TreeViz:
             tree.tok.value.replace('"', "").replace(",", "")
             if type(tree.tok.value) == str
             else tree.tok.value
-        )
-        return self.graph.newItem(f"{tree} ({val})")
+        ) if tree.tok else ""
+        return self.graph.newItem(f"{tree}")
 
     def _link(self, node1, node2):
         self.graph.newLink(node1, node2)

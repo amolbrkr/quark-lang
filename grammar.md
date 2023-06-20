@@ -34,7 +34,7 @@ This file defines the grammar for the Quark language as it stands now, contrary 
              |   '(' <Identifier> ' ' Arguments ')'
 
 ## Arugments
-    Arguments ::= Expression { ',' Expression }
+    Arguments ::= { Expression ',' }
 
 ## Term
     Term ::= <Identifier>

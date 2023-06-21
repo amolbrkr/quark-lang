@@ -1,1 +1,4 @@
-x = 2 + (3 * 4)
+// fn add3 x, y, z: x + y + z
+add3 = fn x, y, z: x + y + z
+
+sayHi = fn: print "Hi"

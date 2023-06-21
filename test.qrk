@@ -1,2 +1,2 @@
-// fn add3 x, y, z: x + y + z
-add3 = fn x, y, z: x + y + z
+fn add3 x, y, z: x + y + z
+// add3 = fn x, y, z: x + y + z

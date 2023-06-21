@@ -96,16 +96,16 @@ class QuarkParser:
         return node
 
     def function(self):
-        print(f"Funciton: {self.cur()}")
+        print(f"Function: {self.cur()}")
         node = None
 
-        # fn - root
-        # id, args, block - children
         if self.cur().type == "FN":
             node = TreeNode(NodeType.Function, self.consume())
-            node.children.extend([self.expect("ID"), self.arguments()])
+            node.children.extend(
+                [TreeNode(NodeType.Identifier, self.expect("ID")), self.arguments()]
+            )
             self.expect("COLON")
-            node.children.append(self.block)
+            node.children.append(self.block())
         elif self.peek(2).type == "FN":
             id = TreeNode(NodeType.Identifier, self.expect("ID"))
             self.expect("EQUALS")
@@ -122,7 +122,7 @@ class QuarkParser:
 
     def arguments(self):
         print(f"Arguments: {self.cur()}")
-        node = TreeNode(NodeType.ArgumentList)
+        node = TreeNode(NodeType.Arguments)
 
         while self.cur().type != "COLON":
             node.children.append(self.expression())

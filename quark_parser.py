@@ -10,7 +10,7 @@ class NodeType(Enum):
     Expression = 3
     Condition = 4
     Function = 5
-    Argument = 6
+    Arguments = 6
     Identifier = 7
     Literal = 8
     Assignment = 9
@@ -48,13 +48,12 @@ class QuarkParser:
 
     def error(self, msg):
         self.errors.append(f"ParseError: {msg}")
-    
+
     def expect(self, type):
         if self.cur().type == type:
             return self.consume()
         else:
             raise Exception(f"Expected {type} but got {self.cur().type}.")
-
 
     ## Parsing functions
     def block(self):
@@ -75,13 +74,12 @@ class QuarkParser:
         print(f"Statement: {self.cur()}")
         node = None
 
-        match self.cur().type:
-            case "if":
-                node = self.ifelse()
-            case "fn":
-                node = self.function()
-            case _:
-                node = self.expression()
+        if self.cur().type == "IF":
+            node = self.ifelse()
+        elif "FN" in [self.cur().type, self.peek(2).type]:
+            node = self.function()
+        else:
+            node = self.expression()
 
         return node
 
@@ -106,12 +104,12 @@ class QuarkParser:
         if self.cur().type == "FN":
             node = TreeNode(NodeType.Function, self.consume())
             node.children.extend([self.expect("ID"), self.arguments()])
-            self.expect('COLON')
+            self.expect("COLON")
             node.children.append(self.block)
         elif self.peek(2).type == "FN":
-            id = self.expect("ID")
+            id = TreeNode(NodeType.Identifier, self.expect("ID"))
             self.expect("EQUALS")
-            node = self.consume()
+            node = TreeNode(NodeType.Function, self.consume())
             node.children.extend([id, self.arguments()])
             self.expect("COLON")
             node.children.append(self.block())
@@ -124,23 +122,24 @@ class QuarkParser:
 
     def arguments(self):
         print(f"Arguments: {self.cur()}")
-        node = None
+        node = TreeNode(NodeType.ArgumentList)
 
-        if self.peek().type == "COLON":
-            node = TreeNode(NodeType.Argument)
-        else:
-            arg = self.expression()
+        while self.cur().type != "COLON":
+            node.children.append(self.expression())
+
             if self.cur().type == "COMMA":
-            # Think through this
+                self.consume()
+
+        return node
 
     def ifelse(self):
         pass
 
     def term(self):
         return TreeNode(
-            NodeType.Identifier if self.cur().type == "ID" else NodeType.Literal, self.consume()
+            NodeType.Identifier if self.cur().type == "ID" else NodeType.Literal,
+            self.consume(),
         )
-
 
     def parse(self):
         self.tree = TreeNode(NodeType.CompilationUnit)

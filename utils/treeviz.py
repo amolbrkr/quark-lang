@@ -13,7 +13,7 @@ class TreeViz:
             if type(tree.tok.value) == str
             else tree.tok.value
         ) if tree.tok else ""
-        return self.graph.newItem(f"{tree} ({val})")
+        return self.graph.newItem(f"{tree}")
 
     def _link(self, node1, node2):
         self.graph.newLink(node1, node2)

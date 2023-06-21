@@ -15,5 +15,8 @@ if __name__ == "__main__":
 
         parser.parse()
         viz = treeviz.TreeViz()
-        viz.generate(parser.tree)
-        viz.save()
+        if parser.tree:
+            viz.generate(parser.tree)
+            viz.save()
+        else:
+            print("Parser tree is Null.")

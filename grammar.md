@@ -29,9 +29,10 @@ This file defines the grammar for the Quark language as it stands now, contrary 
 ## Function
     Function ::= 'fn' <Identifier> ' ' Arguments ':' Block
              |   <Identifier> '=' fn' ' ' Arguments ':' Block
-             |   <Identifier> ' ' Arguments
-             |   { <Identifier> '.' } Arguments
-             |   '(' <Identifier> ' ' Arguments ')'
+    
+    FunctionCall ::= '@' <Identifier> ' ' Arguments
+                 |   '@' { <Identifier> '.' } Arguments
+                 |   '(' '@' <Identifier> ' ' Arguments ')'
 
 ## Arugments
     Arguments ::= { Expression ',' }

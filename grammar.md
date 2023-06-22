@@ -12,6 +12,7 @@ This file defines the grammar for the Quark language as it stands now, contrary 
 ## Statement
     Statement ::= IfStatement
               |   Function
+              |   FunctionCall
               |   Expression
 
 ## Expression
@@ -24,6 +25,7 @@ This file defines the grammar for the Quark language as it stands now, contrary 
 
 ## If-Else Statement
     IfStatement ::= 'if' Expression ':' Block { ElseStatement }
+
     ElseStatement ::= 'else' ':' Block
 
 ## Function

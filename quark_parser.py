@@ -10,10 +10,10 @@ class NodeType(Enum):
     Expression = 3
     Condition = 4
     Function = 5
-    Arguments = 6
-    Identifier = 7
-    Literal = 8
-    Assignment = 9
+    FunctionCall = 6
+    Arguments = 7
+    Identifier = 8
+    Literal = 9
     Operator = 10
 
 
@@ -30,7 +30,6 @@ class TreeNode:
 class QuarkParser:
     def __init__(self, token_stream):
         self.tree = None
-        self.errors = []
         self.tokens = list(token_stream)
 
     ## Util functions
@@ -46,9 +45,6 @@ class QuarkParser:
     def is_term(self, token):
         return token.type in ["ID", "INT", "FLOAT", "STR"]
 
-    def error(self, msg):
-        self.errors.append(f"ParseError: {msg}")
-
     def expect(self, type):
         if self.cur().type == type:
             return self.consume()
@@ -58,15 +54,23 @@ class QuarkParser:
     ## Parsing functions
     def block(self):
         print(f"Block: {self.cur()}")
-        node = None
+        node = TreeNode(NodeType.Block)
 
-        while self.cur().type in ["NEWLINE", "INDENT"]:
-            self.consume()
-        else:
-            node = self.statement()
-
-            while self.cur().type in ["NEWLINE", "DEDENT"]:
+        while True:
+            if self.cur().type in ["NEWLINE", "INDENT", "DEDENT"]:
                 self.consume()
+
+            node.children.append(self.statement())
+            if self.peek().type == "EOF":
+                break
+
+        # while self.cur().type in ["NEWLINE", "INDENT"]:
+        #     self.consume()
+        # else:
+        #     node.children.append(self.statement())
+
+        #     while self.cur().type in ["NEWLINE", "DEDENT"]:
+        #         self.consume()
 
         return node
 
@@ -79,6 +83,7 @@ class QuarkParser:
         elif "FN" in [self.cur().type, self.peek(2).type]:
             node = self.function()
         elif self.cur().type == "AT":
+            self.consume()
             node = self.function_call()
         else:
             node = self.expression()
@@ -115,21 +120,22 @@ class QuarkParser:
             node.children.extend([id, self.arguments()])
             self.expect("COLON")
             node.children.append(self.block())
-        elif self.cur().type == "ID":
-            pass
-        elif self.cur().type == "LPAR":
-            pass
 
         return node
 
     def function_call(self):
-        print(f"Function: {self.cur()}")
+        print(f"Function Call: {self.cur()}")
+        node = TreeNode(NodeType.FunctionCall)
+        node.children.extend(
+            [TreeNode(NodeType.Identifier, self.expect("ID")), self.arguments()]
+        )
+        return node
 
     def arguments(self):
         print(f"Arguments: {self.cur()}")
         node = TreeNode(NodeType.Arguments)
 
-        while self.cur().type != "COLON":
+        while self.cur().type not in ["COLON", "NEWLINE"]:
             node.children.append(self.expression())
 
             if self.cur().type == "COMMA":
@@ -150,5 +156,5 @@ class QuarkParser:
         self.tree = TreeNode(NodeType.CompilationUnit)
         self.tree.children.append(self.block())
 
-        if self.cur().type != "EOF":
-            self.error(f"Expected EOF but got {self.cur().value}")
+        for child in self.tree.children:
+            print(child)

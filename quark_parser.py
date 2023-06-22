@@ -25,6 +25,11 @@ class TreeNode:
 
     def __str__(self):
         return f"{self.type}[{self.tok.value if self.tok else 'None'}]"
+    
+    def print(self, level=0):
+        print('\t' * level + str(self))
+        for child in self.children:
+            child.print(level + 1)
 
 
 class QuarkParser:
@@ -52,7 +57,7 @@ class QuarkParser:
             raise Exception(f"Expected {type} but got {self.cur().type}.")
 
     ## Parsing functions
-    def block(self):
+    def block(self): # Needs re-work
         print(f"Block: {self.cur()}")
         node = TreeNode(NodeType.Block)
 
@@ -63,14 +68,6 @@ class QuarkParser:
             node.children.append(self.statement())
             if self.peek().type == "EOF":
                 break
-
-        # while self.cur().type in ["NEWLINE", "INDENT"]:
-        #     self.consume()
-        # else:
-        #     node.children.append(self.statement())
-
-        #     while self.cur().type in ["NEWLINE", "DEDENT"]:
-        #         self.consume()
 
         return node
 
@@ -156,5 +153,4 @@ class QuarkParser:
         self.tree = TreeNode(NodeType.CompilationUnit)
         self.tree.children.append(self.block())
 
-        for child in self.tree.children:
-            print(child)
+        self.tree.print()

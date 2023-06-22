@@ -78,6 +78,8 @@ class QuarkParser:
             node = self.ifelse()
         elif "FN" in [self.cur().type, self.peek(2).type]:
             node = self.function()
+        elif self.cur().type == "AT":
+            node = self.function_call()
         else:
             node = self.expression()
 
@@ -119,6 +121,9 @@ class QuarkParser:
             pass
 
         return node
+
+    def function_call(self):
+        print(f"Function: {self.cur()}")
 
     def arguments(self):
         print(f"Arguments: {self.cur()}")

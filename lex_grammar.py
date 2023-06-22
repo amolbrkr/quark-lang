@@ -38,6 +38,7 @@ tokens = (
     "INT",  # int
     "FLOAT",  # float
     "STR",  # str
+    "AT",   # @
     "DOT",  # .
     "COMMA",  # ,
     "QUOTES",  # '
@@ -73,6 +74,7 @@ t_LBRACE = r"\["
 t_RBRACE = r"\]"
 
 t_DOT = r"\."
+t_AT = r"@"
 t_COMMA = r"\,"
 t_QUOTES = r"\'"
 t_DQUOTES = r'"'

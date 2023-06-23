@@ -1,4 +1,3 @@
-fn sayHi: @print hi
+fn sayHi: @print "hi"
 
 @sayHi
-

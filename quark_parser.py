@@ -24,7 +24,7 @@ class TreeNode:
     children: list = field(default_factory=list)
 
     def __str__(self):
-        return f"{self.type}[{self.tok.value if self.tok else 'None'}]"
+        return f"{self.type}" + f"[{self.tok.value}]" if self.tok else ""
     
     def print(self, level=0):
         print('\t' * level + str(self))
@@ -61,13 +61,15 @@ class QuarkParser:
         print(f"Block: {self.cur()}")
         node = TreeNode(NodeType.Block)
 
-        while True:
-            if self.cur().type in ["NEWLINE", "INDENT", "DEDENT"]:
-                self.consume()
-
-            node.children.append(self.statement())
-            if self.peek().type == "EOF":
-                break
+        # Both newline and indent are present, which means this is an indendted block,
+        # which means we only need to process statements until the dedent
+        if self.cur().type == "NEWLINE" and self.peek().type == "INDENT":
+            pass
+        # No indent present so process statements EOF
+        else:
+            while self.cur().type != "NEWLINE":
+                node.children.append(self.statement())
+            self.expect("NEWLINE")
 
         return node
 
@@ -137,7 +139,8 @@ class QuarkParser:
 
             if self.cur().type == "COMMA":
                 self.consume()
-
+            
+        print(node)
         return node
 
     def ifelse(self):

@@ -1,3 +1,5 @@
+fn func2: @doSomething
+
 fn sayHi: @print "hi"
 
 @sayHi

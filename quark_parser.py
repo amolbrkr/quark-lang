@@ -24,7 +24,7 @@ class TreeNode:
     children: list = field(default_factory=list)
 
     def __str__(self):
-        return f"{self.type}" + f"[{self.tok.value}]" if self.tok else ""
+        return f"{self.type}" + (f"[{self.tok.value}]" if self.tok else "")
     
     def print(self, level=0):
         print('\t' * level + str(self))

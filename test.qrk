@@ -1,5 +1,4 @@
-fn func2: @doSomething
-
-fn sayHi: @print "hi"
+fn sayHi:
+    @print "hi"
 
 @sayHi

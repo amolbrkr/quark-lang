@@ -61,11 +61,8 @@ class QuarkParser:
         print(f"Block: {self.cur()}")
         node = TreeNode(NodeType.Block)
 
-        # Both newline and indent are present, which means this is an indendted block,
-        # which means we only need to process statements until the dedent
         if self.cur().type == "NEWLINE" and self.peek().type == "INDENT":
             pass
-        # No indent present so process statements EOF
         else:
             while self.cur().type != "NEWLINE":
                 node.children.append(self.statement())

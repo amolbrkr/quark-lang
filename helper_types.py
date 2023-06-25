@@ -16,6 +16,9 @@ class NodeType(Enum):
     Literal = 9
     Operator = 10
 
+    def __str__(self):
+        return self._name_
+
 
 @dataclass(frozen=True)
 class Precedence:

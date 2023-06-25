@@ -34,7 +34,7 @@ class ExprParser:
 
     def binary(self, left):
         node = TreeNode(NodeType.Operator, self.parser.prev)
-        rule = self.rule(self.parser.cur().type)
+        rule = self.rule(self.parser.cur.type)
         node.children.extend([left, self.parse(rule.precedence + 1)])
         return node
 
@@ -48,8 +48,8 @@ class ExprParser:
         expr = prefix()
 
         while (
-            self.parser.cur().type not in ["NEWLINE", "COMMA", "COLON"]
-            and self.rule(self.parser.cur().type).precedence >= precedence
+            self.parser.cur.type not in ["NEWLINE", "COMMA", "COLON"]
+            and self.rule(self.parser.cur.type).precedence >= precedence
         ):
             tok = self.parser.consume()
             infix = self.rule(tok.type).infix

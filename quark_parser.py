@@ -6,6 +6,7 @@ from helper_types import NodeType, TreeNode
 class QuarkParser:
     def __init__(self, token_stream):
         self.tree = None
+        self.prev = None
         self.tokens = list(token_stream)
         self.expr_parser = ExprParser(self)
 
@@ -17,7 +18,8 @@ class QuarkParser:
         return self.tokens[index] if index < len(self.tokens) else None
 
     def consume(self):
-        return self.tokens.pop(0)
+        self.prev = self.tokens.pop(0)
+        return self.prev
 
     def is_term(self, token):
         return token.type in ["ID", "INT", "FLOAT", "STR"]

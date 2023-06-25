@@ -1,4 +1,1 @@
-fn sayHi:
-    @print "hi"
-
-@sayHi
+a = x + y * z

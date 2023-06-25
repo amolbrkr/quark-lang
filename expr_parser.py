@@ -48,7 +48,7 @@ class ExprParser:
         expr = prefix()
 
         while (
-            self.parser.cur().type != "NEWLINE"
+            self.parser.cur().type not in ["NEWLINE", "COMMA", "COLON"]
             and self.rule(self.parser.cur().type).precedence >= precedence
         ):
             tok = self.parser.consume()

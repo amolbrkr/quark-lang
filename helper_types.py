@@ -23,9 +23,10 @@ class NodeType(Enum):
 @dataclass(frozen=True)
 class Precedence:
     Zero = 0
-    Term = 1
-    Factor = 2
-    Unary = 3
+    Assignment = 1
+    Term = 2
+    Factor = 3
+    Unary = 4
 
 
 @dataclass
@@ -45,6 +46,7 @@ class TreeNode:
 
 @dataclass(frozen=True)
 class Rule:
+    type: str
     precedence: Precedence
     prefix: any = None
     infix: any = None

@@ -1,1 +1,3 @@
-a = x + y * z
+fn add3 x, y, z: x + y + z
+
+@add 39, 40, 22

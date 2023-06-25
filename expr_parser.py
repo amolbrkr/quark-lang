@@ -10,7 +10,7 @@ class ExprParser:
             {"tok": "INT", "rule": Rule(Precedence.Zero, prefix=self.number)},
             {"tok": "MULTIPLY", "rule": Rule(Precedence.Factor, infix=self.binary)},
             {"tok": "DIVIDE", "rule": Rule(Precedence.Factor, infix=self.binary)},
-            {"tok": "ID", "rule": Rule(Precedence.Zero, self.identifier)},
+            {"tok": "ID", "rule": Rule(Precedence.Zero, prefix=self.identifier)},
             {
                 "tok": "MINUS",
                 "rule": Rule(Precedence.Term, prefix=self.unary, infix=self.binary),
@@ -22,18 +22,18 @@ class ExprParser:
         return next(filter(lambda x: x["tok"] == tok_type, self.rules))["rule"]
 
     def identifier(self):
-        return TreeNode(NodeType.Identifier, self.parser.cur())
+        return TreeNode(NodeType.Identifier, self.parser.prev)
 
     def number(self):
-        return TreeNode(NodeType.Literal, self.parser.cur())
+        return TreeNode(NodeType.Literal, self.parser.prev)
 
     def unary(self):
-        node = TreeNode(NodeType.Operator, self.parser.cur())
+        node = TreeNode(NodeType.Operator, self.parser.prev)
         node.children.append(self.parse(Precedence.Unary))
         return node
 
     def binary(self, left):
-        node = TreeNode(NodeType.Operator, self.parser.cur())
+        node = TreeNode(NodeType.Operator, self.parser.prev)
         rule = self.rule(self.parser.cur().type)
         node.children.extend([left, self.parse(rule.precedence + 1)])
         return node
@@ -45,9 +45,12 @@ class ExprParser:
         if not prefix:
             raise Exception("Expected expression.")
 
-        expr = prefix
+        expr = prefix()
 
-        while self.rule(self.parser.peek().type).precedence >= precedence:
+        while (
+            self.parser.cur().type != "NEWLINE"
+            and self.rule(self.parser.cur().type).precedence >= precedence
+        ):
             tok = self.parser.consume()
             infix = self.rule(tok.type).infix
             expr = infix(expr)

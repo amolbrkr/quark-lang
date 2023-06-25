@@ -10,7 +10,7 @@ class QuarkParser:
         self.expr_parser = ExprParser(self)
         self.prev, self.cur = None, self.tokens[0]
 
-    ## Util functions
+    # Util functions
     def peek(self, index=1):
         return self.tokens[index] if index < len(self.tokens) else None
 
@@ -28,8 +28,8 @@ class QuarkParser:
         else:
             raise Exception(f"Expected {type} but got {self.cur.type}.")
 
-    ## Parsing functions
-    def block(self):  # Needs re-work
+    # Parsing functions
+    def block(self):
         print(f"Block: {self.cur}")
         node = TreeNode(NodeType.Block)
 
@@ -62,12 +62,13 @@ class QuarkParser:
         print(f"Expression: {self.cur}")
         node = None
 
-        if self.cur.type == "ID" and self.peek().type == "EQUALS":
-            lterm = TreeNode(NodeType.Identifier, self.consume())
-            node = TreeNode(NodeType.Operator, self.consume())
-            node.children.extend([lterm, self.expr_parser.parse()])
-        elif self.is_term(self.cur):
+        if self.is_term(self.cur):
             node = self.expr_parser.parse()
+        elif self.cur.type == "LPAR":
+            self.consume()
+            node = self.expr_parser.parse()
+            self.expect("RPAR")
+
         return node
 
     def function(self):

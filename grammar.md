@@ -8,6 +8,7 @@ This file defines the grammar for the Quark language as it stands now, contrary 
 ## Block
     Block ::= { Statment 'NEWLINE' }
           |   'NEWLINE' { 'INDENT' } Statment 'NEWLINE' { 'DEDENT' }
+          |   'EOF'
 
 ## Statement
     Statement ::= IfStatement

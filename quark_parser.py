@@ -60,16 +60,7 @@ class QuarkParser:
 
     def expression(self):
         print(f"Expression: {self.cur}")
-        node = None
-
-        if self.is_term(self.cur):
-            node = self.expr_parser.parse()
-        elif self.cur.type == "LPAR":
-            self.consume()
-            node = self.expr_parser.parse()
-            self.expect("RPAR")
-
-        return node
+        return self.expr_parser.parse()
 
     def function(self):
         print(f"Function: {self.cur}")

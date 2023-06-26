@@ -27,6 +27,7 @@ class Precedence:
     Term = 2
     Factor = 3
     Unary = 4
+    Paren = 5
 
 
 @dataclass

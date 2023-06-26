@@ -20,7 +20,7 @@ class ExprParser:
     def rule(self, tok_type):
         print(f"Token type: {tok_type}")
         return next(filter(lambda x: x.type == tok_type, self.rules))
-    
+
     def paren(self):
         expr = self.parse()
         self.parser.expect("RPAR")

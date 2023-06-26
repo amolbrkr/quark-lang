@@ -14,10 +14,17 @@ class ExprParser:
             Rule("INT", Precedence.Zero, prefix=self.number),
             Rule("FLOAT", Precedence.Zero, prefix=self.number),
             Rule("ID", Precedence.Zero, prefix=self.identifier),
+            Rule("LPAR", Precedence.Zero, prefix=self.paren),
         ]
 
     def rule(self, tok_type):
+        print(f"Token type: {tok_type}")
         return next(filter(lambda x: x.type == tok_type, self.rules))
+    
+    def paren(self):
+        expr = self.parse()
+        self.parser.expect("RPAR")
+        return expr
 
     def identifier(self):
         return TreeNode(NodeType.Identifier, self.parser.prev)
@@ -45,7 +52,7 @@ class ExprParser:
         expr = prefix()
 
         while (
-            self.parser.cur.type not in ["NEWLINE", "COMMA", "COLON", "RPAR"]
+            self.parser.cur.type not in ["RPAR", "NEWLINE", "COMMA", "COLON"]
             and self.rule(self.parser.cur.type).precedence >= precedence
         ):
             infix = self.rule(self.parser.consume().type).infix

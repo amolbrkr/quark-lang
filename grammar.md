@@ -3,14 +3,14 @@
 This file defines the grammar for the Quark language as it stands now, contrary to the `lex_grammr.py` which defines the grammar used by the language's lexer `QuarkLexer`. The grammar is written in extended `EBNF` notation and not everything is concrete at the moment. Terminal symbols are wrapped in `<>`.
 
 ## CompilationUnit
-    CompilationUnit ::= Block
+    CompilationUnit ::= Block 'EOF'
 
 ## Block
-    Block ::= { Statment 'NEWLINE' }
-          |   'NEWLINE' { 'INDENT' } Statment 'NEWLINE' { 'DEDENT' }
-          |   'EOF'
+    Block ::= Statements
+          |   'NEWLINE' 'INDENT' Statements 'DEDENT'
 
 ## Statement
+    Statements ::= { Statement 'NEWLINE' }
     Statement ::= IfStatement
               |   Function
               |   FunctionCall
@@ -18,11 +18,28 @@ This file defines the grammar for the Quark language as it stands now, contrary 
 
 ## Expression
     Expression ::= <Identifier> '=' Expression
-               |   Term ( '+' | '-' | '*' | '/' ) Expression
-               |   Term ( '<' | '>' | '<=' | '>=' ) Expression 
-               |   ('!' | '-' ) Expression
-               |   '(' Expression ')'
+               |   Equality
+               |   Comparison
                |   Term
+               |   Factor
+               |   Unary
+               |   Primary
+               |   '(' Expression ')'
+    
+    Equality ::= Comparison { ( "!=" | "==" ) Comparison }
+    Comparison ::= Term { ( ">" | ">=" | "<=" | "<" ) Term }
+    Term ::= Factor { ( "-" | "+" ) Factor }
+    Factor ::= Unary { ( "/" | "*" ) Unary }
+
+    Unary ::= ( "!" | "-" ) Unary
+          |   Primary
+    
+    Primary ::= <Identifier>
+            |   <Literal>
+            |   "true"
+            |   "false"
+            |   "null"
+            |   "it"
 
 ## If-Else Statement
     IfStatement ::= 'if' Expression ':' Block { ElseStatement }

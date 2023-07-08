@@ -1,5 +1,4 @@
 from gvgen import *
-from quark_parser import TreeNode
 
 
 class TreeViz:
@@ -9,10 +8,14 @@ class TreeViz:
 
     def _new(self, tree):
         val = (
-            tree.tok.value.replace('"', "").replace(",", "")
-            if type(tree.tok.value) == str
-            else tree.tok.value
-        ) if tree.tok else ""
+            (
+                tree.tok.value.replace('"', "").replace(",", "")
+                if type(tree.tok.value) == str
+                else tree.tok.value
+            )
+            if tree.tok
+            else ""
+        )
         return self.graph.newItem(f"{tree}")
 
     def _link(self, node1, node2):

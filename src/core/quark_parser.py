@@ -1,6 +1,5 @@
-from enum import Enum
-from expr_parser import ExprParser
-from helper_types import NodeType, TreeNode
+from core.expr_parser import ExprParser
+from .helper_types import NodeType, TreeNode
 
 
 class QuarkParser:

@@ -1,7 +1,7 @@
 import sys
 import ply.lex as lex
-from lex_grammar import *
-from quark_lexer import QuarkLexer
+from core.lex_grammar import *
+from core.quark_lexer import QuarkLexer
 
 # Lexer
 lexer = QuarkLexer(lex.lex())

@@ -1,9 +1,9 @@
 import sys
 import ply.lex as lex
 from utils import treeviz
-from lex_grammar import *
-from quark_lexer import QuarkLexer
-from quark_parser import QuarkParser
+from core.lex_grammar import *
+from core.quark_lexer import QuarkLexer
+from core.quark_parser import QuarkParser
 
 # Lexer
 lexer = QuarkLexer(lex.lex())

@@ -61,14 +61,3 @@ class CToken(Structure):
         ("lineno", c_int32),
         ("pos", c_int32),
     ]
-
-
-class CTreeNode(Structure):
-    pass
-
-
-CTreeNode._fields_ = [
-    ("type", c_int32),
-    ("tok", CToken),
-    ("children", POINTER(CTreeNode)),
-]

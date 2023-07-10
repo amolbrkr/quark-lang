@@ -2,10 +2,7 @@ from core.helper_types import *
 
 
 def gen_c_node(node):
-    print("\nGenerateing node for: ")
-    node.print()
-
-    cnode = CTreeNode()
+    cnode = cnode_factory(len(node.children))
     tok = CToken()
 
     if node.tok:
@@ -25,9 +22,7 @@ def gen_c_tree(tree):
 
     if len(tree.children) > 0:
         tmp = [gen_c_node(child) for child in tree.children]
-        print(tmp)
-        cnode.children = POINTER(CTreeNode * len(tree.children))(*tmp)
-    # else:
-    #     cnode.children = POINTER(CTreeNode())
+        # cnode_arr = (cnode_factory len(tree.children))(*tmp)
+        cnode.children = tmp
 
     return cnode

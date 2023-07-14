@@ -4,75 +4,67 @@
 
 enum NodeType
 {
-    CompilationUnit,
-    Block,
-    Statement,
-    Expression,
-    Condition,
-    Function,
-    FunctionCall,
-    Arguments,
-    Identifier,
-    Literal,
-    Operator,
+	CompilationUnit,
+	Block,
+	Statement,
+	Expression,
+	Condition,
+	Function,
+	FunctionCall,
+	Arguments,
+	Identifier,
+	Literal,
+	Operator,
 };
 
 struct Token
 {
-    char *type;
-    char *value;
-    int lineNo;
-    int pos;
+	std::string type;
+	std::string value;
+	int lineNo;
+	int pos;
 };
 
 struct TreeNode
 {
-    NodeType type;
-    Token tok;
-    std::vector<TreeNode *> children;
+	NodeType type;
+	Token tok;
+	std::vector<TreeNode> children;
 };
 
 namespace py = pybind11;
 
-void processTree(TreeNode *root)
+TreeNode genNativeTreeRepr(py::object& tree)
 {
-    std::cout << root->type << std::endl;
+	TreeNode node;
+	node.type = static_cast<NodeType>(std::stoi(tree.attr("type").attr("value").str()));
+	if (!tree.attr("tok").is_none()) {
+		node.tok = Token{
+			tree.attr("tok").attr("type").str(),
+			tree.attr("tok").attr("value").str(),
+			std::stoi(tree.attr("tok").attr("lineno").str()),
+			std::stoi(tree.attr("tok").attr("pos").str())
+		};
+	}
+
+	for (auto child : tree.attr("children")) {
+		node.children.push_back(genNativeTreeRepr(py::reinterpret_borrow<py::object>(child)));
+	}
+
+	return node;
 }
 
-void objTest(py::object &o)
-{
-    for (const py::handle &child : o.attr("children"))
-    {
-        std::cout << child.str() << std::endl;
-    }
+void printTree(TreeNode root, int level) {
+	for (int i = 0; i < level; i++) std::cout << "\t";
+	std::cout << root.type << '\n';
+	for (TreeNode child : root.children) printTree(child, level + 1);
 }
 
-PYBIND11_MODULE(c_codegen, m)
+void consumePyTree(py::object& tree) {
+	printTree(genNativeTreeRepr(tree), 0);
+}
+
+PYBIND11_MODULE(quark_codegen, m)
 {
-    py::enum_<NodeType>(m, "NodeType")
-        .value("CompilationUnit", NodeType::CompilationUnit)
-        .value("Block", NodeType::Block)
-        .value("Statement", NodeType::Statement)
-        .value("Expression", NodeType::Expression)
-        .value("Condition", NodeType::Condition)
-        .value("Function", NodeType::Function)
-        .value("FunctionCall", NodeType::FunctionCall)
-        .value("Arguments", NodeType::Arguments)
-        .value("Identifier", NodeType::Identifier)
-        .value("Literal", NodeType::Literal)
-        .value("Operator", NodeType::Operator)
-        .export_values();
-
-    // py::class_<std::vector<TreeNode *>>(m, "NodeList")
-    //     .def(py::init<>())
-    //     .def(py::vectorize_convert<std::vector<TreeNode *>, py::array_t<TreeNode *>>());
-
-    py::class_<TreeNode>(m, "TreeNode")
-        .def(py::init<>())
-        .def_readwrite("type", &TreeNode::type)
-        .def_readwrite("tok", &TreeNode::tok)
-        .def_readwrite("children", &TreeNode::children);
-
-    m.def("objTest", &objTest, "Test func");
-    m.def("processTree", &processTree, "A function that receives a tree");
+	m.def("initCodegen", &consumePyTree, "This funtion takes in a py::object tree and converts it to native C++ tree structure");
 }

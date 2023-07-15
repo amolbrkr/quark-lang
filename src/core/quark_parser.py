@@ -115,5 +115,3 @@ class QuarkParser:
     def parse(self):
         self.tree = TreeNode(NodeType.CompilationUnit)
         self.tree.children.append(self.block())
-
-        self.tree.print()

@@ -1,36 +1,6 @@
-#include <iostream>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
-
-enum NodeType
-{
-	CompilationUnit,
-	Block,
-	Statement,
-	Expression,
-	Condition,
-	Function,
-	FunctionCall,
-	Arguments,
-	Identifier,
-	Literal,
-	Operator,
-};
-
-struct Token
-{
-	std::string type;
-	std::string value;
-	int lineNo;
-	int pos;
-};
-
-struct TreeNode
-{
-	NodeType type;
-	Token tok;
-	std::vector<TreeNode> children;
-};
+#include "ast.h"
 
 namespace py = pybind11;
 
@@ -47,21 +17,15 @@ TreeNode genNativeTreeRepr(py::object& tree)
 		};
 	}
 
-	for (auto child : tree.attr("children")) {
+	for (py::handle child : tree.attr("children")) {
 		node.children.push_back(genNativeTreeRepr(py::reinterpret_borrow<py::object>(child)));
 	}
 
 	return node;
 }
 
-void printTree(TreeNode root, int level) {
-	for (int i = 0; i < level; i++) std::cout << "\t";
-	std::cout << root.type << '\n';
-	for (TreeNode child : root.children) printTree(child, level + 1);
-}
-
 void consumePyTree(py::object& tree) {
-	printTree(genNativeTreeRepr(tree), 0);
+	printTree(genNativeTreeRepr(tree));
 }
 
 PYBIND11_MODULE(quark_codegen, m)

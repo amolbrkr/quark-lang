@@ -4,7 +4,7 @@ from core.lex_grammar import *
 from core.helper_types import *
 from core.quark_lexer import QuarkLexer
 from core.quark_parser import QuarkParser
-import quark_codegen as cg
+import pytreetonative as cg
 
 lexer = QuarkLexer(lex.lex())
 

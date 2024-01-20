@@ -2,7 +2,6 @@ from enum import Enum
 from typing import Any
 from ply.lex import Token
 from dataclasses import dataclass, field
-from ctypes import POINTER, Structure, c_int16, c_int32, c_char_p
 
 
 class NodeType(Enum):
@@ -52,12 +51,3 @@ class Rule:
     precedence: Precedence
     prefix: any = None
     infix: any = None
-
-
-class CToken(Structure):
-    _fields_ = [
-        ("type", c_char_p),
-        ("value", c_char_p),
-        ("lineno", c_int32),
-        ("pos", c_int32),
-    ]

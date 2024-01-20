@@ -4,7 +4,7 @@ from core.lex_grammar import *
 from core.helper_types import *
 from core.quark_lexer import QuarkLexer
 from core.quark_parser import QuarkParser
-import pytreetonative as cg
+from core.quark_codegen import QuarkCG
 
 lexer = QuarkLexer(lex.lex())
 
@@ -13,6 +13,6 @@ if __name__ == "__main__":
         lexer.input(inputf.read())
         parser = QuarkParser(lexer.token_stream)
         parser.parse()
-
         if parser.tree:
-            cg.initCodegen(parser.tree)
+            cg = QuarkCG(parser.tree)
+            cg.compile()

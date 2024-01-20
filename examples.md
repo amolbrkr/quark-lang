@@ -1,6 +1,6 @@
 # Quark Syntax Examples
 
-## Example Factorial Program
+## Factorial Example
 	// Function definition
 	fn fact n:
 		when n:
@@ -8,7 +8,14 @@
 			_ : n * fact n - 1
 	
 	// Function call
-	exp 10, 1 + 1 -> fact -> print
+	exp 10, 2 | fact | print
+
+## Fibonacci Example
+	// Function definition
+	fn fib n:
+		n if n <= 1 else (fib (n - 1) + fib (n - 2))
+	
+	fib 5 | print
 
 ## Variable Declarations
 	name = 'Amol'
@@ -17,7 +24,7 @@
 
 ### With type annotations
 	str.name = 'Amol'
-	digit.pi = 3.1415926535
+	num.pi = 3.1415926535
 
 ## Conditionals
 
@@ -58,10 +65,10 @@
 
 ## Method Chaining using Pipes
 	params = val[(val.find '(') + 1 : val.find ')']
-		-> split ','
-		-> filter c: bool c 
-		-> map p: p.strip
-		-> map p: interpretParams p
+		| split ','
+		| filter c: bool c 
+		| map p: p.strip
+		| map p: interpretParams p
 
 ## Pushing new value to a HashMap
 	utils.meta.push {key, start: match.start, end: match.end}

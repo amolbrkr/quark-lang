@@ -1,9 +1,23 @@
 # Quark Syntax Examples
 
+## Example Factorial Program
+	// Function definition
+	fn fact n:
+		when n:
+			0 or 1 : 1
+			_ : n * fact n - 1
+	
+	// Function call
+	exp 10, 1 + 1 -> fact -> print
+
 ## Variable Declarations
 	name = 'Amol'
 	pi = 3.1415926535
 	fruits = ['orange', 'apple', 'banana']
+
+### With type annotations
+	str.name = 'Amol'
+	digit.pi = 3.1415926535
 
 ## Conditionals
 
@@ -26,7 +40,7 @@
 ## Loops	
 
 ### For Loops
-	for i to limit: i
+	for i..limit: print i
 
 ### While Loops
 	while stream.hasNext:
@@ -43,11 +57,11 @@
 	add 2, 5 				// Call
 
 ## Method Chaining using Pipes
-	params = val[val.find '(' + 1 : val.find ')']
-		| split ','
-		| filter c: bool c 
-		| map p: p.strip
-		| map p: interpretParams p
+	params = val[(val.find '(') + 1 : val.find ')']
+		-> split ','
+		-> filter c: bool c 
+		-> map p: p.strip
+		-> map p: interpretParams p
 
 ## Pushing new value to a HashMap
 	utils.meta.push {key, start: match.start, end: match.end}

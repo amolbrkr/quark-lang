@@ -16,6 +16,14 @@ class NodeType(Enum):
     Identifier = 8
     Literal = 9
     Operator = 10
+    IfStatement = 11
+    WhenStatement = 12
+    Pattern = 13
+    ForLoop = 14
+    WhileLoop = 15
+    Lambda = 16
+    Ternary = 17
+    Pipe = 18
 
     def __str__(self):
         return self._name_
@@ -23,11 +31,22 @@ class NodeType(Enum):
 
 @dataclass(frozen=True)
 class Precedence:
-    Zero = 0
-    Assignment = 1
-    Term = 2
-    Factor = 3
-    Unary = 4
+    Assignment = 0      # =
+    Pipe = 1           # |
+    Comma = 2          # ,
+    Ternary = 3        # if-else
+    LogicalOr = 4      # or
+    LogicalAnd = 5     # and
+    BitwiseAnd = 6     # &
+    Equality = 7       # == !=
+    Comparison = 8     # < <= > >=
+    Range = 9          # ..
+    Term = 10          # + -
+    Factor = 11        # * / %
+    Exponent = 12      # **
+    Unary = 13         # ! ~ -
+    Application = 14   # function calls (space)
+    Access = 15        # . [] ()
 
 
 @dataclass

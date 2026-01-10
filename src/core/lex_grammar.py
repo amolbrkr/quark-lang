@@ -5,10 +5,11 @@ reserved = {
     "and": "AND",
     "or": "OR",
     "if": "IF",
-    "elif": "ELIF",
+    "elseif": "ELSEIF",
     "else": "ELSE",
     "for": "FOR",
     "while": "WHILE",
+    "when": "WHEN",
     "fn": "FN",
     "class": "CLASS",
 }
@@ -20,15 +21,17 @@ tokens = (
     "MULTIPLY",  # *
     "DIVIDE",  # /
     "MODULO",  # %
+    "DOUBLESTAR",  # **
     "AMPER", # &
     "NOT",  # ~
+    "BANG",  # !
     "EQUALS",  # =
     "LT",  # <
     "GT",  # >
     "LTE",  # <=
     "GTE",  # >=
     "DEQ",  # ==
-    "NE",  # #
+    "NE",  # !=
     "LPAR",  # (
     "RPAR",  # )
     "LBRACE",  # [
@@ -40,11 +43,13 @@ tokens = (
     "STR",  # str
     "AT",   # @
     "DOT",  # .
+    "DOTDOT",  # ..
     "COMMA",  # ,
     "QUOTES",  # '
     "DQUOTES",  # "
-    "PIPE",
+    "PIPE",  # |
     "COLON",  # :
+    "UNDERSCORE",  # _
     "COMMENT",  # //
     "WS",  # Whitespaces
     "NEWLINE",  # \n
@@ -53,22 +58,27 @@ tokens = (
     "EOF"
 )
 
+# Order matters - longer patterns first!
+t_DOUBLESTAR = r"\*\*"
+t_DOTDOT = r"\.\."
+t_LTE = r"\<\="
+t_GTE = r"\>\="
+t_DEQ = r"\=\="
+t_NE = r"\!\="
+
 t_PLUS = r"\+"
 t_MINUS = r"-"
 t_MULTIPLY = r"\*"
 t_DIVIDE = r"/"
 t_MODULO = r"%"
-t_AMPER= r"&"
+t_AMPER = r"&"
 
 t_NOT = r"\~"
+t_BANG = r"\!"
 t_EQUALS = r"\="
 
 t_LT = r"\<"
 t_GT = r"\>"
-t_LTE = r"\<\="
-t_GTE = r"\>\="
-t_DEQ = r"\=\="
-t_NE = r"\!\="
 
 t_LBRACE = r"\["
 t_RBRACE = r"\]"
@@ -80,6 +90,12 @@ t_QUOTES = r"\'"
 t_DQUOTES = r'"'
 t_PIPE = r"\|"
 t_COLON = r":"
+
+
+# Underscore wildcard (must be a function to be checked before t_ID)
+def t_UNDERSCORE(t):
+    r"_"
+    return t
 
 
 # Identifier
@@ -121,14 +137,14 @@ def t_RPAR(t):
 
 # Misc
 def t_WS(t):
-    r"[ ]+"
+    r"[ \t]+"
     if t.lexer.at_line_start and t.lexer.paren_count == 0:
         return t
 
 
 def t_newline(t):
-    r"\n+"
-    t.lineno += len(t.value)
+    r"(\r?\n)+"
+    t.lexer.lineno += t.value.count('\n')
     t.type = "NEWLINE"
     if t.lexer.paren_count == 0:
         return t

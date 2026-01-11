@@ -1,0 +1,44 @@
+// Simple arithmetic
+x = 2 + 3 * 4
+
+// Function definition
+fn add a, b:
+    a + b
+
+// Function with pattern matching
+fn fact n:
+    when n:
+        0 or 1: 1
+        _: n * fact n - 1
+
+// If-elseif-else
+if x < 10:
+    'small'
+elseif x < 20:
+    'medium'
+else:
+    'large'
+
+// For loop with range
+for i in 0..5:
+    i * 2
+
+// While loop
+while x > 0:
+    x - 1
+
+// Pipe chain
+5 | add 3 | fact
+
+// Ternary expression
+result = 1 if x > 0 else 0
+
+// List
+numbers = [1, 2, 3, 4, 5]
+
+// Dict
+person = {'name': 'Alice', 'age': 30}
+
+// Function application (space operator)
+fact 5
+add 2, 3

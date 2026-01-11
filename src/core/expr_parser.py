@@ -154,6 +154,45 @@ class ExprParser:
         node.children.extend([left, TreeNode(NodeType.Identifier, self.parser.expect("ID"))])
         return node
 
+    def function_application(self, func):
+        """Parse function application: func arg1 arg2 ...
+
+        The key insight: arguments should be parsed at a precedence level that allows
+        arithmetic operators to bind the arguments together.
+
+        For `fact n - 1` to parse as `fact(n-1)`, we need to parse at a precedence
+        BELOW Term (10) so that `-` binds the argument.
+
+        But we're at Application level (14), which is TIGHTER than Term (10).
+        So when parsing arguments, we should use a lower precedence to allow operators
+        to grab the arguments.
+        """
+        node = TreeNode(NodeType.FunctionCall)
+        node.children.append(func)
+
+        args = TreeNode(NodeType.Arguments)
+
+        # Parse first argument - needs to consume operators too
+        # Parse at Term level (10) to allow arithmetic within arguments
+        # This way `fact n - 1` becomes `fact(n - 1)` because Term precedence
+        # allows the subtraction to bind
+        arg = self.parse(precedence=Precedence.Term)
+        args.children.append(arg)
+
+        # Handle additional comma-separated arguments
+        while self.parser.cur.type == "COMMA":
+            self.parser.consume()
+            if self.can_start_expression(self.parser.cur.type):
+                arg = self.parse(precedence=Precedence.Term)
+                args.children.append(arg)
+
+        node.children.append(args)
+        return node
+
+    def can_start_expression(self, tok_type):
+        """Check if a token can start an expression (for function application)"""
+        return tok_type in ["ID", "INT", "FLOAT", "STR", "LPAR", "LBRACE", "BLOCKSTART", "UNDERSCORE", "BANG", "NOT", "MINUS"]
+
     def parse(self, precedence=Precedence.Assignment):
         # Handle ternary (if-else) specially
         if self.parser.cur.type == "IF":
@@ -174,6 +213,23 @@ class ExprParser:
             if self.parser.cur.type == "IF" and precedence <= Precedence.Ternary:
                 expr = self.ternary_infix(expr)
                 continue
+
+            # Check for function application (space operator)
+            # Function application happens when:
+            # 1. Current precedence allows it (we're not already at too high precedence)
+            # 2. Next token can start an expression
+            # 3. Next token is not an infix operator at our current precedence level or higher
+            if self.can_start_expression(self.parser.cur.type):
+                rule = self.rule(self.parser.cur.type)
+                # Application precedence is 14
+                # Only apply function if:
+                # - We're parsing at precedence that allows Application (precedence <= 14)
+                # - The next token is NOT an infix operator at current or higher precedence
+                # This ensures `n - 1` doesn't become `n(-1)` when precedence >= Term
+                if (precedence <= Precedence.Application and
+                    (not rule.infix or rule.precedence < precedence)):
+                    expr = self.function_application(expr)
+                    continue
 
             rule = self.rule(self.parser.cur.type)
             if rule.precedence < precedence:

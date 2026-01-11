@@ -45,8 +45,6 @@ tokens = (
     "DOT",  # .
     "DOTDOT",  # ..
     "COMMA",  # ,
-    "QUOTES",  # '
-    "DQUOTES",  # "
     "PIPE",  # |
     "COLON",  # :
     "UNDERSCORE",  # _
@@ -86,8 +84,6 @@ t_RBRACE = r"\]"
 t_DOT = r"\."
 t_AT = r"@"
 t_COMMA = r"\,"
-t_QUOTES = r"\'"
-t_DQUOTES = r'"'
 t_PIPE = r"\|"
 t_COLON = r":"
 
@@ -105,8 +101,12 @@ def t_ID(t):
     return t
 
 
-# Data Types
-t_STR = r'"([^"\n]|(\\"))*"'
+# Data Types - Single-quoted strings only (for now)
+def t_STR(t):
+    r"'([^'\n]|(\\'))*'"
+    # Remove quotes from the value
+    t.value = t.value[1:-1]
+    return t
 
 
 def t_FLOAT(t):

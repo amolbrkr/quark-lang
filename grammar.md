@@ -20,28 +20,30 @@ use, module, in, and, or, if, elseif, else, for, while, when, fn, class
 
 ### Operators
 ```
-+ - * / % **
-< > <= >= == !=
-=
-! ~ &
-|
-. , : .. @
++ - * / % **        (arithmetic)
+< > <= >= == !=     (comparison, equality)
+=                   (assignment)
+! ~ &               (logical not, bitwise not, bitwise and)
+|                   (pipe)
+. , : .. @          (member access, comma, colon, range, at)
 ```
 
 ### Delimiters
 ```
 ( ) [ ] { }
-' "
+'
 ```
 
 ### Literals
 ```
 <INT>       ::= [0-9]+
 <FLOAT>     ::= [0-9]*\.[0-9]+ | [0-9]+\.[0-9]*
-<STRING>    ::= "([^"\n]|\\")*" | '([^'\n]|\\')*'
-<BOOL>      ::= true | false
-<NULL>      ::= null
+<STRING>    ::= '([^'\n]|\\')*'
+<BOOL>      ::= true | false (NOT YET IMPLEMENTED)
+<NULL>      ::= null (NOT YET IMPLEMENTED)
 ```
+
+**Note:** Currently only single-quoted strings are supported. Double-quoted strings are planned for future implementation.
 
 ### Identifiers
 ```

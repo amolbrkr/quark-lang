@@ -22,7 +22,7 @@
 	pi = 3.1415926535
 	fruits = ['orange', 'apple', 'banana']
 
-### With type annotations
+### With type annotations (NOT YET IMPLEMENTED)
 	str.name = 'Amol'
 	num.pi = 3.1415926535
 
@@ -34,7 +34,7 @@
 	elseif age == 16:
 		'Get a learner's permit'
 	else:
-		"Drive safe!" 
+		'Drive safe!'
 
 ### When (Pattern Matching)
 	when position:

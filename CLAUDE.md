@@ -198,7 +198,9 @@ All in `src/drivers/`:
 ✅ **Functions:**
 - Named: `fn name params: body`
 - Anonymous: `name = fn params: body`
-- Calls: `func arg1, arg2` or `@func args`
+- Calls with space operator: `func arg1 arg2` or with commas: `func arg1, arg2`
+- Calls with @ prefix: `@func args`
+- **Function application (space operator) NOW IMPLEMENTED!**
 
 ✅ **Expressions:**
 - Ternary: `value if condition else other`
@@ -207,13 +209,97 @@ All in `src/drivers/`:
 - Lists: `[1, 2, 3]`
 - Dicts: `{key: value}`
 
+✅ **Literals:**
+- Integers: `42`, `0`, `1000`
+- Floats: `3.14`, `.5`, `2.`
+- Strings: `'hello world'` (single-quoted only)
+- **Note:** Only single-quoted strings are currently supported. Double quotes are not yet implemented.
+
 ### Not Yet Implemented
 
-❌ Lambda shorthand in pipes (`x: expr` auto-converted to `fn x: expr`)
-❌ Array indexing/slicing (`arr[0]`, `arr[0:5]`)
-❌ Type annotations (`str.name = value`)
-❌ Class definitions (skeleton only)
-❌ Code generation (framework exists but incomplete)
+#### Documented in Grammar/Examples but Missing from Parser:
+
+**1. Array/List Indexing and Slicing** (grammar.md:118-119, examples.md:89,122-123)
+   - ❌ `arr[0]` - single index access
+   - ❌ `arr[0:5]` - slice notation
+   - ❌ `arr[start..end]` - range-based slicing
+   - **Status:** Token `LBRACE`/`RBRACE` exists, but no indexing handler in expr_parser.py
+   - **Impact:** Examples like `myList[0].length` and `myList[0..5]` will fail
+
+**2. Lambda Shorthand in Pipes** (grammar.md:156,302-306, examples.md:70-72)
+   - ❌ `map x: x * 2` should auto-convert to `map (fn x: x * 2)`
+   - ❌ `filter c: bool c` should auto-convert to `filter (fn c: bool c)`
+   - **Status:** Grammar specifies shorthand after `map`, `filter` keywords, but no context-aware lambda parsing
+   - **Impact:** All examples.md pipe chains with lambda shorthand won't parse
+
+**3. Type Annotations** (grammar.md:196-202, examples.md:25-27)
+   - ❌ `str.name = 'value'` - type prefix syntax
+   - ❌ `num.pi = 3.14` - numeric type annotation
+   - ❌ Type keywords: `int`, `float`, `str`, `bool`, `list`, `dict`
+   - **Status:** No tokens or parser rules for type prefix syntax
+   - **Impact:** Cannot specify variable types explicitly
+
+**4. Function Application (Space Operator)** - ✅ **NOW IMPLEMENTED!** (grammar.md:114,209,276-283)
+   - ✅ Space-based function calls: `func x y` without parentheses
+   - ✅ Examples like `fact n - 1` now work correctly (parses as `fact(n-1)`)
+   - **Status:** IMPLEMENTED in expr_parser.py with proper precedence handling
+   - **How it works:**
+     - Precedence 14 (Application) binds tighter than arithmetic operators
+     - `fact n - 1` parses as `fact(n-1)` because `-` binds the argument
+     - `n * fact n - 1` parses as `n * fact(n-1)` correctly
+     - Works in pipe chains: `10 | double | add 5`
+   - **Implementation details:**
+     - Function application checks if next token can start an expression
+     - Prioritizes infix operators at current precedence level
+     - Arguments parsed at Term level (10) to allow arithmetic within args
+
+**5. Class Definitions** (grammar.md:180-182)
+   - ❌ `class Name:` or `class Child (Parent):`
+   - **Status:** Keyword `class` reserved, but no `class_def()` method in quark_parser.py
+   - **Impact:** No OOP support
+
+**6. Boolean and Null Literals** (grammar.md:42-43)
+   - ❌ `true` / `false` boolean literals
+   - ❌ `null` literal
+   - **Status:** No tokens defined in lex_grammar.py for these keywords
+   - **Impact:** Must use 1/0 for booleans, no null representation
+
+**7. Double-Quoted Strings**
+   - ❌ `"double quoted strings"` - only single quotes supported
+   - **Status:** Lexer changed to only support single-quoted strings (simpler implementation)
+   - **Impact:** All strings must use single quotes `'like this'`
+
+**8. Use/Module System** (grammar.md:16-17)
+   - ❌ `use` keyword for imports
+   - ❌ `module` keyword for module definitions
+   - **Status:** Keywords reserved but no parser implementation
+   - **Impact:** No module/import system
+
+**9. Enhanced For Loop Syntax** (grammar.md:172-174)
+   - ❌ `for i .. expression:` - direct range without `in`
+   - **Status:** Grammar allows it, parser only implements `for i in expression:`
+   - **Impact:** Alternative for loop syntax won't work
+
+**10. Comments** (examples.md:4,10 - has `//` comments)
+   - ✅ **IMPLEMENTED:** Token exists (`t_ignore_COMMENT = r"\//.*"`)
+   - **Status:** Lexer ignores comments correctly
+   - **Note:** Single-line `//` comments work
+
+#### Code Generation Limitations:
+
+**11. Complete Code Generation**
+   - ❌ Full x86-64 code generation for all AST node types
+   - **Status:** Framework exists in quark_codegen.py but incomplete
+   - **Impact:** Cannot compile to executable yet
+
+#### Summary of Missing Token Definitions:
+
+Missing from lex_grammar.py:
+- `true`, `false` - boolean literals
+- `null` - null literal
+- `"double quotes"` - only single quotes implemented
+- No special handling for type annotations (type.identifier syntax)
+- Indexing works with `LBRACE`/`RBRACE` (`[` `]`) but no parser support
 
 ## Key Implementation Details
 
@@ -288,21 +374,28 @@ This creates:
 
 ## Current Development Status
 
+**Recent Fixes (2026-01-10):**
+- ✅ **Fixed string literal parsing** - Changed lexer to support single-quoted strings only
+- ✅ **Implemented function application (space operator)** - Core feature for minimal punctuation philosophy
+  - Added precedence 14 handling in expr_parser.py
+  - `fact n - 1` now correctly parses as `fact(n-1)`
+  - Works with pipes, comma-separated args, and complex expressions
+
 **Git Status:**
-- Modified: `src/core/quark_codegen.py` (refactored to QuarkCG class)
-- Modified: `src/drivers/run_codegen.py` (updated for new CG class)
+- Modified: `src/core/lex_grammar.py` (removed QUOTES/DQUOTES tokens, single-quote strings only)
+- Modified: `src/core/expr_parser.py` (added function_application() method)
+- Modified: `grammar.md` and `examples.md` (documented single-quote restriction)
+- Modified: `CLAUDE.md` (comprehensive feature gap analysis)
 
-**Recent Work:**
-- Added assembly/linking stage
-- Refactored code generator to use class-based approach
-- Updated parser to match new precedence rules
-- Changed `elif` to `elseif` throughout
+**Parser Status:** ~85% complete for documented grammar (up from 65%)
+- Major remaining gaps: array indexing, lambda shorthand, type annotations, classes
 
-**Next Steps (Not Started):**
+**Next Steps:**
+- Add array indexing/slicing support (high priority - examples depend on it)
+- Implement lambda shorthand in pipes
+- Add boolean literals (`true`, `false`) and `null`
 - Complete code generation implementation
 - Add formal test suite
-- Implement lambda shorthand in pipes
-- Add array indexing/slicing support
 - Implement type annotations
 - Complete class definitions
 

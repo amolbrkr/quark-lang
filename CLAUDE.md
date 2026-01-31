@@ -8,7 +8,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Version 0.1 Architecture (Go → C → Native)
 
-The compiler is being rewritten from Python to Go with a C backend:
+> **IMPORTANT**: The Go implementation in `src/core_new/` is the PRIMARY and ACTIVE implementation.
+> All development, bug fixes, and new features should be made to the Go codebase.
+> The Python implementation in `src/core/` is legacy/reference only.
+
+The compiler architecture:
 
 ```
 [Go Frontend] src/core_new/
@@ -60,75 +64,40 @@ Parentheses are ONLY required for:
 
 ## Development Commands
 
-### Project Structure Note
-
-**IMPORTANT**: The `src/` folder is NOT a Python module. Only subfolders within `src/` (like `core/`, `drivers/`, `utils/`) are modules.
-
-**Always run commands from the `src/` directory** using module syntax like:
-```bash
-cd src
-python -m drivers.run_parser ../test.qrk
-```
-
-Never use `python -m src.drivers.run_parser` - this will fail with import errors.
-
-### Testing Parser Stages
-
-All commands should be run from the `src/` directory:
+### Go Compiler (Primary)
 
 ```bash
-# Test lexer only (tokenization + indentation handling)
-python -m drivers.run_lexer ../<input.qrk>
+cd src/core_new
+go build -o quark .
 
-# Test parser - generates AST tree and visualization
-python -m drivers.run_parser ../<input.qrk>
+# Test lexer
+./quark lex ../../test.qrk
 
-# Test parser AND generate PNG visualization (RECOMMENDED)
-# This command runs the parser and generates treeviz.png from the AST
-python -m drivers.run_parser ../test.qrk && dot -Tpng treeviz.dot -o treeviz.png
+# Test parser (prints AST)
+./quark parse ../../test.qrk
 
-# Full pipeline: lex → parse → codegen (produces x86-64 assembly)
-python -m drivers.run_codegen ../<input.qrk>
-
-# Assemble and link (requires NASM and GCC installed)
-python -m drivers.run_assembler ../<input.asm>
+# Run tests
+go test ./...
 ```
-
-### Running the Parser (Default Usage)
-
-**When the user asks to "run the parser", use this command:**
-```bash
-cd /d/Source/quark-lang/src
-python -m drivers.run_parser ../test.qrk && dot -Tpng treeviz.dot -o treeviz.png
-```
-
-This will:
-1. Parse the test file and generate the AST
-2. Create `treeviz.dot` (GraphViz format)
-3. Convert to `treeviz.png` for visualization
-4. Output will be in the `src/` directory
 
 ### Example Test File
 
-The `test.qrk` file contains a simple factorial function with pattern matching:
 ```quark
 fn fact n:
     when n:
         0 or 1: 1
-        _: n - 1
+        _: n * fact n - 1
+
+fact 10 | print
 ```
 
-### Dependencies
+### Legacy Python Implementation
 
-**Python packages:**
+The Python implementation in `src/core/` is for reference only:
 ```bash
-pip install -r requirements.txt
-# Key dependencies: gvgen, llvmlite==0.41.1, peachpy
+cd src
+python -m drivers.run_parser ../test.qrk
 ```
-
-**External tools (for assembly/linking):**
-- NASM (assembler)
-- GCC (linker)
 
 ## Architecture Overview
 

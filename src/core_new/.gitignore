@@ -1,18 +1,8 @@
-# Rust
-target/
-Cargo.lock
+# Compiled binary
+quark
+quark.exe
 
-# Generated files
-*.dot
-*.png
-
-# Editor files
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS files
-.DS_Store
-Thumbs.db
+# Go build artifacts
+*.o
+*.a
+*.so

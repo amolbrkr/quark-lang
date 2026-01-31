@@ -4,7 +4,46 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Quark** is a human-friendly, functional, type-inferred language inspired by Python. The project is in early stages of development with a working lexer, parser, and initial code generation framework. The language emphasizes a **minimal punctuation philosophy** - using as few parentheses, brackets, and braces as possible to create English-like readable code.
+**Quark** is a human-friendly, functional, type-inferred language inspired by Python. The language emphasizes a **minimal punctuation philosophy** - using as few parentheses, brackets, and braces as possible to create English-like readable code.
+
+## Version 0.1 Architecture (Go → C → Native)
+
+The compiler is being rewritten from Python to Go with a C backend:
+
+```
+[Go Frontend] src/core_new/
+├── Lexer (tokenization + indentation tracking)
+├── Parser (Pratt parser for expressions, recursive descent for statements)
+├── AST (typed tree representation)
+└── Type checker / Semantic analysis
+
+[Go Backend]
+├── C Code Emitter (with inline hints for vectorization)
+└── Boehm GC integration (automatic garbage collection)
+         ↓
+    clang -O3 -march=native
+         ↓
+    Native binary (with SIMD auto-vectorization)
+```
+
+**Why this architecture:**
+- **Go frontend**: Fast, easy to modify, great tooling
+- **C backend**: clang's `-O3 -march=native` gives SIMD for vector/data.frame ops
+- **Boehm GC**: Proven C garbage collector, no manual memory management
+
+### Running the Go Compiler
+
+```bash
+cd src/core_new
+go build -o quark .
+./quark lex ../../test.qrk      # Test lexer
+./quark parse ../../test.qrk    # Test parser
+go test ./...                    # Run tests
+```
+
+### Legacy Python Implementation
+
+The original Python implementation remains in `src/core/` for reference.
 
 ## Core Language Philosophy
 

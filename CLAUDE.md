@@ -6,11 +6,30 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Quark** is a human-friendly, functional, type-inferred language inspired by Python. The language emphasizes a **minimal punctuation philosophy** - using as few parentheses, brackets, and braces as possible to create English-like readable code.
 
-## Active Implementation
+## Repository Structure
 
-> **IMPORTANT**: The Go implementation in `src/core_new/` is the PRIMARY and ACTIVE implementation.
+```
+quark-lang/
+├── CLAUDE.md              # This file - AI assistant guidance
+├── STDLIB.md              # Standard library documentation
+├── src/
+│   ├── core/quark/        # PRIMARY: Go compiler implementation
+│   │   ├── main.go        # CLI entry point
+│   │   ├── go.mod         # Go module definition
+│   │   ├── token/         # Token types (44+ types)
+│   │   ├── lexer/         # Lexer with indentation handling
+│   │   ├── ast/           # AST node types, precedence levels
+│   │   ├── parser/        # Pratt parser + recursive descent
+│   │   ├── types/         # Type system, semantic analyzer
+│   │   ├── codegen/       # C code generator with runtime
+│   │   └── runtime/       # (future) Runtime utilities
+│   ├── legacy/            # Python implementation (reference only)
+│   └── testfiles/         # Test .qrk files for validation
+```
+
+> **IMPORTANT**: The Go implementation in `src/core/quark/` is the PRIMARY and ACTIVE implementation.
 > All development, bug fixes, and new features should be made to the Go codebase.
-> The Python implementation in `src/core/` is legacy/reference only.
+> The Python implementation in `src/legacy/` is for reference only.
 
 ## Compiler Architecture
 
@@ -45,7 +64,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 │  ┌─────────────┐                                                │
 │  │   CLANG     │  → Native binary                               │
 │  │ -std=gnu11  │     (SIMD auto-vectorization)                  │
-│  │ -O3         │                                                │
+│  │ -O3 -lm     │                                                │
 │  └─────────────┘                                                │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -64,7 +83,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### C Compilation Flags
 
 ```bash
-clang -std=gnu11 -O3 -march=native -o output input.c
+clang -std=gnu11 -O3 -march=native -o output input.c -lm
 ```
 
 | Flag | Purpose |
@@ -72,33 +91,12 @@ clang -std=gnu11 -O3 -march=native -o output input.c
 | `-std=gnu11` | C11 standard with GNU/POSIX extensions |
 | `-O3` | Maximum optimization (includes auto-vectorization) |
 | `-march=native` | Optimize for current CPU architecture |
-
-### Project Structure
-
-```
-src/core_new/
-├── main.go              # CLI entry point
-├── go.mod               # Go module definition
-├── token/
-│   └── token.go         # Token types (44+ types)
-├── lexer/
-│   └── lexer.go         # Lexer with indentation handling
-├── ast/
-│   └── ast.go           # AST node types, precedence levels
-├── parser/
-│   ├── parser.go        # Statement parser
-│   └── expr.go          # Pratt expression parser
-├── types/
-│   ├── types.go         # Type system (int, float, string, bool, list, fn)
-│   └── analyzer.go      # Semantic analyzer, symbol tables
-└── codegen/
-    └── codegen.go       # C code generator with runtime
-```
+| `-lm` | Link math library (sqrt, floor, ceil, etc.) |
 
 ## CLI Commands
 
 ```bash
-cd src/core_new
+cd src/core/quark
 go build -o quark .
 
 # Commands
@@ -112,6 +110,9 @@ go build -o quark .
 # Shortcuts
 ./quark file.qrk                   # Same as: quark run file.qrk
 ./quark run file.qrk --debug       # Saves file.c for inspection
+
+# Testing
+./quark run ../../../src/testfiles/test_clean.qrk
 ```
 
 ## Core Language Philosophy
@@ -194,6 +195,61 @@ z = x + y       // z: float (int promoted)
 | 14 | function application | Left |
 | 15 | `.` `[]` `()` (access) | Left |
 
+## Module System
+
+Quark supports a simple module system for organizing code.
+
+### Defining Modules
+
+```quark
+module math:
+    fn square n:
+        n * n
+
+    fn cube n:
+        n * n * n
+```
+
+### Using Modules
+
+```quark
+use math
+
+// All symbols from math are now available
+square 5 | println    // 25
+cube 3 | println      // 27
+```
+
+### Implementation Details
+
+- **Parser**: `parseModule()` and `parseUse()` in `parser/parser.go`
+- **AST**: `ModuleNode` and `UseNode` in `ast/ast.go`
+- **Analyzer**: Module scopes and symbol import in `types/analyzer.go`
+- **Codegen**: Functions are generated globally (no namespacing in C output)
+
+The `use` statement imports all symbols from a module into the current scope. Modules are currently compile-time only - they provide code organization but don't create separate compilation units.
+
+## Standard Library
+
+See [STDLIB.md](STDLIB.md) for complete documentation.
+
+Built-in functions are implemented in the C runtime (in `codegen/codegen.go`) for performance:
+
+### Core Functions
+- `print`, `println` - Output
+- `len` - Length of strings/lists
+- `input` - Read line from stdin
+- `str`, `int`, `float`, `bool` - Type conversion
+
+### Math Functions
+- `abs`, `min`, `max` - Basic math
+- `sqrt`, `floor`, `ceil`, `round` - Advanced math
+
+### String Functions
+- `upper`, `lower`, `trim` - Case and whitespace
+- `contains`, `startswith`, `endswith` - Searching
+- `replace`, `concat` - Manipulation
+
 ## Semantic Analyzer
 
 ### Symbol Tables
@@ -204,6 +260,12 @@ Scope {
     Parent  *Scope           // Lexical parent
     Symbols map[string]*Symbol
 }
+
+Module {
+    Name    string
+    Scope   *Scope
+    Symbols map[string]*Symbol
+}
 ```
 
 ### Analysis Phases
@@ -211,6 +273,7 @@ Scope {
 1. **Build symbol tables** - Track variables/functions per scope
 2. **Infer types** - Determine types from literals and operations
 3. **Check semantics** - Validate function calls, undefined variables
+4. **Resolve modules** - Process module definitions and imports
 
 ## C Code Generation
 
@@ -227,6 +290,8 @@ Scope {
 | `x = 5` | `QValue x = qv_int(5);` |
 | `fn foo n:` | `QValue q_foo(QValue n) {` |
 | `x \| f` | `q_f(x)` |
+| `sqrt 16` | `q_sqrt(qv_int(16))` |
+| `upper 'hi'` | `q_upper(qv_string("hi"))` |
 
 ### Runtime Functions
 
@@ -262,6 +327,26 @@ QValue q_not(QValue a);
 // I/O
 QValue q_print(QValue v);
 QValue q_println(QValue v);
+QValue q_input();
+
+// Math (requires -lm)
+QValue q_abs(QValue v);
+QValue q_min(QValue a, QValue b);
+QValue q_max(QValue a, QValue b);
+QValue q_sqrt(QValue v);
+QValue q_floor(QValue v);
+QValue q_ceil(QValue v);
+QValue q_round(QValue v);
+
+// String
+QValue q_upper(QValue v);
+QValue q_lower(QValue v);
+QValue q_trim(QValue v);
+QValue q_contains(QValue str, QValue sub);
+QValue q_startswith(QValue str, QValue prefix);
+QValue q_endswith(QValue str, QValue suffix);
+QValue q_replace(QValue str, QValue old, QValue new_str);
+QValue q_concat(QValue a, QValue b);
 ```
 
 ## Language Features
@@ -313,16 +398,24 @@ a + b, a - b, a * b, a / b, a % b, a ** b
 a == b, a != b, a < b, a > b, a <= b, a >= b
 a and b, a or b, !a
 a..b
+
+// Modules
+module mymodule:
+    fn helper x:
+        x * 2
+
+use mymodule
+helper 5 | println
 ```
 
 ### Not Yet Implemented
 
 - `class` definitions
-- `use`/`module` imports
 - Array slicing `arr[0:5]`
 - Lambda shorthand `map x: x * 2`
 - Type annotations `int.x = 5`
 - Boehm GC integration
+- Multi-file module imports
 
 ## Example Programs
 
@@ -361,6 +454,20 @@ for i in 1..101:
         println i
 ```
 
+### Using Standard Library
+
+```quark
+// Math operations
+sqrt 16 | println           // 4
+abs (0 - 5) | println       // 5
+max 10, 20 | println        // 20
+
+// String operations
+upper 'hello' | println     // HELLO
+'  hi  ' | trim | println   // hi
+replace 'foo', 'o', 'a' | println  // faa
+```
+
 ## Conventions
 
 - **Use `elseif` not `elif`** - More English-like
@@ -375,15 +482,18 @@ for i in 1..101:
 ### Building
 
 ```bash
-cd src/core_new
+cd src/core/quark
 go build -o quark .
 ```
 
 ### Testing
 
 ```bash
-# Test specific file
-./quark run test.qrk
+# Run from src/core/quark directory
+./quark run ../../../src/testfiles/test_clean.qrk
+./quark run ../../../src/testfiles/test_math.qrk
+./quark run ../../../src/testfiles/test_string.qrk
+./quark run ../../../src/testfiles/test_module.qrk
 
 # Debug mode (saves .c file)
 ./quark run test.qrk --debug
@@ -397,4 +507,14 @@ go build -o quark .
 1. **New token**: Add to `token/token.go`
 2. **New operator**: Add precedence in `ast/ast.go`, handler in `parser/expr.go`
 3. **New statement**: Add parser in `parser/parser.go`
-4. **Code generation**: Add case in `codegen/codegen.go`
+4. **New built-in function**:
+   - Add C implementation in `codegen/codegen.go` (in the runtime header)
+   - Add case in `generateFunctionCall()` and `generatePipe()`
+   - Register type signature in `types/analyzer.go` builtins map
+5. **Code generation**: Add case in `codegen/codegen.go`
+
+### Known Limitations
+
+- **Negative number arguments**: `func -5` is parsed as `func - 5` (binary subtraction). Use `x = 0 - 5; func x` as workaround.
+- **Lists**: Not fully implemented in codegen yet.
+- **Garbage collection**: Currently no GC - strings are strdup'd and not freed.

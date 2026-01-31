@@ -1,8 +1,0 @@
-# Compiled binary
-quark
-quark.exe
-
-# Go build artifacts
-*.o
-*.a
-*.so

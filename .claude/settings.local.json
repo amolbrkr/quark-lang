@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go build:*)",
+      "Bash(export PATH=$PATH:$HOME/go/bin)",
+      "Bash($HOME/go/bin/go build:*)",
+      "Bash(./quark lex:*)",
+      "Bash(./quark parse:*)",
+      "Bash($HOME/go/bin/go test ./...)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push)",
+      "Bash(./quark emit:*)",
+      "Bash(./quark run:*)",
+      "Bash(./quark build:*)",
+      "Bash(../../test_clean)"
+    ]
+  }
+}

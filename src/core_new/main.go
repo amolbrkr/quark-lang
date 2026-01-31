@@ -306,7 +306,7 @@ func runBuild(filename string, output string) {
 		}
 	}
 
-	cmd := exec.Command(compiler, "-O3", "-march=native", "-o", output, cFile)
+	cmd := exec.Command(compiler, "-std=gnu11", "-O3", "-march=native", "-o", output, cFile)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -380,7 +380,7 @@ func runRun(filename string, debug bool) {
 		}
 	}
 
-	compileCmd := exec.Command(compiler, "-O3", "-march=native", "-o", exeFile, cFile)
+	compileCmd := exec.Command(compiler, "-std=gnu11", "-O3", "-march=native", "-o", exeFile, cFile)
 	compileCmd.Stderr = os.Stderr
 
 	err = compileCmd.Run()

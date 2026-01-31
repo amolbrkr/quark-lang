@@ -7,3 +7,9 @@ build
 CMakeSettings.json
 CppProperties.json
 .claudetest_clean
+# Generated files
+*.c
+hello
+test_clean
+test_*
+!test_*.qrk

@@ -63,10 +63,16 @@ func main() {
 
 	case "run":
 		if len(os.Args) < 3 {
-			fmt.Println("Usage: quark run <file.qrk>")
+			fmt.Println("Usage: quark run <file.qrk> [--debug]")
 			os.Exit(1)
 		}
-		runRun(os.Args[2])
+		debug := false
+		for _, arg := range os.Args[3:] {
+			if arg == "--debug" || arg == "-d" {
+				debug = true
+			}
+		}
+		runRun(os.Args[2], debug)
 
 	case "help", "-h", "--help":
 		printUsage()
@@ -74,7 +80,13 @@ func main() {
 	default:
 		// Check if it's a .qrk file - if so, run it
 		if strings.HasSuffix(os.Args[1], ".qrk") {
-			runRun(os.Args[1])
+			debug := false
+			for _, arg := range os.Args[2:] {
+				if arg == "--debug" || arg == "-d" {
+					debug = true
+				}
+			}
+			runRun(os.Args[1], debug)
 		} else {
 			fmt.Printf("Unknown command: %s\n", command)
 			printUsage()
@@ -89,13 +101,13 @@ func printUsage() {
 	fmt.Println("Usage: quark <command> [arguments]")
 	fmt.Println()
 	fmt.Println("Commands:")
-	fmt.Println("  lex <file>              Tokenize a file and print tokens")
-	fmt.Println("  parse <file>            Parse a file and print the AST")
-	fmt.Println("  check <file>            Type check a file")
-	fmt.Println("  emit <file>             Emit C code to stdout")
-	fmt.Println("  build <file> [-o out]   Compile to executable")
-	fmt.Println("  run <file>              Compile and run")
-	fmt.Println("  help                    Show this help message")
+	fmt.Println("  lex <file>                 Tokenize a file and print tokens")
+	fmt.Println("  parse <file>               Parse a file and print the AST")
+	fmt.Println("  check <file>               Type check a file")
+	fmt.Println("  emit <file>                Emit C code to stdout")
+	fmt.Println("  build <file> [-o out]      Compile to executable")
+	fmt.Println("  run <file> [--debug|-d]    Compile and run (--debug saves .c file)")
+	fmt.Println("  help                       Show this help message")
 	fmt.Println()
 	fmt.Println("Examples:")
 	fmt.Println("  quark run test.qrk           # Compile and run")
@@ -310,7 +322,7 @@ func runBuild(filename string, output string) {
 	fmt.Printf("Built: %s\n", output)
 }
 
-func runRun(filename string) {
+func runRun(filename string, debug bool) {
 	content, err := os.ReadFile(filename)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading file: %s\n", err)
@@ -335,15 +347,27 @@ func runRun(filename string) {
 	gen := codegen.New()
 	cCode := gen.Generate(ast)
 
-	// Write C code to temp file
-	tmpDir := os.TempDir()
-	cFile := filepath.Join(tmpDir, "quark_temp.c")
-	exeFile := filepath.Join(tmpDir, "quark_temp")
+	// Determine file paths
+	var cFile, exeFile string
+	if debug {
+		// Save C file next to the source file
+		base := strings.TrimSuffix(filename, filepath.Ext(filename))
+		cFile = base + ".c"
+		exeFile = base
+	} else {
+		tmpDir := os.TempDir()
+		cFile = filepath.Join(tmpDir, "quark_temp.c")
+		exeFile = filepath.Join(tmpDir, "quark_temp")
+	}
 
 	err = os.WriteFile(cFile, []byte(cCode), 0644)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error writing C file: %s\n", err)
 		os.Exit(1)
+	}
+
+	if debug {
+		fmt.Fprintf(os.Stderr, "Debug: Generated C file: %s\n", cFile)
 	}
 
 	// Compile with clang (or gcc as fallback)
@@ -376,9 +400,11 @@ func runRun(filename string) {
 
 	err = runCmd.Run()
 
-	// Clean up
-	os.Remove(cFile)
-	os.Remove(exeFile)
+	// Clean up (only if not debug mode)
+	if !debug {
+		os.Remove(cFile)
+		os.Remove(exeFile)
+	}
 
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {

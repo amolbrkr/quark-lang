@@ -16,10 +16,12 @@ test_*
 !test_*.qrk
 
 # Compiled binary
-quark
-quark.exe
+quark-bin.exe
 
 # Go build artifacts
 *.o
 *.a
 *.so
+
+# Personal
+plans.md

@@ -287,26 +287,26 @@ func runBuild(filename string, output string) {
 	gen := codegen.New()
 	cCode := gen.Generate(ast)
 
-	// Write C code to temp file
+	// Write C++ code to temp file
 	tmpDir := os.TempDir()
-	cFile := filepath.Join(tmpDir, "quark_temp.c")
+	cFile := filepath.Join(tmpDir, "quark_temp.cpp")
 	err = os.WriteFile(cFile, []byte(cCode), 0644)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error writing C file: %s\n", err)
+		fmt.Fprintf(os.Stderr, "Error writing C++ file: %s\n", err)
 		os.Exit(1)
 	}
 
-	// Compile with clang (or gcc as fallback)
-	compiler := "clang"
-	if _, err := exec.LookPath("clang"); err != nil {
-		compiler = "gcc"
-		if _, err := exec.LookPath("gcc"); err != nil {
-			fmt.Fprintln(os.Stderr, "Error: neither clang nor gcc found in PATH")
+	// Compile with clang++ (or g++ as fallback)
+	compiler := "clang++"
+	if _, err := exec.LookPath("clang++"); err != nil {
+		compiler = "g++"
+		if _, err := exec.LookPath("g++"); err != nil {
+			fmt.Fprintln(os.Stderr, "Error: neither clang++ nor g++ found in PATH")
 			os.Exit(1)
 		}
 	}
 
-	cmd := exec.Command(compiler, "-std=gnu11", "-O3", "-march=native", "-o", output, cFile, "-lm")
+	cmd := exec.Command(compiler, "-std=c++17", "-O3", "-march=native", "-o", output, cFile, "-lm")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -350,44 +350,44 @@ func runRun(filename string, debug bool) {
 	// Determine file paths
 	var cFile, exeFile string
 	if debug {
-		// Save C file next to the source file
+		// Save C++ file next to the source file
 		base := strings.TrimSuffix(filename, filepath.Ext(filename))
-		cFile = base + ".c"
+		cFile = base + ".cpp"
 		exeFile = base
 	} else {
 		tmpDir := os.TempDir()
-		cFile = filepath.Join(tmpDir, "quark_temp.c")
+		cFile = filepath.Join(tmpDir, "quark_temp.cpp")
 		exeFile = filepath.Join(tmpDir, "quark_temp")
 	}
 
 	err = os.WriteFile(cFile, []byte(cCode), 0644)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error writing C file: %s\n", err)
+		fmt.Fprintf(os.Stderr, "Error writing C++ file: %s\n", err)
 		os.Exit(1)
 	}
 
 	if debug {
-		fmt.Fprintf(os.Stderr, "Debug: Generated C file: %s\n", cFile)
+		fmt.Fprintf(os.Stderr, "Debug: Generated C++ file: %s\n", cFile)
 	}
 
-	// Compile with clang (or gcc as fallback)
-	compiler := "clang"
-	if _, err := exec.LookPath("clang"); err != nil {
-		compiler = "gcc"
-		if _, err := exec.LookPath("gcc"); err != nil {
-			fmt.Fprintln(os.Stderr, "Error: neither clang nor gcc found in PATH")
+	// Compile with clang++ (or g++ as fallback)
+	compiler := "clang++"
+	if _, err := exec.LookPath("clang++"); err != nil {
+		compiler = "g++"
+		if _, err := exec.LookPath("g++"); err != nil {
+			fmt.Fprintln(os.Stderr, "Error: neither clang++ nor g++ found in PATH")
 			os.Exit(1)
 		}
 	}
 
-	compileCmd := exec.Command(compiler, "-std=gnu11", "-O3", "-march=native", "-o", exeFile, cFile, "-lm")
+	compileCmd := exec.Command(compiler, "-std=c++17", "-O3", "-march=native", "-o", exeFile, cFile, "-lm")
 	compileCmd.Stderr = os.Stderr
 
 	err = compileCmd.Run()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Compilation failed: %s\n", err)
-		// Print the C code for debugging
-		fmt.Fprintln(os.Stderr, "\nGenerated C code:")
+		// Print the C++ code for debugging
+		fmt.Fprintln(os.Stderr, "\nGenerated C++ code:")
 		fmt.Fprintln(os.Stderr, cCode)
 		os.Exit(1)
 	}

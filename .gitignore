@@ -16,7 +16,7 @@ test_*
 !test_*.qrk
 
 # Compiled binary
-quark-bin.exe
+quark.exe
 
 # Go build artifacts
 *.o
@@ -24,4 +24,4 @@ quark-bin.exe
 *.so
 
 # Personal
-plans.md
+thoughts.md

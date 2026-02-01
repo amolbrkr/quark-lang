@@ -1,0 +1,753 @@
+// runtime.hpp - Quark Runtime Library (Auto-generated)
+// DO NOT EDIT - Generated from src/core/quark/runtime/include/quark/*.hpp
+// Regenerate with: cd runtime && pwsh build_runtime.ps1
+
+#ifndef QUARK_RUNTIME_HPP
+#define QUARK_RUNTIME_HPP
+
+// Standard library includes
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <cmath>
+#include <cctype>
+#include <cstdarg>
+
+// ============================================================
+// core/value.hpp
+// ============================================================
+
+// QValue: Tagged union for all Quark runtime values
+struct QValue {
+    enum ValueType {
+        VAL_INT,
+        VAL_FLOAT,
+        VAL_STRING,
+        VAL_BOOL,
+        VAL_NULL,
+        VAL_LIST,
+        VAL_FUNC
+    } type;
+
+    union {
+        long long int_val;
+        double float_val;
+        char* string_val;
+        bool bool_val;
+        struct {
+            void** items;
+            int len;
+            int cap;
+        } list_val;
+        void* func_val;
+    } data;
+};
+
+// Function pointer types for dynamic calls (different arities)
+using QFunc0 = QValue (*)();
+using QFunc1 = QValue (*)(QValue);
+using QFunc2 = QValue (*)(QValue, QValue);
+using QFunc3 = QValue (*)(QValue, QValue, QValue);
+using QFunc4 = QValue (*)(QValue, QValue, QValue, QValue);
+
+// ============================================================
+// core/constructors.hpp
+// ============================================================
+
+// Integer value constructor
+inline QValue qv_int(long long v) {
+    QValue q;
+    q.type = QValue::VAL_INT;
+    q.data.int_val = v;
+    return q;
+}
+
+// Float value constructor
+inline QValue qv_float(double v) {
+    QValue q;
+    q.type = QValue::VAL_FLOAT;
+    q.data.float_val = v;
+    return q;
+}
+
+// String value constructor (makes a copy)
+inline QValue qv_string(const char* v) {
+    QValue q;
+    q.type = QValue::VAL_STRING;
+    q.data.string_val = strdup(v);
+    return q;
+}
+
+// Boolean value constructor
+inline QValue qv_bool(bool v) {
+    QValue q;
+    q.type = QValue::VAL_BOOL;
+    q.data.bool_val = v;
+    return q;
+}
+
+// Null value constructor
+inline QValue qv_null() {
+    QValue q;
+    q.type = QValue::VAL_NULL;
+    return q;
+}
+
+// Function value constructor
+inline QValue qv_func(void* f) {
+    QValue q;
+    q.type = QValue::VAL_FUNC;
+    q.data.func_val = f;
+    return q;
+}
+
+// List value constructor with initial capacity
+inline QValue qv_list(int initial_cap) {
+    QValue q;
+    q.type = QValue::VAL_LIST;
+    q.data.list_val.cap = initial_cap > 0 ? initial_cap : 8;
+    q.data.list_val.len = 0;
+    q.data.list_val.items = static_cast<void**>(malloc(sizeof(QValue) * q.data.list_val.cap));
+    return q;
+}
+
+// List value constructor from variadic arguments
+inline QValue qv_list_from(int count, ...) {
+    QValue q = qv_list(count > 0 ? count : 8);
+    va_list args;
+    va_start(args, count);
+    for (int i = 0; i < count; i++) {
+        QValue* items = reinterpret_cast<QValue*>(q.data.list_val.items);
+        items[i] = va_arg(args, QValue);
+    }
+    q.data.list_val.len = count;
+    va_end(args);
+    return q;
+}
+
+// ============================================================
+// core/truthy.hpp
+// ============================================================
+
+// Check if a value is truthy (used for conditions)
+inline bool q_truthy(QValue v) {
+    switch (v.type) {
+        case QValue::VAL_BOOL:
+            return v.data.bool_val;
+        case QValue::VAL_INT:
+            return v.data.int_val != 0;
+        case QValue::VAL_FLOAT:
+            return v.data.float_val != 0.0;
+        case QValue::VAL_STRING:
+            return v.data.string_val != nullptr && strlen(v.data.string_val) > 0;
+        case QValue::VAL_NULL:
+            return false;
+        case QValue::VAL_LIST:
+            return v.data.list_val.len > 0;
+        case QValue::VAL_FUNC:
+            return v.data.func_val != nullptr;
+        default:
+            return true;
+    }
+}
+
+// ============================================================
+// ops/arithmetic.hpp
+// ============================================================
+
+namespace quark {
+namespace detail {
+
+// Helper to extract numeric value as double
+inline double to_double(const QValue& v) {
+    return v.type == QValue::VAL_FLOAT ? v.data.float_val
+                                       : static_cast<double>(v.data.int_val);
+}
+
+// Check if either operand is float
+inline bool either_float(const QValue& a, const QValue& b) {
+    return a.type == QValue::VAL_FLOAT || b.type == QValue::VAL_FLOAT;
+}
+
+} // namespace detail
+} // namespace quark
+
+// Addition: int + int = int, otherwise float
+inline QValue q_add(QValue a, QValue b) {
+    if (quark::detail::either_float(a, b)) {
+        return qv_float(quark::detail::to_double(a) + quark::detail::to_double(b));
+    }
+    return qv_int(a.data.int_val + b.data.int_val);
+}
+
+// Subtraction: int - int = int, otherwise float
+inline QValue q_sub(QValue a, QValue b) {
+    if (quark::detail::either_float(a, b)) {
+        return qv_float(quark::detail::to_double(a) - quark::detail::to_double(b));
+    }
+    return qv_int(a.data.int_val - b.data.int_val);
+}
+
+// Multiplication: int * int = int, otherwise float
+inline QValue q_mul(QValue a, QValue b) {
+    if (quark::detail::either_float(a, b)) {
+        return qv_float(quark::detail::to_double(a) * quark::detail::to_double(b));
+    }
+    return qv_int(a.data.int_val * b.data.int_val);
+}
+
+// Division: always returns float for precision
+inline QValue q_div(QValue a, QValue b) {
+    return qv_float(quark::detail::to_double(a) / quark::detail::to_double(b));
+}
+
+// Modulo: integer only
+inline QValue q_mod(QValue a, QValue b) {
+    return qv_int(a.data.int_val % b.data.int_val);
+}
+
+// Power: preserves int type when possible
+inline QValue q_pow(QValue a, QValue b) {
+    double av = quark::detail::to_double(a);
+    double bv = quark::detail::to_double(b);
+    double result = std::pow(av, bv);
+
+    if (quark::detail::either_float(a, b)) {
+        return qv_float(result);
+    }
+    return qv_int(static_cast<long long>(result));
+}
+
+// Unary negation
+inline QValue q_neg(QValue a) {
+    if (a.type == QValue::VAL_FLOAT) {
+        return qv_float(-a.data.float_val);
+    }
+    return qv_int(-a.data.int_val);
+}
+
+// ============================================================
+// ops/comparison.hpp
+// ============================================================
+
+// Less than
+inline QValue q_lt(QValue a, QValue b) {
+    if (quark::detail::either_float(a, b)) {
+        return qv_bool(quark::detail::to_double(a) < quark::detail::to_double(b));
+    }
+    return qv_bool(a.data.int_val < b.data.int_val);
+}
+
+// Less than or equal
+inline QValue q_lte(QValue a, QValue b) {
+    if (quark::detail::either_float(a, b)) {
+        return qv_bool(quark::detail::to_double(a) <= quark::detail::to_double(b));
+    }
+    return qv_bool(a.data.int_val <= b.data.int_val);
+}
+
+// Greater than
+inline QValue q_gt(QValue a, QValue b) {
+    if (quark::detail::either_float(a, b)) {
+        return qv_bool(quark::detail::to_double(a) > quark::detail::to_double(b));
+    }
+    return qv_bool(a.data.int_val > b.data.int_val);
+}
+
+// Greater than or equal
+inline QValue q_gte(QValue a, QValue b) {
+    if (quark::detail::either_float(a, b)) {
+        return qv_bool(quark::detail::to_double(a) >= quark::detail::to_double(b));
+    }
+    return qv_bool(a.data.int_val >= b.data.int_val);
+}
+
+// Equality (type-sensitive)
+inline QValue q_eq(QValue a, QValue b) {
+    if (a.type != b.type) {
+        // Allow int/float comparison
+        if ((a.type == QValue::VAL_INT || a.type == QValue::VAL_FLOAT) &&
+            (b.type == QValue::VAL_INT || b.type == QValue::VAL_FLOAT)) {
+            return qv_bool(quark::detail::to_double(a) == quark::detail::to_double(b));
+        }
+        return qv_bool(false);
+    }
+
+    switch (a.type) {
+        case QValue::VAL_INT:
+            return qv_bool(a.data.int_val == b.data.int_val);
+        case QValue::VAL_FLOAT:
+            return qv_bool(a.data.float_val == b.data.float_val);
+        case QValue::VAL_BOOL:
+            return qv_bool(a.data.bool_val == b.data.bool_val);
+        case QValue::VAL_STRING:
+            return qv_bool(strcmp(a.data.string_val, b.data.string_val) == 0);
+        case QValue::VAL_NULL:
+            return qv_bool(true);
+        default:
+            return qv_bool(false);
+    }
+}
+
+// Not equal
+inline QValue q_neq(QValue a, QValue b) {
+    return qv_bool(!q_eq(a, b).data.bool_val);
+}
+
+// ============================================================
+// ops/logical.hpp
+// ============================================================
+
+// Logical AND
+inline QValue q_and(QValue a, QValue b) {
+    return qv_bool(q_truthy(a) && q_truthy(b));
+}
+
+// Logical OR
+inline QValue q_or(QValue a, QValue b) {
+    return qv_bool(q_truthy(a) || q_truthy(b));
+}
+
+// Logical NOT
+inline QValue q_not(QValue a) {
+    return qv_bool(!q_truthy(a));
+}
+
+// ============================================================
+// types/list.hpp
+// ============================================================
+
+// Grow list capacity (doubles it)
+inline void q_list_grow(QValue* list) {
+    if (list->type != QValue::VAL_LIST) return;
+    int new_cap = list->data.list_val.cap * 2;
+    list->data.list_val.items = static_cast<void**>(
+        realloc(list->data.list_val.items, sizeof(QValue) * new_cap)
+    );
+    list->data.list_val.cap = new_cap;
+}
+
+// Push item to end of list
+inline QValue q_push(QValue list, QValue item) {
+    if (list.type != QValue::VAL_LIST) return qv_null();
+    if (list.data.list_val.len >= list.data.list_val.cap) {
+        q_list_grow(&list);
+    }
+    QValue* items = reinterpret_cast<QValue*>(list.data.list_val.items);
+    items[list.data.list_val.len] = item;
+    list.data.list_val.len++;
+    return list;
+}
+
+// Pop item from end of list
+inline QValue q_pop(QValue list) {
+    if (list.type != QValue::VAL_LIST || list.data.list_val.len == 0) {
+        return qv_null();
+    }
+    QValue* items = reinterpret_cast<QValue*>(list.data.list_val.items);
+    list.data.list_val.len--;
+    return items[list.data.list_val.len];
+}
+
+// Get item at index (supports negative indexing)
+inline QValue q_get(QValue list, QValue index) {
+    if (list.type != QValue::VAL_LIST) return qv_null();
+    int idx = static_cast<int>(index.data.int_val);
+    if (idx < 0) idx = list.data.list_val.len + idx;
+    if (idx < 0 || idx >= list.data.list_val.len) return qv_null();
+    QValue* items = reinterpret_cast<QValue*>(list.data.list_val.items);
+    return items[idx];
+}
+
+// Set item at index (supports negative indexing)
+inline QValue q_set(QValue list, QValue index, QValue value) {
+    if (list.type != QValue::VAL_LIST) return qv_null();
+    int idx = static_cast<int>(index.data.int_val);
+    if (idx < 0) idx = list.data.list_val.len + idx;
+    if (idx < 0 || idx >= list.data.list_val.len) return qv_null();
+    QValue* items = reinterpret_cast<QValue*>(list.data.list_val.items);
+    items[idx] = value;
+    return value;
+}
+
+// ============================================================
+// types/string.hpp
+// ============================================================
+
+// Convert string to uppercase
+inline QValue q_upper(QValue v) {
+    if (v.type != QValue::VAL_STRING) return qv_string("");
+    char* result = strdup(v.data.string_val);
+    for (int i = 0; result[i]; i++) {
+        result[i] = static_cast<char>(toupper(static_cast<unsigned char>(result[i])));
+    }
+    QValue q = qv_string(result);
+    free(result);
+    return q;
+}
+
+// Convert string to lowercase
+inline QValue q_lower(QValue v) {
+    if (v.type != QValue::VAL_STRING) return qv_string("");
+    char* result = strdup(v.data.string_val);
+    for (int i = 0; result[i]; i++) {
+        result[i] = static_cast<char>(tolower(static_cast<unsigned char>(result[i])));
+    }
+    QValue q = qv_string(result);
+    free(result);
+    return q;
+}
+
+// Trim whitespace from both ends
+inline QValue q_trim(QValue v) {
+    if (v.type != QValue::VAL_STRING) return qv_string("");
+    const char* start = v.data.string_val;
+    while (*start && isspace(static_cast<unsigned char>(*start))) start++;
+    if (*start == '\0') return qv_string("");
+
+    const char* end = v.data.string_val + strlen(v.data.string_val) - 1;
+    while (end > start && isspace(static_cast<unsigned char>(*end))) end--;
+
+    size_t len = static_cast<size_t>(end - start + 1);
+    char* result = static_cast<char*>(malloc(len + 1));
+    strncpy(result, start, len);
+    result[len] = '\0';
+
+    QValue q = qv_string(result);
+    free(result);
+    return q;
+}
+
+// Check if string contains substring
+inline QValue q_contains(QValue str, QValue sub) {
+    if (str.type != QValue::VAL_STRING || sub.type != QValue::VAL_STRING) {
+        return qv_bool(false);
+    }
+    return qv_bool(strstr(str.data.string_val, sub.data.string_val) != nullptr);
+}
+
+// Check if string starts with prefix
+inline QValue q_startswith(QValue str, QValue prefix) {
+    if (str.type != QValue::VAL_STRING || prefix.type != QValue::VAL_STRING) {
+        return qv_bool(false);
+    }
+    size_t plen = strlen(prefix.data.string_val);
+    return qv_bool(strncmp(str.data.string_val, prefix.data.string_val, plen) == 0);
+}
+
+// Check if string ends with suffix
+inline QValue q_endswith(QValue str, QValue suffix) {
+    if (str.type != QValue::VAL_STRING || suffix.type != QValue::VAL_STRING) {
+        return qv_bool(false);
+    }
+    size_t slen = strlen(str.data.string_val);
+    size_t suflen = strlen(suffix.data.string_val);
+    if (suflen > slen) return qv_bool(false);
+    return qv_bool(strcmp(str.data.string_val + slen - suflen, suffix.data.string_val) == 0);
+}
+
+// Replace all occurrences of old_str with new_str
+inline QValue q_replace(QValue str, QValue old_str, QValue new_str) {
+    if (str.type != QValue::VAL_STRING || old_str.type != QValue::VAL_STRING ||
+        new_str.type != QValue::VAL_STRING) {
+        return qv_string("");
+    }
+
+    const char* s = str.data.string_val;
+    const char* o = old_str.data.string_val;
+    const char* n = new_str.data.string_val;
+    size_t olen = strlen(o);
+    size_t nlen = strlen(n);
+    if (olen == 0) return str;
+
+    // Count occurrences
+    int count = 0;
+    const char* tmp = s;
+    while ((tmp = strstr(tmp, o)) != nullptr) {
+        count++;
+        tmp += olen;
+    }
+
+    // Allocate result
+    size_t slen = strlen(s);
+    size_t rlen = slen + static_cast<size_t>(count) * (nlen - olen);
+    char* result = static_cast<char*>(malloc(rlen + 1));
+    char* dest = result;
+
+    while (*s) {
+        if (strncmp(s, o, olen) == 0) {
+            strcpy(dest, n);
+            dest += nlen;
+            s += olen;
+        } else {
+            *dest++ = *s++;
+        }
+    }
+    *dest = '\0';
+
+    QValue q = qv_string(result);
+    free(result);
+    return q;
+}
+
+// Concatenate two strings
+inline QValue q_concat(QValue a, QValue b) {
+    if (a.type != QValue::VAL_STRING || b.type != QValue::VAL_STRING) {
+        return qv_string("");
+    }
+    size_t len = strlen(a.data.string_val) + strlen(b.data.string_val);
+    char* result = static_cast<char*>(malloc(len + 1));
+    strcpy(result, a.data.string_val);
+    strcat(result, b.data.string_val);
+    QValue q = qv_string(result);
+    free(result);
+    return q;
+}
+
+// ============================================================
+// types/function.hpp
+// ============================================================
+
+// Call function value with 0 arguments
+inline QValue q_call0(QValue f) {
+    if (f.type != QValue::VAL_FUNC) return qv_null();
+    return reinterpret_cast<QFunc0>(f.data.func_val)();
+}
+
+// Call function value with 1 argument
+inline QValue q_call1(QValue f, QValue a) {
+    if (f.type != QValue::VAL_FUNC) return qv_null();
+    return reinterpret_cast<QFunc1>(f.data.func_val)(a);
+}
+
+// Call function value with 2 arguments
+inline QValue q_call2(QValue f, QValue a, QValue b) {
+    if (f.type != QValue::VAL_FUNC) return qv_null();
+    return reinterpret_cast<QFunc2>(f.data.func_val)(a, b);
+}
+
+// Call function value with 3 arguments
+inline QValue q_call3(QValue f, QValue a, QValue b, QValue c) {
+    if (f.type != QValue::VAL_FUNC) return qv_null();
+    return reinterpret_cast<QFunc3>(f.data.func_val)(a, b, c);
+}
+
+// Call function value with 4 arguments
+inline QValue q_call4(QValue f, QValue a, QValue b, QValue c, QValue d) {
+    if (f.type != QValue::VAL_FUNC) return qv_null();
+    return reinterpret_cast<QFunc4>(f.data.func_val)(a, b, c, d);
+}
+
+// ============================================================
+// builtins/io.hpp
+// ============================================================
+
+// Print a QValue (without newline)
+inline void print_qvalue(QValue v) {
+    switch (v.type) {
+        case QValue::VAL_INT:
+            printf("%lld", v.data.int_val);
+            break;
+        case QValue::VAL_FLOAT:
+            printf("%g", v.data.float_val);
+            break;
+        case QValue::VAL_STRING:
+            printf("%s", v.data.string_val);
+            break;
+        case QValue::VAL_BOOL:
+            printf(v.data.bool_val ? "true" : "false");
+            break;
+        case QValue::VAL_NULL:
+            printf("null");
+            break;
+        case QValue::VAL_LIST:
+            printf("[list len=%d]", v.data.list_val.len);
+            break;
+        case QValue::VAL_FUNC:
+            printf("<function>");
+            break;
+        default:
+            printf("<value>");
+            break;
+    }
+}
+
+// Print without newline
+inline QValue q_print(QValue v) {
+    print_qvalue(v);
+    return qv_null();
+}
+
+// Print with newline
+inline QValue q_println(QValue v) {
+    print_qvalue(v);
+    printf("\n");
+    return qv_null();
+}
+
+// Read line from stdin
+inline QValue q_input() {
+    char buffer[4096];
+    if (fgets(buffer, sizeof(buffer), stdin) != nullptr) {
+        // Remove trailing newline
+        size_t len = strlen(buffer);
+        if (len > 0 && buffer[len - 1] == '\n') {
+            buffer[len - 1] = '\0';
+        }
+        return qv_string(buffer);
+    }
+    return qv_string("");
+}
+
+// ============================================================
+// builtins/conversion.hpp
+// ============================================================
+
+// Get length of string or list
+inline QValue q_len(QValue v) {
+    switch (v.type) {
+        case QValue::VAL_STRING:
+            return qv_int(static_cast<long long>(strlen(v.data.string_val)));
+        case QValue::VAL_LIST:
+            return qv_int(v.data.list_val.len);
+        default:
+            return qv_int(0);
+    }
+}
+
+// Convert value to string
+inline QValue q_str(QValue v) {
+    char buffer[256];
+    switch (v.type) {
+        case QValue::VAL_INT:
+            snprintf(buffer, sizeof(buffer), "%lld", v.data.int_val);
+            return qv_string(buffer);
+        case QValue::VAL_FLOAT:
+            snprintf(buffer, sizeof(buffer), "%g", v.data.float_val);
+            return qv_string(buffer);
+        case QValue::VAL_BOOL:
+            return qv_string(v.data.bool_val ? "true" : "false");
+        case QValue::VAL_STRING:
+            return v;
+        case QValue::VAL_NULL:
+            return qv_string("null");
+        case QValue::VAL_LIST:
+            snprintf(buffer, sizeof(buffer), "[list len=%d]", v.data.list_val.len);
+            return qv_string(buffer);
+        case QValue::VAL_FUNC:
+            return qv_string("<function>");
+        default:
+            return qv_string("<value>");
+    }
+}
+
+// Convert value to integer
+inline QValue q_int(QValue v) {
+    switch (v.type) {
+        case QValue::VAL_INT:
+            return v;
+        case QValue::VAL_FLOAT:
+            return qv_int(static_cast<long long>(v.data.float_val));
+        case QValue::VAL_BOOL:
+            return qv_int(v.data.bool_val ? 1 : 0);
+        case QValue::VAL_STRING:
+            return qv_int(atoll(v.data.string_val));
+        default:
+            return qv_int(0);
+    }
+}
+
+// Convert value to float
+inline QValue q_float(QValue v) {
+    switch (v.type) {
+        case QValue::VAL_INT:
+            return qv_float(static_cast<double>(v.data.int_val));
+        case QValue::VAL_FLOAT:
+            return v;
+        case QValue::VAL_BOOL:
+            return qv_float(v.data.bool_val ? 1.0 : 0.0);
+        case QValue::VAL_STRING:
+            return qv_float(atof(v.data.string_val));
+        default:
+            return qv_float(0.0);
+    }
+}
+
+// Convert value to boolean
+inline QValue q_bool(QValue v) {
+    return qv_bool(q_truthy(v));
+}
+
+// ============================================================
+// builtins/math.hpp
+// ============================================================
+
+namespace quark {
+namespace detail {
+
+// Helper for math operations
+inline double math_to_double(const QValue& v) {
+    return v.type == QValue::VAL_FLOAT ? v.data.float_val
+                                       : static_cast<double>(v.data.int_val);
+}
+
+inline bool math_either_float(const QValue& a, const QValue& b) {
+    return a.type == QValue::VAL_FLOAT || b.type == QValue::VAL_FLOAT;
+}
+
+} // namespace detail
+} // namespace quark
+
+// Absolute value
+inline QValue q_abs(QValue v) {
+    if (v.type == QValue::VAL_FLOAT) {
+        return qv_float(fabs(v.data.float_val));
+    }
+    return qv_int(llabs(v.data.int_val));
+}
+
+// Minimum of two values
+inline QValue q_min(QValue a, QValue b) {
+    if (quark::detail::math_either_float(a, b)) {
+        double av = quark::detail::math_to_double(a);
+        double bv = quark::detail::math_to_double(b);
+        return qv_float(av < bv ? av : bv);
+    }
+    return qv_int(a.data.int_val < b.data.int_val ? a.data.int_val : b.data.int_val);
+}
+
+// Maximum of two values
+inline QValue q_max(QValue a, QValue b) {
+    if (quark::detail::math_either_float(a, b)) {
+        double av = quark::detail::math_to_double(a);
+        double bv = quark::detail::math_to_double(b);
+        return qv_float(av > bv ? av : bv);
+    }
+    return qv_int(a.data.int_val > b.data.int_val ? a.data.int_val : b.data.int_val);
+}
+
+// Square root (always returns float)
+inline QValue q_sqrt(QValue v) {
+    double val = quark::detail::math_to_double(v);
+    return qv_float(sqrt(val));
+}
+
+// Floor (returns int)
+inline QValue q_floor(QValue v) {
+    if (v.type == QValue::VAL_INT) return v;
+    return qv_int(static_cast<long long>(floor(v.data.float_val)));
+}
+
+// Ceiling (returns int)
+inline QValue q_ceil(QValue v) {
+    if (v.type == QValue::VAL_INT) return v;
+    return qv_int(static_cast<long long>(ceil(v.data.float_val)));
+}
+
+// Round to nearest integer (returns int)
+inline QValue q_round(QValue v) {
+    if (v.type == QValue::VAL_INT) return v;
+    return qv_int(static_cast<long long>(round(v.data.float_val)));
+}
+
+#endif // QUARK_RUNTIME_HPP

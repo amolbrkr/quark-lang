@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Quark** is a human-friendly, functional, type-inferred language inspired by Python. The language emphasizes a **minimal punctuation philosophy** - using as few parentheses, brackets, and braces as possible to create English-like readable code.
+**Quark** is a high-level, dynamically-typed language that compiles to C++, designed for fast data-heavy applications. It combines Python-like syntax with native performance through aggressive compiler optimizations.
 
 ## Repository Structure
 
@@ -21,8 +21,14 @@ quark-lang/
 │   │   ├── ast/           # AST node types, precedence levels
 │   │   ├── parser/        # Pratt parser + recursive descent
 │   │   ├── types/         # Type system, semantic analyzer
-│   │   ├── codegen/       # C code generator with runtime
-│   │   └── runtime/       # (future) Runtime utilities
+│   │   ├── codegen/       # C++ code generator with embedded runtime
+│   │   └── runtime/       # C++ runtime library (header-only)
+│   │       ├── include/quark/  # Modular C++ headers
+│   │       │   ├── core/       # QValue, constructors, truthy
+│   │       │   ├── ops/        # arithmetic, comparison, logical
+│   │       │   ├── types/      # list, string, function
+│   │       │   └── builtins/   # io, conversion, math
+│   │       └── tests/          # Catch2 unit tests
 │   ├── legacy/            # Python implementation (reference only)
 │   └── testfiles/         # Test .qrk files for validation
 ```
@@ -57,13 +63,13 @@ quark-lang/
 │  └─────────────┘                                                │
 │       ↓                                                         │
 │  ┌─────────────┐                                                │
-│  │  CODEGEN    │  → C source code                               │
-│  │ codegen/    │     (Boxed values, runtime functions)          │
+│  │  CODEGEN    │  → C++ source code                             │
+│  │ codegen/    │     (Boxed values, std::vector lists)          │
 │  └─────────────┘                                                │
 │       ↓                                                         │
 │  ┌─────────────┐                                                │
-│  │   CLANG     │  → Native binary                               │
-│  │ -std=gnu11  │     (SIMD auto-vectorization)                  │
+│  │  CLANG++    │  → Native binary                               │
+│  │ -std=c++17  │     (SIMD auto-vectorization)                  │
 │  │ -O3 -lm     │                                                │
 │  └─────────────┘                                                │
 └─────────────────────────────────────────────────────────────────┘
@@ -74,21 +80,22 @@ quark-lang/
 | Component | Choice | Rationale |
 |-----------|--------|-----------|
 | Frontend | Go | Fast compilation, easy to modify, excellent tooling |
-| Backend | C | Leverages clang's mature optimizer, portable |
-| Target | GNU C11 | C11 standard + POSIX extensions (strdup, etc.) |
-| Optimizer | clang -O3 | Aggressive optimizations, loop vectorization |
+| Backend | C++ | Modern features (std::vector, RAII), leverages clang's optimizer |
+| Target | C++17 | Modern standard with good STL support |
+| Optimizer | clang++ -O3 | Aggressive optimizations, loop vectorization |
 | CPU Target | -march=native | Uses AVX/SSE SIMD instructions for current CPU |
 | Memory | Boxed values | Dynamic typing with tagged union (QValue) |
+| Lists | std::vector | Type-safe, automatic memory management |
 
-### C Compilation Flags
+### C++ Compilation Flags
 
 ```bash
-clang -std=gnu11 -O3 -march=native -o output input.c -lm
+clang++ -std=c++17 -O3 -march=native -o output input.cpp -lm
 ```
 
 | Flag | Purpose |
 |------|---------|
-| `-std=gnu11` | C11 standard with GNU/POSIX extensions |
+| `-std=c++17` | C++17 standard for modern features |
 | `-O3` | Maximum optimization (includes auto-vectorization) |
 | `-march=native` | Optimize for current CPU architecture |
 | `-lm` | Link math library (sqrt, floor, ceil, etc.) |
@@ -115,54 +122,65 @@ go build -o quark .
 ./quark run ../../../src/testfiles/test_clean.qrk
 ```
 
-## Core Language Philosophy
+## Core Language Design
 
-**Minimal Punctuation:** Quark reduces punctuation wherever possible:
+**High-Level + Native Performance:** Quark provides Python-like ergonomics with C++ performance:
 ```quark
-// Function calls without parentheses
+// Clean, readable syntax
 print msg
-add 2, 5
+data | transform | filter | save
 
-// Pipe chains
-data | transform | filter | print
-
-// Arithmetic binds arguments
-fact n - 1    // parses as fact(n-1)
+// Compiles to optimized C++ with -O3
+// Uses std::vector for lists, SIMD auto-vectorization
 ```
 
-**Parentheses ONLY required for:**
-1. Overriding precedence: `2 * (3 + 4)`
-2. Nested function calls: `outer (inner x, y)`
-3. Complex expressions as arguments: `func (x + y), z`
+**Key Features:**
+- Dynamic typing with type inference
+- First-class functions and closures
+- Pattern matching (`when` expressions)
+- Pipe operator for data flow
+- Lists backed by `std::vector<QValue>`
+
+**Syntax Conventions:**
+- Function calls: `print x` (parentheses optional)
+- Nested calls require parens: `outer (inner x)`
+- Arithmetic binds tighter: `fact n - 1` parses as `fact(n-1)`
 
 ## Type System
 
 ### Basic Types
 
-| Type | Quark | C Representation |
-|------|-------|------------------|
+| Type | Quark | C++ Representation |
+|------|-------|-------------------|
 | Integer | `42` | `long long` |
 | Float | `3.14` | `double` |
 | String | `'hello'` | `char*` (strdup'd) |
 | Boolean | `true`, `false` | `bool` |
 | Null | `null` | - |
-| List | `[1, 2, 3]` | (not fully implemented) |
+| List | `[1, 2, 3]` | `std::vector<QValue>*` |
 | Function | `fn x: x * 2` | function pointer |
 
 ### Runtime Value (QValue)
 
 All Quark values are boxed in a tagged union:
 
-```c
-typedef struct {
-    enum { VAL_INT, VAL_FLOAT, VAL_STRING, VAL_BOOL, VAL_NULL } type;
+```cpp
+using QList = std::vector<QValue>;
+
+struct QValue {
+    enum ValueType {
+        VAL_INT, VAL_FLOAT, VAL_STRING, VAL_BOOL, VAL_NULL, VAL_LIST, VAL_FUNC
+    } type;
+
     union {
         long long int_val;
         double float_val;
         char* string_val;
         bool bool_val;
+        QList* list_val;    // std::vector<QValue>*
+        void* func_val;
     } data;
-} QValue;
+};
 ```
 
 ### Type Inference
@@ -295,13 +313,15 @@ Module {
 
 ### Runtime Functions
 
-```c
+```cpp
 // Constructors
 QValue qv_int(long long v);
 QValue qv_float(double v);
 QValue qv_string(const char* v);
 QValue qv_bool(bool v);
 QValue qv_null();
+QValue qv_list(int initial_cap = 0);
+QValue qv_list_init(std::initializer_list<QValue> items);
 
 // Arithmetic
 QValue q_add(QValue a, QValue b);
@@ -323,6 +343,17 @@ QValue q_neq(QValue a, QValue b);
 QValue q_and(QValue a, QValue b);
 QValue q_or(QValue a, QValue b);
 QValue q_not(QValue a);
+
+// List operations (backed by std::vector)
+QValue q_push(QValue list, QValue item);
+QValue q_pop(QValue list);
+QValue q_get(QValue list, QValue index);
+QValue q_set(QValue list, QValue index, QValue value);
+QValue q_insert(QValue list, QValue index, QValue item);
+QValue q_remove(QValue list, QValue index);
+QValue q_slice(QValue list, QValue start, QValue end);
+QValue q_reverse(QValue list);
+QValue q_list_concat(QValue a, QValue b);
 
 // I/O
 QValue q_print(QValue v);
@@ -508,13 +539,35 @@ go build -o quark .
 2. **New operator**: Add precedence in `ast/ast.go`, handler in `parser/expr.go`
 3. **New statement**: Add parser in `parser/parser.go`
 4. **New built-in function**:
-   - Add C implementation in `codegen/codegen.go` (in the runtime header)
+   - Add C++ implementation in `runtime/include/quark/` (appropriate header)
+   - Regenerate `codegen/runtime.hpp` (run `build_runtime.ps1`)
    - Add case in `generateFunctionCall()` and `generatePipe()`
    - Register type signature in `types/analyzer.go` builtins map
 5. **Code generation**: Add case in `codegen/codegen.go`
 
+### Runtime Development
+
+The C++ runtime is a header-only library in `runtime/include/quark/`:
+
+```
+runtime/
+├── include/quark/
+│   ├── quark.hpp           # Master include
+│   ├── core/               # QValue, constructors, truthy
+│   ├── ops/                # arithmetic, comparison, logical
+│   ├── types/              # list (std::vector), string, function
+│   └── builtins/           # io, conversion, math
+├── tests/                  # Catch2 unit tests
+└── CMakeLists.txt          # Build tests with: cmake -B build && cmake --build build
+```
+
+After modifying headers, regenerate the embedded runtime:
+```bash
+cd runtime && pwsh build_runtime.ps1
+```
+
 ### Known Limitations
 
 - **Negative number arguments**: `func -5` is parsed as `func - 5` (binary subtraction). Use `x = 0 - 5; func x` as workaround.
-- **Lists**: Not fully implemented in codegen yet.
-- **Garbage collection**: Currently no GC - strings are strdup'd and not freed.
+- **Garbage collection**: Currently no GC - strings are strdup'd and list memory must be manually freed with `q_list_free()`.
+- **List syntax**: List literals `[1, 2, 3]` not yet parsed; use `qv_list()` and `q_push()` in generated code.

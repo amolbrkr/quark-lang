@@ -1,65 +1,61 @@
-# quark README
+# Quark Language Support for VS Code
 
-This is the README for your extension "quark". After writing up a brief description, we recommend including the following sections.
+Syntax highlighting and language support for the Quark programming language.
 
 ## Features
 
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
+- **Syntax Highlighting** - Full syntax highlighting for `.qrk` files
+- **Keywords** - `fn`, `if`, `elseif`, `else`, `when`, `for`, `while`, `in`, `and`, `or`, `not`, `true`, `false`, `null`, `module`, `use`
+- **Operators** - Arithmetic, comparison, logical, pipe (`|`), range (`..`)
+- **Comments** - Single-line comments with `//`
+- **Strings** - Single-quoted strings with escape sequences
 
-For example if there is an image subfolder under your extension project workspace:
+## About Quark
 
-\!\[feature X\]\(images/feature-x.png\)
+Quark is a high-level, dynamically-typed language that compiles to C++, designed for fast data-heavy applications. It combines Python-like syntax with native performance.
 
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
+```quark
+// Quark example
+fn factorial n:
+    when n:
+        0 or 1: 1
+        _: n * factorial n - 1
+
+factorial 10 | println
+```
+
+## Installation
+
+1. Open VS Code
+2. Go to Extensions (Ctrl+Shift+X)
+3. Search for "Quark"
+4. Click Install
+
+Or install from VSIX:
+```bash
+code --install-extension quark-0.0.1.vsix
+```
 
 ## Requirements
 
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
+- VS Code 1.60.0 or higher
 
 ## Extension Settings
 
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
-
-For example:
-
-This extension contributes the following settings:
-
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
+This extension does not add any VS Code settings.
 
 ## Known Issues
 
-Calling out known issues can help limit users opening duplicate issues against your extension.
+- No language server support yet (no autocomplete, go-to-definition)
+- No debugger integration
 
 ## Release Notes
 
-Users appreciate release notes as you update your extension.
+### 0.0.1
 
-### 1.0.0
+Initial release with basic syntax highlighting.
 
-Initial release of ...
+## More Information
 
-### 1.0.1
-
-Fixed issue #.
-
-### 1.1.0
-
-Added features X, Y, and Z.
-
----
-
-## Working with Markdown
-
-You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
-
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
-
-## For more information
-
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
-
-**Enjoy!**
+- [Quark Repository](https://github.com/user/quark-lang)
+- [Language Documentation](https://github.com/user/quark-lang/blob/main/CLAUDE.md)

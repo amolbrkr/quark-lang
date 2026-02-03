@@ -14,7 +14,8 @@
       "Bash(./quark run:*)",
       "Bash(./quark build:*)",
       "Bash(../../test_clean)",
-      "Bash(whereis:*)"
+      "Bash(whereis:*)",
+      "Bash(./quark.exe run:*)"
     ]
   }
 }

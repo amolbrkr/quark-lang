@@ -3,6 +3,13 @@
 #define QUARK_CORE_VALUE_HPP
 
 #include <cstdlib>
+#include <vector>
+
+// Forward declaration
+struct QValue;
+
+// Type alias for list storage
+using QList = std::vector<QValue>;
 
 // QValue: Tagged union for all Quark runtime values
 struct QValue {
@@ -21,11 +28,7 @@ struct QValue {
         double float_val;
         char* string_val;
         bool bool_val;
-        struct {
-            void** items;
-            int len;
-            int cap;
-        } list_val;
+        QList* list_val;    // std::vector<QValue>* - automatic memory management
         void* func_val;
     } data;
 };

@@ -19,7 +19,7 @@ inline bool q_truthy(QValue v) {
         case QValue::VAL_NULL:
             return false;
         case QValue::VAL_LIST:
-            return v.data.list_val.len > 0;
+            return v.data.list_val && !v.data.list_val->empty();
         case QValue::VAL_FUNC:
             return v.data.func_val != nullptr;
         default:

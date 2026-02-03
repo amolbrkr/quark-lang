@@ -15,7 +15,7 @@ inline QValue q_len(QValue v) {
         case QValue::VAL_STRING:
             return qv_int(static_cast<long long>(strlen(v.data.string_val)));
         case QValue::VAL_LIST:
-            return qv_int(v.data.list_val.len);
+            return qv_int(v.data.list_val ? static_cast<long long>(v.data.list_val->size()) : 0);
         default:
             return qv_int(0);
     }
@@ -38,7 +38,8 @@ inline QValue q_str(QValue v) {
         case QValue::VAL_NULL:
             return qv_string("null");
         case QValue::VAL_LIST:
-            snprintf(buffer, sizeof(buffer), "[list len=%d]", v.data.list_val.len);
+            snprintf(buffer, sizeof(buffer), "[list len=%zu]",
+                     v.data.list_val ? v.data.list_val->size() : 0);
             return qv_string(buffer);
         case QValue::VAL_FUNC:
             return qv_string("<function>");

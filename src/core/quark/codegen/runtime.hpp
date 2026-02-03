@@ -1,21 +1,29 @@
-// runtime.hpp - Quark Runtime Library (Auto-generated)
-// DO NOT EDIT - Generated from src/core/quark/runtime/include/quark/*.hpp
-// Regenerate with: cd runtime && pwsh build_runtime.ps1
+// Quark Runtime Library - Auto-generated concatenated header
+// This file is embedded in the Go compiler via go:embed
+// Do not edit directly - regenerate from source headers in runtime/include/quark/
 
 #ifndef QUARK_RUNTIME_HPP
 #define QUARK_RUNTIME_HPP
 
 // Standard library includes
-#include <cstdio>
 #include <cstdlib>
+#include <cstdio>
 #include <cstring>
-#include <cmath>
-#include <cctype>
 #include <cstdarg>
+#include <cctype>
+#include <cmath>
+#include <vector>
+#include <algorithm>
 
 // ============================================================
-// core/value.hpp
+// quark/core/value.hpp - QValue tagged union type
 // ============================================================
+
+// Forward declaration
+struct QValue;
+
+// Type alias for list storage
+using QList = std::vector<QValue>;
 
 // QValue: Tagged union for all Quark runtime values
 struct QValue {
@@ -34,11 +42,7 @@ struct QValue {
         double float_val;
         char* string_val;
         bool bool_val;
-        struct {
-            void** items;
-            int len;
-            int cap;
-        } list_val;
+        QList* list_val;    // std::vector<QValue>* - automatic memory management
         void* func_val;
     } data;
 };
@@ -51,7 +55,7 @@ using QFunc3 = QValue (*)(QValue, QValue, QValue);
 using QFunc4 = QValue (*)(QValue, QValue, QValue, QValue);
 
 // ============================================================
-// core/constructors.hpp
+// quark/core/constructors.hpp - QValue constructors
 // ============================================================
 
 // Integer value constructor
@@ -101,32 +105,42 @@ inline QValue qv_func(void* f) {
     return q;
 }
 
-// List value constructor with initial capacity
-inline QValue qv_list(int initial_cap) {
+// List value constructor with optional initial capacity
+inline QValue qv_list(int initial_cap = 0) {
     QValue q;
     q.type = QValue::VAL_LIST;
-    q.data.list_val.cap = initial_cap > 0 ? initial_cap : 8;
-    q.data.list_val.len = 0;
-    q.data.list_val.items = static_cast<void**>(malloc(sizeof(QValue) * q.data.list_val.cap));
+    q.data.list_val = new QList();
+    if (initial_cap > 0) {
+        q.data.list_val->reserve(initial_cap);
+    }
     return q;
 }
 
 // List value constructor from variadic arguments
 inline QValue qv_list_from(int count, ...) {
-    QValue q = qv_list(count > 0 ? count : 8);
+    QValue q;
+    q.type = QValue::VAL_LIST;
+    q.data.list_val = new QList();
+    q.data.list_val->reserve(count);
     va_list args;
     va_start(args, count);
     for (int i = 0; i < count; i++) {
-        QValue* items = reinterpret_cast<QValue*>(q.data.list_val.items);
-        items[i] = va_arg(args, QValue);
+        q.data.list_val->push_back(va_arg(args, QValue));
     }
-    q.data.list_val.len = count;
     va_end(args);
     return q;
 }
 
+// List value constructor from initializer list (C++ style)
+inline QValue qv_list_init(std::initializer_list<QValue> items) {
+    QValue q;
+    q.type = QValue::VAL_LIST;
+    q.data.list_val = new QList(items);
+    return q;
+}
+
 // ============================================================
-// core/truthy.hpp
+// quark/core/truthy.hpp - Truthiness checking
 // ============================================================
 
 // Check if a value is truthy (used for conditions)
@@ -143,7 +157,7 @@ inline bool q_truthy(QValue v) {
         case QValue::VAL_NULL:
             return false;
         case QValue::VAL_LIST:
-            return v.data.list_val.len > 0;
+            return v.data.list_val && !v.data.list_val->empty();
         case QValue::VAL_FUNC:
             return v.data.func_val != nullptr;
         default:
@@ -152,7 +166,7 @@ inline bool q_truthy(QValue v) {
 }
 
 // ============================================================
-// ops/arithmetic.hpp
+// quark/ops/arithmetic.hpp - Arithmetic operations
 // ============================================================
 
 namespace quark {
@@ -227,7 +241,7 @@ inline QValue q_neg(QValue a) {
 }
 
 // ============================================================
-// ops/comparison.hpp
+// quark/ops/comparison.hpp - Comparison operations
 // ============================================================
 
 // Less than
@@ -295,7 +309,7 @@ inline QValue q_neq(QValue a, QValue b) {
 }
 
 // ============================================================
-// ops/logical.hpp
+// quark/ops/logical.hpp - Logical operations
 // ============================================================
 
 // Logical AND
@@ -314,64 +328,174 @@ inline QValue q_not(QValue a) {
 }
 
 // ============================================================
-// types/list.hpp
+// quark/types/list.hpp - List operations using std::vector
 // ============================================================
-
-// Grow list capacity (doubles it)
-inline void q_list_grow(QValue* list) {
-    if (list->type != QValue::VAL_LIST) return;
-    int new_cap = list->data.list_val.cap * 2;
-    list->data.list_val.items = static_cast<void**>(
-        realloc(list->data.list_val.items, sizeof(QValue) * new_cap)
-    );
-    list->data.list_val.cap = new_cap;
-}
 
 // Push item to end of list
 inline QValue q_push(QValue list, QValue item) {
-    if (list.type != QValue::VAL_LIST) return qv_null();
-    if (list.data.list_val.len >= list.data.list_val.cap) {
-        q_list_grow(&list);
+    if (list.type != QValue::VAL_LIST || !list.data.list_val) {
+        return qv_null();
     }
-    QValue* items = reinterpret_cast<QValue*>(list.data.list_val.items);
-    items[list.data.list_val.len] = item;
-    list.data.list_val.len++;
+    list.data.list_val->push_back(item);
     return list;
 }
 
 // Pop item from end of list
 inline QValue q_pop(QValue list) {
-    if (list.type != QValue::VAL_LIST || list.data.list_val.len == 0) {
+    if (list.type != QValue::VAL_LIST || !list.data.list_val || list.data.list_val->empty()) {
         return qv_null();
     }
-    QValue* items = reinterpret_cast<QValue*>(list.data.list_val.items);
-    list.data.list_val.len--;
-    return items[list.data.list_val.len];
+    QValue item = list.data.list_val->back();
+    list.data.list_val->pop_back();
+    return item;
 }
 
 // Get item at index (supports negative indexing)
 inline QValue q_get(QValue list, QValue index) {
-    if (list.type != QValue::VAL_LIST) return qv_null();
+    if (list.type != QValue::VAL_LIST || !list.data.list_val) {
+        return qv_null();
+    }
     int idx = static_cast<int>(index.data.int_val);
-    if (idx < 0) idx = list.data.list_val.len + idx;
-    if (idx < 0 || idx >= list.data.list_val.len) return qv_null();
-    QValue* items = reinterpret_cast<QValue*>(list.data.list_val.items);
-    return items[idx];
+    int len = static_cast<int>(list.data.list_val->size());
+    if (idx < 0) idx = len + idx;
+    if (idx < 0 || idx >= len) {
+        return qv_null();
+    }
+    return (*list.data.list_val)[idx];
 }
 
 // Set item at index (supports negative indexing)
 inline QValue q_set(QValue list, QValue index, QValue value) {
-    if (list.type != QValue::VAL_LIST) return qv_null();
+    if (list.type != QValue::VAL_LIST || !list.data.list_val) {
+        return qv_null();
+    }
     int idx = static_cast<int>(index.data.int_val);
-    if (idx < 0) idx = list.data.list_val.len + idx;
-    if (idx < 0 || idx >= list.data.list_val.len) return qv_null();
-    QValue* items = reinterpret_cast<QValue*>(list.data.list_val.items);
-    items[idx] = value;
+    int len = static_cast<int>(list.data.list_val->size());
+    if (idx < 0) idx = len + idx;
+    if (idx < 0 || idx >= len) {
+        return qv_null();
+    }
+    (*list.data.list_val)[idx] = value;
     return value;
 }
 
+// Get list size
+inline int q_list_size(QValue list) {
+    if (list.type != QValue::VAL_LIST || !list.data.list_val) {
+        return 0;
+    }
+    return static_cast<int>(list.data.list_val->size());
+}
+
+// Check if list is empty
+inline bool q_list_empty(QValue list) {
+    if (list.type != QValue::VAL_LIST || !list.data.list_val) {
+        return true;
+    }
+    return list.data.list_val->empty();
+}
+
+// Clear all items from list
+inline QValue q_list_clear(QValue list) {
+    if (list.type != QValue::VAL_LIST || !list.data.list_val) {
+        return qv_null();
+    }
+    list.data.list_val->clear();
+    return list;
+}
+
+// Insert item at index
+inline QValue q_insert(QValue list, QValue index, QValue item) {
+    if (list.type != QValue::VAL_LIST || !list.data.list_val) {
+        return qv_null();
+    }
+    int idx = static_cast<int>(index.data.int_val);
+    int len = static_cast<int>(list.data.list_val->size());
+    if (idx < 0) idx = len + idx;
+    if (idx < 0) idx = 0;
+    if (idx > len) idx = len;
+    list.data.list_val->insert(list.data.list_val->begin() + idx, item);
+    return list;
+}
+
+// Remove item at index
+inline QValue q_remove(QValue list, QValue index) {
+    if (list.type != QValue::VAL_LIST || !list.data.list_val) {
+        return qv_null();
+    }
+    int idx = static_cast<int>(index.data.int_val);
+    int len = static_cast<int>(list.data.list_val->size());
+    if (idx < 0) idx = len + idx;
+    if (idx < 0 || idx >= len) {
+        return qv_null();
+    }
+    QValue item = (*list.data.list_val)[idx];
+    list.data.list_val->erase(list.data.list_val->begin() + idx);
+    return item;
+}
+
+// Concatenate two lists, returns new list
+inline QValue q_list_concat(QValue a, QValue b) {
+    if (a.type != QValue::VAL_LIST || b.type != QValue::VAL_LIST) {
+        return qv_null();
+    }
+    QValue result = qv_list();
+    if (a.data.list_val) {
+        for (const auto& item : *a.data.list_val) {
+            result.data.list_val->push_back(item);
+        }
+    }
+    if (b.data.list_val) {
+        for (const auto& item : *b.data.list_val) {
+            result.data.list_val->push_back(item);
+        }
+    }
+    return result;
+}
+
+// Slice list [start:end), returns new list
+inline QValue q_slice(QValue list, QValue start, QValue end) {
+    if (list.type != QValue::VAL_LIST || !list.data.list_val) {
+        return qv_null();
+    }
+    int len = static_cast<int>(list.data.list_val->size());
+    int s = static_cast<int>(start.data.int_val);
+    int e = static_cast<int>(end.data.int_val);
+
+    // Handle negative indices
+    if (s < 0) s = len + s;
+    if (e < 0) e = len + e;
+
+    // Clamp to bounds
+    if (s < 0) s = 0;
+    if (e > len) e = len;
+    if (s >= e) return qv_list();
+
+    QValue result = qv_list(e - s);
+    for (int i = s; i < e; i++) {
+        result.data.list_val->push_back((*list.data.list_val)[i]);
+    }
+    return result;
+}
+
+// Reverse list in place
+inline QValue q_reverse(QValue list) {
+    if (list.type != QValue::VAL_LIST || !list.data.list_val) {
+        return qv_null();
+    }
+    std::reverse(list.data.list_val->begin(), list.data.list_val->end());
+    return list;
+}
+
+// Free list memory (for manual cleanup if needed)
+inline void q_list_free(QValue list) {
+    if (list.type == QValue::VAL_LIST && list.data.list_val) {
+        delete list.data.list_val;
+    }
+}
+
 // ============================================================
-// types/string.hpp
+// quark/types/string.hpp - String operations
 // ============================================================
 
 // Convert string to uppercase
@@ -505,7 +629,7 @@ inline QValue q_concat(QValue a, QValue b) {
 }
 
 // ============================================================
-// types/function.hpp
+// quark/types/function.hpp - Function value operations
 // ============================================================
 
 // Call function value with 0 arguments
@@ -539,7 +663,7 @@ inline QValue q_call4(QValue f, QValue a, QValue b, QValue c, QValue d) {
 }
 
 // ============================================================
-// builtins/io.hpp
+// quark/builtins/io.hpp - I/O operations
 // ============================================================
 
 // Print a QValue (without newline)
@@ -561,7 +685,7 @@ inline void print_qvalue(QValue v) {
             printf("null");
             break;
         case QValue::VAL_LIST:
-            printf("[list len=%d]", v.data.list_val.len);
+            printf("[list len=%zu]", v.data.list_val ? v.data.list_val->size() : 0);
             break;
         case QValue::VAL_FUNC:
             printf("<function>");
@@ -600,7 +724,7 @@ inline QValue q_input() {
 }
 
 // ============================================================
-// builtins/conversion.hpp
+// quark/builtins/conversion.hpp - Type conversion operations
 // ============================================================
 
 // Get length of string or list
@@ -609,7 +733,7 @@ inline QValue q_len(QValue v) {
         case QValue::VAL_STRING:
             return qv_int(static_cast<long long>(strlen(v.data.string_val)));
         case QValue::VAL_LIST:
-            return qv_int(v.data.list_val.len);
+            return qv_int(v.data.list_val ? static_cast<long long>(v.data.list_val->size()) : 0);
         default:
             return qv_int(0);
     }
@@ -632,7 +756,8 @@ inline QValue q_str(QValue v) {
         case QValue::VAL_NULL:
             return qv_string("null");
         case QValue::VAL_LIST:
-            snprintf(buffer, sizeof(buffer), "[list len=%d]", v.data.list_val.len);
+            snprintf(buffer, sizeof(buffer), "[list len=%zu]",
+                     v.data.list_val ? v.data.list_val->size() : 0);
             return qv_string(buffer);
         case QValue::VAL_FUNC:
             return qv_string("<function>");
@@ -679,24 +804,8 @@ inline QValue q_bool(QValue v) {
 }
 
 // ============================================================
-// builtins/math.hpp
+// quark/builtins/math.hpp - Math operations
 // ============================================================
-
-namespace quark {
-namespace detail {
-
-// Helper for math operations
-inline double math_to_double(const QValue& v) {
-    return v.type == QValue::VAL_FLOAT ? v.data.float_val
-                                       : static_cast<double>(v.data.int_val);
-}
-
-inline bool math_either_float(const QValue& a, const QValue& b) {
-    return a.type == QValue::VAL_FLOAT || b.type == QValue::VAL_FLOAT;
-}
-
-} // namespace detail
-} // namespace quark
 
 // Absolute value
 inline QValue q_abs(QValue v) {
@@ -708,9 +817,9 @@ inline QValue q_abs(QValue v) {
 
 // Minimum of two values
 inline QValue q_min(QValue a, QValue b) {
-    if (quark::detail::math_either_float(a, b)) {
-        double av = quark::detail::math_to_double(a);
-        double bv = quark::detail::math_to_double(b);
+    if (quark::detail::either_float(a, b)) {
+        double av = quark::detail::to_double(a);
+        double bv = quark::detail::to_double(b);
         return qv_float(av < bv ? av : bv);
     }
     return qv_int(a.data.int_val < b.data.int_val ? a.data.int_val : b.data.int_val);
@@ -718,9 +827,9 @@ inline QValue q_min(QValue a, QValue b) {
 
 // Maximum of two values
 inline QValue q_max(QValue a, QValue b) {
-    if (quark::detail::math_either_float(a, b)) {
-        double av = quark::detail::math_to_double(a);
-        double bv = quark::detail::math_to_double(b);
+    if (quark::detail::either_float(a, b)) {
+        double av = quark::detail::to_double(a);
+        double bv = quark::detail::to_double(b);
         return qv_float(av > bv ? av : bv);
     }
     return qv_int(a.data.int_val > b.data.int_val ? a.data.int_val : b.data.int_val);
@@ -728,7 +837,7 @@ inline QValue q_max(QValue a, QValue b) {
 
 // Square root (always returns float)
 inline QValue q_sqrt(QValue v) {
-    double val = quark::detail::math_to_double(v);
+    double val = quark::detail::to_double(v);
     return qv_float(sqrt(val));
 }
 

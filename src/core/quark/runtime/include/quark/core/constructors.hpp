@@ -53,27 +53,37 @@ inline QValue qv_func(void* f) {
     return q;
 }
 
-// List value constructor with initial capacity
-inline QValue qv_list(int initial_cap) {
+// List value constructor with optional initial capacity
+inline QValue qv_list(int initial_cap = 0) {
     QValue q;
     q.type = QValue::VAL_LIST;
-    q.data.list_val.cap = initial_cap > 0 ? initial_cap : 8;
-    q.data.list_val.len = 0;
-    q.data.list_val.items = static_cast<void**>(malloc(sizeof(QValue) * q.data.list_val.cap));
+    q.data.list_val = new QList();
+    if (initial_cap > 0) {
+        q.data.list_val->reserve(initial_cap);
+    }
     return q;
 }
 
 // List value constructor from variadic arguments
 inline QValue qv_list_from(int count, ...) {
-    QValue q = qv_list(count > 0 ? count : 8);
+    QValue q;
+    q.type = QValue::VAL_LIST;
+    q.data.list_val = new QList();
+    q.data.list_val->reserve(count);
     va_list args;
     va_start(args, count);
     for (int i = 0; i < count; i++) {
-        QValue* items = reinterpret_cast<QValue*>(q.data.list_val.items);
-        items[i] = va_arg(args, QValue);
+        q.data.list_val->push_back(va_arg(args, QValue));
     }
-    q.data.list_val.len = count;
     va_end(args);
+    return q;
+}
+
+// List value constructor from initializer list (C++ style)
+inline QValue qv_list_init(std::initializer_list<QValue> items) {
+    QValue q;
+    q.type = QValue::VAL_LIST;
+    q.data.list_val = new QList(items);
     return q;
 }
 

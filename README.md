@@ -1,15 +1,15 @@
 # Quark
 
-**Quark** is a human-friendly, functional, type-inferred language inspired by Python. It emphasizes **minimal punctuation** - using as few parentheses, brackets, and braces as possible to create English-like readable code.
+**Quark** is a high-level, dynamically-typed language that compiles to C++, designed for fast data-heavy applications. It combines Python-like syntax with native performance through aggressive compiler optimizations.
 
 ## Features
 
-- **Minimal Punctuation** - Function calls without parentheses, pipe chains for data flow
-- **Type Inference** - Types are inferred from usage, no annotations required
+- **High Performance** - Compiles to optimized C++ with -O3 and SIMD auto-vectorization
+- **Dynamic Typing** - Type inference with no annotations required
 - **Pattern Matching** - Expressive `when` expressions with wildcard support
 - **First-Class Functions** - Functions are values, support pipes and composition
-- **Python-Style Indentation** - Blocks defined by indentation, no braces needed
-- **Native Compilation** - Compiles to C, then to optimized native binaries via clang
+- **Python-Style Syntax** - Clean indentation-based blocks, minimal punctuation
+- **Native Lists** - Backed by `std::vector` for efficient data processing
 
 ## Quick Example
 
@@ -167,12 +167,12 @@ quark-lang/
 Quark uses a multi-stage compilation pipeline:
 
 ```
-Source (.qrk) → Lexer → Parser → Analyzer → C Codegen → clang → Binary
+Source (.qrk) → Lexer → Parser → Analyzer → C++ Codegen → clang++ → Binary
 ```
 
 - **Frontend**: Written in Go for fast compilation and easy modification
-- **Backend**: Generates C code, leveraging clang's mature optimizer
-- **Runtime**: Boxed values with tagged union for dynamic typing
+- **Backend**: Generates C++17 code, leveraging clang's mature optimizer
+- **Runtime**: Header-only C++ library with boxed values and `std::vector` lists
 
 ## Status
 
@@ -181,13 +181,14 @@ Quark is in active development. Current status:
 - [x] Lexer with Python-style indentation
 - [x] Pratt parser for expressions
 - [x] Type inference and semantic analysis
-- [x] C code generation
+- [x] C++ code generation
 - [x] Functions, loops, conditionals
 - [x] Pattern matching (`when`)
 - [x] Pipe operator
 - [x] Module system (`module`/`use`)
 - [x] Standard library (math, string)
-- [ ] Lists and arrays
+- [x] Lists (runtime with std::vector)
+- [ ] List literal syntax `[1, 2, 3]`
 - [ ] Classes/structs
 - [ ] Multi-file modules
 - [ ] Garbage collection

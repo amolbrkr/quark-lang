@@ -1,6 +1,6 @@
 # Quark Standard Library
 
-This document describes the built-in functions available in Quark. All standard library functions are implemented in C for performance and are automatically available without any imports.
+This document describes the built-in functions available in Quark. All standard library functions are implemented in C++ for performance and are automatically available without any imports.
 
 ## Core Functions
 
@@ -26,7 +26,7 @@ println name
 | `int` | `any -> int` | Convert to integer |
 | `float` | `any -> float` | Convert to float |
 | `bool` | `any -> bool` | Convert to boolean (truthiness) |
-| `len` | `string -> int` | Get length of string |
+| `len` | `string\|list -> int` | Get length of string or list |
 
 ```quark
 str 42 | println           // '42'
@@ -37,9 +37,59 @@ bool 1 | println           // true
 len 'hello' | println      // 5
 ```
 
+## List Functions
+
+List operations backed by `std::vector<QValue>` for efficient data processing.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `push` | `list, any -> list` | Add item to end of list |
+| `pop` | `list -> any` | Remove and return last item |
+| `get` | `list, int -> any` | Get item at index (supports negative) |
+| `set` | `list, int, any -> any` | Set item at index |
+| `insert` | `list, int, any -> list` | Insert item at index |
+| `remove` | `list, int -> any` | Remove and return item at index |
+| `slice` | `list, int, int -> list` | Get sublist [start:end) |
+| `reverse` | `list -> list` | Reverse list in place |
+| `len` | `list -> int` | Get number of items |
+
+### Examples
+
+```quark
+// Note: List literal syntax [1, 2, 3] is not yet implemented
+// Lists are created via runtime functions in generated code
+
+// Basic operations
+list = push list, 10
+list = push list, 20
+list = push list, 30
+
+get list, 0 | println        // 10
+get list, -1 | println       // 30 (negative index)
+
+// Modify
+set list, 1, 99
+get list, 1 | println        // 99
+
+// Remove
+pop list | println           // 30
+len list | println           // 2
+
+// Slice (returns new list)
+sublist = slice list, 0, 2
+```
+
+### Notes
+
+- Lists use `std::vector` internally for O(1) push/pop and O(1) random access
+- Negative indices count from the end: `-1` is last item, `-2` is second-to-last
+- `slice` returns a new list; original is not modified
+- `reverse` modifies the list in place
+- Out-of-bounds access returns `null`
+
 ## Math Functions
 
-Mathematical operations implemented using C's math library.
+Mathematical operations implemented using C++'s math library.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
@@ -159,22 +209,23 @@ All functions work seamlessly with Quark's pipe operator:
 
 ## Implementation Details
 
-All standard library functions are implemented as C functions in the runtime, embedded in `codegen/codegen.go`. They are compiled directly into the output binary, requiring no external dependencies except the C standard library and math library (`-lm`).
+All standard library functions are implemented as C++ functions in the header-only runtime library at `runtime/include/quark/`. The concatenated header is embedded in `codegen/runtime.hpp` and compiled directly into the output binary, requiring no external dependencies except the C++ standard library and math library (`-lm`).
 
 ### Adding New Functions
 
 To add a new built-in function:
 
-1. **Add C implementation** in `codegen/codegen.go` (in the runtime header string)
-2. **Add function call handling** in `generateFunctionCall()`
-3. **Add pipe handling** in `generatePipe()` if it should work with pipes
-4. **Register type signature** in `types/analyzer.go` builtins map
+1. **Add C++ implementation** in appropriate header under `runtime/include/quark/`
+2. **Regenerate runtime.hpp** by running `build_runtime.ps1`
+3. **Add function call handling** in `generateFunctionCall()`
+4. **Add pipe handling** in `generatePipe()` if it should work with pipes
+5. **Register type signature** in `types/analyzer.go` builtins map
 
-Example C implementation pattern:
-```c
-QValue q_myfunc(QValue v) {
+Example C++ implementation pattern:
+```cpp
+inline QValue q_myfunc(QValue v) {
     // Type checking
-    if (v.type != VAL_STRING) return qv_string("");
+    if (v.type != QValue::VAL_STRING) return qv_string("");
 
     // Implementation
     char* result = do_something(v.data.string_val);
@@ -190,7 +241,7 @@ QValue q_myfunc(QValue v) {
 
 Planned but not yet implemented:
 
-- **List functions**: `map`, `filter`, `reduce`, `append`, `slice`
+- **Higher-order list functions**: `map`, `filter`, `reduce`, `sort`
 - **File I/O**: `read_file`, `write_file`, `exists`
 - **JSON**: `parse_json`, `to_json`
 - **Time**: `now`, `sleep`, `format_time`

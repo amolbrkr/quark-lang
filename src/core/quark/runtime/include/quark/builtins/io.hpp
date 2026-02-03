@@ -26,7 +26,7 @@ inline void print_qvalue(QValue v) {
             printf("null");
             break;
         case QValue::VAL_LIST:
-            printf("[list len=%d]", v.data.list_val.len);
+            printf("[list len=%zu]", v.data.list_val ? v.data.list_val->size() : 0);
             break;
         case QValue::VAL_FUNC:
             printf("<function>");

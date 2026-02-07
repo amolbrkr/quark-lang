@@ -21,8 +21,9 @@ This grammar specification includes proper precedence and associativity rules. I
 | `->` | "produces" / "maps to" | Function bodies, pattern results |
 | `:` | "has type" / "contains" | Type annotations, block containers, dict entries |
 | `\|` | "then" / "pipe to" | Data flow pipelines |
-| `?` | "might be null" | Optional types, safe navigation *(future)* |
-| `??` | "or else" | Null coalescing *(future)* |
+
+### Native tensor types
+Quark has native N-dimensional `tensor` types which leverages SIMD intstructions for fast data processing.
 
 ### Minimal Punctuation
 
@@ -30,14 +31,27 @@ Quark aims to be readable by minimizing punctuation:
 
 - Function calls use spaces: `print x` not `print(x)`
 - Parentheses only for grouping and nested calls
-- Indentation defines blocks (like Python)
+- Indentation defines blocks 
+
+### Error Handling Philosophy
+
+Quark uses explicit Result types with `ok`/`err` for all fallible operations and all Results must be explicitly handled via pattern matching or `unwrap`.
+
+### Struct + Impl blocks
+
+Quark provides simple syntax for `struct` data types and custom behaviour implementation using `impl` blocks.
 
 ## Lexical Elements (Terminals)
 
 ### Keywords (Reserved)
 
 ```
-use, module, struct, impl, in, and, or, if, elseif, else, for, while, when, fn, null, ok, err, try
+use, module, struct, impl, tensor
+in, and, or, not
+if, elseif, else, for, while, when
+fn, return
+ok, err, try, unwrap
+true, false, null
 ```
 
 ### Operators
@@ -49,9 +63,8 @@ use, module, struct, impl, in, and, or, if, elseif, else, for, while, when, fn, 
 ->                  (arrow: function body, pattern result)
 !                   (logical not)
 |                   (pipe)
-. , : .. @          (member access, comma, colon, range, at)
-?                   (optional type, safe navigation) [FUTURE]
-??                  (null coalescing) [FUTURE]
+. ,                 (member access, comma)
+:                   (type annotation, dict entry, block start)
 ```
 
 ### Delimiters
@@ -141,7 +154,7 @@ literal = 'Use \{x} for set notation'
 
 ## Slicing and Indexing
 
-Quark supports Python-style slicing for lists and strings.
+Quark supports Python-style slicing for lists, strings, and tensors.
 
 ```
 Accessor        ::= "." <ID>                                    // Member access
@@ -182,80 +195,10 @@ list[::-1]      // Reversed
 list[10:0:-1]   // Reverse slice from 10 down to 1
 ```
 
-### Slicing on Strings
-
-Same semantics as lists, operates on characters:
-
-```quark
-text = 'Hello, World!'
-text[0:5]       // 'Hello'
-text[7:]        // 'World!'
-text[-1]        // '!'
-text[::-1]      // '!dlroW ,olleH'
-```
-
-## Null Safety [FUTURE - NOT YET IMPLEMENTED]
-
-> **Note**: The following null safety features are planned but not yet implemented.
-
-### Optional Types
-
-Types that might be null are marked with `?`:
-
-```
-Type            ::= BaseType [ "?" ]
-```
-
-```quark
-struct User:
-    name: string
-    email: string?          // Might be null
-    age: int?               // Might be null
-
-fn find_user id: int -> User?    // Might return null
-```
-
-### Null Coalescing Operator `??`
-
-Returns left side if not null, otherwise right side:
-
-```quark
-name = user.name ?? 'Anonymous'
-port = config.port ?? 8080
-value = first ?? second ?? third ?? 'fallback'
-```
-
-### Safe Navigation Operator `?.`
-
-Accesses member only if receiver is not null, otherwise returns null:
-
-```quark
-name = user?.profile?.name
-name = user?.profile?.name ?? 'Anonymous'
-```
-
-### Safe Index Operator `?[]`
-
-Returns null if list is null or index is out of bounds:
-
-```quark
-first = items?[0]
-value = matrix?[row]?[col]
-```
-
-### Grammar Rules for Null Safety
-
-```
-Accessor        ::= ...
-                |   "?." <ID>                   // Safe member access [FUTURE]
-                |   "?[" Expression "]"         // Safe index [FUTURE]
-
-NullCoalesce    ::= Ternary { "??" Ternary }    // [FUTURE]
-```
 
 ## Error Handling with ok/err
 
-Quark uses explicit Result types for error handling, similar to Rust but with simpler syntax.
+Quark uses explicit Result types for error handling. All fallible operations must be explicitly handled.
 
 ### Result Values
 
@@ -269,7 +212,6 @@ ResultExpr      ::= "ok" Expression
 ### Examples
 
 ```quark
-// Function that returns a result
 fn divide a, b -> Result
     if b == 0:
         err 'Division by zero'
@@ -277,18 +219,10 @@ fn divide a, b -> Result
         ok a / b
 
 fn parse_int text -> Result
-    // ... parsing logic
     if valid:
         ok number
     else:
         err 'Invalid number: {text}'
-
-// Returning results
-fn load_config path -> Result
-    if !file_exists path:
-        err 'File not found: {path}'
-    else:
-        ok read_file path
 ```
 
 ### Pattern Matching on Results
@@ -301,27 +235,35 @@ result = divide 10, 2
 when result:
     ok value -> println 'Result: {value}'
     err msg -> println 'Error: {msg}'
-
-// With destructuring in functions
-fn process_data path ->
-    when load_config path:
-        ok config -> 
-            data = transform config
-            ok data
-        err msg -> 
-            err 'Failed to load: {msg}'
 ```
+
+### Unwrap Keyword
+
+The `unwrap` keyword extracts the value from a Result, with a required default for the error case:
+
+```
+UnwrapExpr      ::= "unwrap" Expression "," Expression
+```
+
+```quark
+// unwrap result, default_value
+value = unwrap divide 10, 2, 0          // Returns 5
+value = unwrap divide 10, 0, -1         // Returns -1 (division failed)
+
+user = unwrap find_user id, default_user
+port = unwrap parse_int port_str, 8080
+```
+
+The second argument is always required—this forces explicit handling of the error case. If you want to crash on error, use pattern matching and call a panic function explicitly.
 
 ### Try Statement
 
-The `try` statement provides a block-based way to handle errors:
+The `try` statement provides block-based error handling:
 
 ```
 TryStatement    ::= "try" ":" Block
                     "err" <ID> ":" Block
 ```
-
-### Examples
 
 ```quark
 try:
@@ -331,28 +273,19 @@ try:
 err e:
     println 'Operation failed: {e}'
     use_defaults
-
-// Nested error handling
-try:
-    try:
-        risky_operation
-    err inner:
-        fallback_operation
-err outer:
-    println 'Everything failed: {outer}'
 ```
 
 ### Propagating Errors
 
-Functions can propagate errors upward by returning the error:
+Functions propagate errors by returning them:
 
 ```quark
 fn full_pipeline path -> Result
     when load_file path:
-        err e -> err e              // Propagate error
+        err e -> err e
         ok content ->
             when parse content:
-                err e -> err e      // Propagate error
+                err e -> err e
                 ok data -> ok (transform data)
 ```
 
@@ -364,56 +297,8 @@ ResultType      ::= "Result" [ "[" Type "]" ]
 
 ```quark
 fn find_user id: int -> Result[User]
-    // Returns ok User or err string
-
 fn get_count -> Result[int]
-    // Returns ok int or err string
-```
-
-### Complete Error Handling Example
-
-```quark
-struct Config:
-    host: string
-    port: int
-    timeout: int = 30
-
-fn load_config path -> Result[Config]
-    if !file_exists path:
-        err 'Config file not found: {path}'
-    
-    content = read_file path
-    
-    when parse_json content:
-        err e -> err 'Invalid JSON: {e}'
-        ok data ->
-            if !has_key data, 'host':
-                err 'Missing required field: host'
-            elseif !has_key data, 'port':
-                err 'Missing required field: port'
-            else:
-                ok Config {
-                    host: data['host'],
-                    port: data['port'],
-                    timeout: data['timeout'] ?? 30
-                }
-
-fn connect_to_server config_path -> Result
-    when load_config config_path:
-        err e -> err e
-        ok config ->
-            println 'Connecting to {config.host}:{config.port}'
-            when establish_connection config.host, config.port:
-                err e -> err 'Connection failed: {e}'
-                ok conn -> ok conn
-
-// Usage
-try:
-    conn = connect_to_server 'config.json'
-    conn.send 'Hello'
-err e:
-    println 'Failed: {e}'
-    exit 1
+fn save_file path: string, data: string -> Result
 ```
 
 ## Function Definitions
@@ -424,7 +309,7 @@ Functions use `->` to separate parameters from body.
 FunctionDef     ::= "fn" <ID> SimpleFnDef
                 |   "fn" <ID> <NEWLINE> <INDENT> MultiLineFnDef
 
-SimpleFnDef     ::= SimpleParams "->" Expression
+SimpleFnDef     ::= TypedParams "->" Expression
 
 MultiLineFnDef  ::= { TypedParam "," <NEWLINE> }
                     [ TypedParam <NEWLINE> ]
@@ -432,7 +317,7 @@ MultiLineFnDef  ::= { TypedParam "," <NEWLINE> }
                     { Statement <NEWLINE> }
                     <DEDENT>
 
-SimpleParams    ::= { <ID> [ "," ] }
+TypedParams     ::= { TypedParam [ "," ] }
 
 TypedParam      ::= <ID> [ ":" Type ] [ "=" Expression ]
 ```
@@ -440,10 +325,15 @@ TypedParam      ::= <ID> [ ":" Type ] [ "=" Expression ]
 ### Examples
 
 ```quark
-// Single-line function
+// Single-line functions
 fn double x -> x * 2
 fn add x, y -> x + y
 fn greet name -> 'Hello, {name}!'
+
+// Single-line with type annotations
+fn add x: int, y: int -> x + y
+fn square n: float -> n * n
+fn format_user name: string, age: int -> 'Name: {name}, Age: {age}'
 
 // Multi-line function with types
 fn calculate
@@ -455,7 +345,7 @@ fn calculate
     result * z
 
 // Function returning result
-fn safe_divide a, b -> Result[float]
+fn safe_divide a: float, b: float -> Result[float]
     if b == 0:
         err 'Division by zero'
     else:
@@ -467,14 +357,15 @@ fn safe_divide a, b -> Result[float]
 Anonymous functions can be assigned to variables:
 
 ```
-AnonFunction    ::= "fn" SimpleParams "->" Expression
+AnonFunction    ::= "fn" TypedParams "->" Expression
 ```
 
 ### Examples
 
 ```quark
 double = fn x -> x * 2
-add = fn x, y -> x + y
+add = fn x: int, y: int -> x + y
+safe_get = fn list, idx, default -> unwrap list[idx], default
 ```
 
 ## Struct Definitions
@@ -504,7 +395,7 @@ struct Config:
 struct Person:
     name: string
     age: int
-    email: string?          // Optional field [FUTURE]
+    email: string
 ```
 
 ## Struct Literals
@@ -542,12 +433,12 @@ ImplDef         ::= "impl" <ID> ":" <NEWLINE> <INDENT>
 
 ```quark
 impl Point:
-    fn distance self, other -> float
+    fn distance self, other: Point -> float
         dx = self.x - other.x
         dy = self.y - other.y
         sqrt (dx*dx + dy*dy)
     
-    fn scale self, factor -> Point
+    fn scale self, factor: float -> Point
         Point { x: self.x * factor, y: self.y * factor }
     
     fn origin -> Point
@@ -570,15 +461,99 @@ UseStatement    ::= "use" <ID>
 
 ```quark
 module math:
-    fn square x -> x * x
-    fn cube x -> x * x * x
+    fn square x: float -> x * x
+    fn cube x: float -> x * x * x
     
-    fn clamp x, min_val, max_val ->
-        max min_val, (min max_val, x)
+    fn clamp x: float, min_val: float, max_val: float -> float
+        if x < min_val:
+            min_val
+        elseif x > max_val:
+            max_val
+        else:
+            x
 
 use math
 
-result = square 5
+result = square 5.0
+```
+
+## Tensor Type [FUTURE - NOT YET IMPLEMENTED]
+
+> **Note**: Tensor types are planned for SIMD/GPU acceleration but not yet implemented.
+
+### Tensor Declaration
+
+```
+TensorDef       ::= "tensor" "[" Expression { "," Expression } "]"
+                |   "tensor" "[" TensorLiteral "]"
+
+TensorLiteral   ::= Expression { "," Expression } { ";" Expression { "," Expression } }
+```
+
+### 1D Tensor (Vector)
+
+Use `tensor` keyword to create 1D tensors:
+
+```quark
+// 1D tensor (vector)
+vec = tensor [1.0, 2.0, 3.0, 4.0]
+
+// From range
+indices = tensor (range 100)
+
+// Operations are SIMD-accelerated
+result = vec * 2.0          // Element-wise multiply
+dot_prod = dot vec1, vec2   // Dot product
+```
+
+### 2D Tensor (Matrix)
+
+Use `;` to separate rows (MATLAB-style):
+
+```quark
+// 2D tensor (matrix) - semicolon separates rows
+matrix = tensor [1, 2, 3; 4, 5, 6; 7, 8, 9]
+
+// Identity matrix
+eye = tensor [1, 0, 0; 0, 1, 0; 0, 0, 1]
+
+// Matrix operations
+result = matrix @ other     // Matrix multiplication
+transposed = transpose matrix
+```
+
+### ND Tensor
+
+Higher-dimensional tensors via constructor functions:
+
+```quark
+// 3D tensor
+cube = zeros 10, 10, 10
+cube = ones 5, 5, 5
+
+// From nested structure
+t3d = tensor_3d [
+    [[1, 2], [3, 4]],
+    [[5, 6], [7, 8]]
+]
+```
+
+### Tensor vs List
+
+| Feature | List | Tensor |
+|---------|------|--------|
+| Element types | Mixed (any QValue) | Homogeneous (float64) |
+| Memory layout | Pointer array | Contiguous buffer |
+| Operations | General purpose | SIMD-accelerated |
+| Indexing | `list[i]` | `tensor[i]` or `tensor[i, j]` |
+
+```quark
+// List - general purpose, mixed types
+items = [1, 'hello', true, [1, 2, 3]]
+
+// Tensor - numeric, SIMD operations
+data = tensor [1.0, 2.0, 3.0, 4.0]
+result = data * 2.0 + 1.0   // Vectorized
 ```
 
 ## Expressions (with Precedence)
@@ -591,11 +566,9 @@ Expression      ::= Assignment
 Assignment      ::= ( <ID> | MemberAccess ) "=" Assignment
                 |   PipeExpr
 
-PipeExpr        ::= NullCoalesce { "|" PipeTarget }
+PipeExpr        ::= Ternary { "|" PipeTarget }
 PipeTarget      ::= <ID> [ Arguments ]
                 |   Access [ Arguments ]
-
-NullCoalesce    ::= Ternary { "??" Ternary }       // [FUTURE]
 
 Ternary         ::= LogicalOr [ "if" LogicalOr "else" Ternary ]
 
@@ -605,9 +578,7 @@ LogicalAnd      ::= Equality { "and" Equality }
 
 Equality        ::= Comparison { ( "==" | "!=" ) Comparison }
 
-Comparison      ::= Range { ( "<" | "<=" | ">" | ">=" ) Range }
-
-Range           ::= Additive [ ".." Additive ]
+Comparison      ::= Additive { ( "<" | "<=" | ">" | ">=" ) Additive }
 
 Additive        ::= Multiplicative { ( "+" | "-" ) Multiplicative }
 
@@ -615,17 +586,15 @@ Multiplicative  ::= Exponent { ( "*" | "/" | "%" ) Exponent }
 
 Exponent        ::= Unary [ "**" Exponent ]
 
-Unary           ::= ( "!" | "-" ) Unary
+Unary           ::= ( "!" | "-" ) Unary          // NO whitespace between operator and operand
                 |   Application
 
 Application     ::= Access [ Arguments ]
 
 Access          ::= Primary { Accessor }
 
-Accessor        ::= "." <ID>                                    // Member access  
-                |   "?." <ID>                                   // Safe member access [FUTURE]
+Accessor        ::= "." <ID>                                    // Member access
                 |   "[" Expression "]"                          // Index
-                |   "?[" Expression "]"                         // Safe index [FUTURE]
                 |   "[" [ Expression ] ":" [ Expression ] "]"   // Slice
                 |   "[" [ Expression ] ":" [ Expression ] ":" [ Expression ] "]"  // Slice with step
 
@@ -633,10 +602,12 @@ Primary         ::= <ID>
                 |   Literal
                 |   AnonFunction
                 |   ResultExpr
+                |   UnwrapExpr
                 |   "(" Expression ")"
                 |   ListLiteral
                 |   DictLiteral
                 |   StructLiteral
+                |   TensorLiteral                               // [FUTURE]
 
 Literal         ::= <INT>
                 |   <FLOAT>
@@ -647,6 +618,8 @@ Literal         ::= <INT>
 ResultExpr      ::= "ok" Expression
                 |   "err" Expression
 
+UnwrapExpr      ::= "unwrap" Expression "," Expression
+
 ListLiteral     ::= "[" [ Expression { "," Expression } ] "]"
 
 DictLiteral     ::= "{" [ DictPair { "," DictPair } ] "}"
@@ -654,7 +627,7 @@ DictPair        ::= Expression ":" Expression
 
 Arguments       ::= Arg { "," Arg }
 Arg             ::= Expression
-                |   <ID> ":" Expression
+                |   <ID> ":" Expression                         // Named argument
 ```
 
 ## Control Flow
@@ -691,7 +664,6 @@ Pattern         ::= "ok" <ID>                     // Match ok result
                 |   "err" <ID>                    // Match err result
                 |   Expression { "or" Expression }
                 |   "_"
-                |   "null"
 ```
 
 ### Examples
@@ -721,8 +693,11 @@ ForLoop         ::= "for" <ID> "in" Expression ":" Block
 ### Examples
 
 ```quark
-for i in 0..10:
+for i in range 10:
     println i
+
+for i in range 0, 100, 5:
+    println 'Step: {i}'
 
 for item in items:
     process item
@@ -778,10 +753,11 @@ IndentedBlock   ::= <NEWLINE> <INDENT>
 ## Type Annotations
 
 ```
-Type            ::= BaseType [ "?" ]              // ? is [FUTURE]
-BaseType        ::= "int" | "float" | "string" | "bool" 
-                |   "list" "[" Type "]"
-                |   "dict" "[" Type "," Type "]"
+Type            ::= BaseType
+BaseType        ::= "int" | "float" | "string" | "bool"
+                |   "list" [ "[" Type "]" ]
+                |   "dict" [ "[" Type "," Type "]" ]
+                |   "tensor" [ "[" Type "]" ]           // [FUTURE]
                 |   "Result" [ "[" Type "]" ]
                 |   <ID>
 
@@ -792,19 +768,17 @@ TypeAnnotation  ::= <ID> ":" Type
 
 | Precedence | Operators | Associativity | Rule |
 |------------|-----------|---------------|------|
-| 16 | `.` `?.` `[]` `?[]` | Left | Access |
-| 15 | (space) | Left | Application |
-| 14 | `**` | Right | Exponent |
-| 13 | `!` `-` (unary) | Right | Unary |
-| 12 | `*` `/` `%` | Left | Multiplicative |
-| 11 | `+` `-` | Left | Additive |
-| 10 | `..` | None | Range |
-| 9 | `<` `<=` `>` `>=` | Left | Comparison |
-| 8 | `==` `!=` | Left | Equality |
-| 7 | `and` | Left | LogicalAnd |
-| 6 | `or` | Left | LogicalOr |
-| 5 | `if-else` | Right | Ternary |
-| 4 | `??` | Left | NullCoalesce [FUTURE] |
+| 14 | `.` `[]` | Left | Access |
+| 13 | (space) | Left | Application |
+| 12 | `**` | Right | Exponent |
+| 11 | `!` `-` (unary) | Right | Unary |
+| 10 | `*` `/` `%` | Left | Multiplicative |
+| 9 | `+` `-` | Left | Additive |
+| 8 | `<` `<=` `>` `>=` | Left | Comparison |
+| 7 | `==` `!=` | Left | Equality |
+| 6 | `and` | Left | LogicalAnd |
+| 5 | `or` | Left | LogicalOr |
+| 4 | `if-else` | Right | Ternary |
 | 3 | `\|` | Left | Pipe |
 | 2 | `->` | Right | Arrow |
 | 1 | `=` | Right | Assignment |
@@ -832,6 +806,40 @@ process (transform (load path))
 // Complex expressions - parens required
 calculate (a + b), (c * d)
 ```
+
+### Unary Operators and Whitespace
+
+**CRITICAL RULE**: Unary operators (`-` and `!`) MUST NOT have whitespace between the operator and operand.
+
+```quark
+// Unary negation (no space)
+x = -5              // Negative five
+y = !flag           // Logical not
+
+// Function call with unary argument
+f -5                // f(-5) - function called with negative five
+process !ready      // process(!ready)
+
+// Binary subtraction (space on both sides)
+a - b               // a minus b (binary subtraction)
+x - 2               // x minus 2 (binary subtraction)
+
+// Function call vs subtraction disambiguation
+add a, -b           // add(a, -b) - second arg is negative b
+add a, b - c        // add(a, b-c) - second arg is b minus c
+fact n - 1          // fact(n-1) - argument is n minus 1
+fact n -1           // INVALID - would be fact(n, -1) but mixing space/no-space
+```
+
+**Lexer Rule**: The lexer disambiguates based on whitespace:
+- `-value` (no space) → Unary minus token
+- `a - b` (spaces) → Binary minus operator
+- `a -b` (space before, none after) → Binary minus operator followed by unary minus (INVALID - parse error expected)
+
+**Parser Behavior**:
+- In expression context, `-` with no following whitespace is always unary
+- In expression context, `-` with preceding whitespace is always binary
+- The parser enforces this during expression parsing to avoid ambiguity
 
 ### Pipe Operator
 
@@ -867,14 +875,14 @@ create_user 'alice', admin: true, active: true
 ### Data Processing with Error Handling
 
 ```quark
-fn load_csv path -> Result[list]
+fn load_csv path: string -> Result[list]
     if !file_exists path:
         err 'File not found: {path}'
     else:
         content = read_file path
         ok parse_csv content
 
-fn process_data path ->
+fn process_data path: string -> list
     when load_csv path:
         err e -> 
             println 'Error: {e}'
@@ -893,10 +901,24 @@ err e:
     println 'Pipeline failed: {e}'
 ```
 
+### Using Unwrap
+
+```quark
+fn get_config_value key: string, default: string -> string
+    config = unwrap load_config 'app.json', {}
+    unwrap config[key], default
+
+// Chained unwraps
+fn process_user_data user_id: int -> string
+    user = unwrap find_user user_id, default_user
+    profile = unwrap user.profile, default_profile
+    unwrap profile.display_name, 'Anonymous'
+```
+
 ### Data Slicing
 
 ```quark
-fn analyze_recent data, count ->
+fn analyze_recent data: list, count: int -> dict
     recent = data[-count:]
     
     avg = (sum recent) / (len recent)
@@ -904,7 +926,7 @@ fn analyze_recent data, count ->
     
     { average: avg, peak: peak }
 
-fn get_page items, page, page_size ->
+fn get_page items: list, page: int, page_size: int -> list
     start = page * page_size
     items[start:start + page_size]
 ```
@@ -912,14 +934,14 @@ fn get_page items, page, page_size ->
 ### String Processing
 
 ```quark
-fn format_user user ->
+fn format_user user: User -> string
     name = user.name
     age = user.age
     status = 'active' if user.active else 'inactive'
     
     'Name: {name}, Age: {age}, Status: {status}'
 
-fn truncate text, max_len, suffix = '...' ->
+fn truncate text: string, max_len: int, suffix: string = '...' -> string
     if (len text) <= max_len:
         text
     else:
@@ -934,11 +956,13 @@ struct Rectangle:
     height: float
 
 impl Rectangle:
-    fn area self -> self.width * self.height
+    fn area self -> float
+        self.width * self.height
     
-    fn perimeter self -> 2 * (self.width + self.height)
+    fn perimeter self -> float
+        2 * (self.width + self.height)
     
-    fn scale self, factor -> Result[Rectangle]
+    fn scale self, factor: float -> Result[Rectangle]
         if factor <= 0:
             err 'Scale factor must be positive'
         else:
@@ -953,13 +977,38 @@ println (rect.area)
 when rect.scale 2.0:
     ok scaled -> println 'New area: {scaled.area}'
     err msg -> println 'Error: {msg}'
+
+// Using unwrap with default
+scaled = unwrap rect.scale 2.0, rect   // Returns scaled or original on error
+```
+
+### Tensor Operations [FUTURE]
+
+```quark
+// Vector operations
+v1 = tensor [1.0, 2.0, 3.0]
+v2 = tensor [4.0, 5.0, 6.0]
+v3 = v1 + v2                    // [5.0, 7.0, 9.0]
+v4 = v1 * 2.0                   // [2.0, 4.0, 6.0]
+d = dot v1, v2                  // 32.0
+
+// Matrix operations
+m1 = tensor [1, 2; 3, 4]
+m2 = tensor [5, 6; 7, 8]
+m3 = m1 @ m2                    // Matrix multiply
+m4 = transpose m1
+
+// Data science workflow
+data = tensor (load_floats 'data.bin')
+normalized = (data - (mean data)) / (std data)
+result = normalized @ weights + bias
 ```
 
 ### Module with Error Handling
 
 ```quark
 module io:
-    fn read_json path -> Result[dict]
+    fn read_json path: string -> Result[dict]
         if !file_exists path:
             err 'File not found: {path}'
         
@@ -969,7 +1018,7 @@ module io:
             err e -> err 'Invalid JSON: {e}'
             ok data -> ok data
     
-    fn write_json path, data -> Result
+    fn write_json path: string, data: dict -> Result
         content = to_json data
         when write_file path, content:
             err e -> err 'Write failed: {e}'
@@ -989,15 +1038,21 @@ err e:
 
 | Feature | Status |
 |---------|--------|
-| Functions (`fn`, `->`) | ✓ Implemented |
-| Structs and Impl | ✓ Implemented |
-| Modules | ✓ Implemented |
-| Pattern Matching (`when`) | ✓ Implemented |
+| Basic expressions (arithmetic, comparison) | ✓ Implemented |
+| Variables and assignment | ✓ Implemented |
+| If/elseif/else | ✓ Implemented |
+| While loops | ✓ Implemented |
+| For loops | ✓ Implemented |
+| Functions (`fn`, `->`) | Partially implemented (updating syntax) |
+| Pattern matching (`when`) | Partially implemented (updating syntax) |
 | Pipes (`\|`) | ✓ Implemented |
-| String Interpolation | Planned |
-| Slicing (`[:]`) | Planned |
-| Error Handling (`ok`/`err`/`try`) | Planned |
-| Null Safety (`?`, `??`, `?.`, `?[]`) | Future |
+| Modules | ✓ Implemented |
+| Structs | Not implemented |
+| Impl blocks | Not implemented |
+| String interpolation | Not implemented |
+| Slicing (`[:]`) | Not implemented |
+| Error handling (`ok`/`err`/`try`/`unwrap`) | Not implemented |
+| Tensor type | Future |
 
 ## Notes on Implementation
 
@@ -1006,9 +1061,13 @@ err e:
 3. **Struct vs Dict**: `Name {` starts struct literal, bare `{` starts dict
 4. **String Interpolation**: Lexer scans for `{` within strings to switch to expression mode
 5. **Result Type**: `ok` and `err` are keywords that wrap values into a tagged union
-6. **Error Recovery**: Helpful messages for:
+6. **Unwrap**: Always requires a default value—no implicit panicking
+7. **Range Function**: `range` is a builtin function, not an operator
+8. **Tensor Literals**: Use `;` as row separator inside `tensor [...]`
+9. **Error Recovery**: Helpful messages for:
    - Missing `->` in function definitions
    - Mismatched indentation
    - Ambiguous nested calls (suggest parens)
    - Unclosed string interpolation braces
-7. **Precedence Climbing**: Use table above for expression parsing
+   - Missing default in `unwrap`
+10. **Precedence Climbing**: Use table above for expression parsing

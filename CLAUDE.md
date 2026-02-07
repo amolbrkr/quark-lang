@@ -147,6 +147,10 @@ data | transform | filter | save
 - Function calls: `print x` (parentheses optional)
 - Nested calls require parens: `outer (inner x)`
 - Arithmetic binds tighter: `fact n - 1` parses as `fact(n-1)`
+- **Unary operators have no whitespace**: `-5` is negative five; `a - b` is subtraction; `a -b` is invalid
+  - `f -5` → function call with negative argument
+  - `a - b` → binary subtraction
+  - Unary `-` and `!` must not have whitespace between operator and operand
 
 ### Symbol Meanings
 
@@ -157,8 +161,6 @@ Quark uses punctuation intentionally to convey semantic meaning:
 | `->` | "produces" / "maps to" | Function bodies, pattern results |
 | `:` | "has type" / "contains" | Type annotations, block containers, dict entries |
 | `\|` | "then" / "pipe to" | Data flow pipelines |
-| `?` | "might be null" | Optional types (future) |
-| `??` | "or else" | Null coalescing (future) |
 
 ## Type System
 
@@ -172,6 +174,7 @@ Quark uses punctuation intentionally to convey semantic meaning:
 | Boolean | `true`, `false` | `bool` |
 | Null | `null` | - |
 | List | `[1, 2, 3]` | `std::vector<QValue>*` |
+| Tensor | `tensor [1, 2, 3]` | contiguous buffer (future) |
 | Function | `fn x -> x * 2` | function pointer |
 | Result | `ok value` or `err msg` | tagged union (planned) |
 | Struct | `Point { x: 1, y: 2 }` | struct instance (planned) |
@@ -212,24 +215,24 @@ z = x + y       // z: float (int promoted)
 
 | Precedence | Operators | Associativity | Rule |
 |------------|-----------|---------------|------|
-| 16 | `.` `?.` `[]` `?[]` | Left | Access |
-| 15 | (space) | Left | Application |
-| 14 | `**` | Right | Exponent |
-| 13 | `!` `-` (unary) | Right | Unary |
-| 12 | `*` `/` `%` | Left | Multiplicative |
-| 11 | `+` `-` | Left | Additive |
-| 10 | `..` | None | Range |
-| 9 | `<` `<=` `>` `>=` | Left | Comparison |
-| 8 | `==` `!=` | Left | Equality |
-| 7 | `and` | Left | LogicalAnd |
-| 6 | `or` | Left | LogicalOr |
-| 5 | `if-else` | Right | Ternary |
-| 4 | `??` | Left | NullCoalesce (future) |
+| 14 | `.` `[]` | Left | Access |
+| 13 | (space) | Left | Application |
+| 12 | `**` | Right | Exponent |
+| 11 | `!` `-` (unary) | Right | Unary |
+| 10 | `*` `/` `%` | Left | Multiplicative |
+| 9 | `+` `-` | Left | Additive |
+| 8 | `<` `<=` `>` `>=` | Left | Comparison |
+| 7 | `==` `!=` | Left | Equality |
+| 6 | `and` | Left | LogicalAnd |
+| 5 | `or` | Left | LogicalOr |
+| 4 | `if-else` | Right | Ternary |
 | 3 | `\|` | Left | Pipe |
 | 2 | `->` | Right | Arrow |
 | 1 | `=` | Right | Assignment |
 
 **Note:** Bitwise operations (`&`, `|`, `^`, `~`, `<<`, `>>`) are NOT supported. Quark is a high-level language focused on readability over low-level bit manipulation.
+
+**Note:** Ranges use the `range()` builtin function, not a `..` operator.
 
 ## Module System
 
@@ -286,7 +289,7 @@ struct Config:
 struct Person:
     name: string
     age: int
-    email: string?    // Optional field (future)
+    email: string
 ```
 
 ### Struct Literals
@@ -400,6 +403,24 @@ fn full_pipeline path -> Result
                 ok data -> ok (transform data)
 ```
 
+### Unwrap Keyword
+
+The `unwrap` keyword extracts values from Results with a required default for the error case:
+
+```quark
+// unwrap result, default_value
+value = unwrap divide 10, 2, 0          // Returns 5
+value = unwrap divide 10, 0, -1         // Returns -1 (division failed)
+
+user = unwrap find_user id, default_user
+port = unwrap parse_int port_str, 8080
+
+// Chained unwraps
+name = unwrap (unwrap user.profile, default_profile).name, 'Anonymous'
+```
+
+The default argument is **always required** - this forces explicit handling of error cases. If you want to crash on error, use pattern matching and call a panic function explicitly.
+
 ## Standard Library
 
 See [STDLIB.md](STDLIB.md) for complete documentation.
@@ -411,6 +432,7 @@ Built-in functions are implemented in the C runtime (in `codegen/codegen.go`) fo
 - `len` - Length of strings/lists
 - `input` - Read line from stdin
 - `str`, `int`, `float`, `bool` - Type conversion
+- `range` - Generate integer ranges: `range 10`, `range 1, 100`, `range 0, 100, 5`
 
 ### Math Functions
 - `abs`, `min`, `max` - Basic math
@@ -420,6 +442,44 @@ Built-in functions are implemented in the C runtime (in `codegen/codegen.go`) fo
 - `upper`, `lower`, `trim` - Case and whitespace
 - `contains`, `startswith`, `endswith` - Searching
 - `replace`, `concat` - Manipulation
+
+## Tensor Type
+
+**Status:** Planned (per grammar.md) - Future feature for SIMD/GPU acceleration
+
+Quark will support native N-dimensional `tensor` types optimized for numerical computing with SIMD instructions.
+
+### Tensor Literals
+
+```quark
+// 1D tensor (vector)
+vec = tensor [1.0, 2.0, 3.0, 4.0]
+
+// 2D tensor (matrix) - semicolon separates rows
+matrix = tensor [1, 2, 3; 4, 5, 6; 7, 8, 9]
+eye = tensor [1, 0, 0; 0, 1, 0; 0, 0, 1]
+
+// Higher dimensions via constructor functions
+cube = zeros 10, 10, 10
+```
+
+### Tensor vs List
+
+| Feature | List | Tensor |
+|---------|------|--------|
+| Element types | Mixed (any QValue) | Homogeneous (float64) |
+| Memory layout | Pointer array | Contiguous buffer |
+| Operations | General purpose | SIMD-accelerated |
+| Use case | General data structures | Numerical computation |
+
+```quark
+// List - general purpose, mixed types
+items = [1, 'hello', true, [1, 2, 3]]
+
+// Tensor - numeric, SIMD operations
+data = tensor [1.0, 2.0, 3.0, 4.0]
+result = data * 2.0 + 1.0   // Vectorized operations
+```
 
 ## Semantic Analyzer
 
@@ -465,6 +525,7 @@ Module {
 | `upper 'hi'` | `q_upper(qv_string("hi"))` |
 | `ok value` | `qv_ok(value)` (planned) |
 | `err msg` | `qv_err(msg)` (planned) |
+| `unwrap result, default` | `q_unwrap(result, default)` (planned) |
 
 ### Runtime Functions
 
@@ -533,6 +594,14 @@ QValue q_startswith(QValue str, QValue prefix);
 QValue q_endswith(QValue str, QValue suffix);
 QValue q_replace(QValue str, QValue old, QValue new_str);
 QValue q_concat(QValue a, QValue b);
+
+// Range
+QValue q_range(QValue end);                          // range(10)
+QValue q_range(QValue start, QValue end);            // range(1, 100)
+QValue q_range(QValue start, QValue end, QValue step); // range(0, 100, 5)
+
+// Error handling (planned)
+QValue q_unwrap(QValue result, QValue default_val);
 ```
 
 ## Language Features
@@ -566,7 +635,7 @@ when value:
     _ -> 'other'
 
 // Loops
-for i in 0..10:
+for i in range 10:
     println i
 
 while x > 0:
@@ -582,7 +651,6 @@ result = a if condition else b
 a + b, a - b, a * b, a / b, a % b, a ** b
 a == b, a != b, a < b, a > b, a <= b, a >= b
 a and b, a or b, !a
-a..b
 
 // Modules
 module mymodule:
@@ -595,14 +663,14 @@ helper 5 | println
 ### Planned (Per grammar.md)
 
 - **Structs and Impl Blocks** - Define data structures with methods
-- **Error Handling** - `ok`, `err`, `try` statements
+- **Error Handling** - `ok`, `err`, `try`, `unwrap` statements
 - **String Interpolation** - `'Hello, {name}!'`
 - **Array Slicing** - `arr[0:5]`, `arr[::2]`, `arr[::-1]`
 - **Type Annotations** - `fn add x: int, y: int -> int`
+- **Tensor Type** - SIMD-accelerated N-dimensional arrays
 
 ### Future Features
 
-- **Null Safety** - `?`, `??`, `?.`, `?[]` operators
 - **Boehm GC Integration**
 - **Multi-file Module Imports**
 
@@ -624,14 +692,14 @@ fact 10 | println
 ```quark
 fn fib n -> n if n <= 1 else fib (n - 1) + fib (n - 2)
 
-for i in 0..10:
+for i in range 10:
     fib i | println
 ```
 
 ### FizzBuzz
 
 ```quark
-for i in 1..101:
+for i in range 1, 101:
     if i % 15 == 0:
         println 'FizzBuzz'
     elseif i % 3 == 0:
@@ -683,6 +751,9 @@ println (rect.area)
 when rect.scale 2.0:
     ok scaled -> println 'New area: {scaled.area}'
     err msg -> println 'Error: {msg}'
+
+// Using unwrap with default
+scaled = unwrap rect.scale 2.0, rect   // Returns scaled or original on error
 ```
 
 ### Error Handling (Planned)
@@ -712,6 +783,10 @@ try:
     save_csv results, 'output.csv'
 err e:
     println 'Pipeline failed: {e}'
+
+// Using unwrap with defaults
+data = unwrap load_csv 'data.csv', []
+results = data | map transform | filter valid
 ```
 
 ## Conventions
@@ -723,11 +798,14 @@ err e:
   - `x: int` (x has type int)
   - `if condition:` (if contains block)
   - `struct Point:` (struct contains fields)
+- **Unary operators have no whitespace** - `-5` (negative), `!flag` (not), `a - b` (subtraction)
 - **Use `elseif` not `elif`** - More English-like
 - **Single-quoted strings** - `'hello'` not `"hello"`
 - **Space for function calls** - `print x` not `print(x)`
 - **Pipe for chaining** - `x | f | g` not nested calls
 - **Underscore for wildcard** - `_` in pattern matching
+- **Ranges use `range()` function** - `range 10`, `range 1, 100`, not `0..10`
+- **Unwrap requires default** - `unwrap result, default` forces explicit error handling
 - **Python-style indentation** - Blocks defined by indentation
 - **No bitwise operations** - High-level language focused on readability
 
@@ -753,19 +831,36 @@ err e:
    - Impl blocks attach methods to structs
    - Simpler than class-based OOP, easier to implement
 
-4. **Error Handling**
-   - New keywords: `ok`, `err`, `try`
+4. **Error Handling with ok/err/unwrap**
+   - New keywords: `ok`, `err`, `try`, `unwrap`
    - Result types for explicit error handling
    - Pattern matching on results
+   - `unwrap` requires a default value (no implicit panicking)
 
-5. **Null Safety (Future)**
-   - `?` for optional types and safe navigation `?.`
-   - `??` for null coalescing
-   - `?[]` for safe indexing
+5. **Range Function (Not Operator)**
+   - Removed `..` operator
+   - Use `range()` builtin: `range 10`, `range 1, 100`, `range 0, 100, 5`
 
-6. **No Bitwise Operations**
-   - Removed: `&`, `|`, `^`, `~`, `<<`, `>>`
-   - Quark is high-level, not focused on bit manipulation
+6. **Tensor Type (Future)**
+   - Native N-dimensional arrays for SIMD/GPU acceleration
+   - Literal syntax: `tensor [1, 2, 3]` (1D), `tensor [1, 2; 3, 4]` (2D)
+   - Homogeneous float64 data, contiguous memory layout
+
+7. **Typed Parameters in One-Line Functions**
+   - Single-line functions support type annotations: `fn add x: int, y: int -> x + y`
+
+8. **Unary Operator Whitespace Rule**
+   - Unary `-` and `!` must NOT have whitespace before operand
+   - `-5` is negative five, `a - b` is subtraction, `a -b` is invalid
+   - This resolves ambiguity between function calls and arithmetic
+
+9. **No Null Safety Operators**
+   - Removed `?`, `??`, `?.`, `?[]` operators
+   - Error handling via explicit Result types instead
+
+10. **No Bitwise Operations**
+    - Removed: `&`, `|`, `^`, `~`, `<<`, `>>`
+    - Quark is high-level, not focused on bit manipulation
 
 ## Development
 
@@ -840,6 +935,6 @@ cd runtime && pwsh build_runtime.ps1
 
 ### Known Limitations
 
-- **Negative number arguments**: `func -5` is parsed as `func - 5` (binary subtraction). Use `x = 0 - 5; func x` as workaround.
+- **Unary operator whitespace**: Unary operators must have no whitespace. `f -5` (function call with negative argument) is valid, but `a -b` (space before, no space after) is a parse error. Use `a - b` for subtraction.
 - **Garbage collection**: Currently no GC - strings are strdup'd and list memory must be manually freed with `q_list_free()`.
 - **List syntax**: List literals `[1, 2, 3]` not yet parsed; use `qv_list()` and `q_push()` in generated code.

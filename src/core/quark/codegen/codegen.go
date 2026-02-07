@@ -22,14 +22,18 @@ type Generator struct {
 	lambdaCounter int
 	inFunction    bool
 	currentFunc   string
+	declaredVars  map[string]bool    // Tracks declared variables to avoid redeclaration
+	scopeStack    []map[string]bool  // Stack of variable scopes for nested blocks
 }
 
 func New() *Generator {
 	return &Generator{
-		functions:   make([]string, 0),
-		lambdas:     make([]*ast.TreeNode, 0),
-		lambdaNames: make(map[*ast.TreeNode]string),
-		tempCounter: 0,
+		functions:    make([]string, 0),
+		lambdas:      make([]*ast.TreeNode, 0),
+		lambdaNames:  make(map[*ast.TreeNode]string),
+		tempCounter:  0,
+		declaredVars: make(map[string]bool),
+		scopeStack:   make([]map[string]bool, 0),
 	}
 }
 
@@ -55,6 +59,20 @@ func (g *Generator) newTemp() string {
 func (g *Generator) newLambda() string {
 	g.lambdaCounter++
 	return fmt.Sprintf("_lambda%d", g.lambdaCounter)
+}
+
+// pushScope saves current variable scope and creates a new one
+func (g *Generator) pushScope() {
+	g.scopeStack = append(g.scopeStack, g.declaredVars)
+	g.declaredVars = make(map[string]bool)
+}
+
+// popScope restores the previous variable scope
+func (g *Generator) popScope() {
+	if len(g.scopeStack) > 0 {
+		g.declaredVars = g.scopeStack[len(g.scopeStack)-1]
+		g.scopeStack = g.scopeStack[:len(g.scopeStack)-1]
+	}
 }
 
 // Generate produces C++ code from the AST
@@ -150,11 +168,14 @@ func (g *Generator) generateFunction(node *ast.TreeNode) {
 	funcName := nameNode.TokenLiteral()
 	g.currentFunc = funcName
 	g.inFunction = true
+	g.pushScope() // Create new scope for function
 
-	// Build parameter list
+	// Build parameter list and mark parameters as declared
 	params := make([]string, 0)
 	for _, param := range argsNode.Children {
-		params = append(params, fmt.Sprintf("QValue %s", param.TokenLiteral()))
+		paramName := param.TokenLiteral()
+		params = append(params, fmt.Sprintf("QValue %s", paramName))
+		g.declaredVars[paramName] = true // Parameters are already declared
 	}
 
 	g.emit("QValue q_%s(%s) {\n", funcName, strings.Join(params, ", "))
@@ -167,6 +188,7 @@ func (g *Generator) generateFunction(node *ast.TreeNode) {
 	g.indentLevel--
 	g.emit("}\n\n")
 
+	g.popScope() // Restore previous scope
 	g.inFunction = false
 }
 
@@ -336,7 +358,14 @@ func (g *Generator) generateOperator(node *ast.TreeNode) string {
 	case token.EQUALS:
 		// Assignment - emit as statement and return the value
 		varName := node.Children[0].TokenLiteral()
-		g.emitLine("QValue %s = %s;", varName, right)
+		if g.declaredVars[varName] {
+			// Variable already declared, just assign
+			g.emitLine("%s = %s;", varName, right)
+		} else {
+			// First declaration
+			g.emitLine("QValue %s = %s;", varName, right)
+			g.declaredVars[varName] = true
+		}
 		return varName
 	case token.DOTDOT:
 		// Range - used in for loops, not directly as a value
@@ -795,7 +824,7 @@ func (g *Generator) generateFor(node *ast.TreeNode) string {
 
 	varName := varNode.TokenLiteral()
 
-	// Handle range expression
+	// Handle range expression (0..10)
 	if rangeNode.NodeType == ast.OperatorNode && rangeNode.Token != nil && rangeNode.Token.Type == token.DOTDOT {
 		startExpr := g.generateExpr(rangeNode.Children[0])
 		endExpr := g.generateExpr(rangeNode.Children[1])
@@ -807,6 +836,15 @@ func (g *Generator) generateFor(node *ast.TreeNode) string {
 		g.emitLine("long long %s = %s.data.int_val;", endTemp, endExpr)
 		g.emitLine("for (long long _i = %s; _i < %s; _i++) {", startTemp, endTemp)
 		g.indentLevel++
+
+		// The loop variable is declared inside the C for loop
+		// Copy parent scope and add loop variable
+		oldDeclaredVars := g.declaredVars
+		g.declaredVars = make(map[string]bool)
+		for k, v := range oldDeclaredVars {
+			g.declaredVars[k] = v
+		}
+		g.declaredVars[varName] = true // Loop variable is declared
 		g.emitLine("QValue %s = qv_int(_i);", varName)
 
 		// Generate body - emit each statement
@@ -819,6 +857,46 @@ func (g *Generator) generateFor(node *ast.TreeNode) string {
 			expr := g.generateExpr(bodyNode)
 			g.emitLine("%s;", expr)
 		}
+
+		// Restore parent scope
+		g.declaredVars = oldDeclaredVars
+
+		g.indentLevel--
+		g.emitLine("}")
+	} else {
+		// Handle list iteration (for item in mylist)
+		listExpr := g.generateExpr(rangeNode)
+		listTemp := g.newTemp()
+		lenTemp := g.newTemp()
+		idxTemp := g.newTemp()
+
+		g.emitLine("QValue %s = %s;", listTemp, listExpr)
+		g.emitLine("long long %s = (long long)%s.data.list_val->size();", lenTemp, listTemp)
+		g.emitLine("for (long long %s = 0; %s < %s; %s++) {", idxTemp, idxTemp, lenTemp, idxTemp)
+		g.indentLevel++
+
+		// Copy parent scope and add loop variable
+		oldDeclaredVars := g.declaredVars
+		g.declaredVars = make(map[string]bool)
+		for k, v := range oldDeclaredVars {
+			g.declaredVars[k] = v
+		}
+		g.declaredVars[varName] = true // Loop variable is declared
+		g.emitLine("QValue %s = q_get(%s, qv_int(%s));", varName, listTemp, idxTemp)
+
+		// Generate body - emit each statement
+		if bodyNode.NodeType == ast.BlockNode {
+			for _, stmt := range bodyNode.Children {
+				expr := g.generateExpr(stmt)
+				g.emitLine("%s;", expr)
+			}
+		} else {
+			expr := g.generateExpr(bodyNode)
+			g.emitLine("%s;", expr)
+		}
+
+		// Restore parent scope
+		g.declaredVars = oldDeclaredVars
 
 		g.indentLevel--
 		g.emitLine("}")
@@ -909,11 +987,14 @@ func (g *Generator) generateLambdaFunc(node *ast.TreeNode) {
 
 	g.inFunction = true
 	g.currentFunc = lambdaName
+	g.pushScope() // Create new scope for lambda
 
-	// Build parameter list
+	// Build parameter list and mark parameters as declared
 	params := make([]string, 0)
 	for _, param := range argsNode.Children {
-		params = append(params, fmt.Sprintf("QValue %s", param.TokenLiteral()))
+		paramName := param.TokenLiteral()
+		params = append(params, fmt.Sprintf("QValue %s", paramName))
+		g.declaredVars[paramName] = true // Parameters are already declared
 	}
 
 	g.emit("QValue q_%s(%s) {\n", lambdaName, strings.Join(params, ", "))
@@ -926,5 +1007,6 @@ func (g *Generator) generateLambdaFunc(node *ast.TreeNode) {
 	g.indentLevel--
 	g.emit("}\n\n")
 
+	g.popScope() // Restore previous scope
 	g.inFunction = false
 }

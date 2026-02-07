@@ -10,8 +10,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```
 quark-lang/
-├── CLAUDE.md              # This file - AI assistant guidance
-├── STDLIB.md              # Standard library documentation
 ├── src/
 │   ├── core/quark/        # PRIMARY: Go compiler implementation
 │   │   ├── main.go        # CLI entry point
@@ -31,6 +29,8 @@ quark-lang/
 │   │       └── tests/          # Catch2 unit tests
 │   ├── legacy/            # Python implementation (reference only)
 │   └── testfiles/         # Test .qrk files for validation
+├── CLAUDE.md              # This file - AI assistant guidance
+├── stdlib.md              # Standard library documentation
 ```
 
 > **IMPORTANT**: The Go implementation in `src/core/quark/` is the PRIMARY and ACTIVE implementation.

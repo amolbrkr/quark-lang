@@ -63,6 +63,12 @@ func (p *Parser) parseExpression(precedence ast.Precedence) *ast.TreeNode {
 
 	// Infix parsing loop
 	for !p.isAtEnd() && !p.isEndOfExpression() {
+		// Skip newline if followed by pipe (line continuation)
+		if p.curToken.Type == token.NEWLINE && p.peek(1).Type == token.PIPE {
+			p.nextToken() // skip NEWLINE, continue with PIPE
+			continue
+		}
+
 		// Check for ternary (infix if)
 		if p.curToken.Type == token.IF && precedence <= ast.PrecTernary {
 			left = p.parseTernaryInfix(left)
@@ -99,8 +105,15 @@ func (p *Parser) parseExpression(precedence ast.Precedence) *ast.TreeNode {
 }
 
 func (p *Parser) isEndOfExpression() bool {
+	// If at NEWLINE, check if next token continues the expression (PIPE)
+	if p.curToken.Type == token.NEWLINE {
+		next := p.peek(1)
+		if next.Type == token.PIPE {
+			return false // PIPE continues the expression on next line
+		}
+		return true
+	}
 	return p.curToken.Type == token.RPAR ||
-		p.curToken.Type == token.NEWLINE ||
 		p.curToken.Type == token.RBRACKET ||
 		p.curToken.Type == token.RBRACE ||
 		p.curToken.Type == token.COLON ||
@@ -226,7 +239,8 @@ func (p *Parser) parseListLiteral() *ast.TreeNode {
 
 	if p.curToken.Type != token.RBRACKET {
 		for {
-			elem := p.parseExpression(ast.PrecLowest)
+			// Parse at PrecTernary to stop before comma (which has lower precedence)
+			elem := p.parseExpression(ast.PrecTernary)
 			if elem != nil {
 				node.AddChild(elem)
 			}

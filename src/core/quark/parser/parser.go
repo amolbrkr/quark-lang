@@ -75,6 +75,9 @@ func (p *Parser) Parse() *ast.TreeNode {
 		stmt := p.parseStatement()
 		if stmt != nil {
 			root.AddChild(stmt)
+		} else {
+			// Parsing failed - advance token to avoid infinite loop
+			p.nextToken()
 		}
 	}
 
@@ -97,9 +100,6 @@ func (p *Parser) parseStatement() *ast.TreeNode {
 		return p.parseWhileLoop()
 	case token.FN:
 		return p.parseFunction()
-	case token.AT:
-		p.nextToken() // skip @
-		return p.parseFunctionCall()
 	default:
 		// Check for anonymous function: id = fn ...
 		if p.curToken.Type == token.ID && p.peek(1).Type == token.EQUALS && p.peek(2).Type == token.FN {
@@ -127,6 +127,10 @@ func (p *Parser) parseBlock() *ast.TreeNode {
 				stmt := p.parseStatement()
 				if stmt != nil {
 					node.AddChild(stmt)
+				} else {
+					// Parsing failed - advance token to avoid infinite loop
+					p.nextToken()
+					continue
 				}
 				if p.curToken.Type == token.NEWLINE {
 					p.nextToken()
@@ -143,6 +147,9 @@ func (p *Parser) parseBlock() *ast.TreeNode {
 			stmt := p.parseStatement()
 			if stmt != nil {
 				node.AddChild(stmt)
+			} else {
+				// Parsing failed - advance token to avoid infinite loop
+				p.nextToken()
 			}
 		}
 		if p.curToken.Type == token.NEWLINE {
@@ -157,7 +164,7 @@ func (p *Parser) parseFunction() *ast.TreeNode {
 	var node *ast.TreeNode
 
 	if p.curToken.Type == token.FN {
-		// Named function: fn name params: body
+		// Named function: fn name params -> body
 		tok := p.curToken
 		node = ast.NewNode(ast.FunctionNode, &tok)
 		p.nextToken() // skip 'fn'
@@ -176,8 +183,8 @@ func (p *Parser) parseFunction() *ast.TreeNode {
 
 		node.AddChildren(nameNode, args)
 
-		// Expect colon
-		if !p.expect(token.COLON) {
+		// Expect arrow
+		if !p.expect(token.ARROW) {
 			return nil
 		}
 
@@ -186,7 +193,7 @@ func (p *Parser) parseFunction() *ast.TreeNode {
 		node.AddChild(body)
 
 	} else if p.curToken.Type == token.ID && p.peek(1).Type == token.EQUALS && p.peek(2).Type == token.FN {
-		// Anonymous function: id = fn params: body
+		// Anonymous function: id = fn params -> body
 		nameTok := p.curToken
 		nameNode := ast.NewNode(ast.IdentifierNode, &nameTok)
 		p.nextToken() // skip id
@@ -201,8 +208,8 @@ func (p *Parser) parseFunction() *ast.TreeNode {
 
 		node.AddChildren(nameNode, args)
 
-		// Expect colon
-		if !p.expect(token.COLON) {
+		// Expect arrow
+		if !p.expect(token.ARROW) {
 			return nil
 		}
 
@@ -236,11 +243,13 @@ func (p *Parser) parseFunctionCall() *ast.TreeNode {
 func (p *Parser) parseArguments() *ast.TreeNode {
 	node := ast.NewNode(ast.ArgumentsNode, nil)
 
-	for p.curToken.Type != token.COLON &&
+	for p.curToken.Type != token.ARROW &&
 		p.curToken.Type != token.NEWLINE &&
 		!p.isAtEnd() {
 
-		expr := p.parseExpression(ast.PrecLowest)
+		// Parse at PrecTernary to stop before comma (which has lower precedence)
+		// This ensures we get individual parameters, not comma expressions
+		expr := p.parseExpression(ast.PrecTernary)
 		if expr != nil {
 			node.AddChild(expr)
 		}
@@ -330,6 +339,10 @@ func (p *Parser) parseWhenStatement() *ast.TreeNode {
 		pattern := p.parsePattern()
 		if pattern != nil {
 			node.AddChild(pattern)
+		} else {
+			// Parsing failed - advance token to avoid infinite loop
+			p.nextToken()
+			continue
 		}
 		if p.curToken.Type == token.NEWLINE {
 			p.nextToken()
@@ -365,8 +378,8 @@ func (p *Parser) parsePattern() *ast.TreeNode {
 		}
 	}
 
-	// Expect colon
-	if !p.expect(token.COLON) {
+	// Expect arrow
+	if !p.expect(token.ARROW) {
 		return nil
 	}
 

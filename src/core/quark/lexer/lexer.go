@@ -108,7 +108,7 @@ func (l *Lexer) trackTokens(tokens []token.Token) []trackedToken {
 		}
 
 		switch tok.Type {
-		case token.COLON:
+		case token.COLON, token.ARROW:
 			atLineStart = false
 			indent = MAY_INDENT
 
@@ -265,7 +265,12 @@ func (l *Lexer) nextRawToken() token.Token {
 	case '+':
 		tok = newToken(token.PLUS, l.ch, tok.Line, tok.Column)
 	case '-':
-		tok = newToken(token.MINUS, l.ch, tok.Line, tok.Column)
+		if l.peekChar() == '>' {
+			l.readChar()
+			tok = token.Token{Type: token.ARROW, Literal: "->", Line: tok.Line, Column: tok.Column}
+		} else {
+			tok = newToken(token.MINUS, l.ch, tok.Line, tok.Column)
+		}
 	case '*':
 		if l.peekChar() == '*' {
 			l.readChar()
@@ -317,20 +322,13 @@ func (l *Lexer) nextRawToken() token.Token {
 	case '}':
 		tok = newToken(token.RBRACE, l.ch, tok.Line, tok.Column)
 	case '.':
-		if l.peekChar() == '.' {
-			l.readChar()
-			tok = token.Token{Type: token.DOTDOT, Literal: "..", Line: tok.Line, Column: tok.Column}
-		} else {
-			tok = newToken(token.DOT, l.ch, tok.Line, tok.Column)
-		}
+		tok = newToken(token.DOT, l.ch, tok.Line, tok.Column)
 	case ',':
 		tok = newToken(token.COMMA, l.ch, tok.Line, tok.Column)
 	case '|':
 		tok = newToken(token.PIPE, l.ch, tok.Line, tok.Column)
 	case ':':
 		tok = newToken(token.COLON, l.ch, tok.Line, tok.Column)
-	case '@':
-		tok = newToken(token.AT, l.ch, tok.Line, tok.Column)
 	case '_':
 		if isLetter(l.peekChar()) || isDigit(l.peekChar()) {
 			// Part of an identifier

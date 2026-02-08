@@ -35,6 +35,7 @@ func NewAnalyzer() *Analyzer {
 		"float":   {ParamTypes: []Type{TypeAny}, ReturnType: TypeFloat},
 		"bool":    {ParamTypes: []Type{TypeAny}, ReturnType: TypeBool},
 		"input":   {ParamTypes: []Type{}, ReturnType: TypeString},
+		"range":   {ParamTypes: []Type{TypeAny, TypeAny, TypeAny}, ReturnType: TypeAny}, // range(end) or range(start, end) or range(start, end, step)
 		// Math module functions
 		"abs":   {ParamTypes: []Type{TypeAny}, ReturnType: TypeAny},
 		"min":   {ParamTypes: []Type{TypeAny, TypeAny}, ReturnType: TypeAny},
@@ -423,10 +424,6 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 
 	case token.AMPER:
 		return TypeInt
-
-	case token.DOTDOT:
-		// Range returns a special range type, but for simplicity use list
-		return &ListType{ElementType: TypeInt}
 
 	case token.EQUALS:
 		// Assignment - define or update variable

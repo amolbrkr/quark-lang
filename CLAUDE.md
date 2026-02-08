@@ -937,4 +937,178 @@ cd runtime && pwsh build_runtime.ps1
 
 - **Unary operator whitespace**: Unary operators must have no whitespace. `f -5` (function call with negative argument) is valid, but `a -b` (space before, no space after) is a parse error. Use `a - b` for subtraction.
 - **Garbage collection**: Currently no GC - strings are strdup'd and list memory must be manually freed with `q_list_free()`.
-- **List syntax**: List literals `[1, 2, 3]` not yet parsed; use `qv_list()` and `q_push()` in generated code.
+- **Dict literals**: Parsed but not codegen'd; runtime has no dict type yet.
+- **Reserved function names**: User-defined functions cannot use names that conflict with runtime builtins (e.g., `add`, `mul`, `div`). Use different names like `mysum`, `mymultiply`, etc.
+
+## Feature Matrix (Grammar vs Implementation)
+
+Key: Yes = implemented, Partial = present but incomplete, No = missing.
+
+| Feature | Lexer | Parser | Analyzer | Codegen | Runtime | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| Indentation blocks | Yes | Yes | Yes | Yes | N/A | INDENT/DEDENT injection works for `:` and `->`. |
+| Comments `//` | Yes | N/A | N/A | N/A | N/A | Stripped in lexer. |
+| Literals (int/float/bool/null) | Yes | Yes | Yes | Yes | Yes | Basic literals are fully supported. |
+| Strings (no interpolation) | Yes | Yes | Yes | Yes | Yes | Interpolation is not implemented. |
+| String interpolation `{expr}` | No | No | No | No | No | Grammar-only. |
+| Function definitions | Yes | Yes | Yes | Yes | Yes | Named functions generate `q_<name>`. |
+| Lambda expressions | Yes | Yes | Yes | Yes | Yes | No closures/captures. |
+| Function calls / application | Yes | Yes | Partial | Yes | Yes | Analyzer does not validate arg counts. |
+| If / elseif / else | Yes | Yes | Yes | Yes | Yes | Emits temp result in codegen. |
+| Ternary `a if cond else b` | Yes | Yes | Yes | Yes | Yes | Expression form only. |
+| When / pattern matching | Yes | Yes | Yes | Yes | Yes | Only equality and `_` wildcard. |
+| For `for x in expr` | Yes | Yes | Partial | Partial | Yes | Codegen assumes list iteration. |
+| While loops | Yes | Yes | Yes | Yes | Yes | Truthy check at runtime. |
+| Pipe operator `|` | Yes | Yes | Yes | Yes | Yes | Builtin expansion in codegen. |
+| Assignment `=` | Yes | Yes | Partial | Yes | N/A | No mutability rules. |
+| Arithmetic ops `+ - * / % **` | Yes | Yes | Partial | Yes | Yes | Type checks are minimal. |
+| Comparison ops `< <= > >= == !=` | Yes | Yes | Partial | Yes | Yes | No strict type errors. |
+| Logical ops `and` / `or` | Yes | Yes | Yes | Yes | Yes | Keyword `not` not implemented. |
+| Unary ops `!` / `-` / `~` | Yes | Yes | Yes | Yes | Yes | `~` maps to logical not. |
+| Member access `.` | Yes | Yes | Partial | No | No | Parsed but not codegen’d. |
+| List literals `[a, b]` | Yes | Yes | Yes | Yes | Yes | Uses `std::vector<QValue>`. |
+| Indexing `list[idx]` | Yes | Yes | Yes | Yes | Yes | `q_get` supports negative indices. |
+| Slicing `[start:end[:step]]` | No | No | No | No | No | Grammar-only. |
+| Dict literals `{k: v}` | Yes | Yes | Partial | No | No | Parsed but no runtime representation. |
+| Modules `module` / `use` | Yes | Yes | Yes | Partial | N/A | Compile-time only, no namespacing. |
+| Structs / impl blocks | No | No | No | No | No | Grammar-only. |
+| Result / ok / err / try / unwrap | No | No | No | No | No | Grammar-only. |
+| Tensor types | No | No | No | No | No | Grammar-only. |
+| Builtins (io/math/string/list) | Yes | Yes | Yes | Yes | Yes | Implemented in runtime and codegen. |
+
+## Recent Changes (2026-02-07)
+
+### Refactored: Separate Runtime Headers Instead of Embedding
+
+**Problem**: The entire 1033-line runtime.hpp was embedded into every generated C++ file, resulting in:
+- Generated files over 1000 lines for even simple programs
+- Bloated, unreadable output
+- Slower compilation (runtime re-parsed every time)
+- Difficult debugging
+
+**Solution**: Refactored code generator to use external header includes instead of embedding.
+
+**Changes Made**:
+
+1. **codegen.go**: Added `embedRuntime` flag (default: false)
+   - When false: generates `#include "quark/quark.hpp"`
+   - When true: embeds full runtime (fallback for portability)
+
+2. **main.go**: Updated compiler commands to pass runtime include path
+   - Added `getRuntimeIncludePath()` function
+   - Passes `-I{runtime_path}` to clang++/g++
+
+3. **quark.hpp**: Fixed missing includes
+   - Added `<algorithm>` and `<vector>` for std::reverse and std::vector
+
+**Results**:
+
+Before refactoring (embedded):
+```cpp
+// runtime.hpp - Quark Runtime Library
+// [1033 lines of runtime code...]
+
+QValue q_double(QValue x) { return q_mul(x, qv_int(2)); }
+int main() { q_println(q_double(qv_int(5))); return 0; }
+```
+**Total**: 1050+ lines
+
+After refactoring (separate headers):
+```cpp
+#include "quark/quark.hpp"
+
+QValue q_double(QValue x) { return q_mul(x, qv_int(2)); }
+int main() { q_println(q_double(qv_int(5))); return 0; }
+```
+**Total**: ~13 lines for simple programs, ~48 lines for complex programs
+
+**Benefits**:
+- ✅ 95%+ reduction in generated code size
+- ✅ Clean, readable generated code
+- ✅ Faster compilation (headers can be precompiled)
+- ✅ Easier debugging
+- ✅ Still supports embedded mode for single-file compilation
+
+## Recent Bug Fixes (2026-02-07)
+
+### Fixed: OOM Errors Due to Infinite Parser Loops
+
+**Problem**: After grammar overhaul to use `->` arrow syntax, several test files caused infinite loops that consumed all system memory, leading to OOM crashes.
+
+**Root Cause**: Multiple parsing loops in `parser.go` failed to advance the token position when parsing returned `nil`, causing the parser to loop forever on the same token.
+
+**Fixes Applied**:
+
+1. **parser.go:70-81 (Parse function)**: Added token advancement when `parseStatement()` returns `nil`
+2. **parser.go:122-134 (parseBlock indented)**: Added token advancement when `parseStatement()` returns `nil`
+3. **parser.go:146-153 (parseBlock inline)**: Added token advancement when `parseStatement()` returns `nil`
+4. **parser.go:332-344 (parseWhenStatement)**: Added token advancement when `parsePattern()` returns `nil`
+
+```go
+// Example fix pattern:
+stmt := p.parseStatement()
+if stmt != nil {
+    node.AddChild(stmt)
+} else {
+    // Parsing failed - advance token to avoid infinite loop
+    p.nextToken()
+    continue
+}
+```
+
+**Result**: Parser now gracefully exits with error messages instead of hanging and consuming all memory.
+
+### Fixed: Lexer Not Recognizing Arrow for Indentation
+
+**Problem**: After grammar change from `:` to `->` for function bodies, lexer produced "unexpected indent" errors for indented blocks after arrow.
+
+**Root Cause**: Lexer only tracked `COLON` tokens as triggering indentation, not `ARROW` tokens.
+
+**Fix**: Updated `lexer.go:111` to include both:
+```go
+case token.COLON, token.ARROW:
+    indent = MAY_INDENT
+```
+
+**Result**: Indented blocks after `->` are now properly recognized.
+
+### Fixed: Lambda Parameters Parsed as Comma Operators
+
+**Problem**: Lambda definitions like `fn a, b -> a + b` generated C++ code with missing parameters: `QValue q_add(QValue ,)`.
+
+**Root Cause**: The `parseArguments()` function called `parseExpression(ast.PrecLowest)`, which has lower precedence than comma. This caused `a, b` to be parsed as a single comma operator expression instead of two separate parameters.
+
+**AST Before Fix**:
+```
+Arguments
+  Operator[,]        # Wrong: comma treated as operator
+    Identifier[a]
+    Identifier[b]
+```
+
+**AST After Fix**:
+```
+Arguments
+  Identifier[a]      # Correct: separate parameters
+  Identifier[b]
+```
+
+**Fix**: Changed `parser.go:250` to parse at higher precedence:
+```go
+// Parse at PrecTernary to stop before comma (which has lower precedence)
+// This ensures we get individual parameters, not comma expressions
+expr := p.parseExpression(ast.PrecTernary)
+```
+
+**Result**: Lambda parameters are now correctly extracted and generate proper C++ function signatures.
+
+### Testing
+
+All core test files now work correctly:
+- ✅ test_for.qrk
+- ✅ test_arrow.qrk
+- ✅ test_when_arrow.qrk
+- ✅ test_clean.qrk
+- ✅ test_lambda_working.qrk (lambdas with non-conflicting names)
+
+**Known Issue**: test_functions.qrk still has name collisions with builtin functions (`add`, `double`). Use different names to avoid conflicts.

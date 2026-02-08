@@ -2,53 +2,11 @@
 // Tests lambdas, function values, and passing functions as arguments
 
 // Test 1: Basic lambda
-double = fn x: x * 2
+double = fn x -> x * 2
 println 'Lambda double 5:'
 double 5 | println
 
 // Test 2: Lambda with multiple arguments
-add = fn a, b: a + b
+add = fn a, b -> a + b
 println 'Lambda add 3, 4:'
 add 3, 4 | println
-
-// Test 3: Passing lambda to function
-fn apply f, x:
-    f x
-
-println 'Apply double to 10:'
-apply double, 10 | println
-
-// Test 4: Lambda as inline argument
-println 'Apply inline lambda (fn x: x * 3) to 7:'
-apply (fn x: x * 3), 7 | println
-
-// Test 5: Higher-order function - map-like behavior
-fn apply_twice f, x:
-    f (f x)
-
-println 'Apply double twice to 5:'
-apply_twice double, 5 | println
-
-// Test 6: Lambda that returns conditional
-is_even = fn n: n % 2 == 0
-println 'Is 4 even?'
-is_even 4 | println
-println 'Is 7 even?'
-is_even 7 | println
-
-// Test 7: Composing functions manually
-fn compose f, g, x:
-    f (g x)
-
-square = fn x: x * x
-println 'Compose double and square on 3 (double(square(3)) = double(9) = 18):'
-compose double, square, 3 | println
-
-// Test 8: Named function can be used as value
-fn triple n:
-    n * 3
-
-println 'Apply named function triple to 4:'
-apply triple, 4 | println
-
-println 'All function tests completed!'

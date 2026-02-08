@@ -62,10 +62,10 @@ mixed[3] | println
 // Test 9: Nested access
 println 'Building list in loop'
 result = []
-for i in 0..5:
+for i in range 5:
     result = push result, i * 2
 println 'Result list (0, 2, 4, 6, 8):'
-for i in 0..5:
+for i in range 5:
     result[i] | println
 
 println 'All list tests completed!'

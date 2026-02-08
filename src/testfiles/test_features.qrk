@@ -3,7 +3,7 @@ x = 10 + 5 * 2
 print x
 
 // Test for loop
-for i in 0..5:
+for i in range 5:
     print i
 
 // Test if-else
@@ -13,7 +13,7 @@ else:
     print 'x is small'
 
 // Test function with pipe
-fn double n:
+fn double n ->
     n * 2
 
 5 | double | print

@@ -6,7 +6,7 @@ x = 10 + 5 * 2
 println x
 
 // For loop
-for i in 0..5:
+for i in range 5:
     println i
 
 // Conditional
@@ -16,17 +16,17 @@ else:
     println 'x is small'
 
 // Function with pipe
-fn double n:
+fn double n ->
     n * 2
 
 println 'Double of 5:'
 5 | double | println
 
 // Factorial
-fn fact n:
+fn fact n ->
     when n:
-        0 or 1: 1
-        _: n * fact n - 1
+        0 or 1 -> 1
+        _ -> n * fact (n - 1)
 
 println 'Factorial of 10:'
 fact 10 | println

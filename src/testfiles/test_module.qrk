@@ -2,10 +2,10 @@
 
 // Define a math module
 module math:
-    fn square n:
+    fn square n ->
         n * n
 
-    fn cube n:
+    fn cube n ->
         n * n * n
 
 // Use the math module

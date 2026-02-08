@@ -10,7 +10,8 @@
 
 // Convert string to uppercase
 inline QValue q_upper(QValue v) {
-    if (v.type != QValue::VAL_STRING) return qv_string("");
+    // Type guard: only STRING is valid
+    if (v.type != QValue::VAL_STRING) return qv_null();
     char* result = strdup(v.data.string_val);
     for (int i = 0; result[i]; i++) {
         result[i] = static_cast<char>(toupper(static_cast<unsigned char>(result[i])));
@@ -22,7 +23,8 @@ inline QValue q_upper(QValue v) {
 
 // Convert string to lowercase
 inline QValue q_lower(QValue v) {
-    if (v.type != QValue::VAL_STRING) return qv_string("");
+    // Type guard: only STRING is valid
+    if (v.type != QValue::VAL_STRING) return qv_null();
     char* result = strdup(v.data.string_val);
     for (int i = 0; result[i]; i++) {
         result[i] = static_cast<char>(tolower(static_cast<unsigned char>(result[i])));
@@ -34,7 +36,8 @@ inline QValue q_lower(QValue v) {
 
 // Trim whitespace from both ends
 inline QValue q_trim(QValue v) {
-    if (v.type != QValue::VAL_STRING) return qv_string("");
+    // Type guard: only STRING is valid
+    if (v.type != QValue::VAL_STRING) return qv_null();
     const char* start = v.data.string_val;
     while (*start && isspace(static_cast<unsigned char>(*start))) start++;
     if (*start == '\0') return qv_string("");
@@ -54,16 +57,18 @@ inline QValue q_trim(QValue v) {
 
 // Check if string contains substring
 inline QValue q_contains(QValue str, QValue sub) {
+    // Type guard: both must be STRING
     if (str.type != QValue::VAL_STRING || sub.type != QValue::VAL_STRING) {
-        return qv_bool(false);
+        return qv_null();
     }
     return qv_bool(strstr(str.data.string_val, sub.data.string_val) != nullptr);
 }
 
 // Check if string starts with prefix
 inline QValue q_startswith(QValue str, QValue prefix) {
+    // Type guard: both must be STRING
     if (str.type != QValue::VAL_STRING || prefix.type != QValue::VAL_STRING) {
-        return qv_bool(false);
+        return qv_null();
     }
     size_t plen = strlen(prefix.data.string_val);
     return qv_bool(strncmp(str.data.string_val, prefix.data.string_val, plen) == 0);
@@ -71,8 +76,9 @@ inline QValue q_startswith(QValue str, QValue prefix) {
 
 // Check if string ends with suffix
 inline QValue q_endswith(QValue str, QValue suffix) {
+    // Type guard: both must be STRING
     if (str.type != QValue::VAL_STRING || suffix.type != QValue::VAL_STRING) {
-        return qv_bool(false);
+        return qv_null();
     }
     size_t slen = strlen(str.data.string_val);
     size_t suflen = strlen(suffix.data.string_val);
@@ -82,9 +88,10 @@ inline QValue q_endswith(QValue str, QValue suffix) {
 
 // Replace all occurrences of old_str with new_str
 inline QValue q_replace(QValue str, QValue old_str, QValue new_str) {
+    // Type guard: all must be STRING
     if (str.type != QValue::VAL_STRING || old_str.type != QValue::VAL_STRING ||
         new_str.type != QValue::VAL_STRING) {
-        return qv_string("");
+        return qv_null();
     }
 
     const char* s = str.data.string_val;
@@ -126,8 +133,9 @@ inline QValue q_replace(QValue str, QValue old_str, QValue new_str) {
 
 // Concatenate two strings
 inline QValue q_concat(QValue a, QValue b) {
+    // Type guard: both must be STRING
     if (a.type != QValue::VAL_STRING || b.type != QValue::VAL_STRING) {
-        return qv_string("");
+        return qv_null();
     }
     size_t len = strlen(a.data.string_val) + strlen(b.data.string_val);
     char* result = static_cast<char*>(malloc(len + 1));

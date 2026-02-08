@@ -27,6 +27,11 @@ inline bool either_float(const QValue& a, const QValue& b) {
 
 // Addition: int + int = int, otherwise float
 inline QValue q_add(QValue a, QValue b) {
+    // Type guard: only INT and FLOAT are valid
+    if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
+        (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
+        return qv_null();
+    }
     if (quark::detail::either_float(a, b)) {
         return qv_float(quark::detail::to_double(a) + quark::detail::to_double(b));
     }
@@ -35,6 +40,11 @@ inline QValue q_add(QValue a, QValue b) {
 
 // Subtraction: int - int = int, otherwise float
 inline QValue q_sub(QValue a, QValue b) {
+    // Type guard: only INT and FLOAT are valid
+    if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
+        (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
+        return qv_null();
+    }
     if (quark::detail::either_float(a, b)) {
         return qv_float(quark::detail::to_double(a) - quark::detail::to_double(b));
     }
@@ -43,6 +53,11 @@ inline QValue q_sub(QValue a, QValue b) {
 
 // Multiplication: int * int = int, otherwise float
 inline QValue q_mul(QValue a, QValue b) {
+    // Type guard: only INT and FLOAT are valid
+    if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
+        (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
+        return qv_null();
+    }
     if (quark::detail::either_float(a, b)) {
         return qv_float(quark::detail::to_double(a) * quark::detail::to_double(b));
     }
@@ -51,16 +66,39 @@ inline QValue q_mul(QValue a, QValue b) {
 
 // Division: always returns float for precision
 inline QValue q_div(QValue a, QValue b) {
-    return qv_float(quark::detail::to_double(a) / quark::detail::to_double(b));
+    // Type guard: only INT and FLOAT are valid
+    if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
+        (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
+        return qv_null();
+    }
+    double bv = quark::detail::to_double(b);
+    // Check for division by zero
+    if (bv == 0.0) {
+        return qv_null();
+    }
+    return qv_float(quark::detail::to_double(a) / bv);
 }
 
 // Modulo: integer only
 inline QValue q_mod(QValue a, QValue b) {
+    // Type guard: only INT is valid for modulo
+    if (a.type != QValue::VAL_INT || b.type != QValue::VAL_INT) {
+        return qv_null();
+    }
+    // Check for modulo by zero
+    if (b.data.int_val == 0) {
+        return qv_null();
+    }
     return qv_int(a.data.int_val % b.data.int_val);
 }
 
 // Power: preserves int type when possible
 inline QValue q_pow(QValue a, QValue b) {
+    // Type guard: only INT and FLOAT are valid
+    if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
+        (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
+        return qv_null();
+    }
     double av = quark::detail::to_double(a);
     double bv = quark::detail::to_double(b);
     double result = std::pow(av, bv);
@@ -73,6 +111,10 @@ inline QValue q_pow(QValue a, QValue b) {
 
 // Unary negation
 inline QValue q_neg(QValue a) {
+    // Type guard: only INT and FLOAT are valid
+    if (a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) {
+        return qv_null();
+    }
     if (a.type == QValue::VAL_FLOAT) {
         return qv_float(-a.data.float_val);
     }

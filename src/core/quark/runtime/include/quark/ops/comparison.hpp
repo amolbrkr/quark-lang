@@ -11,6 +11,11 @@
 
 // Less than
 inline QValue q_lt(QValue a, QValue b) {
+    // Type guard: only INT and FLOAT are valid
+    if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
+        (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
+        return qv_null();
+    }
     if (quark::detail::either_float(a, b)) {
         return qv_bool(quark::detail::to_double(a) < quark::detail::to_double(b));
     }
@@ -19,6 +24,11 @@ inline QValue q_lt(QValue a, QValue b) {
 
 // Less than or equal
 inline QValue q_lte(QValue a, QValue b) {
+    // Type guard: only INT and FLOAT are valid
+    if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
+        (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
+        return qv_null();
+    }
     if (quark::detail::either_float(a, b)) {
         return qv_bool(quark::detail::to_double(a) <= quark::detail::to_double(b));
     }
@@ -27,6 +37,11 @@ inline QValue q_lte(QValue a, QValue b) {
 
 // Greater than
 inline QValue q_gt(QValue a, QValue b) {
+    // Type guard: only INT and FLOAT are valid
+    if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
+        (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
+        return qv_null();
+    }
     if (quark::detail::either_float(a, b)) {
         return qv_bool(quark::detail::to_double(a) > quark::detail::to_double(b));
     }
@@ -35,6 +50,11 @@ inline QValue q_gt(QValue a, QValue b) {
 
 // Greater than or equal
 inline QValue q_gte(QValue a, QValue b) {
+    // Type guard: only INT and FLOAT are valid
+    if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
+        (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
+        return qv_null();
+    }
     if (quark::detail::either_float(a, b)) {
         return qv_bool(quark::detail::to_double(a) >= quark::detail::to_double(b));
     }

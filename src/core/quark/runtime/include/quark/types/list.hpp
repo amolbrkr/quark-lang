@@ -29,6 +29,10 @@ inline QValue q_get(QValue list, QValue index) {
     if (list.type != QValue::VAL_LIST || !list.data.list_val) {
         return qv_null();
     }
+    // Type guard: index must be INT
+    if (index.type != QValue::VAL_INT) {
+        return qv_null();
+    }
     int idx = static_cast<int>(index.data.int_val);
     int len = static_cast<int>(list.data.list_val->size());
     if (idx < 0) idx = len + idx;
@@ -41,6 +45,10 @@ inline QValue q_get(QValue list, QValue index) {
 // Set item at index (supports negative indexing)
 inline QValue q_set(QValue list, QValue index, QValue value) {
     if (list.type != QValue::VAL_LIST || !list.data.list_val) {
+        return qv_null();
+    }
+    // Type guard: index must be INT
+    if (index.type != QValue::VAL_INT) {
         return qv_null();
     }
     int idx = static_cast<int>(index.data.int_val);
@@ -83,6 +91,10 @@ inline QValue q_insert(QValue list, QValue index, QValue item) {
     if (list.type != QValue::VAL_LIST || !list.data.list_val) {
         return qv_null();
     }
+    // Type guard: index must be INT
+    if (index.type != QValue::VAL_INT) {
+        return qv_null();
+    }
     int idx = static_cast<int>(index.data.int_val);
     int len = static_cast<int>(list.data.list_val->size());
     if (idx < 0) idx = len + idx;
@@ -95,6 +107,10 @@ inline QValue q_insert(QValue list, QValue index, QValue item) {
 // Remove item at index
 inline QValue q_remove(QValue list, QValue index) {
     if (list.type != QValue::VAL_LIST || !list.data.list_val) {
+        return qv_null();
+    }
+    // Type guard: index must be INT
+    if (index.type != QValue::VAL_INT) {
         return qv_null();
     }
     int idx = static_cast<int>(index.data.int_val);
@@ -130,6 +146,10 @@ inline QValue q_list_concat(QValue a, QValue b) {
 // Slice list [start:end), returns new list
 inline QValue q_slice(QValue list, QValue start, QValue end) {
     if (list.type != QValue::VAL_LIST || !list.data.list_val) {
+        return qv_null();
+    }
+    // Type guard: start and end must be INT
+    if (start.type != QValue::VAL_INT || end.type != QValue::VAL_INT) {
         return qv_null();
     }
     int len = static_cast<int>(list.data.list_val->size());

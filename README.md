@@ -1,102 +1,85 @@
 # Quark
 
-**Quark** is a high-level, dynamically-typed language that compiles to C++, designed for fast data-heavy applications. It combines Python-like syntax with native performance through aggressive compiler optimizations.
+**Quark** is a high-level, dynamically-typed language that compiles to C++17. It aims for Python-like syntax with native performance through a small Go frontend and a lightweight C++ runtime.
 
-## Features
+## What Works Today
 
-- **High Performance** - Compiles to optimized C++ with -O3 and SIMD auto-vectorization
-- **Dynamic Typing** - Type inference with no annotations required
-- **Pattern Matching** - Expressive `when` expressions with wildcard support
-- **First-Class Functions** - Functions are values, support pipes and composition
-- **Python-Style Syntax** - Clean indentation-based blocks, minimal punctuation
-- **Native Lists** - Backed by `std::vector` for efficient data processing
+- Indentation-based blocks and a Pratt parser for expressions
+- Functions and lambdas (no captures yet)
+- If/elseif/else, `when` pattern matching, `for`/`while` loops, and ternary expressions
+- Pipe operator for data-flow style calls
+- Lists backed by `std::vector<QValue>` with indexing
+- Builtins for I/O, math, strings, and list operations
+- Modules and `use` as compile-time organization (single file)
 
 ## Quick Example
 
 ```quark
-// Function definition - no parentheses needed
-fn factorial n:
+fn factorial n ->
     when n:
-        0 or 1: 1
-        _: n * factorial n - 1
+        0 or 1 -> 1
+        _ -> n * factorial (n - 1)
 
-// Pipe chains for readable data flow
 factorial 10 | println
 
-// Pattern matching with multiple conditions
-fn fizzbuzz n:
+fn fizzbuzz n ->
     when n % 15:
-        0: 'FizzBuzz'
-        _: when n % 3:
-            0: 'Fizz'
-            _: when n % 5:
-                0: 'Buzz'
-                _: n
+        0 -> 'FizzBuzz'
+        _ -> when n % 3:
+            0 -> 'Fizz'
+            _ -> when n % 5:
+                0 -> 'Buzz'
+                _ -> n
 
-// Loops with ranges
-for i in 1..21:
+for i in range 1, 21:
     fizzbuzz i | println
 ```
 
 ## Installation
 
 ```bash
-# Clone the repository
 git clone https://github.com/user/quark-lang.git
 cd quark-lang
 
-# Build the compiler (requires Go 1.19+)
 cd src/core/quark
 go build -o quark .
 
-# Run a program
 ./quark run ../../../src/testfiles/test_clean.qrk
 ```
 
 ### Requirements
 
-- **Go 1.19+** - For building the compiler
-- **clang or gcc** - For compiling generated C code
-- **Linux/macOS/WSL** - Primary development platforms
+- **Go 1.19+**
+- **clang++ or g++** in PATH (for C++17 codegen)
+- **Windows, Linux, or macOS**
 
 ## Usage
 
 ```bash
-# Run a Quark program
-./quark run program.qrk
-
-# Compile to executable
+./quark lex program.qrk
+./quark parse program.qrk
+./quark check program.qrk
+./quark emit program.qrk      # Emits C++ to stdout
 ./quark build program.qrk -o myapp
-
-# View generated C code
-./quark emit program.qrk
-
-# Debug mode (keeps .c file)
-./quark run program.qrk --debug
+./quark run program.qrk --debug   # Keeps a .cpp next to the source
 ```
 
-## Language Syntax
+## Language Notes
 
 ### Variables and Functions
 
 ```quark
-// Variables - type inferred
 x = 42
 name = 'Quark'
 pi = 3.14159
 
-// Functions
-fn greet name:
+fn greet name ->
     println 'Hello, ' + name
-
-fn add a, b:
-    a + b
 ```
 
 ### Control Flow
 
 ```quark
-// If-elseif-else
 if x > 10:
     println 'big'
 elseif x > 5:
@@ -104,104 +87,84 @@ elseif x > 5:
 else:
     println 'small'
 
-// Pattern matching
 when value:
-    0 or 1: 'zero or one'
-    2: 'two'
-    _: 'other'
+    0 or 1 -> 'zero or one'
+    2 -> 'two'
+    _ -> 'other'
 
-// Ternary
 result = 'yes' if condition else 'no'
 ```
 
-### Loops
+### Loops and Pipes
 
 ```quark
-// For loop with range
-for i in 0..10:
+for i in range 0, 10:
     println i
 
-// While loop
 while x > 0:
     x = x - 1
+
+'hello world' | upper | println
 ```
 
-### Pipes
+### Lists
 
 ```quark
-// Chain operations naturally
-'hello world' | upper | println
-
-// Works with any function
-data | transform | filter | save
+nums = [1, 2, 3]
+first = nums[0]
+nums | push 4
 ```
 
-## Standard Library
-
-Quark includes built-in functions for common operations:
+## Standard Library (Builtins)
 
 | Category | Functions |
-|----------|-----------|
+| --- | --- |
 | **I/O** | `print`, `println`, `input` |
 | **Types** | `str`, `int`, `float`, `bool`, `len` |
 | **Math** | `abs`, `min`, `max`, `sqrt`, `floor`, `ceil`, `round` |
 | **String** | `upper`, `lower`, `trim`, `contains`, `startswith`, `endswith`, `replace`, `concat` |
+| **List** | `push`, `pop`, `get`, `set` |
 
-See [STDLIB.md](STDLIB.md) for complete documentation.
-
-## Project Structure
-
-```
-quark-lang/
-├── src/
-│   ├── core/quark/     # Go compiler (primary implementation)
-│   ├── legacy/         # Python reference implementation
-│   └── testfiles/      # Test programs
-├── CLAUDE.md           # Development guide
-├── STDLIB.md           # Standard library docs
-└── README.md           # This file
-```
+See [stdlib.md](stdlib.md) for details.
 
 ## Architecture
 
-Quark uses a multi-stage compilation pipeline:
-
 ```
-Source (.qrk) → Lexer → Parser → Analyzer → C++ Codegen → clang++ → Binary
+Source (.qrk) -> Lexer -> Parser -> Analyzer -> C++ Codegen -> clang++/g++ -> Binary
 ```
 
-- **Frontend**: Written in Go for fast compilation and easy modification
-- **Backend**: Generates C++17 code, leveraging clang's mature optimizer
-- **Runtime**: Header-only C++ library with boxed values and `std::vector` lists
+- **Frontend**: Go
+- **Backend**: C++17 codegen
+- **Runtime**: Header-only C++ runtime embedded into generated output
 
-## Status
+## Status and Gaps
 
-Quark is in active development. Current status:
+Implemented:
 
-- [x] Lexer with Python-style indentation
-- [x] Pratt parser for expressions
-- [x] Type inference and semantic analysis
-- [x] C++ code generation
-- [x] Functions, loops, conditionals
-- [x] Pattern matching (`when`)
-- [x] Pipe operator
-- [x] Module system (`module`/`use`)
-- [x] Standard library (math, string)
-- [x] Lists (runtime with std::vector)
-- [ ] List literal syntax `[1, 2, 3]`
-- [ ] Classes/structs
-- [ ] Multi-file modules
-- [ ] Garbage collection
+- Lexer with indentation and a Pratt parser
+- Analyzer with basic type inference
+- Codegen for functions, control flow, pipes, lists, and builtins
+- Modules (`module`/`use`) as a single-file organization tool
+
+Not yet implemented or incomplete:
+
+- Dict runtime/codegen (dict literals parse but do not compile)
+- Slicing (`[start:end[:step]]`)
+- String interpolation
+- Structs and impl blocks
+- Result/try/unwrap error handling
+- Tensor types
+- Multi-file modules
+- Memory management / GC
 
 ## Contributing
 
-Contributions welcome! Areas that need help:
+Contributions welcome. Priorities:
 
-- **Testing** - Write test programs in `src/testfiles/`
-- **Documentation** - Improve docs and examples
-- **Standard Library** - Add useful built-in functions
-- **Error Messages** - Better compiler diagnostics
+- Tests in [src/testfiles/](src/testfiles/)
+- Compiler diagnostics and error recovery
+- Runtime correctness and memory management
 
 ## License
 
-MIT License - See LICENSE file for details.
+MIT License

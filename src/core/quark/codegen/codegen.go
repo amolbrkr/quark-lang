@@ -101,7 +101,7 @@ func (g *Generator) Generate(node *ast.TreeNode) string {
 
 	// Emit forward declarations
 	for _, fname := range g.functions {
-		g.emitLine("QValue q_%s();", fname)
+		g.emitLine("QValue quark_%s();", fname)
 	}
 	g.emit("\n")
 
@@ -193,7 +193,7 @@ func (g *Generator) generateFunction(node *ast.TreeNode) {
 		g.declaredVars[paramName] = true // Parameters are already declared
 	}
 
-	g.emit("QValue q_%s(%s) {\n", funcName, strings.Join(params, ", "))
+	g.emit("QValue quark_%s(%s) {\n", funcName, strings.Join(params, ", "))
 	g.indentLevel++
 
 	// Generate body
@@ -562,7 +562,7 @@ func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
 
 	if isKnownFunc {
 		// User-defined function - call directly
-		return fmt.Sprintf("q_%s(%s)", funcName, strings.Join(args, ", "))
+		return fmt.Sprintf("quark_%s(%s)", funcName, strings.Join(args, ", "))
 	}
 
 	// Otherwise, it might be a function value - use dynamic call
@@ -580,7 +580,7 @@ func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
 		return fmt.Sprintf("q_call4(%s, %s, %s, %s, %s)", funcExpr, args[0], args[1], args[2], args[3])
 	default:
 		// For more than 4 args, fall back to direct call (won't work for function values)
-		return fmt.Sprintf("q_%s(%s)", funcName, strings.Join(args, ", "))
+		return fmt.Sprintf("quark_%s(%s)", funcName, strings.Join(args, ", "))
 	}
 }
 
@@ -632,7 +632,7 @@ func (g *Generator) generatePipe(node *ast.TreeNode) string {
 		case "trim":
 			return fmt.Sprintf("q_trim(%s)", input)
 		default:
-			return fmt.Sprintf("q_%s(%s)", funcName, input)
+			return fmt.Sprintf("quark_%s(%s)", funcName, input)
 		}
 	} else if rightNode.NodeType == ast.FunctionCallNode {
 		// Function call - prepend input to arguments
@@ -724,7 +724,7 @@ func (g *Generator) generatePipe(node *ast.TreeNode) string {
 				}
 				return "qv_string(\"\")"
 			default:
-				return fmt.Sprintf("q_%s(%s)", funcName, strings.Join(args, ", "))
+				return fmt.Sprintf("quark_%s(%s)", funcName, strings.Join(args, ", "))
 			}
 		}
 	}
@@ -962,7 +962,7 @@ func (g *Generator) generateLambdaExpr(node *ast.TreeNode) string {
 	}
 
 	// Return a function value wrapping the lambda
-	return fmt.Sprintf("qv_func((void*)q_%s)", lambdaName)
+	return fmt.Sprintf("qv_func((void*)quark_%s)", lambdaName)
 }
 
 func (g *Generator) generateLambdaFunc(node *ast.TreeNode) {
@@ -986,7 +986,7 @@ func (g *Generator) generateLambdaFunc(node *ast.TreeNode) {
 		g.declaredVars[paramName] = true // Parameters are already declared
 	}
 
-	g.emit("QValue q_%s(%s) {\n", lambdaName, strings.Join(params, ", "))
+	g.emit("QValue quark_%s(%s) {\n", lambdaName, strings.Join(params, ", "))
 	g.indentLevel++
 
 	// Generate body - for lambdas, the body is a single expression

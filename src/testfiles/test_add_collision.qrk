@@ -1,0 +1,9 @@
+// Test that we can now use 'add' as a function name without collision
+add = fn a, b -> a + b
+println 'add(3, 4):'
+add 3, 4 | println
+
+// And we can still use the + operator
+result = 10 + 20
+println 'result:'
+result | println

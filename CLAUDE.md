@@ -938,7 +938,6 @@ cd runtime && pwsh build_runtime.ps1
 - **Unary operator whitespace**: Unary operators must have no whitespace. `f -5` (function call with negative argument) is valid, but `a -b` (space before, no space after) is a parse error. Use `a - b` for subtraction.
 - **Garbage collection**: Currently no GC - strings are strdup'd and list memory must be manually freed with `q_list_free()`.
 - **Dict literals**: Parsed but not codegen'd; runtime has no dict type yet.
-- **Reserved function names**: User-defined functions cannot use names that conflict with runtime builtins (e.g., `add`, `mul`, `div`). Use different names like `mysum`, `mymultiply`, etc.
 
 ## Feature Matrix (Grammar vs Implementation)
 
@@ -1028,6 +1027,66 @@ int main() { q_println(q_double(qv_int(5))); return 0; }
 - ✅ Faster compilation (headers can be precompiled)
 - ✅ Easier debugging
 - ✅ Still supports embedded mode for single-file compilation
+
+### Fixed: User Function Name Collisions with Runtime Builtins
+
+**Problem**: User-defined functions used the same `q_` prefix as runtime builtins, causing name collisions. For example, a user function named `add` would generate `q_add()`, conflicting with the runtime's `q_add()` (the `+` operator).
+
+**Why `q_` prefix exists**:
+1. Avoid C++ keyword collisions (`class`, `new`, `delete`, etc.)
+2. Namespace all Quark runtime functions consistently
+3. Prevent conflicts with C++ standard library
+
+**Solution**: Changed user-defined functions to use `quark_` prefix instead of `q_`, creating clear separation between user code and runtime builtins.
+
+**Changes Made**:
+
+Updated `codegen.go` to use `quark_` prefix for all user-defined functions:
+- Function declarations: `QValue quark_add();`
+- Function definitions: `QValue quark_add(QValue a, QValue b) { ... }`
+- Function calls: `quark_add(x, y)`
+- Lambda functions: `quark__lambda1()`
+
+**Results**:
+
+Before (name collision):
+```cpp
+// User function 'add'
+QValue q_add(QValue a, QValue b) { return q_add(a, b); }  // ERROR: redefinition!
+
+// Runtime builtin for '+'
+inline QValue q_add(QValue a, QValue b) { ... }  // CONFLICT!
+```
+
+After (clear separation):
+```cpp
+// User function 'add' → quark_add
+QValue quark_add(QValue a, QValue b) {
+    return q_add(a, b);  // Calls runtime builtin for '+'
+}
+
+// Runtime builtin for '+' → q_add
+inline QValue q_add(QValue a, QValue b) { ... }  // No conflict!
+```
+
+**Example**:
+```quark
+add = fn a, b -> a + b
+result = add 3, 4      // Calls quark_add()
+x = 10 + 20            // Calls q_add() operator
+```
+
+Generated C++:
+```cpp
+QValue quark_add(QValue a, QValue b) { return q_add(a, b); }
+// quark_add = user function, q_add = runtime operator
+```
+
+**Benefits**:
+- ✅ Users can now use any function name, including `add`, `mul`, `sub`, etc.
+- ✅ Clear distinction between user code (`quark_*`) and runtime (`q_*`)
+- ✅ No more reserved function names
+- ✅ Generated code is more readable and self-documenting
 
 ## Recent Bug Fixes (2026-02-07)
 

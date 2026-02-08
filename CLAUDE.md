@@ -975,6 +975,27 @@ Key: Yes = implemented, Partial = present but incomplete, No = missing.
 | Tensor types | No | No | No | No | No | Grammar-only. |
 | Builtins (io/math/string/list) | Yes | Yes | Yes | Yes | Yes | Implemented in runtime and codegen. |
 
+## Stdlib Feature Matrix (Runtime + Compiler + Quark Modules)
+
+Key: Yes = implemented, Partial = present but incomplete, No = missing.
+
+| Area / API | C++ Runtime | Compiler Wired | Quark Module | Notes |
+| --- | --- | --- | --- | --- |
+| I/O: `print`, `println`, `input` | Yes | Yes | No | Builtins only. |
+| Conversions: `len`, `str`, `int`, `float`, `bool` | Yes | Yes | No | Builtins only. |
+| Math: `abs`, `min`, `max`, `sqrt`, `floor`, `ceil`, `round` | Yes | Yes | No | Builtins only. |
+| String: `upper`, `lower`, `trim`, `contains`, `startswith`, `endswith`, `replace`, `concat` | Yes | Yes | No | Builtins only. |
+| List: `push`, `pop`, `get`, `set` | Yes | Yes | No | Builtins only. |
+| List extras: `size`, `empty`, `clear`, `insert`, `remove`, `concat`, `slice`, `reverse` | Yes | No | No | Implemented in runtime but not exposed as builtins. |
+| Dict / map | No | No | No | Dict literals parse but no runtime or codegen. |
+| Time / clock | No | No | No | Not yet implemented. |
+| Random | No | No | No | Not yet implemented. |
+| OS / filesystem | No | No | No | Not yet implemented. |
+| Process / exec | No | No | No | Not yet implemented. |
+| Env vars | No | No | No | Not yet implemented. |
+| JSON / serialization | No | No | No | Not yet implemented. |
+| Quark stdlib modules | No | No | No | Module loader needed for external stdlib files. |
+
 ## Recent Changes (2026-02-07)
 
 ### Refactored: Separate Runtime Headers Instead of Embedding

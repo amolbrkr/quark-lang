@@ -145,7 +145,6 @@ const (
 	PrecBitwiseAnd            // &
 	PrecEquality              // == !=
 	PrecComparison            // < <= > >=
-	PrecRange                 // ..
 	PrecTerm                  // + -
 	PrecFactor                // * / %
 	PrecExponent              // **
@@ -165,7 +164,6 @@ var precedenceNames = map[Precedence]string{
 	PrecBitwiseAnd: "BitwiseAnd",
 	PrecEquality:   "Equality",
 	PrecComparison: "Comparison",
-	PrecRange:      "Range",
 	PrecTerm:       "Term",
 	PrecFactor:     "Factor",
 	PrecExponent:   "Exponent",

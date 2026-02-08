@@ -19,7 +19,6 @@ var precedences = map[token.TokenType]ast.Precedence{
 	token.LTE:        ast.PrecComparison,
 	token.GT:         ast.PrecComparison,
 	token.GTE:        ast.PrecComparison,
-	token.DOTDOT:     ast.PrecRange,
 	token.PLUS:       ast.PrecTerm,
 	token.MINUS:      ast.PrecTerm,
 	token.MULTIPLY:   ast.PrecFactor,
@@ -167,7 +166,7 @@ func (p *Parser) infixParseFn(t token.TokenType) func(*ast.TreeNode) *ast.TreeNo
 	switch t {
 	case token.PLUS, token.MINUS, token.MULTIPLY, token.DIVIDE, token.MODULO,
 		token.LT, token.LTE, token.GT, token.GTE, token.DEQ, token.NE,
-		token.AND, token.OR, token.AMPER, token.DOTDOT, token.EQUALS, token.COMMA:
+		token.AND, token.OR, token.AMPER, token.EQUALS, token.COMMA:
 		return p.parseBinaryOp
 	case token.DOUBLESTAR:
 		return p.parseExponent
@@ -443,8 +442,8 @@ func (p *Parser) parseLambda() *ast.TreeNode {
 
 	node.AddChild(args)
 
-	// Expect colon
-	if !p.expect(token.COLON) {
+	// Expect arrow
+	if !p.expect(token.ARROW) {
 		return nil
 	}
 

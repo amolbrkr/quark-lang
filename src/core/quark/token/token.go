@@ -36,6 +36,7 @@ const (
 	GTE    // >=
 	DEQ    // ==
 	NE     // !=
+	ARROW  // ->
 
 	// Delimiters
 	LPAR       // (
@@ -45,11 +46,9 @@ const (
 	LBRACE     // {
 	RBRACE     // }
 	DOT        // .
-	DOTDOT     // ..
 	COMMA      // ,
 	PIPE       // |
 	COLON      // :
-	AT         // @
 	UNDERSCORE // _
 
 	// Keywords
@@ -104,6 +103,7 @@ var tokenNames = map[TokenType]string{
 	GTE:    "GTE",
 	DEQ:    "DEQ",
 	NE:     "NE",
+	ARROW:  "ARROW",
 
 	LPAR:       "LPAR",
 	RPAR:       "RPAR",
@@ -112,11 +112,9 @@ var tokenNames = map[TokenType]string{
 	LBRACE:     "LBRACE",
 	RBRACE:     "RBRACE",
 	DOT:        "DOT",
-	DOTDOT:     "DOTDOT",
 	COMMA:      "COMMA",
 	PIPE:       "PIPE",
 	COLON:      "COLON",
-	AT:         "AT",
 	UNDERSCORE: "UNDERSCORE",
 
 	USE:    "USE",

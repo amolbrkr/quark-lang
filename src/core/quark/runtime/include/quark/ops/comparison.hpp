@@ -6,24 +6,8 @@
 #include "../core/constructors.hpp"
 #include <cstring>
 
-namespace quark {
-namespace detail {
-
-// Helper to extract numeric value as double (defined in arithmetic.hpp)
-#ifndef QUARK_DETAIL_TO_DOUBLE_DEFINED
-#define QUARK_DETAIL_TO_DOUBLE_DEFINED
-inline double to_double(const QValue& v) {
-    return v.type == QValue::VAL_FLOAT ? v.data.float_val
-                                       : static_cast<double>(v.data.int_val);
-}
-
-inline bool either_float(const QValue& a, const QValue& b) {
-    return a.type == QValue::VAL_FLOAT || b.type == QValue::VAL_FLOAT;
-}
-#endif
-
-} // namespace detail
-} // namespace quark
+// Helper functions to_double() and either_float() are defined in arithmetic.hpp
+// (removed from here to avoid duplication in the concatenated runtime.hpp)
 
 // Less than
 inline QValue q_lt(QValue a, QValue b) {

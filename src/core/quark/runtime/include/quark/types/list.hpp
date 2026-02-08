@@ -168,4 +168,101 @@ inline void q_list_free(QValue list) {
     }
 }
 
+// Range functions - generate lists of integers
+// range(end) - generates [0, 1, 2, ..., end-1]
+inline QValue q_range(QValue end) {
+    long long e = 0;
+    if (end.type == QValue::VAL_INT) {
+        e = end.data.int_val;
+    } else if (end.type == QValue::VAL_FLOAT) {
+        e = static_cast<long long>(end.data.float_val);
+    } else {
+        return qv_list();
+    }
+
+    QValue result = qv_list();
+    for (long long i = 0; i < e; i++) {
+        result.data.list_val->push_back(qv_int(i));
+    }
+    return result;
+}
+
+// range(start, end) - generates [start, start+1, ..., end-1]
+inline QValue q_range(QValue start, QValue end) {
+    long long s = 0, e = 0;
+
+    if (start.type == QValue::VAL_INT) {
+        s = start.data.int_val;
+    } else if (start.type == QValue::VAL_FLOAT) {
+        s = static_cast<long long>(start.data.float_val);
+    } else {
+        return qv_list();
+    }
+
+    if (end.type == QValue::VAL_INT) {
+        e = end.data.int_val;
+    } else if (end.type == QValue::VAL_FLOAT) {
+        e = static_cast<long long>(end.data.float_val);
+    } else {
+        return qv_list();
+    }
+
+    QValue result = qv_list();
+    if (s < e) {
+        for (long long i = s; i < e; i++) {
+            result.data.list_val->push_back(qv_int(i));
+        }
+    } else {
+        for (long long i = s; i > e; i--) {
+            result.data.list_val->push_back(qv_int(i));
+        }
+    }
+    return result;
+}
+
+// range(start, end, step) - generates [start, start+step, start+2*step, ...]
+inline QValue q_range(QValue start, QValue end, QValue step) {
+    long long s = 0, e = 0, st = 1;
+
+    if (start.type == QValue::VAL_INT) {
+        s = start.data.int_val;
+    } else if (start.type == QValue::VAL_FLOAT) {
+        s = static_cast<long long>(start.data.float_val);
+    } else {
+        return qv_list();
+    }
+
+    if (end.type == QValue::VAL_INT) {
+        e = end.data.int_val;
+    } else if (end.type == QValue::VAL_FLOAT) {
+        e = static_cast<long long>(end.data.float_val);
+    } else {
+        return qv_list();
+    }
+
+    if (step.type == QValue::VAL_INT) {
+        st = step.data.int_val;
+    } else if (step.type == QValue::VAL_FLOAT) {
+        st = static_cast<long long>(step.data.float_val);
+    } else {
+        return qv_list();
+    }
+
+    if (st == 0) {
+        return qv_list(); // Avoid infinite loop
+    }
+
+    QValue result = qv_list();
+    if (st > 0) {
+        for (long long i = s; i < e; i += st) {
+            result.data.list_val->push_back(qv_int(i));
+        }
+    } else {
+        for (long long i = s; i > e; i += st) {
+            result.data.list_val->push_back(qv_int(i));
+        }
+    }
+    return result;
+}
+
 #endif // QUARK_TYPES_LIST_HPP

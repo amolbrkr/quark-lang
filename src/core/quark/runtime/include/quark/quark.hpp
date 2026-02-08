@@ -10,6 +10,8 @@
 #include <cmath>
 #include <cctype>
 #include <cstdarg>
+#include <algorithm>
+#include <vector>
 
 // Core types and constructors
 #include "core/value.hpp"

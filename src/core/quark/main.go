@@ -13,6 +13,32 @@ import (
 	"quark/types"
 )
 
+// getRuntimeIncludePath returns the path to the runtime include directory
+// relative to the quark executable
+func getRuntimeIncludePath() string {
+	// Get the executable path
+	exePath, err := os.Executable()
+	if err != nil {
+		// Fallback to current directory
+		return filepath.Join("runtime", "include")
+	}
+
+	// Get the directory containing the executable
+	exeDir := filepath.Dir(exePath)
+
+	// Runtime headers are in ../runtime/include relative to the executable
+	// (exe is in src/core/quark, runtime is in src/core/quark/runtime)
+	runtimePath := filepath.Join(exeDir, "runtime", "include")
+
+	// Check if the path exists
+	if _, err := os.Stat(runtimePath); err == nil {
+		return runtimePath
+	}
+
+	// Fallback: try relative to current directory
+	return filepath.Join("runtime", "include")
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		printUsage()
@@ -306,7 +332,11 @@ func runBuild(filename string, output string) {
 		}
 	}
 
-	cmd := exec.Command(compiler, "-std=c++17", "-O3", "-march=native", "-o", output, cFile, "-lm")
+	// Get runtime include path
+	runtimeInclude := getRuntimeIncludePath()
+	includePath := fmt.Sprintf("-I%s", runtimeInclude)
+
+	cmd := exec.Command(compiler, "-std=c++17", "-O3", "-march=native", includePath, "-o", output, cFile, "-lm")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -380,7 +410,17 @@ func runRun(filename string, debug bool) {
 		}
 	}
 
-	compileCmd := exec.Command(compiler, "-std=c++17", "-O3", "-march=native", "-o", exeFile, cFile, "-lm")
+	// Get runtime include path
+	runtimeInclude := getRuntimeIncludePath()
+	includePath := fmt.Sprintf("-I%s", runtimeInclude)
+
+	if debug {
+		fmt.Fprintf(os.Stderr, "Debug: Runtime include path: %s\n", runtimeInclude)
+		fmt.Fprintf(os.Stderr, "Debug: Compile command: %s -std=c++17 -O3 -march=native %s -o %s %s -lm\n",
+			compiler, includePath, exeFile, cFile)
+	}
+
+	compileCmd := exec.Command(compiler, "-std=c++17", "-O3", "-march=native", includePath, "-o", exeFile, cFile, "-lm")
 	compileCmd.Stderr = os.Stderr
 
 	err = compileCmd.Run()

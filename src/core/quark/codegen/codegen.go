@@ -24,6 +24,7 @@ type Generator struct {
 	currentFunc   string
 	declaredVars  map[string]bool    // Tracks declared variables to avoid redeclaration
 	scopeStack    []map[string]bool  // Stack of variable scopes for nested blocks
+	embedRuntime  bool               // If true, embed full runtime; if false, use #include
 }
 
 func New() *Generator {
@@ -34,7 +35,13 @@ func New() *Generator {
 		tempCounter:  0,
 		declaredVars: make(map[string]bool),
 		scopeStack:   make([]map[string]bool, 0),
+		embedRuntime: false, // Default: use #include instead of embedding
 	}
+}
+
+// SetEmbedRuntime configures whether to embed the full runtime or use #include
+func (g *Generator) SetEmbedRuntime(embed bool) {
+	g.embedRuntime = embed
 }
 
 func (g *Generator) indent() string {
@@ -77,9 +84,17 @@ func (g *Generator) popScope() {
 
 // Generate produces C++ code from the AST
 func (g *Generator) Generate(node *ast.TreeNode) string {
-	// Emit C++ runtime header (use WriteString directly to avoid % interpretation)
-	g.output.WriteString(runtimeHeader)
-	g.output.WriteString("\n// Forward declarations\n")
+	// Emit C++ runtime header
+	if g.embedRuntime {
+		// Embed full runtime (use WriteString directly to avoid % interpretation)
+		g.output.WriteString(runtimeHeader)
+		g.output.WriteString("\n")
+	} else {
+		// Use external header (clean, readable output)
+		g.output.WriteString("#include \"quark/quark.hpp\"\n\n")
+	}
+
+	g.output.WriteString("// Forward declarations\n")
 
 	// First pass: collect function declarations
 	g.collectFunctions(node)
@@ -367,9 +382,6 @@ func (g *Generator) generateOperator(node *ast.TreeNode) string {
 			g.declaredVars[varName] = true
 		}
 		return varName
-	case token.DOTDOT:
-		// Range - used in for loops, not directly as a value
-		return fmt.Sprintf("/* range %s..%s */", left, right)
 	}
 
 	return "qv_null()"
@@ -430,6 +442,15 @@ func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
 			return fmt.Sprintf("q_bool(%s)", args[0])
 		}
 		return "qv_bool(false)"
+	case "range":
+		if len(args) == 1 {
+			return fmt.Sprintf("q_range(%s)", args[0])
+		} else if len(args) == 2 {
+			return fmt.Sprintf("q_range(%s, %s)", args[0], args[1])
+		} else if len(args) >= 3 {
+			return fmt.Sprintf("q_range(%s, %s, %s)", args[0], args[1], args[2])
+		}
+		return "qv_list()"
 	// Math module functions
 	case "abs":
 		if len(args) > 0 {
@@ -640,6 +661,15 @@ func (g *Generator) generatePipe(node *ast.TreeNode) string {
 				return fmt.Sprintf("q_float(%s)", args[0])
 			case "bool":
 				return fmt.Sprintf("q_bool(%s)", args[0])
+			case "range":
+				if len(args) == 1 {
+					return fmt.Sprintf("q_range(%s)", args[0])
+				} else if len(args) == 2 {
+					return fmt.Sprintf("q_range(%s, %s)", args[0], args[1])
+				} else if len(args) >= 3 {
+					return fmt.Sprintf("q_range(%s, %s, %s)", args[0], args[1], args[2])
+				}
+				return "qv_list()"
 			// Math functions
 			case "abs":
 				return fmt.Sprintf("q_abs(%s)", args[0])
@@ -824,83 +854,42 @@ func (g *Generator) generateFor(node *ast.TreeNode) string {
 
 	varName := varNode.TokenLiteral()
 
-	// Handle range expression (0..10)
-	if rangeNode.NodeType == ast.OperatorNode && rangeNode.Token != nil && rangeNode.Token.Type == token.DOTDOT {
-		startExpr := g.generateExpr(rangeNode.Children[0])
-		endExpr := g.generateExpr(rangeNode.Children[1])
+	// Handle list iteration (for item in mylist or for i in range(10))
+	listExpr := g.generateExpr(rangeNode)
+	listTemp := g.newTemp()
+	lenTemp := g.newTemp()
+	idxTemp := g.newTemp()
 
-		startTemp := g.newTemp()
-		endTemp := g.newTemp()
+	g.emitLine("QValue %s = %s;", listTemp, listExpr)
+	g.emitLine("long long %s = (long long)%s.data.list_val->size();", lenTemp, listTemp)
+	g.emitLine("for (long long %s = 0; %s < %s; %s++) {", idxTemp, idxTemp, lenTemp, idxTemp)
+	g.indentLevel++
 
-		g.emitLine("long long %s = %s.data.int_val;", startTemp, startExpr)
-		g.emitLine("long long %s = %s.data.int_val;", endTemp, endExpr)
-		g.emitLine("for (long long _i = %s; _i < %s; _i++) {", startTemp, endTemp)
-		g.indentLevel++
-
-		// The loop variable is declared inside the C for loop
-		// Copy parent scope and add loop variable
-		oldDeclaredVars := g.declaredVars
-		g.declaredVars = make(map[string]bool)
-		for k, v := range oldDeclaredVars {
-			g.declaredVars[k] = v
-		}
-		g.declaredVars[varName] = true // Loop variable is declared
-		g.emitLine("QValue %s = qv_int(_i);", varName)
-
-		// Generate body - emit each statement
-		if bodyNode.NodeType == ast.BlockNode {
-			for _, stmt := range bodyNode.Children {
-				expr := g.generateExpr(stmt)
-				g.emitLine("%s;", expr)
-			}
-		} else {
-			expr := g.generateExpr(bodyNode)
-			g.emitLine("%s;", expr)
-		}
-
-		// Restore parent scope
-		g.declaredVars = oldDeclaredVars
-
-		g.indentLevel--
-		g.emitLine("}")
-	} else {
-		// Handle list iteration (for item in mylist)
-		listExpr := g.generateExpr(rangeNode)
-		listTemp := g.newTemp()
-		lenTemp := g.newTemp()
-		idxTemp := g.newTemp()
-
-		g.emitLine("QValue %s = %s;", listTemp, listExpr)
-		g.emitLine("long long %s = (long long)%s.data.list_val->size();", lenTemp, listTemp)
-		g.emitLine("for (long long %s = 0; %s < %s; %s++) {", idxTemp, idxTemp, lenTemp, idxTemp)
-		g.indentLevel++
-
-		// Copy parent scope and add loop variable
-		oldDeclaredVars := g.declaredVars
-		g.declaredVars = make(map[string]bool)
-		for k, v := range oldDeclaredVars {
-			g.declaredVars[k] = v
-		}
-		g.declaredVars[varName] = true // Loop variable is declared
-		g.emitLine("QValue %s = q_get(%s, qv_int(%s));", varName, listTemp, idxTemp)
-
-		// Generate body - emit each statement
-		if bodyNode.NodeType == ast.BlockNode {
-			for _, stmt := range bodyNode.Children {
-				expr := g.generateExpr(stmt)
-				g.emitLine("%s;", expr)
-			}
-		} else {
-			expr := g.generateExpr(bodyNode)
-			g.emitLine("%s;", expr)
-		}
-
-		// Restore parent scope
-		g.declaredVars = oldDeclaredVars
-
-		g.indentLevel--
-		g.emitLine("}")
+	// Copy parent scope and add loop variable
+	oldDeclaredVars := g.declaredVars
+	g.declaredVars = make(map[string]bool)
+	for k, v := range oldDeclaredVars {
+		g.declaredVars[k] = v
 	}
+	g.declaredVars[varName] = true // Loop variable is declared
+	g.emitLine("QValue %s = q_get(%s, qv_int(%s));", varName, listTemp, idxTemp)
+
+	// Generate body - emit each statement
+	if bodyNode.NodeType == ast.BlockNode {
+		for _, stmt := range bodyNode.Children {
+			expr := g.generateExpr(stmt)
+			g.emitLine("%s;", expr)
+		}
+	} else {
+		expr := g.generateExpr(bodyNode)
+		g.emitLine("%s;", expr)
+	}
+
+	// Restore parent scope
+	g.declaredVars = oldDeclaredVars
+
+	g.indentLevel--
+	g.emitLine("}")
 
 	return "qv_null()"
 }

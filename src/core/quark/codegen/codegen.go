@@ -421,6 +421,9 @@ func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
 		}
 		return "qv_int(0)"
 	case "input":
+		if len(args) > 0 {
+			return fmt.Sprintf("q_input(%s)", args[0])
+		}
 		return "q_input()"
 	case "str":
 		if len(args) > 0 {

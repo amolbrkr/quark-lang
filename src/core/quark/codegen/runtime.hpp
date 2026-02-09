@@ -988,8 +988,13 @@ inline QValue q_println(QValue v) {
     return qv_null();
 }
 
-// Read line from stdin
-inline QValue q_input() {
+// Read line from stdin (with optional prompt)
+inline QValue q_input(QValue prompt) {
+    // Print prompt if it's a string
+    if (prompt.type == QValue::VAL_STRING) {
+        printf("%s", prompt.data.string_val);
+        fflush(stdout);
+    }
     char buffer[4096];
     if (fgets(buffer, sizeof(buffer), stdin) != nullptr) {
         // Remove trailing newline
@@ -1000,6 +1005,11 @@ inline QValue q_input() {
         return qv_string(buffer);
     }
     return qv_string("");
+}
+
+// Read line from stdin (no prompt)
+inline QValue q_input() {
+    return q_input(qv_null());
 }
 
 // ============================================================

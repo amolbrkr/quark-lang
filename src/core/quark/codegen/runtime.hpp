@@ -249,9 +249,20 @@ inline bool either_float(const QValue& a, const QValue& b) {
 } // namespace detail
 } // namespace quark
 
-// Addition: int + int = int, otherwise float
+// Addition: int + int = int, float promotion, string + string = concat
 inline QValue q_add(QValue a, QValue b) {
-    // Type guard: only INT and FLOAT are valid
+    // String concatenation: string + string
+    if (a.type == QValue::VAL_STRING && b.type == QValue::VAL_STRING) {
+        size_t len = strlen(a.data.string_val) + strlen(b.data.string_val);
+        char* result = static_cast<char*>(q_malloc_atomic(len + 1));
+        strcpy(result, a.data.string_val);
+        strcat(result, b.data.string_val);
+        QValue q;
+        q.type = QValue::VAL_STRING;
+        q.data.string_val = result;
+        return q;
+    }
+    // Type guard: only INT and FLOAT are valid for numeric addition
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
         return qv_null();

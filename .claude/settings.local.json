@@ -15,7 +15,19 @@
       "Bash(./quark build:*)",
       "Bash(../../test_clean)",
       "Bash(whereis:*)",
-      "Bash(./quark.exe run:*)"
+      "Bash(./quark.exe run:*)",
+      "Bash(./quark.exe parse:*)",
+      "Bash(timeout:*)",
+      "Bash(ls:*)",
+      "Bash(bash build_runtime.sh:*)",
+      "Bash(./quark.exe lex:*)",
+      "Bash(git push:*)",
+      "Bash(./quark.exe emit:*)",
+      "Bash(for file in test_for.qrk test_clean.qrk test_arrow.qrk test_when_arrow.qrk test_lambda_working.qrk test_add_collision.qrk)",
+      "Bash(do echo \"=== Testing $file ===\")",
+      "Bash(done)",
+      "Bash(where:*)",
+      "Bash(powershell.exe:*)"
     ]
   }
 }

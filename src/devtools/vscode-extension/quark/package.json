@@ -2,7 +2,9 @@
   "name": "quark-language",
   "displayName": "Quark Language Support",
   "description": "Syntax highlighting for the Quark language",
-  "version": "0.0.1",
+  "version": "0.0.2",
+  "publisher": "quark-lang",
+  "license": "MIT",
   "engines": {
     "vscode": "^1.74.0"
   },

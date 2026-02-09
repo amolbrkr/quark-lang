@@ -20,7 +20,7 @@
     ["'", "'"]
   ],
   "indentationRules": {
-    "increaseIndentPattern": "^\\s*(if|elseif|else|for|while|when|fn|class|.*:)\\s*$",
+    "increaseIndentPattern": "^\\s*(if|elseif|else|for|while|when|fn|module)\\b.*(:|->)\\s*$",
     "decreaseIndentPattern": "^\\s*(elseif|else)\\b"
   }
 }

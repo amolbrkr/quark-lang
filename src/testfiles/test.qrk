@@ -1,3 +1,5 @@
-'hello'
-    | upper
-    | println
+list1 = [92, 43, 56, 78, 12, 193, 45, 67, 89, 34]
+
+for item in list1:
+    println item
+

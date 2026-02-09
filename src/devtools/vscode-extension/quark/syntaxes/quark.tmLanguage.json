@@ -6,7 +6,6 @@
     { "include": "#comments" },
     { "include": "#strings" },
     { "include": "#function-definitions" },
-    { "include": "#class-definitions" },
     { "include": "#control-keywords" },
     { "include": "#constants" },
     { "include": "#operators" },
@@ -60,22 +59,11 @@
         }
       ]
     },
-    "class-definitions": {
-      "patterns": [
-        {
-          "match": "\\b(class)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
-          "captures": {
-            "1": { "name": "storage.type.class.quark" },
-            "2": { "name": "entity.name.type.class.quark" }
-          }
-        }
-      ]
-    },
     "control-keywords": {
       "patterns": [
         {
           "name": "keyword.control.quark",
-          "match": "\\b(if|else|elseif|for|while|when|in|return|use|module)\\b"
+          "match": "\\b(if|else|elseif|for|while|when|in|use|module)\\b"
         },
         {
           "name": "keyword.operator.logical.quark",
@@ -110,10 +98,6 @@
           "match": "\\|"
         },
         {
-          "name": "keyword.operator.range.quark",
-          "match": "\\.\\."
-        },
-        {
           "name": "keyword.operator.arithmetic.quark",
           "match": "\\+|\\-|\\*|\\/|%|\\*\\*"
         },
@@ -122,12 +106,16 @@
           "match": "==|!=|<=|>=|<|>"
         },
         {
+          "name": "keyword.operator.arrow.quark",
+          "match": "->"
+        },
+        {
           "name": "keyword.operator.assignment.quark",
           "match": "="
         },
         {
-          "name": "keyword.operator.bitwise.quark",
-          "match": "\\!|\\~|\\&"
+          "name": "keyword.operator.unary.quark",
+          "match": "\\!|\\~"
         }
       ]
     },
@@ -135,7 +123,7 @@
       "patterns": [
         {
           "name": "support.type.quark",
-          "match": "\\b(int|float|str|bool|list|dict)\\b"
+          "match": "\\b(int|float|string|bool)\\b"
         }
       ]
     },
@@ -155,7 +143,7 @@
       "patterns": [
         {
           "name": "punctuation.separator.quark",
-          "match": ",|:|\\.|@"
+          "match": ",|:|\\."
         },
         {
           "name": "punctuation.section.block.begin.quark",

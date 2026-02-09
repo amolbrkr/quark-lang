@@ -6,4 +6,12 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
-- Initial release
+- Update syntax highlighting for arrow-based function bodies
+- Remove obsolete `class` and range operator patterns
+- Add extension metadata for local installation
+
+## [0.0.2]
+
+- Update syntax highlighting for arrow-based function bodies
+- Remove obsolete `class` and range operator patterns
+- Add extension metadata for local installation

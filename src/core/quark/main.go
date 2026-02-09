@@ -78,27 +78,36 @@ func main() {
 
 	case "build":
 		if len(os.Args) < 3 {
-			fmt.Println("Usage: quark build <file.qrk> [-o output]")
+			fmt.Println("Usage: quark build <file.qrk> [-o output] [--gc]")
 			os.Exit(1)
 		}
 		output := ""
-		if len(os.Args) >= 5 && os.Args[3] == "-o" {
-			output = os.Args[4]
+		useGC := false
+		for i := 3; i < len(os.Args); i++ {
+			if os.Args[i] == "-o" && i+1 < len(os.Args) {
+				output = os.Args[i+1]
+				i++ // Skip next arg
+			} else if os.Args[i] == "--gc" {
+				useGC = true
+			}
 		}
-		runBuild(os.Args[2], output)
+		runBuild(os.Args[2], output, useGC)
 
 	case "run":
 		if len(os.Args) < 3 {
-			fmt.Println("Usage: quark run <file.qrk> [--debug]")
+			fmt.Println("Usage: quark run <file.qrk> [--debug] [--gc]")
 			os.Exit(1)
 		}
 		debug := false
+		useGC := false
 		for _, arg := range os.Args[3:] {
 			if arg == "--debug" || arg == "-d" {
 				debug = true
+			} else if arg == "--gc" {
+				useGC = true
 			}
 		}
-		runRun(os.Args[2], debug)
+		runRun(os.Args[2], debug, useGC)
 
 	case "help", "-h", "--help":
 		printUsage()
@@ -107,12 +116,15 @@ func main() {
 		// Check if it's a .qrk file - if so, run it
 		if strings.HasSuffix(os.Args[1], ".qrk") {
 			debug := false
+			useGC := false
 			for _, arg := range os.Args[2:] {
 				if arg == "--debug" || arg == "-d" {
 					debug = true
+				} else if arg == "--gc" {
+					useGC = true
 				}
 			}
-			runRun(os.Args[1], debug)
+			runRun(os.Args[1], debug, useGC)
 		} else {
 			fmt.Printf("Unknown command: %s\n", command)
 			printUsage()
@@ -127,18 +139,23 @@ func printUsage() {
 	fmt.Println("Usage: quark <command> [arguments]")
 	fmt.Println()
 	fmt.Println("Commands:")
-	fmt.Println("  lex <file>                 Tokenize a file and print tokens")
-	fmt.Println("  parse <file>               Parse a file and print the AST")
-	fmt.Println("  check <file>               Type check a file")
-	fmt.Println("  emit <file>                Emit C code to stdout")
-	fmt.Println("  build <file> [-o out]      Compile to executable")
-	fmt.Println("  run <file> [--debug|-d]    Compile and run (--debug saves .c file)")
-	fmt.Println("  help                       Show this help message")
+	fmt.Println("  lex <file>                    Tokenize a file and print tokens")
+	fmt.Println("  parse <file>                  Parse a file and print the AST")
+	fmt.Println("  check <file>                  Type check a file")
+	fmt.Println("  emit <file>                   Emit C code to stdout")
+	fmt.Println("  build <file> [-o out] [--gc]  Compile to executable")
+	fmt.Println("  run <file> [--debug] [--gc]   Compile and run")
+	fmt.Println("  help                          Show this help message")
+	fmt.Println()
+	fmt.Println("Flags:")
+	fmt.Println("  --debug, -d    Save generated C++ file (for run/build)")
+	fmt.Println("  --gc           Enable Boehm GC (requires libgc)")
 	fmt.Println()
 	fmt.Println("Examples:")
-	fmt.Println("  quark run test.qrk           # Compile and run")
-	fmt.Println("  quark build test.qrk -o app  # Compile to executable")
-	fmt.Println("  quark test.qrk               # Shorthand for run")
+	fmt.Println("  quark run test.qrk                # Compile and run")
+	fmt.Println("  quark run test.qrk --gc           # Run with GC enabled")
+	fmt.Println("  quark build test.qrk -o app --gc  # Build with GC")
+	fmt.Println("  quark test.qrk                    # Shorthand for run")
 }
 
 func compile(filename string) (*codegen.Generator, error) {
@@ -282,7 +299,7 @@ func runEmit(filename string) {
 	fmt.Println(cCode)
 }
 
-func runBuild(filename string, output string) {
+func runBuild(filename string, output string, useGC bool) {
 	content, err := os.ReadFile(filename)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading file: %s\n", err)
@@ -336,7 +353,23 @@ func runBuild(filename string, output string) {
 	runtimeInclude := getRuntimeIncludePath()
 	includePath := fmt.Sprintf("-I%s", runtimeInclude)
 
-	cmd := exec.Command(compiler, "-std=c++17", "-O3", "-march=native", includePath, "-o", output, cFile, "-lm")
+	// Build compilation arguments
+	args := []string{"-std=c++17", "-O3", "-march=native", includePath}
+
+	// Add GC flags if enabled
+	if useGC {
+		args = append(args, "-DQUARK_USE_GC")
+	}
+
+	args = append(args, "-o", output, cFile)
+
+	// Add linker flags
+	if useGC {
+		args = append(args, "-lgc")
+	}
+	args = append(args, "-lm")
+
+	cmd := exec.Command(compiler, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -352,7 +385,7 @@ func runBuild(filename string, output string) {
 	fmt.Printf("Built: %s\n", output)
 }
 
-func runRun(filename string, debug bool) {
+func runRun(filename string, debug bool, useGC bool) {
 	content, err := os.ReadFile(filename)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading file: %s\n", err)
@@ -414,13 +447,28 @@ func runRun(filename string, debug bool) {
 	runtimeInclude := getRuntimeIncludePath()
 	includePath := fmt.Sprintf("-I%s", runtimeInclude)
 
-	if debug {
-		fmt.Fprintf(os.Stderr, "Debug: Runtime include path: %s\n", runtimeInclude)
-		fmt.Fprintf(os.Stderr, "Debug: Compile command: %s -std=c++17 -O3 -march=native %s -o %s %s -lm\n",
-			compiler, includePath, exeFile, cFile)
+	// Build compilation arguments
+	args := []string{"-std=c++17", "-O3", "-march=native", includePath}
+
+	// Add GC flags if enabled
+	if useGC {
+		args = append(args, "-DQUARK_USE_GC")
 	}
 
-	compileCmd := exec.Command(compiler, "-std=c++17", "-O3", "-march=native", includePath, "-o", exeFile, cFile, "-lm")
+	args = append(args, "-o", exeFile, cFile)
+
+	// Add linker flags
+	if useGC {
+		args = append(args, "-lgc")
+	}
+	args = append(args, "-lm")
+
+	if debug {
+		fmt.Fprintf(os.Stderr, "Debug: Runtime include path: %s\n", runtimeInclude)
+		fmt.Fprintf(os.Stderr, "Debug: Compile command: %s %s\n", compiler, strings.Join(args, " "))
+	}
+
+	compileCmd := exec.Command(compiler, args...)
 	compileCmd.Stderr = os.Stderr
 
 	err = compileCmd.Run()

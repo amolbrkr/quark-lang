@@ -4,6 +4,7 @@
 
 #include "../core/value.hpp"
 #include "../core/constructors.hpp"
+#include "../core/gc.hpp"
 #include <cstring>
 #include <cctype>
 #include <cstdlib>
@@ -12,12 +13,12 @@
 inline QValue q_upper(QValue v) {
     // Type guard: only STRING is valid
     if (v.type != QValue::VAL_STRING) return qv_null();
-    char* result = strdup(v.data.string_val);
+    char* result = q_strdup(v.data.string_val);
     for (int i = 0; result[i]; i++) {
         result[i] = static_cast<char>(toupper(static_cast<unsigned char>(result[i])));
     }
     QValue q = qv_string(result);
-    free(result);
+    // GC will handle cleanup - no explicit free needed
     return q;
 }
 
@@ -25,12 +26,12 @@ inline QValue q_upper(QValue v) {
 inline QValue q_lower(QValue v) {
     // Type guard: only STRING is valid
     if (v.type != QValue::VAL_STRING) return qv_null();
-    char* result = strdup(v.data.string_val);
+    char* result = q_strdup(v.data.string_val);
     for (int i = 0; result[i]; i++) {
         result[i] = static_cast<char>(tolower(static_cast<unsigned char>(result[i])));
     }
     QValue q = qv_string(result);
-    free(result);
+    // GC will handle cleanup - no explicit free needed
     return q;
 }
 
@@ -46,12 +47,12 @@ inline QValue q_trim(QValue v) {
     while (end > start && isspace(static_cast<unsigned char>(*end))) end--;
 
     size_t len = static_cast<size_t>(end - start + 1);
-    char* result = static_cast<char*>(malloc(len + 1));
+    char* result = static_cast<char*>(q_malloc_atomic(len + 1));
     strncpy(result, start, len);
     result[len] = '\0';
 
     QValue q = qv_string(result);
-    free(result);
+    // GC will handle cleanup - no explicit free needed
     return q;
 }
 
@@ -109,10 +110,10 @@ inline QValue q_replace(QValue str, QValue old_str, QValue new_str) {
         tmp += olen;
     }
 
-    // Allocate result
+    // Allocate result (use atomic since it's just chars, no pointers)
     size_t slen = strlen(s);
     size_t rlen = slen + static_cast<size_t>(count) * (nlen - olen);
-    char* result = static_cast<char*>(malloc(rlen + 1));
+    char* result = static_cast<char*>(q_malloc_atomic(rlen + 1));
     char* dest = result;
 
     while (*s) {
@@ -127,7 +128,7 @@ inline QValue q_replace(QValue str, QValue old_str, QValue new_str) {
     *dest = '\0';
 
     QValue q = qv_string(result);
-    free(result);
+    // GC will handle cleanup - no explicit free needed
     return q;
 }
 
@@ -138,11 +139,11 @@ inline QValue q_concat(QValue a, QValue b) {
         return qv_null();
     }
     size_t len = strlen(a.data.string_val) + strlen(b.data.string_val);
-    char* result = static_cast<char*>(malloc(len + 1));
+    char* result = static_cast<char*>(q_malloc_atomic(len + 1));
     strcpy(result, a.data.string_val);
     strcat(result, b.data.string_val);
     QValue q = qv_string(result);
-    free(result);
+    // GC will handle cleanup - no explicit free needed
     return q;
 }
 

@@ -7,6 +7,7 @@ $IncludeDir = "include/quark"
 
 # Header files in dependency order
 $HeaderFiles = @(
+    "core/gc.hpp",
     "core/value.hpp",
     "core/constructors.hpp",
     "core/truthy.hpp",

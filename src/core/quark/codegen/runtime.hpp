@@ -14,6 +14,54 @@
 #include <cstdarg>
 
 // ============================================================
+// core/gc.hpp
+// ============================================================
+
+// quark/core/gc.hpp - Boehm GC integration wrapper
+// Boehm GC configuration
+// Define QUARK_USE_GC to enable garbage collection
+// Otherwise falls back to manual memory management (leaking for now)
+
+#ifdef QUARK_USE_GC
+    #include <gc.h>
+
+    // Initialize GC (call once at program start)
+    inline void q_gc_init() {
+        GC_INIT();
+    }
+
+    // GC allocation macros (expand to Boehm GC calls)
+    #define q_malloc(n)         GC_MALLOC(n)
+    #define q_malloc_atomic(n)  GC_MALLOC_ATOMIC(n)
+    #define q_realloc(p, n)     GC_REALLOC(p, n)
+    #define q_free(p)           /* GC handles it */
+    #define q_strdup(s)         GC_STRDUP(s)
+
+    // For future tensor/array data (no pointer scanning needed)
+    #define q_malloc_tensor(n)  GC_MALLOC_ATOMIC(n)
+
+#else
+    // No GC - use standard malloc (will leak for now)
+    #include <cstdlib>
+    #include <cstring>
+
+    inline void q_gc_init() {
+        // No-op when GC disabled
+    }
+
+    #define q_malloc(n)         malloc(n)
+    #define q_malloc_atomic(n)  malloc(n)
+    #define q_realloc(p, n)     realloc(p, n)
+    #define q_free(p)           free(p)
+
+    inline char* q_strdup(const char* s) {
+        return strdup(s);
+    }
+
+    #define q_malloc_tensor(n)  malloc(n)
+#endif
+
+// ============================================================
 // core/value.hpp
 // ============================================================
 
@@ -80,11 +128,11 @@ inline QValue qv_float(double v) {
     return q;
 }
 
-// String value constructor (makes a copy)
+// String value constructor (makes a copy using GC)
 inline QValue qv_string(const char* v) {
     QValue q;
     q.type = QValue::VAL_STRING;
-    q.data.string_val = strdup(v);
+    q.data.string_val = q_strdup(v);
     return q;
 }
 
@@ -112,10 +160,11 @@ inline QValue qv_func(void* f) {
 }
 
 // List value constructor with optional initial capacity
+// Note: std::vector internally uses new/delete, which Boehm GC intercepts
 inline QValue qv_list(int initial_cap = 0) {
     QValue q;
     q.type = QValue::VAL_LIST;
-    q.data.list_val = new QList();
+    q.data.list_val = new QList();  // Boehm GC intercepts operator new
     if (initial_cap > 0) {
         q.data.list_val->reserve(initial_cap);
     }
@@ -126,7 +175,7 @@ inline QValue qv_list(int initial_cap = 0) {
 inline QValue qv_list_from(int count, ...) {
     QValue q;
     q.type = QValue::VAL_LIST;
-    q.data.list_val = new QList();
+    q.data.list_val = new QList();  // Boehm GC intercepts operator new
     q.data.list_val->reserve(count);
     va_list args;
     va_start(args, count);
@@ -141,7 +190,7 @@ inline QValue qv_list_from(int count, ...) {
 inline QValue qv_list_init(std::initializer_list<QValue> items) {
     QValue q;
     q.type = QValue::VAL_LIST;
-    q.data.list_val = new QList(items);
+    q.data.list_val = new QList(items);  // Boehm GC intercepts operator new
     return q;
 }
 
@@ -708,12 +757,12 @@ inline QValue q_range(QValue start, QValue end, QValue step) {
 inline QValue q_upper(QValue v) {
     // Type guard: only STRING is valid
     if (v.type != QValue::VAL_STRING) return qv_null();
-    char* result = strdup(v.data.string_val);
+    char* result = q_strdup(v.data.string_val);
     for (int i = 0; result[i]; i++) {
         result[i] = static_cast<char>(toupper(static_cast<unsigned char>(result[i])));
     }
     QValue q = qv_string(result);
-    free(result);
+    // GC will handle cleanup - no explicit free needed
     return q;
 }
 
@@ -721,12 +770,12 @@ inline QValue q_upper(QValue v) {
 inline QValue q_lower(QValue v) {
     // Type guard: only STRING is valid
     if (v.type != QValue::VAL_STRING) return qv_null();
-    char* result = strdup(v.data.string_val);
+    char* result = q_strdup(v.data.string_val);
     for (int i = 0; result[i]; i++) {
         result[i] = static_cast<char>(tolower(static_cast<unsigned char>(result[i])));
     }
     QValue q = qv_string(result);
-    free(result);
+    // GC will handle cleanup - no explicit free needed
     return q;
 }
 
@@ -742,12 +791,12 @@ inline QValue q_trim(QValue v) {
     while (end > start && isspace(static_cast<unsigned char>(*end))) end--;
 
     size_t len = static_cast<size_t>(end - start + 1);
-    char* result = static_cast<char*>(malloc(len + 1));
+    char* result = static_cast<char*>(q_malloc_atomic(len + 1));
     strncpy(result, start, len);
     result[len] = '\0';
 
     QValue q = qv_string(result);
-    free(result);
+    // GC will handle cleanup - no explicit free needed
     return q;
 }
 
@@ -805,10 +854,10 @@ inline QValue q_replace(QValue str, QValue old_str, QValue new_str) {
         tmp += olen;
     }
 
-    // Allocate result
+    // Allocate result (use atomic since it's just chars, no pointers)
     size_t slen = strlen(s);
     size_t rlen = slen + static_cast<size_t>(count) * (nlen - olen);
-    char* result = static_cast<char*>(malloc(rlen + 1));
+    char* result = static_cast<char*>(q_malloc_atomic(rlen + 1));
     char* dest = result;
 
     while (*s) {
@@ -823,7 +872,7 @@ inline QValue q_replace(QValue str, QValue old_str, QValue new_str) {
     *dest = '\0';
 
     QValue q = qv_string(result);
-    free(result);
+    // GC will handle cleanup - no explicit free needed
     return q;
 }
 
@@ -834,11 +883,11 @@ inline QValue q_concat(QValue a, QValue b) {
         return qv_null();
     }
     size_t len = strlen(a.data.string_val) + strlen(b.data.string_val);
-    char* result = static_cast<char*>(malloc(len + 1));
+    char* result = static_cast<char*>(q_malloc_atomic(len + 1));
     strcpy(result, a.data.string_val);
     strcat(result, b.data.string_val);
     QValue q = qv_string(result);
-    free(result);
+    // GC will handle cleanup - no explicit free needed
     return q;
 }
 

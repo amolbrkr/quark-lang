@@ -133,8 +133,7 @@ inline QValue q_replace(QValue str, QValue old_str, QValue new_str) {
 }
 
 // Concatenate two strings
-inline QValue q_concat(QValue a, QValue b) {
-    // Type guard: both must be STRING
+inline QValue q_str_concat(QValue a, QValue b) {
     if (a.type != QValue::VAL_STRING || b.type != QValue::VAL_STRING) {
         return qv_null();
     }
@@ -143,7 +142,6 @@ inline QValue q_concat(QValue a, QValue b) {
     strcpy(result, a.data.string_val);
     strcat(result, b.data.string_val);
     QValue q = qv_string(result);
-    // GC will handle cleanup - no explicit free needed
     return q;
 }
 

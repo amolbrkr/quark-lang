@@ -530,7 +530,7 @@ func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
 		if len(args) >= 2 {
 			return fmt.Sprintf("q_concat(%s, %s)", args[0], args[1])
 		}
-		return "qv_string(\"\")"
+		return "qv_null()"
 	// List functions
 	case "push":
 		if len(args) >= 2 {
@@ -550,6 +550,26 @@ func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
 	case "set":
 		if len(args) >= 3 {
 			return fmt.Sprintf("q_set(%s, %s, %s)", args[0], args[1], args[2])
+		}
+		return "qv_null()"
+	case "insert":
+		if len(args) >= 3 {
+			return fmt.Sprintf("q_insert(%s, %s, %s)", args[0], args[1], args[2])
+		}
+		return "qv_null()"
+	case "remove":
+		if len(args) >= 2 {
+			return fmt.Sprintf("q_remove(%s, %s)", args[0], args[1])
+		}
+		return "qv_null()"
+	case "slice":
+		if len(args) >= 3 {
+			return fmt.Sprintf("q_slice(%s, %s, %s)", args[0], args[1], args[2])
+		}
+		return "qv_null()"
+	case "reverse":
+		if len(args) >= 1 {
+			return fmt.Sprintf("q_reverse(%s)", args[0])
 		}
 		return "qv_null()"
 	}
@@ -634,6 +654,11 @@ func (g *Generator) generatePipe(node *ast.TreeNode) string {
 			return fmt.Sprintf("q_lower(%s)", input)
 		case "trim":
 			return fmt.Sprintf("q_trim(%s)", input)
+		// List functions (single-arg)
+		case "pop":
+			return fmt.Sprintf("q_pop(%s)", input)
+		case "reverse":
+			return fmt.Sprintf("q_reverse(%s)", input)
 		default:
 			return fmt.Sprintf("quark_%s(%s)", funcName, input)
 		}
@@ -725,7 +750,42 @@ func (g *Generator) generatePipe(node *ast.TreeNode) string {
 				if len(args) >= 2 {
 					return fmt.Sprintf("q_concat(%s, %s)", args[0], args[1])
 				}
-				return "qv_string(\"\")"
+				return "qv_null()"
+			// List functions
+			case "push":
+				if len(args) >= 2 {
+					return fmt.Sprintf("q_push(%s, %s)", args[0], args[1])
+				}
+				return "qv_null()"
+			case "pop":
+				return fmt.Sprintf("q_pop(%s)", args[0])
+			case "get":
+				if len(args) >= 2 {
+					return fmt.Sprintf("q_get(%s, %s)", args[0], args[1])
+				}
+				return "qv_null()"
+			case "set":
+				if len(args) >= 3 {
+					return fmt.Sprintf("q_set(%s, %s, %s)", args[0], args[1], args[2])
+				}
+				return "qv_null()"
+			case "insert":
+				if len(args) >= 3 {
+					return fmt.Sprintf("q_insert(%s, %s, %s)", args[0], args[1], args[2])
+				}
+				return "qv_null()"
+			case "remove":
+				if len(args) >= 2 {
+					return fmt.Sprintf("q_remove(%s, %s)", args[0], args[1])
+				}
+				return "qv_null()"
+			case "slice":
+				if len(args) >= 3 {
+					return fmt.Sprintf("q_slice(%s, %s, %s)", args[0], args[1], args[2])
+				}
+				return "qv_null()"
+			case "reverse":
+				return fmt.Sprintf("q_reverse(%s)", args[0])
 			default:
 				return fmt.Sprintf("quark_%s(%s)", funcName, strings.Join(args, ", "))
 			}

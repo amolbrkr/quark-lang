@@ -441,7 +441,16 @@ Built-in functions are implemented in the C runtime (in `codegen/codegen.go`) fo
 ### String Functions
 - `upper`, `lower`, `trim` - Case and whitespace
 - `contains`, `startswith`, `endswith` - Searching
-- `replace`, `concat` - Manipulation
+- `replace` - Manipulation
+- `concat` - Concatenation (works for both strings and lists)
+
+### List Functions
+- `push`, `pop` - Add/remove from end
+- `get`, `set` - Access/modify by index
+- `insert` - Insert at index: `insert list, 2, value`
+- `remove` - Remove at index: `remove list, 0`
+- `slice` - Slice [start, end): `slice list, 1, 3`
+- `reverse` - Reverse in place
 
 ## Tensor Type
 
@@ -569,8 +578,6 @@ QValue q_insert(QValue list, QValue index, QValue item);
 QValue q_remove(QValue list, QValue index);
 QValue q_slice(QValue list, QValue start, QValue end);
 QValue q_reverse(QValue list);
-QValue q_list_concat(QValue a, QValue b);
-
 // I/O
 QValue q_print(QValue v);
 QValue q_println(QValue v);
@@ -593,7 +600,7 @@ QValue q_contains(QValue str, QValue sub);
 QValue q_startswith(QValue str, QValue prefix);
 QValue q_endswith(QValue str, QValue suffix);
 QValue q_replace(QValue str, QValue old, QValue new_str);
-QValue q_concat(QValue a, QValue b);
+QValue q_concat(QValue a, QValue b);  // Works for both strings and lists
 
 // Range
 QValue q_range(QValue end);                          // range(10)
@@ -985,8 +992,9 @@ Key: Yes = implemented, Partial = present but incomplete, No = missing.
 | Conversions: `len`, `str`, `int`, `float`, `bool` | Yes | Yes | No | Builtins only. |
 | Math: `abs`, `min`, `max`, `sqrt`, `floor`, `ceil`, `round` | Yes | Yes | No | Builtins only. |
 | String: `upper`, `lower`, `trim`, `contains`, `startswith`, `endswith`, `replace`, `concat` | Yes | Yes | No | Builtins only. |
-| List: `push`, `pop`, `get`, `set` | Yes | Yes | No | Builtins only. |
-| List extras: `size`, `empty`, `clear`, `insert`, `remove`, `concat`, `slice`, `reverse` | Yes | No | No | Implemented in runtime but not exposed as builtins. |
+| List: `push`, `pop`, `get`, `set`, `insert`, `remove`, `slice`, `reverse` | Yes | Yes | No | Builtins only. |
+| List extras: `size`, `empty`, `clear` | Yes | No | No | Implemented in runtime but not exposed as builtins. |
+| `concat` (overloaded) | Yes | Yes | No | Works for both strings and lists. |
 | Dict / map | No | No | No | Dict literals parse but no runtime or codegen. |
 | Time / clock | No | No | No | Not yet implemented. |
 | Random | No | No | No | Not yet implemented. |

@@ -24,8 +24,8 @@
 #include "ops/logical.hpp"
 
 // Type-specific operations
-#include "types/list.hpp"
 #include "types/string.hpp"
+#include "types/list.hpp"
 #include "types/function.hpp"
 
 // Built-in functions

@@ -52,12 +52,16 @@ func NewAnalyzer() *Analyzer {
 		"startswith": {ParamTypes: []Type{TypeString, TypeString}, ReturnType: TypeBool},
 		"endswith":   {ParamTypes: []Type{TypeString, TypeString}, ReturnType: TypeBool},
 		"replace":    {ParamTypes: []Type{TypeString, TypeString, TypeString}, ReturnType: TypeString},
-		"concat":     {ParamTypes: []Type{TypeString, TypeString}, ReturnType: TypeString},
+		"concat":     {ParamTypes: []Type{TypeAny, TypeAny}, ReturnType: TypeAny},
 		// List module functions
-		"push": {ParamTypes: []Type{TypeAny, TypeAny}, ReturnType: TypeAny},
-		"pop":  {ParamTypes: []Type{TypeAny}, ReturnType: TypeAny},
-		"get":  {ParamTypes: []Type{TypeAny, TypeInt}, ReturnType: TypeAny},
-		"set":  {ParamTypes: []Type{TypeAny, TypeInt, TypeAny}, ReturnType: TypeAny},
+		"push":    {ParamTypes: []Type{TypeAny, TypeAny}, ReturnType: TypeAny},
+		"pop":     {ParamTypes: []Type{TypeAny}, ReturnType: TypeAny},
+		"get":     {ParamTypes: []Type{TypeAny, TypeInt}, ReturnType: TypeAny},
+		"set":     {ParamTypes: []Type{TypeAny, TypeInt, TypeAny}, ReturnType: TypeAny},
+		"insert":  {ParamTypes: []Type{TypeAny, TypeInt, TypeAny}, ReturnType: TypeAny},
+		"remove":  {ParamTypes: []Type{TypeAny, TypeInt}, ReturnType: TypeAny},
+		"slice":   {ParamTypes: []Type{TypeAny, TypeInt, TypeInt}, ReturnType: TypeAny},
+		"reverse": {ParamTypes: []Type{TypeAny}, ReturnType: TypeAny},
 	}
 
 	funcs := make(map[string]*FunctionType)

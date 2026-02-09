@@ -39,6 +39,31 @@ func getRuntimeIncludePath() string {
 	return filepath.Join("runtime", "include")
 }
 
+// getGCPaths returns the include and library paths for the Boehm GC dependency
+// relative to the quark executable (deps/bdwgc)
+func getGCPaths() (includePath string, libPath string) {
+	exePath, err := os.Executable()
+	if err != nil {
+		return "", ""
+	}
+	exeDir := filepath.Dir(exePath)
+
+	// GC is in deps/bdwgc relative to the project root
+	// exe is in src/core/quark, so go up 3 levels
+	projectRoot := filepath.Join(exeDir, "..", "..", "..")
+	gcInclude := filepath.Join(projectRoot, "deps", "bdwgc", "include")
+	gcLib := filepath.Join(projectRoot, "deps", "bdwgc", "build")
+
+	// Check if paths exist
+	if _, err := os.Stat(gcInclude); err != nil {
+		// Fallback: try relative to current directory
+		gcInclude = filepath.Join("deps", "bdwgc", "include")
+		gcLib = filepath.Join("deps", "bdwgc", "build")
+	}
+
+	return gcInclude, gcLib
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		printUsage()
@@ -358,7 +383,8 @@ func runBuild(filename string, output string, useGC bool) {
 
 	// Add GC flags if enabled
 	if useGC {
-		args = append(args, "-DQUARK_USE_GC")
+		gcInclude, gcLib := getGCPaths()
+		args = append(args, "-DQUARK_USE_GC", fmt.Sprintf("-I%s", gcInclude), fmt.Sprintf("-L%s", gcLib))
 	}
 
 	args = append(args, "-o", output, cFile)
@@ -452,7 +478,8 @@ func runRun(filename string, debug bool, useGC bool) {
 
 	// Add GC flags if enabled
 	if useGC {
-		args = append(args, "-DQUARK_USE_GC")
+		gcInclude, gcLib := getGCPaths()
+		args = append(args, "-DQUARK_USE_GC", fmt.Sprintf("-I%s", gcInclude), fmt.Sprintf("-L%s", gcLib))
 	}
 
 	args = append(args, "-o", exeFile, cFile)

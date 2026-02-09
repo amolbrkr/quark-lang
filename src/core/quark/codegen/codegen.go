@@ -333,6 +333,14 @@ func (g *Generator) generateOperator(node *ast.TreeNode) string {
 		return operand
 	}
 
+	// Member access - handle before binary operators to avoid evaluating
+	// the member name as a variable reference
+	if op == token.DOT && len(node.Children) >= 2 {
+		obj := g.generateExpr(node.Children[0])
+		memberName := node.Children[1].TokenLiteral()
+		return fmt.Sprintf("q_member_get(%s, \"%s\")", obj, memberName)
+	}
+
 	// Binary operators
 	if len(node.Children) < 2 {
 		return "qv_null()"
@@ -395,6 +403,26 @@ func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
 	funcNode := node.Children[0]
 	argsNode := node.Children[1]
 
+	// Member method call: obj.method(args) → q_member_callN(obj, "method", args...)
+	if funcNode.NodeType == ast.OperatorNode && funcNode.Token != nil && funcNode.Token.Type == token.DOT && len(funcNode.Children) >= 2 {
+		obj := g.generateExpr(funcNode.Children[0])
+		methodName := funcNode.Children[1].TokenLiteral()
+		args := make([]string, 0)
+		for _, arg := range argsNode.Children {
+			args = append(args, g.generateExpr(arg))
+		}
+		switch len(args) {
+		case 0:
+			return fmt.Sprintf("q_member_get(%s, \"%s\")", obj, methodName)
+		case 1:
+			return fmt.Sprintf("q_member_call1(%s, \"%s\", %s)", obj, methodName, args[0])
+		case 2:
+			return fmt.Sprintf("q_member_call2(%s, \"%s\", %s, %s)", obj, methodName, args[0], args[1])
+		default:
+			return fmt.Sprintf("q_member_call2(%s, \"%s\", %s, %s)", obj, methodName, args[0], args[1])
+		}
+	}
+
 	funcName := funcNode.TokenLiteral()
 
 	// Generate arguments
@@ -403,175 +431,9 @@ func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
 		args = append(args, g.generateExpr(arg))
 	}
 
-	// Built-in functions
-	switch funcName {
-	case "print":
-		if len(args) > 0 {
-			return fmt.Sprintf("q_print(%s)", args[0])
-		}
-		return "q_print(qv_string(\"\"))"
-	case "println":
-		if len(args) > 0 {
-			return fmt.Sprintf("q_println(%s)", args[0])
-		}
-		return "q_println(qv_string(\"\"))"
-	case "len":
-		if len(args) > 0 {
-			return fmt.Sprintf("q_len(%s)", args[0])
-		}
-		return "qv_int(0)"
-	case "input":
-		if len(args) > 0 {
-			return fmt.Sprintf("q_input(%s)", args[0])
-		}
-		return "q_input()"
-	case "str":
-		if len(args) > 0 {
-			return fmt.Sprintf("q_str(%s)", args[0])
-		}
-		return "qv_string(\"\")"
-	case "int":
-		if len(args) > 0 {
-			return fmt.Sprintf("q_int(%s)", args[0])
-		}
-		return "qv_int(0)"
-	case "float":
-		if len(args) > 0 {
-			return fmt.Sprintf("q_float(%s)", args[0])
-		}
-		return "qv_float(0.0)"
-	case "bool":
-		if len(args) > 0 {
-			return fmt.Sprintf("q_bool(%s)", args[0])
-		}
-		return "qv_bool(false)"
-	case "range":
-		if len(args) == 1 {
-			return fmt.Sprintf("q_range(%s)", args[0])
-		} else if len(args) == 2 {
-			return fmt.Sprintf("q_range(%s, %s)", args[0], args[1])
-		} else if len(args) >= 3 {
-			return fmt.Sprintf("q_range(%s, %s, %s)", args[0], args[1], args[2])
-		}
-		return "qv_list()"
-	// Math module functions
-	case "abs":
-		if len(args) > 0 {
-			return fmt.Sprintf("q_abs(%s)", args[0])
-		}
-		return "qv_int(0)"
-	case "min":
-		if len(args) >= 2 {
-			return fmt.Sprintf("q_min(%s, %s)", args[0], args[1])
-		}
-		return "qv_int(0)"
-	case "max":
-		if len(args) >= 2 {
-			return fmt.Sprintf("q_max(%s, %s)", args[0], args[1])
-		}
-		return "qv_int(0)"
-	case "sqrt":
-		if len(args) > 0 {
-			return fmt.Sprintf("q_sqrt(%s)", args[0])
-		}
-		return "qv_float(0.0)"
-	case "floor":
-		if len(args) > 0 {
-			return fmt.Sprintf("q_floor(%s)", args[0])
-		}
-		return "qv_int(0)"
-	case "ceil":
-		if len(args) > 0 {
-			return fmt.Sprintf("q_ceil(%s)", args[0])
-		}
-		return "qv_int(0)"
-	case "round":
-		if len(args) > 0 {
-			return fmt.Sprintf("q_round(%s)", args[0])
-		}
-		return "qv_int(0)"
-	// String module functions
-	case "upper":
-		if len(args) > 0 {
-			return fmt.Sprintf("q_upper(%s)", args[0])
-		}
-		return "qv_string(\"\")"
-	case "lower":
-		if len(args) > 0 {
-			return fmt.Sprintf("q_lower(%s)", args[0])
-		}
-		return "qv_string(\"\")"
-	case "trim":
-		if len(args) > 0 {
-			return fmt.Sprintf("q_trim(%s)", args[0])
-		}
-		return "qv_string(\"\")"
-	case "contains":
-		if len(args) >= 2 {
-			return fmt.Sprintf("q_contains(%s, %s)", args[0], args[1])
-		}
-		return "qv_bool(false)"
-	case "startswith":
-		if len(args) >= 2 {
-			return fmt.Sprintf("q_startswith(%s, %s)", args[0], args[1])
-		}
-		return "qv_bool(false)"
-	case "endswith":
-		if len(args) >= 2 {
-			return fmt.Sprintf("q_endswith(%s, %s)", args[0], args[1])
-		}
-		return "qv_bool(false)"
-	case "replace":
-		if len(args) >= 3 {
-			return fmt.Sprintf("q_replace(%s, %s, %s)", args[0], args[1], args[2])
-		}
-		return "qv_string(\"\")"
-	case "concat":
-		if len(args) >= 2 {
-			return fmt.Sprintf("q_concat(%s, %s)", args[0], args[1])
-		}
-		return "qv_null()"
-	// List functions
-	case "push":
-		if len(args) >= 2 {
-			return fmt.Sprintf("q_push(%s, %s)", args[0], args[1])
-		}
-		return "qv_null()"
-	case "pop":
-		if len(args) >= 1 {
-			return fmt.Sprintf("q_pop(%s)", args[0])
-		}
-		return "qv_null()"
-	case "get":
-		if len(args) >= 2 {
-			return fmt.Sprintf("q_get(%s, %s)", args[0], args[1])
-		}
-		return "qv_null()"
-	case "set":
-		if len(args) >= 3 {
-			return fmt.Sprintf("q_set(%s, %s, %s)", args[0], args[1], args[2])
-		}
-		return "qv_null()"
-	case "insert":
-		if len(args) >= 3 {
-			return fmt.Sprintf("q_insert(%s, %s, %s)", args[0], args[1], args[2])
-		}
-		return "qv_null()"
-	case "remove":
-		if len(args) >= 2 {
-			return fmt.Sprintf("q_remove(%s, %s)", args[0], args[1])
-		}
-		return "qv_null()"
-	case "slice":
-		if len(args) >= 3 {
-			return fmt.Sprintf("q_slice(%s, %s, %s)", args[0], args[1], args[2])
-		}
-		return "qv_null()"
-	case "reverse":
-		if len(args) >= 1 {
-			return fmt.Sprintf("q_reverse(%s)", args[0])
-		}
-		return "qv_null()"
+	// Built-in functions — lookup from centralized registry
+	if result, ok := GenerateBuiltinCall(funcName, args); ok {
+		return result
 	}
 
 	// Check if this is a known user-defined function
@@ -621,47 +483,10 @@ func (g *Generator) generatePipe(node *ast.TreeNode) string {
 	if rightNode.NodeType == ast.IdentifierNode {
 		// Simple function name - call with input as argument
 		funcName := rightNode.TokenLiteral()
-		switch funcName {
-		case "print":
-			return fmt.Sprintf("q_print(%s)", input)
-		case "println":
-			return fmt.Sprintf("q_println(%s)", input)
-		case "len":
-			return fmt.Sprintf("q_len(%s)", input)
-		case "str":
-			return fmt.Sprintf("q_str(%s)", input)
-		case "int":
-			return fmt.Sprintf("q_int(%s)", input)
-		case "float":
-			return fmt.Sprintf("q_float(%s)", input)
-		case "bool":
-			return fmt.Sprintf("q_bool(%s)", input)
-		// Math functions
-		case "abs":
-			return fmt.Sprintf("q_abs(%s)", input)
-		case "sqrt":
-			return fmt.Sprintf("q_sqrt(%s)", input)
-		case "floor":
-			return fmt.Sprintf("q_floor(%s)", input)
-		case "ceil":
-			return fmt.Sprintf("q_ceil(%s)", input)
-		case "round":
-			return fmt.Sprintf("q_round(%s)", input)
-		// String functions
-		case "upper":
-			return fmt.Sprintf("q_upper(%s)", input)
-		case "lower":
-			return fmt.Sprintf("q_lower(%s)", input)
-		case "trim":
-			return fmt.Sprintf("q_trim(%s)", input)
-		// List functions (single-arg)
-		case "pop":
-			return fmt.Sprintf("q_pop(%s)", input)
-		case "reverse":
-			return fmt.Sprintf("q_reverse(%s)", input)
-		default:
-			return fmt.Sprintf("quark_%s(%s)", funcName, input)
+		if result, ok := GenerateBuiltinCall(funcName, []string{input}); ok {
+			return result
 		}
+		return fmt.Sprintf("quark_%s(%s)", funcName, input)
 	} else if rightNode.NodeType == ast.FunctionCallNode {
 		// Function call - prepend input to arguments
 		if len(rightNode.Children) >= 2 {
@@ -674,121 +499,11 @@ func (g *Generator) generatePipe(node *ast.TreeNode) string {
 				args = append(args, g.generateExpr(arg))
 			}
 
-			switch funcName {
-			case "print":
-				return fmt.Sprintf("q_print(%s)", args[0])
-			case "println":
-				return fmt.Sprintf("q_println(%s)", args[0])
-			case "len":
-				return fmt.Sprintf("q_len(%s)", args[0])
-			case "str":
-				return fmt.Sprintf("q_str(%s)", args[0])
-			case "int":
-				return fmt.Sprintf("q_int(%s)", args[0])
-			case "float":
-				return fmt.Sprintf("q_float(%s)", args[0])
-			case "bool":
-				return fmt.Sprintf("q_bool(%s)", args[0])
-			case "range":
-				if len(args) == 1 {
-					return fmt.Sprintf("q_range(%s)", args[0])
-				} else if len(args) == 2 {
-					return fmt.Sprintf("q_range(%s, %s)", args[0], args[1])
-				} else if len(args) >= 3 {
-					return fmt.Sprintf("q_range(%s, %s, %s)", args[0], args[1], args[2])
-				}
-				return "qv_list()"
-			// Math functions
-			case "abs":
-				return fmt.Sprintf("q_abs(%s)", args[0])
-			case "min":
-				if len(args) >= 2 {
-					return fmt.Sprintf("q_min(%s, %s)", args[0], args[1])
-				}
-				return "qv_int(0)"
-			case "max":
-				if len(args) >= 2 {
-					return fmt.Sprintf("q_max(%s, %s)", args[0], args[1])
-				}
-				return "qv_int(0)"
-			case "sqrt":
-				return fmt.Sprintf("q_sqrt(%s)", args[0])
-			case "floor":
-				return fmt.Sprintf("q_floor(%s)", args[0])
-			case "ceil":
-				return fmt.Sprintf("q_ceil(%s)", args[0])
-			case "round":
-				return fmt.Sprintf("q_round(%s)", args[0])
-			// String functions
-			case "upper":
-				return fmt.Sprintf("q_upper(%s)", args[0])
-			case "lower":
-				return fmt.Sprintf("q_lower(%s)", args[0])
-			case "trim":
-				return fmt.Sprintf("q_trim(%s)", args[0])
-			case "contains":
-				if len(args) >= 2 {
-					return fmt.Sprintf("q_contains(%s, %s)", args[0], args[1])
-				}
-				return "qv_bool(false)"
-			case "startswith":
-				if len(args) >= 2 {
-					return fmt.Sprintf("q_startswith(%s, %s)", args[0], args[1])
-				}
-				return "qv_bool(false)"
-			case "endswith":
-				if len(args) >= 2 {
-					return fmt.Sprintf("q_endswith(%s, %s)", args[0], args[1])
-				}
-				return "qv_bool(false)"
-			case "replace":
-				if len(args) >= 3 {
-					return fmt.Sprintf("q_replace(%s, %s, %s)", args[0], args[1], args[2])
-				}
-				return "qv_string(\"\")"
-			case "concat":
-				if len(args) >= 2 {
-					return fmt.Sprintf("q_concat(%s, %s)", args[0], args[1])
-				}
-				return "qv_null()"
-			// List functions
-			case "push":
-				if len(args) >= 2 {
-					return fmt.Sprintf("q_push(%s, %s)", args[0], args[1])
-				}
-				return "qv_null()"
-			case "pop":
-				return fmt.Sprintf("q_pop(%s)", args[0])
-			case "get":
-				if len(args) >= 2 {
-					return fmt.Sprintf("q_get(%s, %s)", args[0], args[1])
-				}
-				return "qv_null()"
-			case "set":
-				if len(args) >= 3 {
-					return fmt.Sprintf("q_set(%s, %s, %s)", args[0], args[1], args[2])
-				}
-				return "qv_null()"
-			case "insert":
-				if len(args) >= 3 {
-					return fmt.Sprintf("q_insert(%s, %s, %s)", args[0], args[1], args[2])
-				}
-				return "qv_null()"
-			case "remove":
-				if len(args) >= 2 {
-					return fmt.Sprintf("q_remove(%s, %s)", args[0], args[1])
-				}
-				return "qv_null()"
-			case "slice":
-				if len(args) >= 3 {
-					return fmt.Sprintf("q_slice(%s, %s, %s)", args[0], args[1], args[2])
-				}
-				return "qv_null()"
-			case "reverse":
-				return fmt.Sprintf("q_reverse(%s)", args[0])
-			default:
-				return fmt.Sprintf("quark_%s(%s)", funcName, strings.Join(args, ", "))
+			// Built-in functions — lookup from centralized registry
+			if result, ok := GenerateBuiltinCall(funcName, args); ok {
+				return result
 			}
+			return fmt.Sprintf("quark_%s(%s)", funcName, strings.Join(args, ", "))
 		}
 	}
 

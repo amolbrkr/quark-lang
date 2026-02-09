@@ -33,4 +33,7 @@
 #include "builtins/conversion.hpp"
 #include "builtins/math.hpp"
 
+// Member access (must come after types and builtins)
+#include "ops/member.hpp"
+
 #endif // QUARK_RUNTIME_HPP

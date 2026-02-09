@@ -971,7 +971,7 @@ Key: Yes = implemented, Partial = present but incomplete, No = missing.
 | Comparison ops `< <= > >= == !=` | Yes | Yes | Partial | Yes | Yes | No strict type errors. |
 | Logical ops `and` / `or` | Yes | Yes | Yes | Yes | Yes | Keyword `not` not implemented. |
 | Unary ops `!` / `-` / `~` | Yes | Yes | Yes | Yes | Yes | `~` maps to logical not. |
-| Member access `.` | Yes | Yes | Partial | No | No | Parsed but not codegen’d. |
+| Member access `.` | Yes | Yes | Partial | Yes | Yes | Properties and no-arg methods on lists/strings. Method calls with args not yet supported. |
 | List literals `[a, b]` | Yes | Yes | Yes | Yes | Yes | Uses `std::vector<QValue>`. |
 | Indexing `list[idx]` | Yes | Yes | Yes | Yes | Yes | `q_get` supports negative indices. |
 | Slicing `[start:end[:step]]` | No | No | No | No | No | Grammar-only. |

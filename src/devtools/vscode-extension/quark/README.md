@@ -5,8 +5,8 @@ Syntax highlighting and language support for the Quark programming language.
 ## Features
 
 - **Syntax Highlighting** - Full syntax highlighting for `.qrk` files
-- **Keywords** - `fn`, `if`, `elseif`, `else`, `when`, `for`, `while`, `in`, `and`, `or`, `not`, `true`, `false`, `null`, `module`, `use`
-- **Operators** - Arithmetic, comparison, logical, pipe (`|`), range (`..`)
+- **Keywords** - `fn`, `if`, `elseif`, `else`, `when`, `for`, `while`, `in`, `and`, `or`, `true`, `false`, `null`, `module`, `use`
+- **Operators** - Arithmetic, comparison, logical, pipe (`|`), arrow (`->`)
 - **Comments** - Single-line comments with `//`
 - **Strings** - Single-quoted strings with escape sequences
 
@@ -16,10 +16,10 @@ Quark is a high-level, dynamically-typed language that compiles to C++, designed
 
 ```quark
 // Quark example
-fn factorial n:
+fn factorial n ->
     when n:
-        0 or 1: 1
-        _: n * factorial n - 1
+        0 or 1 -> 1
+        _ -> n * factorial (n - 1)
 
 factorial 10 | println
 ```

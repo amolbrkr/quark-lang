@@ -344,6 +344,18 @@ func runBuild(filename string, output string, useGC bool) {
 		os.Exit(1)
 	}
 
+	// Type checking phase
+	analyzer := types.NewAnalyzer()
+	analyzer.Analyze(ast)
+
+	if len(analyzer.Errors()) > 0 {
+		fmt.Fprintln(os.Stderr, "Type errors:")
+		for _, err := range analyzer.Errors() {
+			fmt.Fprintf(os.Stderr, "  %s\n", err)
+		}
+		os.Exit(1)
+	}
+
 	gen := codegen.New()
 	cCode := gen.Generate(ast)
 
@@ -420,6 +432,18 @@ func runRun(filename string, debug bool, useGC bool) {
 	if len(p.Errors()) > 0 {
 		fmt.Fprintln(os.Stderr, "Parser errors:")
 		for _, err := range p.Errors() {
+			fmt.Fprintf(os.Stderr, "  %s\n", err)
+		}
+		os.Exit(1)
+	}
+
+	// Type checking phase
+	analyzer := types.NewAnalyzer()
+	analyzer.Analyze(ast)
+
+	if len(analyzer.Errors()) > 0 {
+		fmt.Fprintln(os.Stderr, "Type errors:")
+		for _, err := range analyzer.Errors() {
 			fmt.Fprintf(os.Stderr, "  %s\n", err)
 		}
 		os.Exit(1)

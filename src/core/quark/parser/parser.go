@@ -105,6 +105,9 @@ func (p *Parser) parseStatement() *ast.TreeNode {
 		if p.curToken.Type == token.ID && p.peek(1).Type == token.EQUALS && p.peek(2).Type == token.FN {
 			return p.parseFunction()
 		}
+		if p.curToken.Type == token.ID && p.peek(1).Type == token.COLON {
+			return p.parseVarDecl()
+		}
 		return p.parseExpression(ast.PrecLowest)
 	}
 }
@@ -178,8 +181,8 @@ func (p *Parser) parseFunction() *ast.TreeNode {
 		nameNode := ast.NewNode(ast.IdentifierNode, &nameTok)
 		p.nextToken()
 
-		// Parse arguments
-		args := p.parseArguments()
+		// Parse parameters
+		args := p.parseParameters()
 
 		node.AddChildren(nameNode, args)
 
@@ -203,8 +206,8 @@ func (p *Parser) parseFunction() *ast.TreeNode {
 		node = ast.NewNode(ast.FunctionNode, &tok)
 		p.nextToken() // skip 'fn'
 
-		// Parse arguments
-		args := p.parseArguments()
+		// Parse parameters
+		args := p.parseParameters()
 
 		node.AddChildren(nameNode, args)
 
@@ -234,13 +237,13 @@ func (p *Parser) parseFunctionCall() *ast.TreeNode {
 	p.nextToken()
 
 	// Parse arguments
-	args := p.parseArguments()
+	args := p.parseCallArguments()
 
 	node.AddChildren(nameNode, args)
 	return node
 }
 
-func (p *Parser) parseArguments() *ast.TreeNode {
+func (p *Parser) parseCallArguments() *ast.TreeNode {
 	node := ast.NewNode(ast.ArgumentsNode, nil)
 
 	for p.curToken.Type != token.ARROW &&
@@ -261,6 +264,95 @@ func (p *Parser) parseArguments() *ast.TreeNode {
 		}
 	}
 
+	return node
+}
+
+func (p *Parser) parseParameters() *ast.TreeNode {
+	node := ast.NewNode(ast.ArgumentsNode, nil)
+
+	for p.curToken.Type == token.ID {
+		paramTok := p.curToken
+		paramNode := ast.NewNode(ast.ParameterNode, &paramTok)
+		nameNode := ast.NewNode(ast.IdentifierNode, &paramTok)
+		paramNode.AddChild(nameNode)
+		p.nextToken()
+
+		if p.curToken.Type == token.COLON {
+			p.nextToken()
+			typeNode := p.parseTypeExpr()
+			if typeNode != nil {
+				paramNode.AddChild(typeNode)
+			}
+		}
+
+		node.AddChild(paramNode)
+
+		if p.curToken.Type == token.COMMA {
+			p.nextToken()
+			continue
+		}
+		break
+	}
+
+	return node
+}
+
+func (p *Parser) parseTypeExpr() *ast.TreeNode {
+	if p.curToken.Type != token.ID && p.curToken.Type != token.LIST {
+		p.addError("expected type name")
+		return nil
+	}
+
+	tok := p.curToken
+	node := ast.NewNode(ast.TypeNode, &tok)
+	p.nextToken()
+
+	if p.curToken.Type == token.LBRACKET {
+		p.nextToken()
+		for !p.isAtEnd() && p.curToken.Type != token.RBRACKET {
+			arg := p.parseTypeExpr()
+			if arg != nil {
+				node.AddChild(arg)
+			}
+			if p.curToken.Type == token.COMMA {
+				p.nextToken()
+				continue
+			}
+			break
+		}
+		if !p.expect(token.RBRACKET) {
+			return node
+		}
+	}
+
+	return node
+}
+
+func (p *Parser) parseVarDecl() *ast.TreeNode {
+	nameTok := p.curToken
+	nameNode := ast.NewNode(ast.IdentifierNode, &nameTok)
+	p.nextToken()
+
+	if !p.expect(token.COLON) {
+		return nil
+	}
+
+	typeNode := p.parseTypeExpr()
+	if typeNode == nil {
+		return nil
+	}
+
+	if !p.expect(token.EQUALS) {
+		return nil
+	}
+
+	valueNode := p.parseExpression(ast.PrecLowest)
+	if valueNode == nil {
+		return nil
+	}
+
+	node := ast.NewNode(ast.VarDeclNode, &nameTok)
+	node.AddChildren(nameNode, typeNode, valueNode)
 	return node
 }
 

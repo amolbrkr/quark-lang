@@ -33,6 +33,9 @@ const (
 	IndexNode
 	ResultNode
 	ResultPatternNode
+	ParameterNode
+	TypeNode
+	VarDeclNode
 	ModuleNode
 	UseNode
 )
@@ -62,6 +65,9 @@ var nodeTypeNames = map[NodeType]string{
 	IndexNode:           "Index",
 	ResultNode:          "Result",
 	ResultPatternNode:   "ResultPattern",
+	ParameterNode:       "Parameter",
+	TypeNode:            "Type",
+	VarDeclNode:         "VarDecl",
 	ModuleNode:          "Module",
 	UseNode:             "Use",
 }

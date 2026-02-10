@@ -12,6 +12,11 @@ type builtinSignature struct {
 	MaxArgs int
 }
 
+type paramSpec struct {
+	name     string
+	typeNode *ast.TreeNode
+}
+
 // Module represents a defined module with its symbols
 type Module struct {
 	Name    string
@@ -147,9 +152,10 @@ func (a *Analyzer) declareFunctionSignature(node *ast.TreeNode) *FunctionType {
 		}
 		return nil
 	}
-	paramTypes := make([]Type, len(argsNode.Children))
-	for i := range paramTypes {
-		paramTypes[i] = TypeAny
+	paramSpecs := collectParamSpecs(argsNode)
+	paramTypes := make([]Type, len(paramSpecs))
+	for i, spec := range paramSpecs {
+		paramTypes[i] = a.resolveTypeNode(spec.typeNode)
 	}
 	funcType := &FunctionType{ParamTypes: paramTypes, ReturnType: TypeAny}
 	a.currentScope.Define(funcName, funcType, false)
@@ -198,6 +204,8 @@ func (a *Analyzer) Analyze(node *ast.TreeNode) Type {
 		return a.analyzeIndex(node)
 	case ast.ResultNode:
 		return a.analyzeResult(node)
+	case ast.VarDeclNode:
+		return a.analyzeVarDecl(node)
 	case ast.ModuleNode:
 		return a.analyzeModule(node)
 	case ast.UseNode:
@@ -257,21 +265,25 @@ func (a *Analyzer) analyzeFunction(node *ast.TreeNode) Type {
 		}
 	}
 
-	if len(funcType.ParamTypes) != len(argsNode.Children) {
-		funcType.ParamTypes = make([]Type, len(argsNode.Children))
-		for i := range funcType.ParamTypes {
-			funcType.ParamTypes[i] = TypeAny
-		}
+	paramSpecs := collectParamSpecs(argsNode)
+	if len(funcType.ParamTypes) != len(paramSpecs) {
+		funcType.ParamTypes = make([]Type, len(paramSpecs))
+	}
+	for i, spec := range paramSpecs {
+		funcType.ParamTypes[i] = a.resolveTypeNode(spec.typeNode)
 	}
 
 	// Create function scope for parameters and body
 	a.pushScope()
-	for _, param := range argsNode.Children {
-		paramName := param.TokenLiteral()
-		if paramName == "" {
+	for i, spec := range paramSpecs {
+		if spec.name == "" {
 			continue
 		}
-		a.currentScope.Define(paramName, TypeAny, true)
+		var paramType Type = TypeAny
+		if i < len(funcType.ParamTypes) {
+			paramType = funcType.ParamTypes[i]
+		}
+		a.currentScope.Define(spec.name, paramType, true)
 	}
 	returnType := a.Analyze(bodyNode)
 	a.popScope()
@@ -661,6 +673,37 @@ func (a *Analyzer) analyzePipe(node *ast.TreeNode) Type {
 
 	// Right side is the function (or function call)
 	rightNode := node.Children[1]
+
+	// If the right side is a function call, the pipe injects one extra argument
+	// (the left side). Validate arity with that in mind.
+	if rightNode.NodeType == ast.FunctionCallNode && len(rightNode.Children) >= 2 {
+		funcNode := rightNode.Children[0]
+		argsNode := rightNode.Children[1]
+		funcExprType := a.Analyze(funcNode)
+		for _, arg := range argsNode.Children {
+			a.Analyze(arg)
+		}
+		pipeArgCount := len(argsNode.Children) + 1 // +1 for the piped input
+
+		if funcNode.NodeType == ast.IdentifierNode {
+			name := funcNode.TokenLiteral()
+			if sig, ok := a.builtins[name]; ok {
+				if pipeArgCount < sig.MinArgs || pipeArgCount > sig.MaxArgs {
+					a.errorAt(node, "builtin '%s' expects %d-%d arguments but got %d (including piped input)", name, sig.MinArgs, sig.MaxArgs, pipeArgCount)
+				}
+				return sig.Type.ReturnType
+			}
+		}
+
+		if funcType, ok := funcExprType.(*FunctionType); ok {
+			if pipeArgCount != len(funcType.ParamTypes) {
+				a.errorAt(node, "function expects %d arguments but got %d (including piped input)", len(funcType.ParamTypes), pipeArgCount)
+			}
+			return funcType.ReturnType
+		}
+		return TypeAny
+	}
+
 	return a.Analyze(rightNode)
 }
 
@@ -808,11 +851,14 @@ func (a *Analyzer) analyzeLambda(node *ast.TreeNode) Type {
 	a.pushScope()
 
 	// Define parameters
-	paramTypes := make([]Type, 0)
-	for _, param := range argsNode.Children {
-		paramName := param.TokenLiteral()
-		paramType := TypeAny // Type inference will refine this
-		a.currentScope.Define(paramName, paramType, true)
+	paramSpecs := collectParamSpecs(argsNode)
+	paramTypes := make([]Type, 0, len(paramSpecs))
+	for _, spec := range paramSpecs {
+		if spec.name == "" {
+			continue
+		}
+		paramType := a.resolveTypeNode(spec.typeNode)
+		a.currentScope.Define(spec.name, paramType, true)
 		paramTypes = append(paramTypes, paramType)
 	}
 
@@ -825,6 +871,131 @@ func (a *Analyzer) analyzeLambda(node *ast.TreeNode) Type {
 	return &FunctionType{
 		ParamTypes: paramTypes,
 		ReturnType: returnType,
+	}
+}
+
+func (a *Analyzer) analyzeVarDecl(node *ast.TreeNode) Type {
+	if len(node.Children) < 3 {
+		a.errorAt(node, "invalid typed declaration")
+		return TypeAny
+	}
+
+	nameNode := node.Children[0]
+	typeNode := node.Children[1]
+	valueNode := node.Children[2]
+	varName := nameNode.TokenLiteral()
+
+	declType := a.resolveTypeNode(typeNode)
+	valueType := a.Analyze(valueNode)
+	if listType, ok := declType.(*ListType); ok {
+		a.checkListLiteralTypes(listType, valueNode)
+	}
+	if !CanAssign(declType, valueType) && !isUnknownType(valueType) {
+		a.errorAt(nameNode, "cannot assign value of type '%s' to '%s'", valueType.String(), declType.String())
+	}
+
+	if existing := a.currentScope.LookupLocal(varName); existing != nil {
+		a.errorAt(nameNode, "symbol '%s' already defined in this scope", varName)
+		return declType
+	}
+
+	a.currentScope.Define(varName, declType, true)
+	return declType
+}
+
+func (a *Analyzer) checkListLiteralTypes(listType *ListType, valueNode *ast.TreeNode) {
+	if listType == nil || valueNode == nil {
+		return
+	}
+	if valueNode.NodeType != ast.ListNode {
+		return
+	}
+	for _, elem := range valueNode.Children {
+		if elem == nil {
+			continue
+		}
+		elemType := a.Analyze(elem)
+		if isUnknownType(elemType) {
+			continue
+		}
+		if !CanAssign(listType.ElementType, elemType) {
+			a.errorAt(elem, "list expects '%s' elements but got '%s'", listType.ElementType.String(), elemType.String())
+		}
+	}
+}
+
+func collectParamSpecs(argsNode *ast.TreeNode) []paramSpec {
+	if argsNode == nil {
+		return nil
+	}
+	specs := make([]paramSpec, 0, len(argsNode.Children))
+	for _, child := range argsNode.Children {
+		if child == nil {
+			continue
+		}
+		switch child.NodeType {
+		case ast.ParameterNode:
+			nameNode := (*ast.TreeNode)(nil)
+			typeNode := (*ast.TreeNode)(nil)
+			if len(child.Children) > 0 {
+				nameNode = child.Children[0]
+			}
+			if len(child.Children) > 1 {
+				typeNode = child.Children[1]
+			}
+			name := ""
+			if nameNode != nil {
+				name = nameNode.TokenLiteral()
+			}
+			specs = append(specs, paramSpec{name: name, typeNode: typeNode})
+		case ast.IdentifierNode:
+			name := child.TokenLiteral()
+			specs = append(specs, paramSpec{name: name})
+		}
+	}
+	return specs
+}
+
+func (a *Analyzer) resolveTypeNode(node *ast.TreeNode) Type {
+	if node == nil {
+		return TypeAny
+	}
+	if node.NodeType != ast.TypeNode {
+		return TypeAny
+	}
+
+	name := node.TokenLiteral()
+	switch name {
+	case "int":
+		return TypeInt
+	case "float":
+		return TypeFloat
+	case "str":
+		return TypeString
+	case "bool":
+		return TypeBool
+	case "null":
+		return TypeNull
+	case "any":
+		return TypeAny
+	case "list":
+		if len(node.Children) != 1 {
+			a.errorAt(node, "list expects 1 type argument")
+			return &ListType{ElementType: TypeAny}
+		}
+		return &ListType{ElementType: a.resolveTypeNode(node.Children[0])}
+	case "dict":
+		if len(node.Children) != 2 {
+			a.errorAt(node, "dict expects 2 type arguments")
+			return &DictType{KeyType: TypeAny, ValueType: TypeAny}
+		}
+		return &DictType{
+			KeyType:   a.resolveTypeNode(node.Children[0]),
+			ValueType: a.resolveTypeNode(node.Children[1]),
+		}
+	default:
+		a.errorAt(node, "unknown type '%s'", name)
+		return TypeAny
 	}
 }
 

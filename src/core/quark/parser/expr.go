@@ -122,10 +122,10 @@ func (p *Parser) isEndOfExpression() bool {
 func (p *Parser) canStartExpression(tokType token.TokenType) bool {
 	switch tokType {
 	case token.ID, token.INT, token.FLOAT, token.STRING,
-		token.LPAR, token.LBRACKET, token.LBRACE,
+		token.LPAR, token.LBRACE,
 		token.UNDERSCORE, token.BANG, token.NOT, token.MINUS,
 		token.TRUE, token.FALSE, token.NULL, token.FN,
-		token.OK, token.ERR:
+		token.OK, token.ERR, token.LIST:
 		return true
 	}
 	return false
@@ -149,8 +149,6 @@ func (p *Parser) prefixParseFn(t token.TokenType) func() *ast.TreeNode {
 		return p.parseWildcard
 	case token.LPAR:
 		return p.parseGroupedExpression
-	case token.LBRACKET:
-		return p.parseListLiteral
 	case token.LBRACE:
 		return p.parseDictLiteral
 	case token.BANG, token.NOT, token.MINUS:
@@ -159,6 +157,8 @@ func (p *Parser) prefixParseFn(t token.TokenType) func() *ast.TreeNode {
 		return p.parseLambda
 	case token.OK, token.ERR:
 		return p.parseResultLiteral
+	case token.LIST:
+		return p.parseListLiteral
 	}
 	return nil
 }
@@ -248,7 +248,11 @@ func (p *Parser) parseGroupedExpression() *ast.TreeNode {
 func (p *Parser) parseListLiteral() *ast.TreeNode {
 	tok := p.curToken
 	node := ast.NewNode(ast.ListNode, &tok)
-	p.nextToken() // skip '['
+	p.nextToken() // skip 'list'
+
+	if !p.expect(token.LBRACKET) {
+		return nil
+	}
 
 	if p.curToken.Type != token.RBRACKET {
 		for {
@@ -438,21 +442,8 @@ func (p *Parser) parseLambda() *ast.TreeNode {
 	node := ast.NewNode(ast.LambdaNode, &tok)
 	p.nextToken() // skip 'fn'
 
-	// Parse parameters (identifiers until we hit colon)
-	args := ast.NewNode(ast.ArgumentsNode, nil)
-
-	for p.curToken.Type == token.ID {
-		paramTok := p.curToken
-		param := ast.NewNode(ast.IdentifierNode, &paramTok)
-		args.AddChild(param)
-		p.nextToken()
-
-		if p.curToken.Type == token.COMMA {
-			p.nextToken() // skip comma
-		} else {
-			break
-		}
-	}
+	// Parse parameters
+	args := p.parseParameters()
 
 	node.AddChild(args)
 

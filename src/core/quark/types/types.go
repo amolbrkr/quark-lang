@@ -32,7 +32,7 @@ func (t *BasicType) Equals(other Type) bool {
 var (
 	TypeInt    = &BasicType{Name: "int"}
 	TypeFloat  = &BasicType{Name: "float"}
-	TypeString = &BasicType{Name: "string"}
+	TypeString = &BasicType{Name: "str"}
 	TypeBool   = &BasicType{Name: "bool"}
 	TypeNull   = &BasicType{Name: "null"}
 	TypeAny    = &BasicType{Name: "any"}  // For unresolved types
@@ -217,7 +217,7 @@ func IsComparable(t Type) bool {
 		return true
 	}
 	if basic, ok := t.(*BasicType); ok {
-		return basic.Name == "int" || basic.Name == "float" || basic.Name == "string" || basic.Name == "bool"
+		return basic.Name == "int" || basic.Name == "float" || basic.Name == "str" || basic.Name == "bool"
 	}
 	return false
 }

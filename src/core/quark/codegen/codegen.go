@@ -68,6 +68,16 @@ func (g *Generator) newLambda() string {
 	return fmt.Sprintf("_lambda%d", g.lambdaCounter)
 }
 
+func (g *Generator) paramName(node *ast.TreeNode) string {
+	if node == nil {
+		return ""
+	}
+	if node.NodeType == ast.ParameterNode && len(node.Children) > 0 {
+		return node.Children[0].TokenLiteral()
+	}
+	return node.TokenLiteral()
+}
+
 // pushScope saves current variable scope and creates an isolated one (used for functions)
 func (g *Generator) pushScope() {
 	g.scopeStack = append(g.scopeStack, g.declaredVars)
@@ -199,7 +209,10 @@ func (g *Generator) generateFunction(node *ast.TreeNode) {
 	// Build parameter list and mark parameters as declared
 	params := make([]string, 0)
 	for _, param := range argsNode.Children {
-		paramName := param.TokenLiteral()
+		paramName := g.paramName(param)
+		if paramName == "" {
+			continue
+		}
 		params = append(params, fmt.Sprintf("QValue %s", paramName))
 		g.declaredVars[paramName] = true // Parameters are already declared
 	}
@@ -281,6 +294,8 @@ func (g *Generator) generateExpr(node *ast.TreeNode) string {
 		return g.generateIndex(node)
 	case ast.ResultNode:
 		return g.generateResult(node)
+	case ast.VarDeclNode:
+		return g.generateVarDecl(node)
 	case ast.LambdaNode:
 		return g.generateLambdaExpr(node)
 	case ast.BlockNode:
@@ -786,6 +801,23 @@ func (g *Generator) generateResult(node *ast.TreeNode) string {
 	return fmt.Sprintf("qv_ok(%s)", value)
 }
 
+func (g *Generator) generateVarDecl(node *ast.TreeNode) string {
+	if len(node.Children) < 3 {
+		return "qv_null()"
+	}
+	nameNode := node.Children[0]
+	valueNode := node.Children[2]
+	name := nameNode.TokenLiteral()
+	value := g.generateExpr(valueNode)
+	if g.declaredVars[name] {
+		g.emitLine("%s = %s;", name, value)
+		return name
+	}
+	g.emitLine("QValue %s = %s;", name, value)
+	g.declaredVars[name] = true
+	return name
+}
+
 func (g *Generator) generateLambdaExpr(node *ast.TreeNode) string {
 	// Look up the lambda name we assigned during collection
 	lambdaName, ok := g.lambdaNames[node]
@@ -817,7 +849,10 @@ func (g *Generator) generateLambdaFunc(node *ast.TreeNode) {
 	// Build parameter list and mark parameters as declared
 	params := make([]string, 0)
 	for _, param := range argsNode.Children {
-		paramName := param.TokenLiteral()
+		paramName := g.paramName(param)
+		if paramName == "" {
+			continue
+		}
 		params = append(params, fmt.Sprintf("QValue %s", paramName))
 		g.declaredVars[paramName] = true // Parameters are already declared
 	}

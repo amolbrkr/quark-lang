@@ -959,19 +959,19 @@ Key: Yes = implemented, Partial = present but incomplete, No = missing.
 | String interpolation `{expr}` | No | No | No | No | No | Grammar-only. |
 | Function definitions | Yes | Yes | Yes | Yes | Yes | Named functions generate `q_<name>`. |
 | Lambda expressions | Yes | Yes | Yes | Yes | Yes | No closures/captures. |
-| Function calls / application | Yes | Yes | Partial | Yes | Yes | Analyzer does not validate arg counts. |
+| Function calls / application | Yes | Yes | Yes | Yes | Yes | Analyzer validates arg counts for builtins and user functions. |
 | If / elseif / else | Yes | Yes | Yes | Yes | Yes | Emits temp result in codegen. |
 | Ternary `a if cond else b` | Yes | Yes | Yes | Yes | Yes | Expression form only. |
 | When / pattern matching | Yes | Yes | Yes | Yes | Yes | Only equality and `_` wildcard. |
-| For `for x in expr` | Yes | Yes | Partial | Partial | Yes | Codegen assumes list iteration. |
+| For `for x in expr` | Yes | Yes | Yes | Yes | Yes | Loop variable typed from iterable; codegen uses list iteration. |
 | While loops | Yes | Yes | Yes | Yes | Yes | Truthy check at runtime. |
 | Pipe operator `|` | Yes | Yes | Yes | Yes | Yes | Builtin expansion in codegen. |
-| Assignment `=` | Yes | Yes | Partial | Yes | N/A | No mutability rules. |
-| Arithmetic ops `+ - * / % **` | Yes | Yes | Partial | Yes | Yes | Type checks are minimal. |
-| Comparison ops `< <= > >= == !=` | Yes | Yes | Partial | Yes | Yes | No strict type errors. |
+| Assignment `=` | Yes | Yes | Yes | Yes | N/A | Type tracking and assignment validation. |
+| Arithmetic ops `+ - * / % **` | Yes | Yes | Yes | Yes | Yes | Enforces numeric/string operand checks. |
+| Comparison ops `< <= > >= == !=` | Yes | Yes | Yes | Yes | Yes | Enforces comparable operand checks. |
 | Logical ops `and` / `or` | Yes | Yes | Yes | Yes | Yes | Keyword `not` not implemented. |
 | Unary ops `!` / `-` / `~` | Yes | Yes | Yes | Yes | Yes | `~` maps to logical not. |
-| Member access `.` | Yes | Yes | Partial | Yes | Yes | Properties and no-arg methods on lists/strings. Method calls with args not yet supported. |
+| Member access `.` | Yes | Yes | Yes | Yes | Yes | Properties, no-arg methods, and method calls with args on lists/strings. |
 | List literals `[a, b]` | Yes | Yes | Yes | Yes | Yes | Uses `std::vector<QValue>`. |
 | Indexing `list[idx]` | Yes | Yes | Yes | Yes | Yes | `q_get` supports negative indices. |
 | Slicing `[start:end[:step]]` | No | No | No | No | No | Grammar-only. |
@@ -1200,3 +1200,66 @@ All core test files now work correctly:
 - ✅ test_lambda_working.qrk (lambdas with non-conflicting names)
 
 **Known Issue**: test_functions.qrk still has name collisions with builtin functions (`add`, `double`). Use different names to avoid conflicts.
+
+## Recent Changes (2026-02-09)
+
+### Compiler Robustness: Union Types and MergeTypes
+
+**Problem**: Type information was collapsing to `any` for branches, lists, and other multi-path constructs, preventing the analyzer from detecting real type errors.
+
+**Solution**: Added `UnionType` and `MergeTypes()` to `types/types.go` (lines 107-306) so branches, lists, and other constructs retain precise type info instead of collapsing to `any`.
+
+**New type utilities**:
+- `UnionType` struct — represents a value that can be one of several concrete types
+- `MergeTypes(...Type)` — combines multiple type possibilities into the most precise representation
+- `IsComparable()`, `CanAssign()` — union-aware type checking helpers
+- `isIntLike()`, `isStringLike()`, `isBoolLike()` — union-aware type predicates
+
+### Reworked Semantic Analyzer
+
+**Changes to `types/analyzer.go`**:
+
+1. **Builtin signatures with arity** (lines 9-96): New `builtinSignature` struct stores `MinArgs`/`MaxArgs` alongside the `FunctionType`. Builtin definitions are now a single table kept in sync with `codegen/builtins.go`.
+
+2. **Location-aware diagnostics** (line 106-112): New `errorAt(node, format, args...)` method attaches line/column info to error messages.
+
+3. **Predeclared functions** (lines 122-158): `predeclareFunctions()` scans blocks and modules for function definitions before analyzing bodies, enabling recursion and forward references.
+
+4. **Argument count validation** (lines 281-328): `analyzeFunctionCall()` checks arg counts for both builtins (min/max arity) and user functions. Non-callable expressions now produce clear error messages.
+
+5. **Expression analysis** (lines 467-605): Operators enforce operand compatibility:
+   - Arithmetic: requires numeric (or string for `+`)
+   - Modulo: requires integer operands
+   - Comparison: requires comparable operands
+   - Logical: requires boolean operands
+   - Warns on undefined identifiers
+
+6. **Branch merging** (lines 330-373, 620-631): If/elseif/else and ternary branches use `MergeTypes` for precise result types.
+
+7. **Scoped blocks and loops** (lines 375-426): For/while loops push fresh scopes; loop variables are typed from the iterable's element type.
+
+### Codegen Block-Level Scoping
+
+**Changes to `codegen/codegen.go`**:
+
+- `pushBlockScope()` (line 77-85): Creates a child scope that inherits parent declarations. Variables declared inside blocks don't leak to outer scopes, preventing C++ redeclaration errors.
+- `generateFor()` uses `pushBlockScope`/`popScope` to isolate loop variables.
+- `generateBlock()` (line 235-249) pushes its own block scope.
+
+### Runtime Callable Guard
+
+**Changes to `runtime/include/quark/types/function.hpp`**:
+
+- New `q_require_callable(QValue)` helper (line 9-15): All `q_call*` functions now gate on this check, producing a clear `"runtime error: attempted to call a non-function value"` instead of silently returning null or crashing.
+
+### Fixed: For Loop Body Last Statement Not Emitted
+
+**Problem**: `generateBlock()` returns the last expression without emitting it (designed for function return values). When called from `generateFor()`, the returned value was discarded, causing the last (or only) statement in a for loop body to be silently dropped.
+
+**Example**: `for i in range 10: print i` would generate an empty loop body.
+
+**Fix**: Changed `generateFor()` to iterate block children directly (like `generateWhile()`) instead of delegating to `generateBlock()`, ensuring all statements are emitted.
+
+### Known Issue: test_while.qrk
+
+`test_while.qrk` uses `x` without initializing it (`while x > 0: x = x - 1`). This is a broken test file — `x` is never assigned an initial value. The new scoping correctly surfaces this as a C++ compilation error.

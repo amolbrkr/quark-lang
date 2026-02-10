@@ -15,16 +15,16 @@ var runtimeHeader string
 type Generator struct {
 	output        strings.Builder
 	indentLevel   int
-	functions     []string           // Function definitions (generated separately)
-	lambdas       []*ast.TreeNode    // Lambda expressions to generate
+	functions     []string                 // Function definitions (generated separately)
+	lambdas       []*ast.TreeNode          // Lambda expressions to generate
 	lambdaNames   map[*ast.TreeNode]string // Maps lambda nodes to their generated names
 	tempCounter   int
 	lambdaCounter int
 	inFunction    bool
 	currentFunc   string
-	declaredVars  map[string]bool    // Tracks declared variables to avoid redeclaration
-	scopeStack    []map[string]bool  // Stack of variable scopes for nested blocks
-	embedRuntime  bool               // If true, embed full runtime; if false, use #include
+	declaredVars  map[string]bool   // Tracks declared variables to avoid redeclaration
+	scopeStack    []map[string]bool // Stack of variable scopes for nested blocks
+	embedRuntime  bool              // If true, embed full runtime; if false, use #include
 }
 
 func New() *Generator {
@@ -68,10 +68,20 @@ func (g *Generator) newLambda() string {
 	return fmt.Sprintf("_lambda%d", g.lambdaCounter)
 }
 
-// pushScope saves current variable scope and creates a new one
+// pushScope saves current variable scope and creates an isolated one (used for functions)
 func (g *Generator) pushScope() {
 	g.scopeStack = append(g.scopeStack, g.declaredVars)
 	g.declaredVars = make(map[string]bool)
+}
+
+func (g *Generator) pushBlockScope() {
+	parent := g.declaredVars
+	g.scopeStack = append(g.scopeStack, parent)
+	child := make(map[string]bool)
+	for k, v := range parent {
+		child[k] = v
+	}
+	g.declaredVars = child
 }
 
 // popScope restores the previous variable scope
@@ -223,11 +233,15 @@ func (g *Generator) generateModule(node *ast.TreeNode) {
 }
 
 func (g *Generator) generateBlock(node *ast.TreeNode) string {
+	if node == nil {
+		return "qv_null()"
+	}
+	g.pushBlockScope()
+	defer g.popScope()
 	var lastExpr string = "qv_null()"
-	for _, child := range node.Children {
+	for idx, child := range node.Children {
 		lastExpr = g.generateExpr(child)
-		// Only emit as statement if it's not the last expression
-		if child != node.Children[len(node.Children)-1] {
+		if idx < len(node.Children)-1 {
 			g.emitLine("%s;", lastExpr)
 		}
 	}
@@ -607,7 +621,7 @@ func (g *Generator) generateWhen(node *ast.TreeNode) string {
 			g.emitLine("if (%s) {", condStr)
 			first = false
 		} else {
-			g.emit(g.indent() + "} else if (%s) {\n", condStr)
+			g.emit(g.indent()+"} else if (%s) {\n", condStr)
 		}
 		g.indentLevel++
 		g.emitLine("%s = %s;", temp, result)
@@ -643,16 +657,10 @@ func (g *Generator) generateFor(node *ast.TreeNode) string {
 	g.emitLine("for (long long %s = 0; %s < %s; %s++) {", idxTemp, idxTemp, lenTemp, idxTemp)
 	g.indentLevel++
 
-	// Copy parent scope and add loop variable
-	oldDeclaredVars := g.declaredVars
-	g.declaredVars = make(map[string]bool)
-	for k, v := range oldDeclaredVars {
-		g.declaredVars[k] = v
-	}
+	g.pushBlockScope()
 	g.declaredVars[varName] = true // Loop variable is declared
 	g.emitLine("QValue %s = q_get(%s, qv_int(%s));", varName, listTemp, idxTemp)
 
-	// Generate body - emit each statement
 	if bodyNode.NodeType == ast.BlockNode {
 		for _, stmt := range bodyNode.Children {
 			expr := g.generateExpr(stmt)
@@ -663,8 +671,7 @@ func (g *Generator) generateFor(node *ast.TreeNode) string {
 		g.emitLine("%s;", expr)
 	}
 
-	// Restore parent scope
-	g.declaredVars = oldDeclaredVars
+	g.popScope()
 
 	g.indentLevel--
 	g.emitLine("}")

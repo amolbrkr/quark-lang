@@ -1,6 +1,10 @@
 package types
 
-import "fmt"
+import (
+	"fmt"
+	"sort"
+	"strings"
+)
 
 // Type represents a Quark type
 type Type interface {
@@ -31,8 +35,8 @@ var (
 	TypeString = &BasicType{Name: "string"}
 	TypeBool   = &BasicType{Name: "bool"}
 	TypeNull   = &BasicType{Name: "null"}
-	TypeAny    = &BasicType{Name: "any"}    // For unresolved types
-	TypeVoid   = &BasicType{Name: "void"}   // For statements with no value
+	TypeAny    = &BasicType{Name: "any"}  // For unresolved types
+	TypeVoid   = &BasicType{Name: "void"} // For statements with no value
 )
 
 // ListType represents a list of elements
@@ -100,6 +104,37 @@ func (t *FunctionType) Equals(other Type) bool {
 	return false
 }
 
+// UnionType represents a value that can be one of several concrete types
+type UnionType struct {
+	Options []Type
+}
+
+func (t *UnionType) String() string {
+	parts := make([]string, len(t.Options))
+	for i, opt := range t.Options {
+		parts[i] = opt.String()
+	}
+	return fmt.Sprintf("union[%s]", strings.Join(parts, " | "))
+}
+
+func (t *UnionType) Equals(other Type) bool {
+	if o, ok := other.(*UnionType); ok {
+		if len(t.Options) != len(o.Options) {
+			return false
+		}
+		for i, opt := range t.Options {
+			if !opt.Equals(o.Options[i]) {
+				return false
+			}
+		}
+		return true
+	}
+	if len(t.Options) == 1 {
+		return t.Options[0].Equals(other)
+	}
+	return false
+}
+
 // Symbol represents a variable or function in the symbol table
 type Symbol struct {
 	Name    string
@@ -151,6 +186,17 @@ func (s *Scope) LookupLocal(name string) *Symbol {
 
 // IsNumeric checks if a type is numeric (int or float)
 func IsNumeric(t Type) bool {
+	if union, ok := t.(*UnionType); ok {
+		if len(union.Options) == 0 {
+			return false
+		}
+		for _, opt := range union.Options {
+			if !IsNumeric(opt) {
+				return false
+			}
+		}
+		return true
+	}
 	if basic, ok := t.(*BasicType); ok {
 		return basic.Name == "int" || basic.Name == "float"
 	}
@@ -159,6 +205,17 @@ func IsNumeric(t Type) bool {
 
 // IsComparable checks if a type can be compared
 func IsComparable(t Type) bool {
+	if union, ok := t.(*UnionType); ok {
+		if len(union.Options) == 0 {
+			return false
+		}
+		for _, opt := range union.Options {
+			if !IsComparable(opt) {
+				return false
+			}
+		}
+		return true
+	}
 	if basic, ok := t.(*BasicType); ok {
 		return basic.Name == "int" || basic.Name == "float" || basic.Name == "string" || basic.Name == "bool"
 	}
@@ -183,4 +240,67 @@ func CanAssign(dstType, srcType Type) bool {
 		return true
 	}
 	return dstType.Equals(srcType)
+}
+
+// MergeTypes combines multiple type possibilities into the most precise representation.
+func MergeTypes(types ...Type) Type {
+	unique := make(map[string]Type)
+	for _, t := range types {
+		if t == nil {
+			continue
+		}
+		if union, ok := t.(*UnionType); ok {
+			for _, opt := range union.Options {
+				unique[typeKey(opt)] = opt
+			}
+			continue
+		}
+		unique[typeKey(t)] = t
+	}
+
+	switch len(unique) {
+	case 0:
+		return TypeVoid
+	case 1:
+		for _, v := range unique {
+			return v
+		}
+	}
+
+	keys := make([]string, 0, len(unique))
+	for k := range unique {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	opts := make([]Type, 0, len(keys))
+	for _, k := range keys {
+		opts = append(opts, unique[k])
+	}
+	return &UnionType{Options: opts}
+}
+
+func typeKey(t Type) string {
+	switch v := t.(type) {
+	case *BasicType:
+		return "basic:" + v.Name
+	case *ListType:
+		return "list[" + typeKey(v.ElementType) + "]"
+	case *DictType:
+		return "dict[" + typeKey(v.KeyType) + "," + typeKey(v.ValueType) + "]"
+	case *FunctionType:
+		params := make([]string, len(v.ParamTypes))
+		for i, p := range v.ParamTypes {
+			params[i] = typeKey(p)
+		}
+		return "fn[" + strings.Join(params, "|") + ":" + typeKey(v.ReturnType) + "]"
+	case *UnionType:
+		parts := make([]string, len(v.Options))
+		for i, opt := range v.Options {
+			parts[i] = typeKey(opt)
+		}
+		return "union[" + strings.Join(parts, "|") + "]"
+	default:
+		return fmt.Sprintf("%T:%s", t, t.String())
+	}
 }

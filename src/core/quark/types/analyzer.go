@@ -6,6 +6,12 @@ import (
 	"quark/token"
 )
 
+type builtinSignature struct {
+	Type    *FunctionType
+	MinArgs int
+	MaxArgs int
+}
+
 // Module represents a defined module with its symbols
 type Module struct {
 	Name    string
@@ -20,54 +26,63 @@ type Analyzer struct {
 	functions     map[string]*FunctionType // Track function signatures
 	modules       map[string]*Module       // Track defined modules
 	currentModule string                   // Current module being defined (empty if global)
+	builtins      map[string]*builtinSignature
 }
 
 func NewAnalyzer() *Analyzer {
 	globalScope := NewScope(nil)
 
-	// Define built-in functions
-	builtins := map[string]*FunctionType{
-		"print":   {ParamTypes: []Type{TypeAny}, ReturnType: TypeVoid},
-		"println": {ParamTypes: []Type{TypeAny}, ReturnType: TypeVoid},
-		"len":     {ParamTypes: []Type{TypeAny}, ReturnType: TypeInt},
-		"str":     {ParamTypes: []Type{TypeAny}, ReturnType: TypeString},
-		"int":     {ParamTypes: []Type{TypeAny}, ReturnType: TypeInt},
-		"float":   {ParamTypes: []Type{TypeAny}, ReturnType: TypeFloat},
-		"bool":    {ParamTypes: []Type{TypeAny}, ReturnType: TypeBool},
-		"input":   {ParamTypes: []Type{}, ReturnType: TypeString},
-		"range":   {ParamTypes: []Type{TypeAny, TypeAny, TypeAny}, ReturnType: TypeAny}, // range(end) or range(start, end) or range(start, end, step)
-		// Math module functions
-		"abs":   {ParamTypes: []Type{TypeAny}, ReturnType: TypeAny},
-		"min":   {ParamTypes: []Type{TypeAny, TypeAny}, ReturnType: TypeAny},
-		"max":   {ParamTypes: []Type{TypeAny, TypeAny}, ReturnType: TypeAny},
-		"sqrt":  {ParamTypes: []Type{TypeAny}, ReturnType: TypeFloat},
-		"floor": {ParamTypes: []Type{TypeAny}, ReturnType: TypeInt},
-		"ceil":  {ParamTypes: []Type{TypeAny}, ReturnType: TypeInt},
-		"round": {ParamTypes: []Type{TypeAny}, ReturnType: TypeInt},
-		// String module functions
-		"upper":      {ParamTypes: []Type{TypeString}, ReturnType: TypeString},
-		"lower":      {ParamTypes: []Type{TypeString}, ReturnType: TypeString},
-		"trim":       {ParamTypes: []Type{TypeString}, ReturnType: TypeString},
-		"contains":   {ParamTypes: []Type{TypeString, TypeString}, ReturnType: TypeBool},
-		"startswith": {ParamTypes: []Type{TypeString, TypeString}, ReturnType: TypeBool},
-		"endswith":   {ParamTypes: []Type{TypeString, TypeString}, ReturnType: TypeBool},
-		"replace":    {ParamTypes: []Type{TypeString, TypeString, TypeString}, ReturnType: TypeString},
-		"concat":     {ParamTypes: []Type{TypeAny, TypeAny}, ReturnType: TypeAny},
-		// List module functions
-		"push":    {ParamTypes: []Type{TypeAny, TypeAny}, ReturnType: TypeAny},
-		"pop":     {ParamTypes: []Type{TypeAny}, ReturnType: TypeAny},
-		"get":     {ParamTypes: []Type{TypeAny, TypeInt}, ReturnType: TypeAny},
-		"set":     {ParamTypes: []Type{TypeAny, TypeInt, TypeAny}, ReturnType: TypeAny},
-		"insert":  {ParamTypes: []Type{TypeAny, TypeInt, TypeAny}, ReturnType: TypeAny},
-		"remove":  {ParamTypes: []Type{TypeAny, TypeInt}, ReturnType: TypeAny},
-		"slice":   {ParamTypes: []Type{TypeAny, TypeInt, TypeInt}, ReturnType: TypeAny},
-		"reverse": {ParamTypes: []Type{TypeAny}, ReturnType: TypeAny},
+	// NOTE: keep this list in sync with codegen/builtins.go
+	builtinDefs := []struct {
+		name       string
+		minArgs    int
+		maxArgs    int
+		paramTypes []Type
+		returnType Type
+	}{
+		{"print", 0, 1, []Type{TypeAny}, TypeVoid},
+		{"println", 0, 1, []Type{TypeAny}, TypeVoid},
+		{"input", 0, 1, []Type{TypeAny}, TypeString},
+		{"len", 1, 1, []Type{TypeAny}, TypeInt},
+		{"str", 1, 1, []Type{TypeAny}, TypeString},
+		{"int", 1, 1, []Type{TypeAny}, TypeInt},
+		{"float", 1, 1, []Type{TypeAny}, TypeFloat},
+		{"bool", 1, 1, []Type{TypeAny}, TypeBool},
+		{"range", 1, 3, []Type{TypeAny, TypeAny, TypeAny}, TypeAny},
+		{"abs", 1, 1, []Type{TypeAny}, TypeAny},
+		{"min", 2, 2, []Type{TypeAny, TypeAny}, TypeAny},
+		{"max", 2, 2, []Type{TypeAny, TypeAny}, TypeAny},
+		{"sqrt", 1, 1, []Type{TypeAny}, TypeFloat},
+		{"floor", 1, 1, []Type{TypeAny}, TypeInt},
+		{"ceil", 1, 1, []Type{TypeAny}, TypeInt},
+		{"round", 1, 1, []Type{TypeAny}, TypeInt},
+		{"upper", 1, 1, []Type{TypeString}, TypeString},
+		{"lower", 1, 1, []Type{TypeString}, TypeString},
+		{"trim", 1, 1, []Type{TypeString}, TypeString},
+		{"contains", 2, 2, []Type{TypeString, TypeString}, TypeBool},
+		{"startswith", 2, 2, []Type{TypeString, TypeString}, TypeBool},
+		{"endswith", 2, 2, []Type{TypeString, TypeString}, TypeBool},
+		{"replace", 3, 3, []Type{TypeString, TypeString, TypeString}, TypeString},
+		{"concat", 2, 2, []Type{TypeAny, TypeAny}, TypeAny},
+		{"push", 2, 2, []Type{TypeAny, TypeAny}, TypeAny},
+		{"pop", 1, 1, []Type{TypeAny}, TypeAny},
+		{"get", 2, 2, []Type{TypeAny, TypeInt}, TypeAny},
+		{"set", 3, 3, []Type{TypeAny, TypeInt, TypeAny}, TypeAny},
+		{"insert", 3, 3, []Type{TypeAny, TypeInt, TypeAny}, TypeAny},
+		{"remove", 2, 2, []Type{TypeAny, TypeInt}, TypeAny},
+		{"slice", 3, 3, []Type{TypeAny, TypeInt, TypeInt}, TypeAny},
+		{"reverse", 1, 1, []Type{TypeAny}, TypeAny},
 	}
 
+	builtins := make(map[string]*builtinSignature)
 	funcs := make(map[string]*FunctionType)
-	for name, typ := range builtins {
-		globalScope.Define(name, typ, false)
-		funcs[name] = typ
+	for _, def := range builtinDefs {
+		params := make([]Type, len(def.paramTypes))
+		copy(params, def.paramTypes)
+		funcType := &FunctionType{ParamTypes: params, ReturnType: def.returnType}
+		globalScope.Define(def.name, funcType, false)
+		funcs[def.name] = funcType
+		builtins[def.name] = &builtinSignature{Type: funcType, MinArgs: def.minArgs, MaxArgs: def.maxArgs}
 	}
 
 	return &Analyzer{
@@ -76,6 +91,7 @@ func NewAnalyzer() *Analyzer {
 		functions:     funcs,
 		modules:       make(map[string]*Module),
 		currentModule: "",
+		builtins:      builtins,
 	}
 }
 
@@ -87,12 +103,58 @@ func (a *Analyzer) addError(format string, args ...interface{}) {
 	a.errors = append(a.errors, fmt.Sprintf(format, args...))
 }
 
+func (a *Analyzer) errorAt(node *ast.TreeNode, format string, args ...interface{}) {
+	msg := fmt.Sprintf(format, args...)
+	if node != nil && node.Token != nil {
+		msg = fmt.Sprintf("line %d, col %d: %s", node.Token.Line, node.Token.Column, msg)
+	}
+	a.errors = append(a.errors, msg)
+}
+
 func (a *Analyzer) pushScope() {
 	a.currentScope = NewScope(a.currentScope)
 }
 
 func (a *Analyzer) popScope() {
 	a.currentScope = a.currentScope.Parent
+}
+
+func (a *Analyzer) predeclareFunctions(nodes []*ast.TreeNode) {
+	for _, child := range nodes {
+		if child == nil {
+			continue
+		}
+		if child.NodeType == ast.FunctionNode {
+			a.declareFunctionSignature(child)
+		}
+	}
+}
+
+func (a *Analyzer) declareFunctionSignature(node *ast.TreeNode) *FunctionType {
+	if len(node.Children) < 2 {
+		return nil
+	}
+	nameNode := node.Children[0]
+	argsNode := node.Children[1]
+	funcName := nameNode.TokenLiteral()
+	if funcName == "" {
+		return nil
+	}
+	if existing := a.currentScope.LookupLocal(funcName); existing != nil {
+		a.errorAt(nameNode, "symbol '%s' already defined in this scope", funcName)
+		if ft, ok := existing.Type.(*FunctionType); ok {
+			return ft
+		}
+		return nil
+	}
+	paramTypes := make([]Type, len(argsNode.Children))
+	for i := range paramTypes {
+		paramTypes[i] = TypeAny
+	}
+	funcType := &FunctionType{ParamTypes: paramTypes, ReturnType: TypeAny}
+	a.currentScope.Define(funcName, funcType, false)
+	a.functions[funcName] = funcType
+	return funcType
 }
 
 // Analyze performs semantic analysis on the AST
@@ -146,6 +208,7 @@ func (a *Analyzer) Analyze(node *ast.TreeNode) Type {
 }
 
 func (a *Analyzer) analyzeCompilationUnit(node *ast.TreeNode) Type {
+	a.predeclareFunctions(node.Children)
 	var lastType Type = TypeVoid
 	for _, child := range node.Children {
 		lastType = a.Analyze(child)
@@ -154,6 +217,9 @@ func (a *Analyzer) analyzeCompilationUnit(node *ast.TreeNode) Type {
 }
 
 func (a *Analyzer) analyzeBlock(node *ast.TreeNode) Type {
+	a.pushScope()
+	defer a.popScope()
+	a.predeclareFunctions(node.Children)
 	var lastType Type = TypeVoid
 	for _, child := range node.Children {
 		lastType = a.Analyze(child)
@@ -173,73 +239,89 @@ func (a *Analyzer) analyzeFunction(node *ast.TreeNode) Type {
 
 	funcName := nameNode.TokenLiteral()
 
-	// Create function scope
-	a.pushScope()
+	sym := a.currentScope.LookupLocal(funcName)
+	var funcType *FunctionType
+	if sym != nil {
+		var ok bool
+		funcType, ok = sym.Type.(*FunctionType)
+		if !ok {
+			a.errorAt(nameNode, "symbol '%s' already defined and is not a function", funcName)
+			return TypeVoid
+		}
+	} else {
+		funcType = a.declareFunctionSignature(node)
+		if funcType == nil {
+			return TypeVoid
+		}
+	}
 
-	// Define parameters
-	paramTypes := make([]Type, 0)
+	if len(funcType.ParamTypes) != len(argsNode.Children) {
+		funcType.ParamTypes = make([]Type, len(argsNode.Children))
+		for i := range funcType.ParamTypes {
+			funcType.ParamTypes[i] = TypeAny
+		}
+	}
+
+	// Create function scope for parameters and body
+	a.pushScope()
 	for _, param := range argsNode.Children {
 		paramName := param.TokenLiteral()
-		paramType := TypeAny // Type inference will refine this
-		a.currentScope.Define(paramName, paramType, true)
-		paramTypes = append(paramTypes, paramType)
+		if paramName == "" {
+			continue
+		}
+		a.currentScope.Define(paramName, TypeAny, true)
 	}
-
-	// Analyze body to infer return type
 	returnType := a.Analyze(bodyNode)
-
 	a.popScope()
 
-	// Create function type
-	funcType := &FunctionType{
-		ParamTypes: paramTypes,
-		ReturnType: returnType,
-	}
-
-	// Define function in parent scope
-	a.currentScope.Define(funcName, funcType, false)
-	a.functions[funcName] = funcType
-
+	funcType.ReturnType = returnType
 	return funcType
 }
 
 func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 	if len(node.Children) < 2 {
+		a.errorAt(node, "invalid function call expression")
 		return TypeAny
 	}
 
 	funcNode := node.Children[0]
 	argsNode := node.Children[1]
 
-	// Analyze the function expression to get its type
-	funcExprType := a.Analyze(funcNode)
-
-	// Check if it's a function type
-	funcType, ok := funcExprType.(*FunctionType)
-	if !ok {
-		// Try looking up by name for backward compatibility
-		if funcNode.NodeType == ast.IdentifierNode {
-			funcName := funcNode.TokenLiteral()
-			sym := a.currentScope.Lookup(funcName)
-			if sym != nil {
-				if ft, ok := sym.Type.(*FunctionType); ok {
-					funcType = ft
-				}
-			}
+	// Method calls (obj.method()) are handled dynamically at runtime
+	if funcNode.NodeType == ast.OperatorNode && funcNode.Token != nil && funcNode.Token.Type == token.DOT {
+		a.Analyze(funcNode)
+		for _, arg := range argsNode.Children {
+			a.Analyze(arg)
 		}
-		// If still not a function, allow it (might be resolved later)
-		if funcType == nil {
-			// Analyze arguments anyway
-			for _, arg := range argsNode.Children {
-				a.Analyze(arg)
+		return TypeAny
+	}
+
+	funcExprType := a.Analyze(funcNode)
+	argCount := len(argsNode.Children)
+	for _, arg := range argsNode.Children {
+		a.Analyze(arg)
+	}
+
+	if funcNode.NodeType == ast.IdentifierNode {
+		name := funcNode.TokenLiteral()
+		if sig, ok := a.builtins[name]; ok {
+			if argCount < sig.MinArgs || argCount > sig.MaxArgs {
+				a.errorAt(node, "builtin '%s' expects %d-%d arguments but got %d", name, sig.MinArgs, sig.MaxArgs, argCount)
 			}
-			return TypeAny
+			return sig.Type.ReturnType
 		}
 	}
 
-	// Analyze arguments
-	for _, arg := range argsNode.Children {
-		a.Analyze(arg)
+	funcType, ok := funcExprType.(*FunctionType)
+	if !ok {
+		if !isUnknownType(funcExprType) {
+			a.errorAt(funcNode, "expression is not callable")
+		}
+		return TypeAny
+	}
+
+	if argCount != len(funcType.ParamTypes) {
+		a.errorAt(node, "function expects %d arguments but got %d", len(funcType.ParamTypes), argCount)
 	}
 
 	return funcType.ReturnType
@@ -256,25 +338,15 @@ func (a *Analyzer) analyzeIfStatement(node *ast.TreeNode) Type {
 		// Allow any type as condition (truthy/falsy)
 	}
 
-	// Analyze if block
-	a.pushScope()
-	ifType := a.Analyze(node.Children[1])
-	a.popScope()
+	_ = condType
+	resultType := a.Analyze(node.Children[1])
 
-	// Analyze elseif/else blocks
-	var elseType Type = TypeVoid
 	for i := 2; i < len(node.Children); i++ {
-		child := node.Children[i]
-		a.pushScope()
-		elseType = a.Analyze(child)
-		a.popScope()
+		branchType := a.Analyze(node.Children[i])
+		resultType = MergeTypes(resultType, branchType)
 	}
 
-	// Return type is union of branches (simplified to any for now)
-	if !ifType.Equals(elseType) {
-		return TypeAny
-	}
-	return ifType
+	return resultType
 }
 
 func (a *Analyzer) analyzeWhenStatement(node *ast.TreeNode) Type {
@@ -286,13 +358,14 @@ func (a *Analyzer) analyzeWhenStatement(node *ast.TreeNode) Type {
 	a.Analyze(node.Children[0])
 
 	// Analyze patterns
-	var resultType Type = TypeAny
+	var resultType Type = TypeVoid
 	for i := 1; i < len(node.Children); i++ {
 		pattern := node.Children[i]
 		if pattern.NodeType == ast.PatternNode && len(pattern.Children) > 0 {
 			// Last child of pattern is the result expression
 			result := pattern.Children[len(pattern.Children)-1]
-			resultType = a.Analyze(result)
+			branchType := a.Analyze(result)
+			resultType = MergeTypes(resultType, branchType)
 		}
 	}
 
@@ -315,9 +388,16 @@ func (a *Analyzer) analyzeForLoop(node *ast.TreeNode) Type {
 	a.pushScope()
 
 	varName := varNode.TokenLiteral()
-	var varType Type = TypeInt // For range, loop variable is int
-	if listType, ok := iterType.(*ListType); ok {
-		varType = listType.ElementType
+	var varType Type = TypeInt // Default for numeric ranges
+	switch t := iterType.(type) {
+	case *ListType:
+		varType = t.ElementType
+	case *DictType:
+		varType = t.ValueType
+	default:
+		if !isUnknownType(iterType) {
+			a.errorAt(iterNode, "value of type '%s' is not iterable", iterType.String())
+		}
 	}
 	a.currentScope.Define(varName, varType, false)
 
@@ -355,7 +435,7 @@ func (a *Analyzer) analyzeIdentifier(node *ast.TreeNode) Type {
 
 	sym := a.currentScope.Lookup(name)
 	if sym == nil {
-		// Could be a forward reference or undefined - allow for now
+		a.errorAt(node, "undefined identifier '%s'", name)
 		return TypeAny
 	}
 
@@ -379,16 +459,26 @@ func (a *Analyzer) analyzeLiteral(node *ast.TreeNode) Type {
 	case token.NULL:
 		return TypeNull
 	default:
+		a.errorAt(node, "unsupported literal type: %s", node.Token.Type)
 		return TypeAny
 	}
 }
 
 func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 	if node.Token == nil || len(node.Children) == 0 {
+		a.errorAt(node, "malformed operator expression")
 		return TypeAny
 	}
 
 	op := node.Token.Type
+
+	if op == token.DOT {
+		// Member access: only analyze the target to avoid treating the member name as an identifier lookup
+		if len(node.Children) >= 1 {
+			a.Analyze(node.Children[0])
+		}
+		return TypeAny
+	}
 
 	// Unary operators
 	if len(node.Children) == 1 {
@@ -398,11 +488,44 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 			if IsNumeric(operandType) {
 				return operandType
 			}
-			return TypeInt
+			if isUnknownType(operandType) {
+				return TypeAny
+			}
+			a.errorAt(node, "unary '-' expects numeric operand, got %s", operandType.String())
+			return TypeAny
 		case token.BANG, token.NOT:
-			return TypeBool
+			if isBoolLike(operandType) {
+				return TypeBool
+			}
+			if isUnknownType(operandType) {
+				return TypeAny
+			}
+			a.errorAt(node, "logical not expects boolean operand, got %s", operandType.String())
+			return TypeAny
 		}
 		return operandType
+	}
+
+	// Assignment must be handled before analyzing the left side,
+	// because the left side may be a new variable being defined.
+	if op == token.EQUALS && len(node.Children) == 2 {
+		target := node.Children[0]
+		rightType := a.Analyze(node.Children[1])
+		if target.NodeType != ast.IdentifierNode {
+			a.errorAt(target, "left side of assignment must be an identifier")
+			return rightType
+		}
+		varName := target.TokenLiteral()
+		sym := a.currentScope.Lookup(varName)
+		if sym == nil {
+			a.currentScope.Define(varName, rightType, true)
+		} else {
+			if !CanAssign(sym.Type, rightType) && !isUnknownType(rightType) {
+				a.errorAt(target, "cannot assign value of type '%s' to '%s'", rightType.String(), sym.Type.String())
+			}
+			sym.Type = rightType
+		}
+		return rightType
 	}
 
 	// Binary operators
@@ -411,34 +534,68 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 
 	switch op {
 	case token.PLUS, token.MINUS, token.MULTIPLY, token.DIVIDE, token.MODULO, token.DOUBLESTAR:
-		// Arithmetic operators
-		if leftType.Equals(TypeFloat) || rightType.Equals(TypeFloat) {
-			return TypeFloat
+		if op == token.MODULO {
+			if isIntLike(leftType) && isIntLike(rightType) {
+				return TypeInt
+			}
+			if isUnknownType(leftType) || isUnknownType(rightType) {
+				return TypeAny
+			}
+			a.errorAt(node, "operator '%%' requires integer operands, got %s and %s", leftType.String(), rightType.String())
+			return TypeAny
 		}
-		return TypeInt
+		if op == token.PLUS && isStringLike(leftType) && isStringLike(rightType) {
+			return TypeString
+		}
+		if IsNumeric(leftType) && IsNumeric(rightType) {
+			if op == token.DIVIDE {
+				return TypeFloat
+			}
+			if leftType.Equals(TypeFloat) || rightType.Equals(TypeFloat) {
+				return TypeFloat
+			}
+			if op == token.MODULO {
+				return TypeInt
+			}
+			return TypeInt
+		}
+		if isUnknownType(leftType) || isUnknownType(rightType) {
+			return TypeAny
+		}
+		a.errorAt(node, "operator '%s' requires numeric operands, got %s and %s", node.Token.Type.String(), leftType.String(), rightType.String())
+		return TypeAny
 
 	case token.LT, token.LTE, token.GT, token.GTE:
+		if IsComparable(leftType) && IsComparable(rightType) {
+			return TypeBool
+		}
+		if isUnknownType(leftType) || isUnknownType(rightType) {
+			return TypeBool
+		}
+		a.errorAt(node, "comparison requires comparable operands, got %s and %s", leftType.String(), rightType.String())
 		return TypeBool
 
 	case token.DEQ, token.NE:
 		return TypeBool
 
 	case token.AND, token.OR:
+		if isBoolLike(leftType) && isBoolLike(rightType) {
+			return TypeBool
+		}
+		if isUnknownType(leftType) || isUnknownType(rightType) {
+			return TypeBool
+		}
+		a.errorAt(node, "logical operator '%s' expects boolean operands, got %s and %s", node.Token.Type.String(), leftType.String(), rightType.String())
 		return TypeBool
 
 	case token.AMPER:
-		return TypeInt
-
-	case token.EQUALS:
-		// Assignment - define or update variable
-		if node.Children[0].NodeType == ast.IdentifierNode {
-			varName := node.Children[0].TokenLiteral()
-			a.currentScope.Define(varName, rightType, true)
+		if isIntLike(leftType) && isIntLike(rightType) {
+			return TypeInt
 		}
-		return rightType
-
-	case token.DOT:
-		// Member access - return any for now
+		if isUnknownType(leftType) || isUnknownType(rightType) {
+			return TypeAny
+		}
+		a.errorAt(node, "'&' operator expects numeric operands, got %s and %s", leftType.String(), rightType.String())
 		return TypeAny
 
 	case token.COMMA:
@@ -446,6 +603,7 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 		return rightType
 	}
 
+	a.errorAt(node, "unsupported operator '%s'", node.Token.Type.String())
 	return TypeAny
 }
 
@@ -472,10 +630,7 @@ func (a *Analyzer) analyzeTernary(node *ast.TreeNode) Type {
 	trueType := a.Analyze(node.Children[1])
 	falseType := a.Analyze(node.Children[2])
 
-	if trueType.Equals(falseType) {
-		return trueType
-	}
-	return TypeAny
+	return MergeTypes(trueType, falseType)
 }
 
 func (a *Analyzer) analyzeList(node *ast.TreeNode) Type {
@@ -486,7 +641,8 @@ func (a *Analyzer) analyzeList(node *ast.TreeNode) Type {
 	// Use first element's type as list element type
 	elemType := a.Analyze(node.Children[0])
 	for _, child := range node.Children[1:] {
-		a.Analyze(child)
+		childType := a.Analyze(child)
+		elemType = MergeTypes(elemType, childType)
 	}
 
 	return &ListType{ElementType: elemType}
@@ -511,12 +667,16 @@ func (a *Analyzer) analyzeIndex(node *ast.TreeNode) Type {
 		return dictType.ValueType
 	}
 
+	if !isUnknownType(targetType) {
+		a.errorAt(node, "type '%s' is not indexable", targetType.String())
+	}
+
 	return TypeAny
 }
 
 func (a *Analyzer) analyzeModule(node *ast.TreeNode) Type {
 	if len(node.Children) < 2 {
-		a.addError("invalid module definition")
+		a.errorAt(node, "invalid module definition")
 		return TypeVoid
 	}
 
@@ -527,7 +687,7 @@ func (a *Analyzer) analyzeModule(node *ast.TreeNode) Type {
 
 	// Check for duplicate module definition
 	if _, exists := a.modules[moduleName]; exists {
-		a.addError("module '%s' already defined", moduleName)
+		a.errorAt(nameNode, "module '%s' already defined", moduleName)
 		return TypeVoid
 	}
 
@@ -537,8 +697,15 @@ func (a *Analyzer) analyzeModule(node *ast.TreeNode) Type {
 	a.currentScope = moduleScope
 	a.currentModule = moduleName
 
-	// Analyze module body
-	a.Analyze(bodyNode)
+	// Analyze module body without introducing an extra block scope
+	if bodyNode != nil && bodyNode.NodeType == ast.BlockNode {
+		a.predeclareFunctions(bodyNode.Children)
+		for _, child := range bodyNode.Children {
+			a.Analyze(child)
+		}
+	} else {
+		a.Analyze(bodyNode)
+	}
 
 	// Store module with its symbols
 	module := &Module{
@@ -557,7 +724,7 @@ func (a *Analyzer) analyzeModule(node *ast.TreeNode) Type {
 
 func (a *Analyzer) analyzeUse(node *ast.TreeNode) Type {
 	if len(node.Children) < 1 {
-		a.addError("invalid use statement")
+		a.errorAt(node, "invalid use statement")
 		return TypeVoid
 	}
 
@@ -567,7 +734,7 @@ func (a *Analyzer) analyzeUse(node *ast.TreeNode) Type {
 	// Look up module
 	module, exists := a.modules[moduleName]
 	if !exists {
-		a.addError("undefined module: %s", moduleName)
+		a.errorAt(nameNode, "undefined module '%s'", moduleName)
 		return TypeVoid
 	}
 
@@ -615,4 +782,84 @@ func (a *Analyzer) analyzeLambda(node *ast.TreeNode) Type {
 		ParamTypes: paramTypes,
 		ReturnType: returnType,
 	}
+}
+
+func isUnknownType(t Type) bool {
+	if t == nil {
+		return true
+	}
+	if t.Equals(TypeAny) {
+		return true
+	}
+	if union, ok := t.(*UnionType); ok {
+		for _, opt := range union.Options {
+			if isUnknownType(opt) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isBoolLike(t Type) bool {
+	if t == nil {
+		return false
+	}
+	if t.Equals(TypeBool) {
+		return true
+	}
+	if union, ok := t.(*UnionType); ok {
+		if len(union.Options) == 0 {
+			return false
+		}
+		for _, opt := range union.Options {
+			if !isBoolLike(opt) {
+				return false
+			}
+		}
+		return true
+	}
+	return isUnknownType(t)
+}
+
+func isStringLike(t Type) bool {
+	if t == nil {
+		return false
+	}
+	if t.Equals(TypeString) {
+		return true
+	}
+	if union, ok := t.(*UnionType); ok {
+		if len(union.Options) == 0 {
+			return false
+		}
+		for _, opt := range union.Options {
+			if !isStringLike(opt) {
+				return false
+			}
+		}
+		return true
+	}
+	return isUnknownType(t)
+}
+
+func isIntLike(t Type) bool {
+	if t == nil {
+		return false
+	}
+	if t.Equals(TypeInt) {
+		return true
+	}
+	if union, ok := t.(*UnionType); ok {
+		if len(union.Options) == 0 {
+			return false
+		}
+		for _, opt := range union.Options {
+			if !isIntLike(opt) {
+				return false
+			}
+		}
+		return true
+	}
+	return isUnknownType(t)
 }

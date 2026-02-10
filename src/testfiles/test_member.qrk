@@ -29,9 +29,4 @@ chain_list = list [10, 20, 30]
 println chain_list.reverse.length
 println 'hello'.upper.length
 
-// --- Error cases (should print errors to stderr, not crash) ---
-x = null
-println x.length
-
-y = 42
-println y.upper
+// Note: null.length and int.upper are now caught at compile time by the analyzer

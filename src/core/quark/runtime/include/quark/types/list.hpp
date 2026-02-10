@@ -4,7 +4,7 @@
 
 #include "../core/value.hpp"
 #include "../core/constructors.hpp"
-#include "dict.hpp"
+#include "string.hpp"
 
 // Push item to end of list
 inline QValue q_push(QValue list, QValue item) {
@@ -27,8 +27,8 @@ inline QValue q_pop(QValue list) {
 
 // Get item at index (supports negative indexing)
 inline QValue q_get(QValue list, QValue index) {
-    if (list.type == QValue::VAL_DICT) {
-        return q_dict_get(list, index);
+    if (list.type == QValue::VAL_STRING) {
+        return q_str_get(list, index);
     }
     if (list.type != QValue::VAL_LIST || !list.data.list_val) {
         return qv_null();
@@ -48,9 +48,6 @@ inline QValue q_get(QValue list, QValue index) {
 
 // Set item at index (supports negative indexing)
 inline QValue q_set(QValue list, QValue index, QValue value) {
-    if (list.type == QValue::VAL_DICT) {
-        return q_dict_set(list, index, value);
-    }
     if (list.type != QValue::VAL_LIST || !list.data.list_val) {
         return qv_null();
     }

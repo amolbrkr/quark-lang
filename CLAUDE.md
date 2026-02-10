@@ -139,9 +139,9 @@ data | transform | filter | save
 - First-class functions and closures
 - Pattern matching (`when` expressions)
 - Pipe operator for data flow
-- Structs with impl blocks (not classes)
-- Error handling with `ok`/`err`/`try`
+- Result values with `ok`/`err`
 - Lists backed by `std::vector<QValue>`
+- Dicts backed by `std::unordered_map<std::string, QValue>`
 
 **Syntax Conventions:**
 - Function calls: `print x` (parentheses optional)
@@ -174,10 +174,10 @@ Quark uses punctuation intentionally to convey semantic meaning:
 | Boolean | `true`, `false` | `bool` |
 | Null | `null` | - |
 | List | `[1, 2, 3]` | `std::vector<QValue>*` |
+| Dict | `dict { a: 1 }` | `std::unordered_map<std::string, QValue>*` |
 | Tensor | `tensor [1, 2, 3]` | contiguous buffer (future) |
 | Function | `fn x -> x * 2` | function pointer |
-| Result | `ok value` or `err msg` | tagged union (VAL_OK / VAL_ERR) |
-| Struct | `Point { x: 1, y: 2 }` | struct instance (planned) |
+| Result | `ok value` or `err msg` | tagged union (VAL_RESULT) |
 
 ### Runtime Value (QValue)
 
@@ -188,8 +188,8 @@ using QList = std::vector<QValue>;
 
 struct QValue {
     enum ValueType {
-        VAL_INT, VAL_FLOAT, VAL_STRING, VAL_BOOL, VAL_NULL, VAL_LIST, VAL_FUNC,
-        VAL_OK, VAL_ERR
+        VAL_INT, VAL_FLOAT, VAL_STRING, VAL_BOOL, VAL_NULL, VAL_LIST, VAL_DICT,
+        VAL_FUNC, VAL_RESULT
     } type;
 
     union {
@@ -198,7 +198,9 @@ struct QValue {
         char* string_val;
         bool bool_val;
         QList* list_val;    // std::vector<QValue>*
+        QDict* dict_val;    // std::unordered_map<std::string, QValue>*
         void* func_val;
+        QResult* result_val;
     } data;
 };
 ```

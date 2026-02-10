@@ -125,7 +125,10 @@ Accessor        ::= "." <ID>                   // Member access / dict key
 list[0]         // First element
 list[-1]        // Last element
 text[0]         // First character
+text[-1]        // Last character
 ```
+
+String indexing returns a 1-character string.
 
 For slicing, use the `slice` builtin: `slice list, 1, 3`
 

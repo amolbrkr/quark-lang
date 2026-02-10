@@ -145,4 +145,24 @@ inline QValue q_str_concat(QValue a, QValue b) {
     return q;
 }
 
+// Get character at index (supports negative indexing)
+inline QValue q_str_get(QValue str, QValue index) {
+    if (str.type != QValue::VAL_STRING || str.data.string_val == nullptr) {
+        return qv_null();
+    }
+    if (index.type != QValue::VAL_INT) {
+        return qv_null();
+    }
+    int len = static_cast<int>(strlen(str.data.string_val));
+    int idx = static_cast<int>(index.data.int_val);
+    if (idx < 0) idx = len + idx;
+    if (idx < 0 || idx >= len) {
+        return qv_null();
+    }
+    char buf[2];
+    buf[0] = str.data.string_val[idx];
+    buf[1] = '\0';
+    return qv_string(buf);
+}
+
 #endif // QUARK_TYPES_STRING_HPP

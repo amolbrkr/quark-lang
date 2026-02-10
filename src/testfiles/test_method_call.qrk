@@ -1,7 +1,7 @@
 // Test method calls with arguments: obj.method arg
 
 // --- List methods ---
-nums = [1, 2, 3]
+nums = list [1, 2, 3]
 nums.push 4
 nums.push 5
 println nums.length
@@ -36,7 +36,7 @@ println (msg.replace 'world', 'quark')
 println (msg.concat '!')
 
 // --- Chaining with methods ---
-data = [5, 4, 3, 2, 1]
+data = list [5, 4, 3, 2, 1]
 data.reverse
 println data.length
 

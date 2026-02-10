@@ -1,17 +1,17 @@
 // Test member access (.) operator
 
 // --- List properties ---
-nums = [1, 2, 3, 4, 5]
+nums = list [1, 2, 3, 4, 5]
 println nums.length
 println nums.size
 println nums.empty
 
-empty_list = []
+empty_list = list []
 println empty_list.empty
 println empty_list.length
 
 // --- List no-arg methods ---
-data = [3, 1, 2]
+data = list [3, 1, 2]
 data.reverse
 println data.length
 
@@ -25,7 +25,7 @@ println 'WORLD'.lower
 println '  hi  '.trim
 
 // --- Chaining ---
-chain_list = [10, 20, 30]
+chain_list = list [10, 20, 30]
 println chain_list.reverse.length
 println 'hello'.upper.length
 

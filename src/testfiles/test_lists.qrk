@@ -3,13 +3,13 @@
 
 // Test 1: Create empty list
 println 'Creating empty list'
-empty = []
+empty = list []
 println 'Empty list length:'
 len empty | println
 
 // Test 2: Create list with elements
 println 'Creating list [1, 2, 3]'
-nums = [1, 2, 3]
+nums = list [1, 2, 3]
 println 'List length:'
 len nums | println
 
@@ -47,7 +47,7 @@ get nums, 2 | println
 
 // Test 8: List with different types
 println 'Creating mixed list'
-mixed = [1, 'hello', 3.14, true]
+mixed = list [1, 'hello', 3.14, true]
 println 'Mixed list length:'
 len mixed | println
 println 'First element (int):'
@@ -61,7 +61,7 @@ mixed[3] | println
 
 // Test 9: Nested access
 println 'Building list in loop'
-result = []
+result = list []
 for i in range 5:
     result = push result, i * 2
 println 'Result list (0, 2, 4, 6, 8):'

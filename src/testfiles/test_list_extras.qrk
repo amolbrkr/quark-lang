@@ -1,7 +1,7 @@
 // Test list extras: insert, remove, slice, reverse, concat
 
 // Setup
-nums = [10, 20, 30, 40, 50]
+nums = list [10, 20, 30, 40, 50]
 
 // Test reverse
 println 'reverse:'
@@ -39,8 +39,8 @@ println ''
 
 // Test concat (lists)
 println 'concat lists:'
-a = [1, 2]
-b = [3, 4]
+a = list [1, 2]
+b = list [3, 4]
 c = concat a, b
 for i in range (len c):
     print (get c, i)
@@ -53,7 +53,7 @@ println (concat 'hello ', 'world')
 
 // Test pipe with reverse
 println 'pipe reverse:'
-x = [100, 200, 300]
+x = list [100, 200, 300]
 x | reverse
 for i in range (len x):
     print (get x, i)

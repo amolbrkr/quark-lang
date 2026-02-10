@@ -1,8 +1,8 @@
 fn add x: int, y: int -> x + y
 
-fn head xs: list[int] -> get xs, 0
+fn head xs: list -> get xs, 0
 
-fn tail xs: list[int] -> get xs, -1
+fn tail xs: list -> get xs, -1
 
 fn join a: str, b: str -> a + b
 
@@ -10,9 +10,9 @@ fn is_even n: int -> (n % 2) == 0
 
 double = fn x: int -> x * 2
 
-names: list[str] = list ['alice', 'bob']
-nums: list[int] = list [1, 2, 9]
-more_nums: list[int] = list [10, 20, 30]
+names: list = list ['alice', 'bob']
+nums: list = list [1, 2, 9]
+more_nums: list = list [10, 20, 30]
 greeting: str = join 'hi, ', 'james'
 flag: bool = is_even 10
 

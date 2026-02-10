@@ -1382,9 +1382,9 @@ The parser previously special-cased `id = fn params -> body` as a `FunctionNode`
 **Changes**:
 - `parser/parser.go`: Removed Form 2 lookahead and special-case branch in `parseFunction()`
 
-### Fixed C++ Keyword Collision for Variable Names
+### Unified `quark_` Prefix for All User Names
 
-After removing Form 2, variables like `double` generated invalid C++ (`QValue double = ...`). Added `sanitizeVarName()` to `codegen/codegen.go` that prefixes C++ reserved keywords with `_q_` (e.g., `double` → `_q_double`).
+After removing Form 2, variables like `double` generated invalid C++ (`QValue double = ...`). Fixed by prefixing ALL user variable names with `quark_` (same prefix already used for user-defined functions). This eliminates the need for a C++ reserved keyword map — all user identifiers are uniformly namespaced in generated code (e.g., `x` → `quark_x`, `double` → `quark_double`).
 
 ### Fixed Lambda Forward Declarations
 

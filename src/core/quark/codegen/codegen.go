@@ -50,40 +50,11 @@ func (g *Generator) SetEmbedRuntime(embed bool) {
 	g.embedRuntime = embed
 }
 
-// cppReserved contains C++ keywords and type names that cannot be used as variable names
-var cppReserved = map[string]bool{
-	// C++ type keywords
-	"auto": true, "bool": true, "char": true, "double": true, "float": true,
-	"int": true, "long": true, "short": true, "signed": true, "unsigned": true,
-	"void": true, "wchar_t": true, "char8_t": true, "char16_t": true, "char32_t": true,
-	// C++ control flow
-	"break": true, "case": true, "catch": true, "continue": true, "default": true,
-	"do": true, "else": true, "for": true, "goto": true, "if": true,
-	"return": true, "switch": true, "throw": true, "try": true, "while": true,
-	// C++ declaration/definition
-	"class": true, "const": true, "constexpr": true, "enum": true, "extern": true,
-	"inline": true, "mutable": true, "namespace": true, "new": true, "delete": true,
-	"operator": true, "private": true, "protected": true, "public": true,
-	"register": true, "sizeof": true, "static": true, "struct": true,
-	"template": true, "this": true, "typedef": true, "typename": true,
-	"union": true, "using": true, "virtual": true, "volatile": true,
-	// C++ literals
-	"true": true, "false": true, "nullptr": true, "NULL": true,
-	// C++ other
-	"alignas": true, "alignof": true, "asm": true, "concept": true,
-	"consteval": true, "constinit": true, "co_await": true, "co_return": true,
-	"co_yield": true, "decltype": true, "dynamic_cast": true, "explicit": true,
-	"export": true, "friend": true, "noexcept": true, "reflexpr": true,
-	"reinterpret_cast": true, "requires": true, "static_assert": true,
-	"static_cast": true, "thread_local": true, "typeid": true,
-}
-
-// sanitizeVarName mangles variable names that collide with C++ reserved keywords
+// sanitizeVarName prefixes all user variable names with quark_ to avoid
+// collisions with C++ reserved keywords. This is the same prefix used for
+// user-defined functions, giving a uniform naming scheme in generated code.
 func sanitizeVarName(name string) string {
-	if cppReserved[name] {
-		return "_q_" + name
-	}
-	return name
+	return "quark_" + name
 }
 
 func (g *Generator) indent() string {

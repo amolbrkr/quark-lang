@@ -54,6 +54,44 @@ inline QValue qv_func(void* f) {
     return q;
 }
 
+inline QValue qv_ok(QValue v) {
+    QValue q;
+    q.type = QValue::VAL_RESULT;
+    QResult* result = static_cast<QResult*>(q_malloc(sizeof(QResult)));
+    result->is_ok = true;
+    result->payload = v;
+    q.data.result_val = result;
+    return q;
+}
+
+inline QValue qv_err(QValue v) {
+    QValue q;
+    q.type = QValue::VAL_RESULT;
+    QResult* result = static_cast<QResult*>(q_malloc(sizeof(QResult)));
+    result->is_ok = false;
+    result->payload = v;
+    q.data.result_val = result;
+    return q;
+}
+
+inline bool q_is_ok(const QValue& v) {
+    return v.type == QValue::VAL_RESULT && v.data.result_val->is_ok;
+}
+
+inline QValue q_result_value(const QValue& v) {
+    if (v.type == QValue::VAL_RESULT && v.data.result_val->is_ok) {
+        return v.data.result_val->payload;
+    }
+    return qv_null();
+}
+
+inline QValue q_result_error(const QValue& v) {
+    if (v.type == QValue::VAL_RESULT && !v.data.result_val->is_ok) {
+        return v.data.result_val->payload;
+    }
+    return qv_null();
+}
+
 // List value constructor with optional initial capacity
 // Note: std::vector internally uses new/delete, which Boehm GC intercepts
 inline QValue qv_list(int initial_cap = 0) {

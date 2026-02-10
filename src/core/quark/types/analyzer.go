@@ -196,6 +196,8 @@ func (a *Analyzer) Analyze(node *ast.TreeNode) Type {
 		return a.analyzeDict(node)
 	case ast.IndexNode:
 		return a.analyzeIndex(node)
+	case ast.ResultNode:
+		return a.analyzeResult(node)
 	case ast.ModuleNode:
 		return a.analyzeModule(node)
 	case ast.UseNode:
@@ -361,15 +363,57 @@ func (a *Analyzer) analyzeWhenStatement(node *ast.TreeNode) Type {
 	var resultType Type = TypeVoid
 	for i := 1; i < len(node.Children); i++ {
 		pattern := node.Children[i]
-		if pattern.NodeType == ast.PatternNode && len(pattern.Children) > 0 {
-			// Last child of pattern is the result expression
-			result := pattern.Children[len(pattern.Children)-1]
-			branchType := a.Analyze(result)
-			resultType = MergeTypes(resultType, branchType)
+		if pattern.NodeType != ast.PatternNode || len(pattern.Children) == 0 {
+			continue
 		}
+
+		resultExpr := pattern.Children[len(pattern.Children)-1]
+		bindName, hasBinding := extractResultPatternBinding(pattern)
+
+		if hasBinding && bindName != "" {
+			a.pushScope()
+			a.currentScope.Define(bindName, TypeAny, true)
+			branchType := a.Analyze(resultExpr)
+			a.popScope()
+			resultType = MergeTypes(resultType, branchType)
+			continue
+		}
+
+		branchType := a.Analyze(resultExpr)
+		resultType = MergeTypes(resultType, branchType)
 	}
 
 	return resultType
+}
+
+func extractResultPatternBinding(pattern *ast.TreeNode) (string, bool) {
+	if pattern == nil || len(pattern.Children) == 0 {
+		return "", false
+	}
+	for i := 0; i < len(pattern.Children)-1; i++ {
+		child := pattern.Children[i]
+		if child.NodeType != ast.ResultPatternNode || len(child.Children) == 0 {
+			continue
+		}
+		bindNode := child.Children[0]
+		if bindNode == nil {
+			return "", true
+		}
+		name := bindNode.TokenLiteral()
+		if name == "_" {
+			return "", true
+		}
+		return name, true
+	}
+	return "", false
+}
+
+func (a *Analyzer) analyzeResult(node *ast.TreeNode) Type {
+	if len(node.Children) == 0 {
+		return TypeAny
+	}
+	a.Analyze(node.Children[0])
+	return TypeAny
 }
 
 func (a *Analyzer) analyzeForLoop(node *ast.TreeNode) Type {

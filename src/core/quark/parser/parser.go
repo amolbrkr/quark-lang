@@ -360,23 +360,50 @@ func (p *Parser) parsePattern() *ast.TreeNode {
 	// Parse at precedence above OR so 'or' separates patterns
 	for {
 		var patternExpr *ast.TreeNode
-		if p.curToken.Type == token.UNDERSCORE {
+		switch p.curToken.Type {
+		case token.OK, token.ERR:
+			tok := p.curToken
+			patternExpr = ast.NewNode(ast.ResultPatternNode, &tok)
+			p.nextToken()
+			if p.curToken.Type != token.ID && p.curToken.Type != token.UNDERSCORE {
+				p.addError("expected identifier after %s in pattern", tok.Type.String())
+				return nil
+			}
+			bindTok := p.curToken
+			binding := ast.NewNode(ast.IdentifierNode, &bindTok)
+			patternExpr.AddChild(binding)
+			p.nextToken()
+			node.AddChild(patternExpr)
+			// Result patterns cannot be combined with additional OR patterns
+			break
+		case token.UNDERSCORE:
 			// Wildcard pattern
 			tok := p.curToken
 			patternExpr = ast.NewNode(ast.IdentifierNode, &tok)
 			p.nextToken()
-		} else {
+			node.AddChild(patternExpr)
+		default:
 			// Regular expression pattern - stop before 'or'
 			patternExpr = p.parseExpression(ast.PrecAnd) // Above OR precedence
+			node.AddChild(patternExpr)
+			if p.curToken.Type == token.OR {
+				p.nextToken()
+				continue
+			}
+			return p.finishPatternNode(node)
 		}
-		node.AddChild(patternExpr)
 
 		if p.curToken.Type == token.OR {
 			p.nextToken()
-		} else {
-			break
+			continue
 		}
+		break
 	}
+
+	return p.finishPatternNode(node)
+}
+
+func (p *Parser) finishPatternNode(node *ast.TreeNode) *ast.TreeNode {
 
 	// Expect arrow
 	if !p.expect(token.ARROW) {

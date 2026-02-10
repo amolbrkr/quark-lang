@@ -69,6 +69,8 @@ const (
 	TRUE
 	FALSE
 	NULL
+	OK
+	ERR
 	keyword_end
 )
 
@@ -133,6 +135,8 @@ var tokenNames = map[TokenType]string{
 	TRUE:   "TRUE",
 	FALSE:  "FALSE",
 	NULL:   "NULL",
+	OK:     "OK",
+	ERR:    "ERR",
 }
 
 func (t TokenType) String() string {
@@ -159,6 +163,8 @@ var keywords = map[string]TokenType{
 	"true":   TRUE,
 	"false":  FALSE,
 	"null":   NULL,
+	"ok":     OK,
+	"err":    ERR,
 }
 
 func LookupIdent(ident string) TokenType {

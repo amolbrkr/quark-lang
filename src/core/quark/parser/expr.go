@@ -124,7 +124,8 @@ func (p *Parser) canStartExpression(tokType token.TokenType) bool {
 	case token.ID, token.INT, token.FLOAT, token.STRING,
 		token.LPAR, token.LBRACKET, token.LBRACE,
 		token.UNDERSCORE, token.BANG, token.NOT, token.MINUS,
-		token.TRUE, token.FALSE, token.NULL, token.FN:
+		token.TRUE, token.FALSE, token.NULL, token.FN,
+		token.OK, token.ERR:
 		return true
 	}
 	return false
@@ -156,6 +157,8 @@ func (p *Parser) prefixParseFn(t token.TokenType) func() *ast.TreeNode {
 		return p.parseUnary
 	case token.FN:
 		return p.parseLambda
+	case token.OK, token.ERR:
+		return p.parseResultLiteral
 	}
 	return nil
 }
@@ -212,6 +215,17 @@ func (p *Parser) parseNull() *ast.TreeNode {
 	tok := p.curToken
 	node := ast.NewNode(ast.LiteralNode, &tok)
 	p.nextToken()
+	return node
+}
+
+func (p *Parser) parseResultLiteral() *ast.TreeNode {
+	tok := p.curToken
+	node := ast.NewNode(ast.ResultNode, &tok)
+	p.nextToken()
+	value := p.parseExpression(ast.PrecAssignment)
+	if value != nil {
+		node.AddChild(value)
+	}
 	return node
 }
 

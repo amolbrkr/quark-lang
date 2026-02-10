@@ -31,6 +31,8 @@ const (
 	ListNode
 	DictNode
 	IndexNode
+	ResultNode
+	ResultPatternNode
 	ModuleNode
 	UseNode
 )
@@ -58,6 +60,8 @@ var nodeTypeNames = map[NodeType]string{
 	ListNode:            "List",
 	DictNode:            "Dict",
 	IndexNode:           "Index",
+	ResultNode:          "Result",
+	ResultPatternNode:   "ResultPattern",
 	ModuleNode:          "Module",
 	UseNode:             "Use",
 }
@@ -135,41 +139,41 @@ func (n *TreeNode) PrintTree() {
 type Precedence int
 
 const (
-	PrecLowest     Precedence = iota
-	PrecAssignment            // =
-	PrecPipe                  // |
-	PrecComma                 // ,
-	PrecTernary               // if-else
-	PrecOr                    // or
-	PrecAnd                   // and
-	PrecBitwiseAnd            // &
-	PrecEquality              // == !=
-	PrecComparison            // < <= > >=
-	PrecTerm                  // + -
-	PrecFactor                // * / %
-	PrecExponent              // **
-	PrecUnary                 // ! ~ -
-	PrecApplication           // function application (space)
-	PrecAccess                // . [] ()
+	PrecLowest      Precedence = iota
+	PrecAssignment             // =
+	PrecPipe                   // |
+	PrecComma                  // ,
+	PrecTernary                // if-else
+	PrecOr                     // or
+	PrecAnd                    // and
+	PrecBitwiseAnd             // &
+	PrecEquality               // == !=
+	PrecComparison             // < <= > >=
+	PrecTerm                   // + -
+	PrecFactor                 // * / %
+	PrecExponent               // **
+	PrecUnary                  // ! ~ -
+	PrecApplication            // function application (space)
+	PrecAccess                 // . [] ()
 )
 
 var precedenceNames = map[Precedence]string{
-	PrecLowest:     "Lowest",
-	PrecAssignment: "Assignment",
-	PrecPipe:       "Pipe",
-	PrecComma:      "Comma",
-	PrecTernary:    "Ternary",
-	PrecOr:         "Or",
-	PrecAnd:        "And",
-	PrecBitwiseAnd: "BitwiseAnd",
-	PrecEquality:   "Equality",
-	PrecComparison: "Comparison",
-	PrecTerm:       "Term",
-	PrecFactor:     "Factor",
-	PrecExponent:   "Exponent",
-	PrecUnary:      "Unary",
+	PrecLowest:      "Lowest",
+	PrecAssignment:  "Assignment",
+	PrecPipe:        "Pipe",
+	PrecComma:       "Comma",
+	PrecTernary:     "Ternary",
+	PrecOr:          "Or",
+	PrecAnd:         "And",
+	PrecBitwiseAnd:  "BitwiseAnd",
+	PrecEquality:    "Equality",
+	PrecComparison:  "Comparison",
+	PrecTerm:        "Term",
+	PrecFactor:      "Factor",
+	PrecExponent:    "Exponent",
+	PrecUnary:       "Unary",
 	PrecApplication: "Application",
-	PrecAccess:     "Access",
+	PrecAccess:      "Access",
 }
 
 func (p Precedence) String() string {

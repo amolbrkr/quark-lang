@@ -103,33 +103,29 @@ func main() {
 
 	case "build":
 		if len(os.Args) < 3 {
-			fmt.Println("Usage: quark build <file.qrk> [-o output] [--gc]")
+			fmt.Println("Usage: quark build <file.qrk> [-o output]")
 			os.Exit(1)
 		}
 		output := ""
-		useGC := false
+		useGC := true
 		for i := 3; i < len(os.Args); i++ {
 			if os.Args[i] == "-o" && i+1 < len(os.Args) {
 				output = os.Args[i+1]
 				i++ // Skip next arg
-			} else if os.Args[i] == "--gc" {
-				useGC = true
 			}
 		}
 		runBuild(os.Args[2], output, useGC)
 
 	case "run":
 		if len(os.Args) < 3 {
-			fmt.Println("Usage: quark run <file.qrk> [--debug] [--gc]")
+			fmt.Println("Usage: quark run <file.qrk> [--debug]")
 			os.Exit(1)
 		}
 		debug := false
-		useGC := false
+		useGC := true
 		for _, arg := range os.Args[3:] {
 			if arg == "--debug" || arg == "-d" {
 				debug = true
-			} else if arg == "--gc" {
-				useGC = true
 			}
 		}
 		runRun(os.Args[2], debug, useGC)
@@ -141,12 +137,10 @@ func main() {
 		// Check if it's a .qrk file - if so, run it
 		if strings.HasSuffix(os.Args[1], ".qrk") {
 			debug := false
-			useGC := false
+			useGC := true
 			for _, arg := range os.Args[2:] {
 				if arg == "--debug" || arg == "-d" {
 					debug = true
-				} else if arg == "--gc" {
-					useGC = true
 				}
 			}
 			runRun(os.Args[1], debug, useGC)
@@ -168,18 +162,16 @@ func printUsage() {
 	fmt.Println("  parse <file>                  Parse a file and print the AST")
 	fmt.Println("  check <file>                  Type check a file")
 	fmt.Println("  emit <file>                   Emit C code to stdout")
-	fmt.Println("  build <file> [-o out] [--gc]  Compile to executable")
-	fmt.Println("  run <file> [--debug] [--gc]   Compile and run")
+	fmt.Println("  build <file> [-o out]         Compile to executable")
+	fmt.Println("  run <file> [--debug]          Compile and run")
 	fmt.Println("  help                          Show this help message")
 	fmt.Println()
 	fmt.Println("Flags:")
 	fmt.Println("  --debug, -d    Save generated C++ file (for run/build)")
-	fmt.Println("  --gc           Enable Boehm GC (requires libgc)")
 	fmt.Println()
 	fmt.Println("Examples:")
-	fmt.Println("  quark run test.qrk                # Compile and run")
-	fmt.Println("  quark run test.qrk --gc           # Run with GC enabled")
-	fmt.Println("  quark build test.qrk -o app --gc  # Build with GC")
+	fmt.Println("  quark run test.qrk                # Compile and run with GC")
+	fmt.Println("  quark build test.qrk -o app      # Build with GC")
 	fmt.Println("  quark test.qrk                    # Shorthand for run")
 }
 

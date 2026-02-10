@@ -121,6 +121,7 @@ func (g *Generator) Generate(node *ast.TreeNode) string {
 	// Generate main function
 	g.emit("\nint main() {\n")
 	g.indentLevel++
+	g.emitLine("q_gc_init();")
 
 	// Generate top-level statements that aren't function/module definitions
 	for _, child := range node.Children {
@@ -278,6 +279,8 @@ func (g *Generator) generateExpr(node *ast.TreeNode) string {
 		return g.generateList(node)
 	case ast.IndexNode:
 		return g.generateIndex(node)
+	case ast.ResultNode:
+		return g.generateResult(node)
 	case ast.LambdaNode:
 		return g.generateLambdaExpr(node)
 	case ast.BlockNode:
@@ -605,18 +608,48 @@ func (g *Generator) generateWhen(node *ast.TreeNode) string {
 
 		// Build condition from patterns
 		conditions := make([]string, 0)
+		bindings := make([]struct {
+			name string
+			isOk bool
+		}, 0)
 		for j := 0; j < resultIdx; j++ {
 			patternExpr := pattern.Children[j]
-			if patternExpr.NodeType == ast.IdentifierNode && patternExpr.TokenLiteral() == "_" {
-				// Wildcard matches everything
-				conditions = append(conditions, "true")
-			} else {
+			switch patternExpr.NodeType {
+			case ast.IdentifierNode:
+				if patternExpr.TokenLiteral() == "_" {
+					conditions = append(conditions, "true")
+					continue
+				}
+				patternVal := g.generateExpr(patternExpr)
+				conditions = append(conditions, fmt.Sprintf("q_eq(%s, %s).data.bool_val", matchTemp, patternVal))
+			case ast.ResultPatternNode:
+				if patternExpr.Token != nil && patternExpr.Token.Type == token.ERR {
+					conditions = append(conditions, fmt.Sprintf("!q_is_ok(%s)", matchTemp))
+				} else {
+					conditions = append(conditions, fmt.Sprintf("q_is_ok(%s)", matchTemp))
+				}
+				if len(patternExpr.Children) > 0 {
+					bindNode := patternExpr.Children[0]
+					if bindNode != nil {
+						name := bindNode.TokenLiteral()
+						if name != "" && name != "_" {
+							bindings = append(bindings, struct {
+								name string
+								isOk bool
+							}{name: name, isOk: patternExpr.Token == nil || patternExpr.Token.Type != token.ERR})
+						}
+					}
+				}
+			default:
 				patternVal := g.generateExpr(patternExpr)
 				conditions = append(conditions, fmt.Sprintf("q_eq(%s, %s).data.bool_val", matchTemp, patternVal))
 			}
 		}
 
 		condStr := strings.Join(conditions, " || ")
+		if condStr == "" {
+			condStr = "false"
+		}
 		if first {
 			g.emitLine("if (%s) {", condStr)
 			first = false
@@ -624,6 +657,13 @@ func (g *Generator) generateWhen(node *ast.TreeNode) string {
 			g.emit(g.indent()+"} else if (%s) {\n", condStr)
 		}
 		g.indentLevel++
+		for _, bind := range bindings {
+			accessor := "q_result_value"
+			if !bind.isOk {
+				accessor = "q_result_error"
+			}
+			g.emitLine("QValue %s = %s(%s);", bind.name, accessor, matchTemp)
+		}
 		g.emitLine("%s = %s;", temp, result)
 		g.indentLevel--
 	}
@@ -733,6 +773,17 @@ func (g *Generator) generateIndex(node *ast.TreeNode) string {
 	index := g.generateExpr(node.Children[1])
 
 	return fmt.Sprintf("q_get(%s, %s)", target, index)
+}
+
+func (g *Generator) generateResult(node *ast.TreeNode) string {
+	if len(node.Children) == 0 {
+		return "qv_null()"
+	}
+	value := g.generateExpr(node.Children[0])
+	if node.Token != nil && node.Token.Type == token.ERR {
+		return fmt.Sprintf("qv_err(%s)", value)
+	}
+	return fmt.Sprintf("qv_ok(%s)", value)
 }
 
 func (g *Generator) generateLambdaExpr(node *ast.TreeNode) string {

@@ -303,7 +303,40 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 
 	// Method calls (obj.method()) are handled dynamically at runtime
 	if funcNode.NodeType == ast.OperatorNode && funcNode.Token != nil && funcNode.Token.Type == token.DOT {
-		a.Analyze(funcNode)
+		if len(funcNode.Children) >= 2 {
+			targetType := a.Analyze(funcNode.Children[0])
+			method := funcNode.Children[1].TokenLiteral()
+			if targetType.Equals(TypeNull) {
+				a.errorAt(funcNode.Children[0], "cannot call method '%s' on null", method)
+			} else {
+				switch t := targetType.(type) {
+				case *ListType:
+					switch method {
+					case "push", "get", "remove", "concat", "set", "insert", "slice":
+						// Valid list methods
+					default:
+						a.errorAt(funcNode.Children[1], "list has no method '%s'", method)
+					}
+				case *BasicType:
+					if t.Name == "str" {
+						switch method {
+						case "contains", "startswith", "endswith", "concat", "replace":
+							// Valid string methods
+						default:
+							a.errorAt(funcNode.Children[1], "string has no method '%s'", method)
+						}
+					} else if t.Name != "any" {
+						a.errorAt(funcNode.Children[1], "type '%s' has no methods", t.Name)
+					}
+				case *DictType:
+					a.errorAt(funcNode.Children[1], "dict has no methods")
+				default:
+					if !isUnknownType(targetType) {
+						a.errorAt(funcNode.Children[1], "type '%s' has no methods", targetType.String())
+					}
+				}
+			}
+		}
 		for _, arg := range argsNode.Children {
 			a.Analyze(arg)
 		}
@@ -530,10 +563,62 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 
 	if op == token.DOT {
 		// Member access: only analyze the target to avoid treating the member name as an identifier lookup
-		if len(node.Children) >= 1 {
-			a.Analyze(node.Children[0])
+		if len(node.Children) < 2 {
+			return TypeAny
 		}
-		return TypeAny
+		targetType := a.Analyze(node.Children[0])
+		member := node.Children[1].TokenLiteral()
+		if targetType.Equals(TypeNull) {
+			a.errorAt(node.Children[0], "cannot access member '%s' on null", member)
+			return TypeAny
+		}
+
+		switch t := targetType.(type) {
+		case *ListType:
+			switch member {
+			case "length", "size":
+				return TypeInt
+			case "empty":
+				return TypeBool
+			case "reverse", "clear":
+				return targetType
+			case "pop":
+				return t.ElementType
+			default:
+				a.errorAt(node.Children[1], "list has no member '%s'", member)
+				return TypeAny
+			}
+		case *DictType:
+			if member == "length" || member == "size" {
+				return TypeInt
+			}
+			return t.ValueType
+		case *BasicType:
+			if t.Name == "str" {
+				switch member {
+				case "length", "size":
+					return TypeInt
+				case "upper", "lower", "trim":
+					return TypeString
+				default:
+					a.errorAt(node.Children[1], "string has no member '%s'", member)
+					return TypeAny
+				}
+			}
+			if t.Name == "any" {
+				return TypeAny
+			}
+			a.errorAt(node.Children[1], "type '%s' has no members", t.Name)
+			return TypeAny
+		case *UnionType:
+			return TypeAny
+		default:
+			if isUnknownType(targetType) {
+				return TypeAny
+			}
+			a.errorAt(node.Children[1], "type '%s' has no members", targetType.String())
+			return TypeAny
+		}
 	}
 
 	// Unary operators
@@ -563,12 +648,47 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 		rightType := a.Analyze(node.Children[1])
 		// Allow member assignment: obj.member = value
 		if target.NodeType == ast.OperatorNode && target.Token != nil && target.Token.Type == token.DOT {
-			a.Analyze(target.Children[0])
+			targetType := a.Analyze(target.Children[0])
+			if targetType.Equals(TypeNull) {
+				a.errorAt(target.Children[0], "cannot assign member on null")
+				return rightType
+			}
+			if _, ok := targetType.(*DictType); ok {
+				return rightType
+			}
+			if isUnknownType(targetType) {
+				return rightType
+			}
+			a.errorAt(target, "only dict members are assignable")
 			return rightType
 		}
 		// Allow index assignment: obj[key] = value
 		if target.NodeType == ast.IndexNode {
-			a.Analyze(target)
+			if len(target.Children) >= 2 {
+				targetType := a.Analyze(target.Children[0])
+				indexType := a.Analyze(target.Children[1])
+				if targetType.Equals(TypeNull) {
+					a.errorAt(target.Children[0], "cannot index null")
+					return rightType
+				}
+				if _, ok := targetType.(*ListType); ok {
+					if !isIntLike(indexType) && !isUnknownType(indexType) {
+						a.errorAt(target.Children[1], "list index must be int, got %s", indexType.String())
+					}
+					return rightType
+				}
+				if targetType.Equals(TypeString) {
+					a.errorAt(target, "strings are immutable")
+					return rightType
+				}
+				if _, ok := targetType.(*DictType); ok {
+					a.errorAt(target, "use dot access for dict assignment: d.key = value")
+					return rightType
+				}
+				if !isUnknownType(targetType) {
+					a.errorAt(target, "type '%s' is not index-assignable", targetType.String())
+				}
+			}
 			return rightType
 		}
 		if target.NodeType != ast.IdentifierNode {
@@ -797,6 +917,12 @@ func (a *Analyzer) analyzeIndex(node *ast.TreeNode) Type {
 			a.errorAt(node.Children[1], "list index must be int, got %s", indexType.String())
 		}
 		return listType.ElementType
+	}
+	if targetType.Equals(TypeString) {
+		if !isIntLike(indexType) && !isUnknownType(indexType) {
+			a.errorAt(node.Children[1], "string index must be int, got %s", indexType.String())
+		}
+		return TypeString
 	}
 	if _, ok := targetType.(*DictType); ok {
 		a.errorAt(node, "use dot access for dicts: d.key instead of d['key']")

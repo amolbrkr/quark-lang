@@ -887,9 +887,6 @@ func (a *Analyzer) analyzeVarDecl(node *ast.TreeNode) Type {
 
 	declType := a.resolveTypeNode(typeNode)
 	valueType := a.Analyze(valueNode)
-	if listType, ok := declType.(*ListType); ok {
-		a.checkListLiteralTypes(listType, valueNode)
-	}
 	if !CanAssign(declType, valueType) && !isUnknownType(valueType) {
 		a.errorAt(nameNode, "cannot assign value of type '%s' to '%s'", valueType.String(), declType.String())
 	}
@@ -903,26 +900,6 @@ func (a *Analyzer) analyzeVarDecl(node *ast.TreeNode) Type {
 	return declType
 }
 
-func (a *Analyzer) checkListLiteralTypes(listType *ListType, valueNode *ast.TreeNode) {
-	if listType == nil || valueNode == nil {
-		return
-	}
-	if valueNode.NodeType != ast.ListNode {
-		return
-	}
-	for _, elem := range valueNode.Children {
-		if elem == nil {
-			continue
-		}
-		elemType := a.Analyze(elem)
-		if isUnknownType(elemType) {
-			continue
-		}
-		if !CanAssign(listType.ElementType, elemType) {
-			a.errorAt(elem, "list expects '%s' elements but got '%s'", listType.ElementType.String(), elemType.String())
-		}
-	}
-}
 
 func collectParamSpecs(argsNode *ast.TreeNode) []paramSpec {
 	if argsNode == nil {
@@ -979,20 +956,9 @@ func (a *Analyzer) resolveTypeNode(node *ast.TreeNode) Type {
 	case "any":
 		return TypeAny
 	case "list":
-		if len(node.Children) != 1 {
-			a.errorAt(node, "list expects 1 type argument")
-			return &ListType{ElementType: TypeAny}
-		}
-		return &ListType{ElementType: a.resolveTypeNode(node.Children[0])}
+		return &ListType{ElementType: TypeAny}
 	case "dict":
-		if len(node.Children) != 2 {
-			a.errorAt(node, "dict expects 2 type arguments")
-			return &DictType{KeyType: TypeAny, ValueType: TypeAny}
-		}
-		return &DictType{
-			KeyType:   a.resolveTypeNode(node.Children[0]),
-			ValueType: a.resolveTypeNode(node.Children[1]),
-		}
+		return &DictType{KeyType: TypeAny, ValueType: TypeAny}
 	default:
 		a.errorAt(node, "unknown type '%s'", name)
 		return TypeAny

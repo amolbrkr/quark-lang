@@ -101,10 +101,6 @@ func (p *Parser) parseStatement() *ast.TreeNode {
 	case token.FN:
 		return p.parseFunction()
 	default:
-		// Check for anonymous function: id = fn ...
-		if p.curToken.Type == token.ID && p.peek(1).Type == token.EQUALS && p.peek(2).Type == token.FN {
-			return p.parseFunction()
-		}
 		if p.curToken.Type == token.ID && p.peek(1).Type == token.COLON {
 			return p.parseVarDecl()
 		}
@@ -180,31 +176,6 @@ func (p *Parser) parseFunction() *ast.TreeNode {
 		nameTok := p.curToken
 		nameNode := ast.NewNode(ast.IdentifierNode, &nameTok)
 		p.nextToken()
-
-		// Parse parameters
-		args := p.parseParameters()
-
-		node.AddChildren(nameNode, args)
-
-		// Expect arrow
-		if !p.expect(token.ARROW) {
-			return nil
-		}
-
-		// Parse body
-		body := p.parseBlock()
-		node.AddChild(body)
-
-	} else if p.curToken.Type == token.ID && p.peek(1).Type == token.EQUALS && p.peek(2).Type == token.FN {
-		// Anonymous function: id = fn params -> body
-		nameTok := p.curToken
-		nameNode := ast.NewNode(ast.IdentifierNode, &nameTok)
-		p.nextToken() // skip id
-		p.nextToken() // skip =
-
-		tok := p.curToken
-		node = ast.NewNode(ast.FunctionNode, &tok)
-		p.nextToken() // skip 'fn'
 
 		// Parse parameters
 		args := p.parseParameters()
@@ -306,24 +277,6 @@ func (p *Parser) parseTypeExpr() *ast.TreeNode {
 	tok := p.curToken
 	node := ast.NewNode(ast.TypeNode, &tok)
 	p.nextToken()
-
-	if p.curToken.Type == token.LBRACKET {
-		p.nextToken()
-		for !p.isAtEnd() && p.curToken.Type != token.RBRACKET {
-			arg := p.parseTypeExpr()
-			if arg != nil {
-				node.AddChild(arg)
-			}
-			if p.curToken.Type == token.COMMA {
-				p.nextToken()
-				continue
-			}
-			break
-		}
-		if !p.expect(token.RBRACKET) {
-			return node
-		}
-	}
 
 	return node
 }

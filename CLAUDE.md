@@ -692,21 +692,16 @@ fn add x: int, y: int -> x + y
 
 // Typed variables
 name: str = 'hello'
-nums: list[int] = list [1, 2, 3]
+nums: list = list [1, 2, 3]
 
-// Generic type expressions
-fn head xs: list[int] -> get xs, 0
+// Lambdas assigned to variables
+double = fn x -> x * 2
 ```
 
-### Planned (Per grammar.md)
+### Future (Per grammar.md)
 
 - **Structs and Impl Blocks** - Define data structures with methods
-- **String Interpolation** - `'Hello, {name}!'`
-- **Array Slicing** - `arr[0:5]`, `arr[::2]`, `arr[::-1]`
 - **Tensor Type** - SIMD-accelerated N-dimensional arrays
-
-### Future Features
-
 - **Multi-file Module Imports**
 
 ## Example Programs
@@ -984,8 +979,7 @@ Key: Yes = implemented, Partial = present but incomplete, No = missing.
 | Comments `//` | Yes | N/A | N/A | N/A | N/A | Stripped in lexer. |
 | Literals (int/float/bool/null) | Yes | Yes | Yes | Yes | Yes | Basic literals are fully supported. |
 | Strings (no interpolation) | Yes | Yes | Yes | Yes | Yes | Interpolation is not implemented. |
-| String interpolation `{expr}` | No | No | No | No | No | Grammar-only. |
-| Function definitions | Yes | Yes | Yes | Yes | Yes | Named functions generate `q_<name>`. |
+| Function definitions | Yes | Yes | Yes | Yes | Yes | Named functions generate `quark_<name>`. |
 | Lambda expressions | Yes | Yes | Yes | Yes | Yes | No closures/captures. |
 | Function calls / application | Yes | Yes | Yes | Yes | Yes | Analyzer validates arg counts for builtins and user functions. |
 | If / elseif / else | Yes | Yes | Yes | Yes | Yes | Emits temp result in codegen. |
@@ -1001,12 +995,11 @@ Key: Yes = implemented, Partial = present but incomplete, No = missing.
 | Unary ops `!` / `-` / `~` | Yes | Yes | Yes | Yes | Yes | `~` maps to logical not. |
 | Member access `.` | Yes | Yes | Yes | Yes | Yes | Properties, no-arg methods, and method calls with args on lists/strings. |
 | List literals `list [a, b]` | Yes | Yes | Yes | Yes | Yes | Uses `std::vector<QValue>`. Requires `list` keyword prefix. |
-| Typed parameters `x: int` | Yes | Yes | Yes | Yes | N/A | Supported in functions and variable declarations. Generic types: `list[int]`, `dict[str, int]`. |
+| Typed parameters `x: int` | Yes | Yes | Yes | Yes | N/A | Basic annotations on params and variable declarations. No generic types. |
 | Indexing `list[idx]` | Yes | Yes | Yes | Yes | Yes | `q_get` supports negative indices. |
-| Slicing `[start:end[:step]]` | No | No | No | No | No | Grammar-only. |
 | Dict literals `{k: v}` | Yes | Yes | Partial | No | No | Parsed but no runtime representation. |
 | Modules `module` / `use` | Yes | Yes | Yes | Partial | N/A | Compile-time only, no namespacing. |
-| Structs / impl blocks | No | No | No | No | No | Grammar-only. |
+| Structs / impl blocks | No | No | No | No | No | Future. |
 | Result / ok / err | Yes | Yes | Yes | Yes | Yes | `ok`/`err` values and `when` pattern matching on results. `try`/`unwrap` not yet implemented. |
 | Tensor types | No | No | No | No | No | Grammar-only. |
 | Builtins (io/math/string/list) | Yes | Yes | Yes | Yes | Yes | Implemented in runtime and codegen. |
@@ -1325,12 +1318,11 @@ when load true:
     err message -> println message
 ```
 
-### Implemented Typed Parameters and Generic Type Expressions
+### Implemented Typed Parameters
 
 - **Function parameters**: `fn add x: int, y: int -> x + y`
-- **Variable declarations**: `name: str = 'hello'`
-- **Generic types**: `list[int]`, `dict[str, int]` parsed as type expressions
-- **Analyzer enforcement**: Call-site argument types are validated against declared parameter types; list literal elements are checked when assigning to `list[T]`
+- **Variable declarations**: `name: str = 'hello'`, `nums: list = list [1, 2, 3]`
+- Basic type annotations only (`int`, `float`, `str`, `bool`, `list`, `dict`). Generic type expressions (`list[int]`) have been removed.
 - Files changed: `parser/parser.go`, `ast/ast.go`, `types/analyzer.go`, `codegen/codegen.go`
 
 ### Standardized String Type to `str`
@@ -1370,3 +1362,40 @@ when load true:
 - test_member.qrk
 - test_method_call.qrk
 - test_typed_params.qrk
+
+## Recent Changes (2026-02-09, Grammar Trimming)
+
+### Removed Generic Type Expressions
+
+Generic type annotations like `list[int]`, `dict[str, int]` have been removed. Only basic type annotations are supported: `x: int`, `name: str`, `nums: list`, `data: dict`.
+
+**Changes**:
+- `parser/parser.go` `parseTypeExpr()`: Removed bracket parsing for generic params
+- `types/analyzer.go` `resolveTypeNode()`: `list` always resolves to `ListType{ElementType: TypeAny}`, `dict` to `DictType{KeyType: TypeAny, ValueType: TypeAny}`
+- `types/types.go` `CanAssign()`: Added list/dict covariance so `list[any]` accepts `list[str]` etc.
+- Removed `checkListLiteralTypes()` from analyzer
+
+### Removed Form 2 Lambda (id = fn special case)
+
+The parser previously special-cased `id = fn params -> body` as a `FunctionNode` (Form 2). This was redundant with assigning a lambda expression to a variable. Now `double = fn x -> x * 2` parses as a normal assignment of a lambda expression.
+
+**Changes**:
+- `parser/parser.go`: Removed Form 2 lookahead and special-case branch in `parseFunction()`
+
+### Fixed C++ Keyword Collision for Variable Names
+
+After removing Form 2, variables like `double` generated invalid C++ (`QValue double = ...`). Added `sanitizeVarName()` to `codegen/codegen.go` that prefixes C++ reserved keywords with `_q_` (e.g., `double` → `_q_double`).
+
+### Fixed Lambda Forward Declarations
+
+Lambda forward declarations were emitted with no parameters (`QValue quark__lambda1();`), causing C++ overload ambiguity. Changed `funcDecl` to track parameter counts and emit correct forward declarations.
+
+### Grammar Cleanup
+
+Removed from `grammar.md`:
+- Python-like slicing syntax (never implemented)
+- String interpolation (never implemented)
+- `try`/`unwrap` statements (never implemented)
+- Generic type expressions
+- Form 2 lambda special case
+- Struct/impl marked as [FUTURE]

@@ -239,6 +239,24 @@ func CanAssign(dstType, srcType Type) bool {
 	if dstType.Equals(TypeFloat) && srcType.Equals(TypeInt) {
 		return true
 	}
+	// List covariance: list[any] accepts list[T] for any T
+	if dstList, ok := dstType.(*ListType); ok {
+		if srcList, ok := srcType.(*ListType); ok {
+			if dstList.ElementType.Equals(TypeAny) || srcList.ElementType.Equals(TypeAny) {
+				return true
+			}
+			return CanAssign(dstList.ElementType, srcList.ElementType)
+		}
+	}
+	// Dict covariance: dict[any,any] accepts dict[K,V]
+	if dstDict, ok := dstType.(*DictType); ok {
+		if srcDict, ok := srcType.(*DictType); ok {
+			if (dstDict.KeyType.Equals(TypeAny) || CanAssign(dstDict.KeyType, srcDict.KeyType)) &&
+				(dstDict.ValueType.Equals(TypeAny) || CanAssign(dstDict.ValueType, srcDict.ValueType)) {
+				return true
+			}
+		}
+	}
 	return dstType.Equals(srcType)
 }
 

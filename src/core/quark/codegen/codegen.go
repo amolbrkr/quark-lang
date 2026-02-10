@@ -11,11 +11,17 @@ import (
 //go:embed runtime.hpp
 var runtimeHeader string
 
+// funcDecl stores a function name and its parameter count for forward declarations
+type funcDecl struct {
+	name       string
+	paramCount int
+}
+
 // Generator generates C code from an AST
 type Generator struct {
 	output        strings.Builder
 	indentLevel   int
-	functions     []string                 // Function definitions (generated separately)
+	funcDecls     []funcDecl               // Function declarations with param counts
 	lambdas       []*ast.TreeNode          // Lambda expressions to generate
 	lambdaNames   map[*ast.TreeNode]string // Maps lambda nodes to their generated names
 	tempCounter   int
@@ -29,7 +35,7 @@ type Generator struct {
 
 func New() *Generator {
 	return &Generator{
-		functions:    make([]string, 0),
+		funcDecls:    make([]funcDecl, 0),
 		lambdas:      make([]*ast.TreeNode, 0),
 		lambdaNames:  make(map[*ast.TreeNode]string),
 		tempCounter:  0,
@@ -42,6 +48,42 @@ func New() *Generator {
 // SetEmbedRuntime configures whether to embed the full runtime or use #include
 func (g *Generator) SetEmbedRuntime(embed bool) {
 	g.embedRuntime = embed
+}
+
+// cppReserved contains C++ keywords and type names that cannot be used as variable names
+var cppReserved = map[string]bool{
+	// C++ type keywords
+	"auto": true, "bool": true, "char": true, "double": true, "float": true,
+	"int": true, "long": true, "short": true, "signed": true, "unsigned": true,
+	"void": true, "wchar_t": true, "char8_t": true, "char16_t": true, "char32_t": true,
+	// C++ control flow
+	"break": true, "case": true, "catch": true, "continue": true, "default": true,
+	"do": true, "else": true, "for": true, "goto": true, "if": true,
+	"return": true, "switch": true, "throw": true, "try": true, "while": true,
+	// C++ declaration/definition
+	"class": true, "const": true, "constexpr": true, "enum": true, "extern": true,
+	"inline": true, "mutable": true, "namespace": true, "new": true, "delete": true,
+	"operator": true, "private": true, "protected": true, "public": true,
+	"register": true, "sizeof": true, "static": true, "struct": true,
+	"template": true, "this": true, "typedef": true, "typename": true,
+	"union": true, "using": true, "virtual": true, "volatile": true,
+	// C++ literals
+	"true": true, "false": true, "nullptr": true, "NULL": true,
+	// C++ other
+	"alignas": true, "alignof": true, "asm": true, "concept": true,
+	"consteval": true, "constinit": true, "co_await": true, "co_return": true,
+	"co_yield": true, "decltype": true, "dynamic_cast": true, "explicit": true,
+	"export": true, "friend": true, "noexcept": true, "reflexpr": true,
+	"reinterpret_cast": true, "requires": true, "static_assert": true,
+	"static_cast": true, "thread_local": true, "typeid": true,
+}
+
+// sanitizeVarName mangles variable names that collide with C++ reserved keywords
+func sanitizeVarName(name string) string {
+	if cppReserved[name] {
+		return "_q_" + name
+	}
+	return name
 }
 
 func (g *Generator) indent() string {
@@ -119,9 +161,13 @@ func (g *Generator) Generate(node *ast.TreeNode) string {
 	// First pass: collect function declarations
 	g.collectFunctions(node)
 
-	// Emit forward declarations
-	for _, fname := range g.functions {
-		g.emitLine("QValue quark_%s();", fname)
+	// Emit forward declarations with correct parameter counts
+	for _, fd := range g.funcDecls {
+		params := make([]string, fd.paramCount)
+		for i := range params {
+			params[i] = "QValue"
+		}
+		g.emitLine("QValue quark_%s(%s);", fd.name, strings.Join(params, ", "))
 	}
 	g.emit("\n")
 
@@ -150,18 +196,22 @@ func (g *Generator) Generate(node *ast.TreeNode) string {
 func (g *Generator) collectFunctions(node *ast.TreeNode) {
 	switch node.NodeType {
 	case ast.FunctionNode:
-		if len(node.Children) >= 1 {
+		if len(node.Children) >= 2 {
 			name := node.Children[0].TokenLiteral()
-			// No module prefix - all functions are global in C
-			// Modules are just a grouping mechanism in Quark
-			g.functions = append(g.functions, name)
+			argsNode := node.Children[1]
+			paramCount := len(argsNode.Children)
+			g.funcDecls = append(g.funcDecls, funcDecl{name: name, paramCount: paramCount})
 		}
 	case ast.LambdaNode:
 		// Assign a unique name to this lambda
 		lambdaName := g.newLambda()
 		g.lambdaNames[node] = lambdaName
 		g.lambdas = append(g.lambdas, node)
-		g.functions = append(g.functions, lambdaName)
+		paramCount := 0
+		if len(node.Children) >= 1 {
+			paramCount = len(node.Children[0].Children)
+		}
+		g.funcDecls = append(g.funcDecls, funcDecl{name: lambdaName, paramCount: paramCount})
 	case ast.ModuleNode:
 		if len(node.Children) >= 2 {
 			bodyNode := node.Children[1]
@@ -213,7 +263,8 @@ func (g *Generator) generateFunction(node *ast.TreeNode) {
 		if paramName == "" {
 			continue
 		}
-		params = append(params, fmt.Sprintf("QValue %s", paramName))
+		cParamName := sanitizeVarName(paramName)
+		params = append(params, fmt.Sprintf("QValue %s", cParamName))
 		g.declaredVars[paramName] = true // Parameters are already declared
 	}
 
@@ -343,7 +394,7 @@ func (g *Generator) generateIdentifier(node *ast.TreeNode) string {
 	if name == "_" {
 		return "qv_null()"
 	}
-	return name
+	return sanitizeVarName(name)
 }
 
 func (g *Generator) generateOperator(node *ast.TreeNode) string {
@@ -413,15 +464,16 @@ func (g *Generator) generateOperator(node *ast.TreeNode) string {
 	case token.EQUALS:
 		// Assignment - emit as statement and return the value
 		varName := node.Children[0].TokenLiteral()
+		cName := sanitizeVarName(varName)
 		if g.declaredVars[varName] {
 			// Variable already declared, just assign
-			g.emitLine("%s = %s;", varName, right)
+			g.emitLine("%s = %s;", cName, right)
 		} else {
 			// First declaration
-			g.emitLine("QValue %s = %s;", varName, right)
+			g.emitLine("QValue %s = %s;", cName, right)
 			g.declaredVars[varName] = true
 		}
-		return varName
+		return cName
 	}
 
 	return "qv_null()"
@@ -470,8 +522,8 @@ func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
 
 	// Check if this is a known user-defined function
 	isKnownFunc := false
-	for _, fname := range g.functions {
-		if fname == funcName {
+	for _, fd := range g.funcDecls {
+		if fd.name == funcName {
 			isKnownFunc = true
 			break
 		}
@@ -677,7 +729,7 @@ func (g *Generator) generateWhen(node *ast.TreeNode) string {
 			if !bind.isOk {
 				accessor = "q_result_error"
 			}
-			g.emitLine("QValue %s = %s(%s);", bind.name, accessor, matchTemp)
+			g.emitLine("QValue %s = %s(%s);", sanitizeVarName(bind.name), accessor, matchTemp)
 		}
 		g.emitLine("%s = %s;", temp, result)
 		g.indentLevel--
@@ -700,6 +752,7 @@ func (g *Generator) generateFor(node *ast.TreeNode) string {
 	bodyNode := node.Children[2]
 
 	varName := varNode.TokenLiteral()
+	cVarName := sanitizeVarName(varName)
 
 	// Handle list iteration (for item in mylist or for i in range(10))
 	listExpr := g.generateExpr(rangeNode)
@@ -714,7 +767,7 @@ func (g *Generator) generateFor(node *ast.TreeNode) string {
 
 	g.pushBlockScope()
 	g.declaredVars[varName] = true // Loop variable is declared
-	g.emitLine("QValue %s = q_get(%s, qv_int(%s));", varName, listTemp, idxTemp)
+	g.emitLine("QValue %s = q_get(%s, qv_int(%s));", cVarName, listTemp, idxTemp)
 
 	if bodyNode.NodeType == ast.BlockNode {
 		for _, stmt := range bodyNode.Children {
@@ -808,14 +861,15 @@ func (g *Generator) generateVarDecl(node *ast.TreeNode) string {
 	nameNode := node.Children[0]
 	valueNode := node.Children[2]
 	name := nameNode.TokenLiteral()
+	cName := sanitizeVarName(name)
 	value := g.generateExpr(valueNode)
 	if g.declaredVars[name] {
-		g.emitLine("%s = %s;", name, value)
-		return name
+		g.emitLine("%s = %s;", cName, value)
+		return cName
 	}
-	g.emitLine("QValue %s = %s;", name, value)
+	g.emitLine("QValue %s = %s;", cName, value)
 	g.declaredVars[name] = true
-	return name
+	return cName
 }
 
 func (g *Generator) generateLambdaExpr(node *ast.TreeNode) string {
@@ -826,7 +880,11 @@ func (g *Generator) generateLambdaExpr(node *ast.TreeNode) string {
 		lambdaName = g.newLambda()
 		g.lambdaNames[node] = lambdaName
 		g.lambdas = append(g.lambdas, node)
-		g.functions = append(g.functions, lambdaName)
+		paramCount := 0
+		if len(node.Children) >= 1 {
+			paramCount = len(node.Children[0].Children)
+		}
+		g.funcDecls = append(g.funcDecls, funcDecl{name: lambdaName, paramCount: paramCount})
 	}
 
 	// Return a function value wrapping the lambda
@@ -853,7 +911,8 @@ func (g *Generator) generateLambdaFunc(node *ast.TreeNode) {
 		if paramName == "" {
 			continue
 		}
-		params = append(params, fmt.Sprintf("QValue %s", paramName))
+		cParamName := sanitizeVarName(paramName)
+		params = append(params, fmt.Sprintf("QValue %s", cParamName))
 		g.declaredVars[paramName] = true // Parameters are already declared
 	}
 

@@ -269,7 +269,7 @@ func (p *Parser) parseParameters() *ast.TreeNode {
 }
 
 func (p *Parser) parseTypeExpr() *ast.TreeNode {
-	if p.curToken.Type != token.ID && p.curToken.Type != token.LIST {
+	if p.curToken.Type != token.ID && p.curToken.Type != token.LIST && p.curToken.Type != token.DICT {
 		p.addError("expected type name")
 		return nil
 	}

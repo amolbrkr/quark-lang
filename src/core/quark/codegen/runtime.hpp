@@ -12,6 +12,10 @@
 #include <cmath>
 #include <cctype>
 #include <cstdarg>
+#include <algorithm>
+#include <vector>
+#include <unordered_map>
+#include <string>
 
 // ============================================================
 // core/gc.hpp
@@ -71,20 +75,24 @@
 
 // Forward declaration
 struct QValue;
+struct QResult;
+struct QDict;
 
 // Type alias for list storage
 using QList = std::vector<QValue>;
 
 // QValue: Tagged union for all Quark runtime values
 struct QValue {
-    enum ValueType {
+        enum ValueType {
         VAL_INT,
         VAL_FLOAT,
         VAL_STRING,
         VAL_BOOL,
         VAL_NULL,
         VAL_LIST,
-        VAL_FUNC
+        VAL_DICT,
+        VAL_FUNC,
+        VAL_RESULT
     } type;
 
     union {
@@ -93,7 +101,9 @@ struct QValue {
         char* string_val;
         bool bool_val;
         QList* list_val;    // std::vector<QValue>* - automatic memory management
+        QDict* dict_val;    // std::unordered_map<std::string, QValue>*
         void* func_val;
+        QResult* result_val;
     } data;
 };
 
@@ -103,6 +113,11 @@ using QFunc1 = QValue (*)(QValue);
 using QFunc2 = QValue (*)(QValue, QValue);
 using QFunc3 = QValue (*)(QValue, QValue, QValue);
 using QFunc4 = QValue (*)(QValue, QValue, QValue, QValue);
+
+struct QResult {
+    bool is_ok;
+    QValue payload;
+};
 
 // ============================================================
 // core/constructors.hpp
@@ -157,6 +172,44 @@ inline QValue qv_func(void* f) {
     q.type = QValue::VAL_FUNC;
     q.data.func_val = f;
     return q;
+}
+
+inline QValue qv_ok(QValue v) {
+    QValue q;
+    q.type = QValue::VAL_RESULT;
+    QResult* result = static_cast<QResult*>(q_malloc(sizeof(QResult)));
+    result->is_ok = true;
+    result->payload = v;
+    q.data.result_val = result;
+    return q;
+}
+
+inline QValue qv_err(QValue v) {
+    QValue q;
+    q.type = QValue::VAL_RESULT;
+    QResult* result = static_cast<QResult*>(q_malloc(sizeof(QResult)));
+    result->is_ok = false;
+    result->payload = v;
+    q.data.result_val = result;
+    return q;
+}
+
+inline bool q_is_ok(const QValue& v) {
+    return v.type == QValue::VAL_RESULT && v.data.result_val->is_ok;
+}
+
+inline QValue q_result_value(const QValue& v) {
+    if (v.type == QValue::VAL_RESULT && v.data.result_val->is_ok) {
+        return v.data.result_val->payload;
+    }
+    return qv_null();
+}
+
+inline QValue q_result_error(const QValue& v) {
+    if (v.type == QValue::VAL_RESULT && !v.data.result_val->is_ok) {
+        return v.data.result_val->payload;
+    }
+    return qv_null();
 }
 
 // List value constructor with optional initial capacity
@@ -216,6 +269,8 @@ inline bool q_truthy(QValue v) {
             return false;
         case QValue::VAL_LIST:
             return v.data.list_val && !v.data.list_val->empty();
+        case QValue::VAL_DICT:
+            return v.data.dict_val && !v.data.dict_val->entries.empty();
         case QValue::VAL_FUNC:
             return v.data.func_val != nullptr;
         default:
@@ -471,6 +526,97 @@ inline QValue q_not(QValue a) {
 }
 
 // ============================================================
+// types/dict.hpp
+// ============================================================
+
+// quark/types/dict.hpp - Dict operations using std::unordered_map
+#include <unordered_map>
+#include <string>
+#include <cstdio>
+
+struct QDict {
+    std::unordered_map<std::string, QValue> entries;
+};
+
+inline QValue qv_dict() {
+    QValue q;
+    q.type = QValue::VAL_DICT;
+    q.data.dict_val = new QDict();
+    return q;
+}
+
+inline bool q_require_dict(const QValue& v, const char* action) {
+    if (v.type == QValue::VAL_DICT) {
+        return true;
+    }
+    std::fprintf(stderr, "runtime error: %s expects dict\n", action);
+    return false;
+}
+
+inline bool q_require_string_key(const QValue& key) {
+    if (key.type == QValue::VAL_STRING) {
+        return true;
+    }
+    std::fprintf(stderr, "runtime error: dict key must be string\n");
+    return false;
+}
+
+inline QValue q_dict_get(QValue dict, QValue key) {
+    if (!q_require_dict(dict, "dict get")) {
+        return qv_null();
+    }
+    if (!q_require_string_key(key)) {
+        return qv_null();
+    }
+    if (!dict.data.dict_val) {
+        return qv_null();
+    }
+    auto it = dict.data.dict_val->entries.find(key.data.string_val ? key.data.string_val : "");
+    if (it == dict.data.dict_val->entries.end()) {
+        return qv_null();
+    }
+    return it->second;
+}
+
+inline QValue q_dict_set(QValue dict, QValue key, QValue value) {
+    if (!q_require_dict(dict, "dict set")) {
+        return qv_null();
+    }
+    if (!q_require_string_key(key)) {
+        return qv_null();
+    }
+    if (!dict.data.dict_val) {
+        dict.data.dict_val = new QDict();
+    }
+    dict.data.dict_val->entries[std::string(key.data.string_val ? key.data.string_val : "")] = value;
+    return dict;
+}
+
+inline QValue q_dict_has(QValue dict, QValue key) {
+    if (!q_require_dict(dict, "dict has")) {
+        return qv_bool(false);
+    }
+    if (!q_require_string_key(key)) {
+        return qv_bool(false);
+    }
+    if (!dict.data.dict_val) {
+        return qv_bool(false);
+    }
+    auto it = dict.data.dict_val->entries.find(key.data.string_val ? key.data.string_val : "");
+    return qv_bool(it != dict.data.dict_val->entries.end());
+}
+
+inline int q_dict_size(QValue dict) {
+    if (!q_require_dict(dict, "dict size")) {
+        return 0;
+    }
+    if (!dict.data.dict_val) {
+        return 0;
+    }
+    return static_cast<int>(dict.data.dict_val->entries.size());
+}
+
+// ============================================================
 // types/list.hpp
 // ============================================================
 
@@ -496,6 +642,9 @@ inline QValue q_pop(QValue list) {
 
 // Get item at index (supports negative indexing)
 inline QValue q_get(QValue list, QValue index) {
+    if (list.type == QValue::VAL_DICT) {
+        return q_dict_get(list, index);
+    }
     if (list.type != QValue::VAL_LIST || !list.data.list_val) {
         return qv_null();
     }
@@ -514,6 +663,9 @@ inline QValue q_get(QValue list, QValue index) {
 
 // Set item at index (supports negative indexing)
 inline QValue q_set(QValue list, QValue index, QValue value) {
+    if (list.type == QValue::VAL_DICT) {
+        return q_dict_set(list, index, value);
+    }
     if (list.type != QValue::VAL_LIST || !list.data.list_val) {
         return qv_null();
     }
@@ -611,6 +763,22 @@ inline QValue q_list_concat(QValue a, QValue b) {
         }
     }
     return result;
+}
+
+// Unified concat - dispatches to string or list concat at runtime
+inline QValue q_concat(QValue a, QValue b) {
+    if (a.type == QValue::VAL_STRING && b.type == QValue::VAL_STRING) {
+        return q_str_concat(a, b);
+    }
+    if (a.type == QValue::VAL_LIST && b.type == QValue::VAL_LIST) {
+        return q_list_concat(a, b);
+    }
+    // Type mismatch - both arguments must be the same type
+    const char* type_names[] = {"int", "float", "string", "bool", "null", "list", "dict", "func", "result"};
+    const char* a_type = (a.type >= 0 && a.type <= 8) ? type_names[a.type] : "unknown";
+    const char* b_type = (b.type >= 0 && b.type <= 8) ? type_names[b.type] : "unknown";
+    fprintf(stderr, "runtime error: concat expects both arguments to be the same type (string+string or list+list), got %s and %s\n", a_type, b_type);
+    return qv_null();
 }
 
 // Slice list [start:end), returns new list
@@ -888,8 +1056,7 @@ inline QValue q_replace(QValue str, QValue old_str, QValue new_str) {
 }
 
 // Concatenate two strings
-inline QValue q_concat(QValue a, QValue b) {
-    // Type guard: both must be STRING
+inline QValue q_str_concat(QValue a, QValue b) {
     if (a.type != QValue::VAL_STRING || b.type != QValue::VAL_STRING) {
         return qv_null();
     }
@@ -898,7 +1065,6 @@ inline QValue q_concat(QValue a, QValue b) {
     strcpy(result, a.data.string_val);
     strcat(result, b.data.string_val);
     QValue q = qv_string(result);
-    // GC will handle cleanup - no explicit free needed
     return q;
 }
 
@@ -907,33 +1073,43 @@ inline QValue q_concat(QValue a, QValue b) {
 // ============================================================
 
 // quark/types/function.hpp - Function value operations
+#include <cstdio>
+
+inline bool q_require_callable(const QValue& f) {
+    if (f.type == QValue::VAL_FUNC) {
+        return true;
+    }
+    std::fprintf(stderr, "runtime error: attempted to call a non-function value\n");
+    return false;
+}
+
 // Call function value with 0 arguments
 inline QValue q_call0(QValue f) {
-    if (f.type != QValue::VAL_FUNC) return qv_null();
+    if (!q_require_callable(f)) return qv_null();
     return reinterpret_cast<QFunc0>(f.data.func_val)();
 }
 
 // Call function value with 1 argument
 inline QValue q_call1(QValue f, QValue a) {
-    if (f.type != QValue::VAL_FUNC) return qv_null();
+    if (!q_require_callable(f)) return qv_null();
     return reinterpret_cast<QFunc1>(f.data.func_val)(a);
 }
 
 // Call function value with 2 arguments
 inline QValue q_call2(QValue f, QValue a, QValue b) {
-    if (f.type != QValue::VAL_FUNC) return qv_null();
+    if (!q_require_callable(f)) return qv_null();
     return reinterpret_cast<QFunc2>(f.data.func_val)(a, b);
 }
 
 // Call function value with 3 arguments
 inline QValue q_call3(QValue f, QValue a, QValue b, QValue c) {
-    if (f.type != QValue::VAL_FUNC) return qv_null();
+    if (!q_require_callable(f)) return qv_null();
     return reinterpret_cast<QFunc3>(f.data.func_val)(a, b, c);
 }
 
 // Call function value with 4 arguments
 inline QValue q_call4(QValue f, QValue a, QValue b, QValue c, QValue d) {
-    if (f.type != QValue::VAL_FUNC) return qv_null();
+    if (!q_require_callable(f)) return qv_null();
     return reinterpret_cast<QFunc4>(f.data.func_val)(a, b, c, d);
 }
 
@@ -965,6 +1141,9 @@ inline void print_qvalue(QValue v) {
             break;
         case QValue::VAL_LIST:
             printf("[list len=%zu]", v.data.list_val ? v.data.list_val->size() : 0);
+            break;
+        case QValue::VAL_DICT:
+            printf("[dict len=%zu]", v.data.dict_val ? v.data.dict_val->entries.size() : 0);
             break;
         case QValue::VAL_FUNC:
             printf("<function>");
@@ -1028,6 +1207,8 @@ inline QValue q_len(QValue v) {
             return qv_int(static_cast<long long>(strlen(v.data.string_val)));
         case QValue::VAL_LIST:
             return qv_int(v.data.list_val ? static_cast<long long>(v.data.list_val->size()) : 0);
+        case QValue::VAL_DICT:
+            return qv_int(v.data.dict_val ? static_cast<long long>(v.data.dict_val->entries.size()) : 0);
         default:
             return qv_int(0);
     }
@@ -1052,6 +1233,10 @@ inline QValue q_str(QValue v) {
         case QValue::VAL_LIST:
             snprintf(buffer, sizeof(buffer), "[list len=%zu]",
                      v.data.list_val ? v.data.list_val->size() : 0);
+            return qv_string(buffer);
+        case QValue::VAL_DICT:
+            snprintf(buffer, sizeof(buffer), "[dict len=%zu]",
+                     v.data.dict_val ? v.data.dict_val->entries.size() : 0);
             return qv_string(buffer);
         case QValue::VAL_FUNC:
             return qv_string("<function>");
@@ -1192,6 +1377,152 @@ inline QValue q_round(QValue v) {
     }
     if (v.type == QValue::VAL_INT) return v;
     return qv_int(static_cast<long long>(round(v.data.float_val)));
+}
+
+// ============================================================
+// ops/member.hpp
+// ============================================================
+
+// quark/ops/member.hpp - Member access dispatch
+// Note: This header must be included AFTER all type and builtin headers
+// in quark.hpp, since it calls q_len, q_upper, q_lower, q_trim, q_reverse,
+// q_pop, q_list_clear, q_list_empty.
+
+#include <cstring>
+#include <cstdio>
+
+inline QValue q_member_get(QValue obj, const char* member) {
+    // Null guard
+    if (obj.type == QValue::VAL_NULL) {
+        fprintf(stderr, "runtime error: cannot access member '%s' on null\n", member);
+        return qv_null();
+    }
+
+    // List members
+    if (obj.type == QValue::VAL_LIST) {
+        if (strcmp(member, "length") == 0 || strcmp(member, "size") == 0) {
+            return q_len(obj);
+        }
+        if (strcmp(member, "empty") == 0) {
+            return qv_bool(q_list_empty(obj));
+        }
+        if (strcmp(member, "reverse") == 0) {
+            return q_reverse(obj);
+        }
+        if (strcmp(member, "pop") == 0) {
+            return q_pop(obj);
+        }
+        if (strcmp(member, "clear") == 0) {
+            return q_list_clear(obj);
+        }
+        fprintf(stderr, "runtime error: list has no member '%s'\n", member);
+        return qv_null();
+    }
+
+    // String members
+    if (obj.type == QValue::VAL_STRING) {
+        if (strcmp(member, "length") == 0 || strcmp(member, "size") == 0) {
+            return q_len(obj);
+        }
+        if (strcmp(member, "upper") == 0) {
+            return q_upper(obj);
+        }
+        if (strcmp(member, "lower") == 0) {
+            return q_lower(obj);
+        }
+        if (strcmp(member, "trim") == 0) {
+            return q_trim(obj);
+        }
+        fprintf(stderr, "runtime error: string has no member '%s'\n", member);
+        return qv_null();
+    }
+
+    // Dict members
+    if (obj.type == QValue::VAL_DICT) {
+        if (strcmp(member, "length") == 0 || strcmp(member, "size") == 0) {
+            return q_len(obj);
+        }
+        // Fall through to key lookup
+        return q_dict_get(obj, qv_string(member));
+    }
+
+    // Unsupported type
+    const char* type_names[] = {"int", "float", "string", "bool", "null", "list", "dict", "func", "result"};
+    const char* type_name = (obj.type >= 0 && obj.type <= 8) ? type_names[obj.type] : "unknown";
+    fprintf(stderr, "runtime error: type '%s' has no member '%s'\n", type_name, member);
+    return qv_null();
+}
+
+// Member method calls with arguments
+// obj.method(arg1) → q_member_call1(obj, "method", arg1)
+inline QValue q_member_call1(QValue obj, const char* method, QValue arg1) {
+    if (obj.type == QValue::VAL_NULL) {
+        fprintf(stderr, "runtime error: cannot call method '%s' on null\n", method);
+        return qv_null();
+    }
+
+    // List methods with 1 arg
+    if (obj.type == QValue::VAL_LIST) {
+        if (strcmp(method, "push") == 0) return q_push(obj, arg1);
+        if (strcmp(method, "get") == 0) return q_get(obj, arg1);
+        if (strcmp(method, "remove") == 0) return q_remove(obj, arg1);
+        if (strcmp(method, "concat") == 0) return q_concat(obj, arg1);
+        fprintf(stderr, "runtime error: list has no method '%s' taking 1 argument\n", method);
+        return qv_null();
+    }
+
+    // String methods with 1 arg
+    if (obj.type == QValue::VAL_STRING) {
+        if (strcmp(method, "contains") == 0) return q_contains(obj, arg1);
+        if (strcmp(method, "startswith") == 0) return q_startswith(obj, arg1);
+        if (strcmp(method, "endswith") == 0) return q_endswith(obj, arg1);
+        if (strcmp(method, "concat") == 0) return q_concat(obj, arg1);
+        fprintf(stderr, "runtime error: string has no method '%s' taking 1 argument\n", method);
+        return qv_null();
+    }
+
+    const char* type_names[] = {"int", "float", "string", "bool", "null", "list", "dict", "func", "result"};
+    const char* type_name = (obj.type >= 0 && obj.type <= 8) ? type_names[obj.type] : "unknown";
+    fprintf(stderr, "runtime error: type '%s' has no method '%s'\n", type_name, method);
+    return qv_null();
+}
+
+// obj.method(arg1, arg2) → q_member_call2(obj, "method", arg1, arg2)
+inline QValue q_member_call2(QValue obj, const char* method, QValue arg1, QValue arg2) {
+    if (obj.type == QValue::VAL_NULL) {
+        fprintf(stderr, "runtime error: cannot call method '%s' on null\n", method);
+        return qv_null();
+    }
+
+    // List methods with 2 args
+    if (obj.type == QValue::VAL_LIST) {
+        if (strcmp(method, "set") == 0) return q_set(obj, arg1, arg2);
+        if (strcmp(method, "insert") == 0) return q_insert(obj, arg1, arg2);
+        if (strcmp(method, "slice") == 0) return q_slice(obj, arg1, arg2);
+        fprintf(stderr, "runtime error: list has no method '%s' taking 2 arguments\n", method);
+        return qv_null();
+    }
+
+    // String methods with 2 args
+    if (obj.type == QValue::VAL_STRING) {
+        if (strcmp(method, "replace") == 0) return q_replace(obj, arg1, arg2);
+        fprintf(stderr, "runtime error: string has no method '%s' taking 2 arguments\n", method);
+        return qv_null();
+    }
+
+    const char* type_names[] = {"int", "float", "string", "bool", "null", "list", "dict", "func", "result"};
+    const char* type_name = (obj.type >= 0 && obj.type <= 8) ? type_names[obj.type] : "unknown";
+    fprintf(stderr, "runtime error: type '%s' has no method '%s'\n", type_name, method);
+    return qv_null();
+}
+
+// Member set: obj.member = value (for dict key assignment)
+inline QValue q_member_set(QValue obj, const char* member, QValue value) {
+    if (obj.type == QValue::VAL_DICT) {
+        return q_dict_set(obj, qv_string(member), value);
+    }
+    fprintf(stderr, "runtime error: cannot set member '%s' on non-dict type\n", member);
+    return qv_null();
 }
 
 #endif // QUARK_RUNTIME_HPP

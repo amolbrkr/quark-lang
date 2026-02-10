@@ -57,9 +57,18 @@ inline QValue q_member_get(QValue obj, const char* member) {
         return qv_null();
     }
 
+    // Dict members
+    if (obj.type == QValue::VAL_DICT) {
+        if (strcmp(member, "length") == 0 || strcmp(member, "size") == 0) {
+            return q_len(obj);
+        }
+        // Fall through to key lookup
+        return q_dict_get(obj, qv_string(member));
+    }
+
     // Unsupported type
-    const char* type_names[] = {"int", "float", "string", "bool", "null", "list", "func"};
-    const char* type_name = (obj.type >= 0 && obj.type <= 6) ? type_names[obj.type] : "unknown";
+    const char* type_names[] = {"int", "float", "string", "bool", "null", "list", "dict", "func", "result"};
+    const char* type_name = (obj.type >= 0 && obj.type <= 8) ? type_names[obj.type] : "unknown";
     fprintf(stderr, "runtime error: type '%s' has no member '%s'\n", type_name, member);
     return qv_null();
 }
@@ -92,8 +101,8 @@ inline QValue q_member_call1(QValue obj, const char* method, QValue arg1) {
         return qv_null();
     }
 
-    const char* type_names[] = {"int", "float", "string", "bool", "null", "list", "func"};
-    const char* type_name = (obj.type >= 0 && obj.type <= 6) ? type_names[obj.type] : "unknown";
+    const char* type_names[] = {"int", "float", "string", "bool", "null", "list", "dict", "func", "result"};
+    const char* type_name = (obj.type >= 0 && obj.type <= 8) ? type_names[obj.type] : "unknown";
     fprintf(stderr, "runtime error: type '%s' has no method '%s'\n", type_name, method);
     return qv_null();
 }
@@ -121,9 +130,18 @@ inline QValue q_member_call2(QValue obj, const char* method, QValue arg1, QValue
         return qv_null();
     }
 
-    const char* type_names[] = {"int", "float", "string", "bool", "null", "list", "func"};
-    const char* type_name = (obj.type >= 0 && obj.type <= 6) ? type_names[obj.type] : "unknown";
+    const char* type_names[] = {"int", "float", "string", "bool", "null", "list", "dict", "func", "result"};
+    const char* type_name = (obj.type >= 0 && obj.type <= 8) ? type_names[obj.type] : "unknown";
     fprintf(stderr, "runtime error: type '%s' has no method '%s'\n", type_name, method);
+    return qv_null();
+}
+
+// Member set: obj.member = value (for dict key assignment)
+inline QValue q_member_set(QValue obj, const char* member, QValue value) {
+    if (obj.type == QValue::VAL_DICT) {
+        return q_dict_set(obj, qv_string(member), value);
+    }
+    fprintf(stderr, "runtime error: cannot set member '%s' on non-dict type\n", member);
     return qv_null();
 }
 

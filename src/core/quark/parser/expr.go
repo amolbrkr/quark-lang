@@ -122,10 +122,10 @@ func (p *Parser) isEndOfExpression() bool {
 func (p *Parser) canStartExpression(tokType token.TokenType) bool {
 	switch tokType {
 	case token.ID, token.INT, token.FLOAT, token.STRING,
-		token.LPAR, token.LBRACE,
+		token.LPAR,
 		token.UNDERSCORE, token.BANG, token.NOT, token.MINUS,
 		token.TRUE, token.FALSE, token.NULL, token.FN,
-		token.OK, token.ERR, token.LIST:
+		token.OK, token.ERR, token.LIST, token.DICT:
 		return true
 	}
 	return false
@@ -149,8 +149,6 @@ func (p *Parser) prefixParseFn(t token.TokenType) func() *ast.TreeNode {
 		return p.parseWildcard
 	case token.LPAR:
 		return p.parseGroupedExpression
-	case token.LBRACE:
-		return p.parseDictLiteral
 	case token.BANG, token.NOT, token.MINUS:
 		return p.parseUnary
 	case token.FN:
@@ -159,6 +157,8 @@ func (p *Parser) prefixParseFn(t token.TokenType) func() *ast.TreeNode {
 		return p.parseResultLiteral
 	case token.LIST:
 		return p.parseListLiteral
+	case token.DICT:
+		return p.parseDictLiteral
 	}
 	return nil
 }
@@ -278,28 +278,36 @@ func (p *Parser) parseListLiteral() *ast.TreeNode {
 func (p *Parser) parseDictLiteral() *ast.TreeNode {
 	tok := p.curToken
 	node := ast.NewNode(ast.DictNode, &tok)
-	p.nextToken() // skip '{'
+	p.nextToken() // skip 'dict'
+	if !p.expect(token.LBRACE) {
+		return nil
+	}
 
 	if p.curToken.Type != token.RBRACE {
 		for {
-			// Parse key (identifier)
 			if p.curToken.Type != token.ID {
 				p.addError("expected identifier as dict key")
 				return nil
 			}
-			keyTok := p.curToken
-			key := ast.NewNode(ast.IdentifierNode, &keyTok)
+			keyTok := token.Token{
+				Type:    token.STRING,
+				Literal: p.curToken.Literal,
+				Line:    p.curToken.Line,
+				Column:  p.curToken.Column,
+			}
+			key := ast.NewNode(ast.LiteralNode, &keyTok)
 			p.nextToken()
 
-			// Expect colon
 			if !p.expect(token.COLON) {
 				return nil
 			}
 
-			// Parse value
-			value := p.parseExpression(ast.PrecLowest)
+			value := p.parseExpression(ast.PrecTernary)
+			if value == nil {
+				p.addError("expected value after ':' in dict literal")
+				return nil
+			}
 
-			// Create key-value pair
 			pair := ast.NewNode(ast.OperatorNode, nil)
 			pair.AddChildren(key, value)
 			node.AddChild(pair)

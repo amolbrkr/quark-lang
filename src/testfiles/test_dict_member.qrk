@@ -1,0 +1,33 @@
+// test_dict_member.qrk - Dict member access and mutation
+
+// Create
+person = dict { first: 'John', last: 'Doe' }
+
+// Read
+println person.first
+println person.last
+
+// Write
+person.first = 'Jane'
+println person.first
+
+// Size property
+println person.size
+
+// Add new key via dot assignment
+person.email = 'jane@test.com'
+println person.email
+println person.size
+
+// Dict as function argument
+fn greet p ->
+    println p.first
+    println p.last
+
+greet person
+
+// Multiple dicts
+a = dict { color: 'red' }
+b = dict { color: 'blue' }
+println a.color
+println b.color

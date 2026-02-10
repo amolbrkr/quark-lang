@@ -967,7 +967,8 @@ cd runtime && pwsh build_runtime.ps1
 
 - **Unary operator whitespace**: Unary operators must have no whitespace. `f -5` (function call with negative argument) is valid, but `a -b` (space before, no space after) is a parse error. Use `a - b` for subtraction.
 - **Garbage collection**: Boehm GC is enabled by default. GC_init() is called at program start. Requires Boehm GC installed on the system.
-- **Dict literals**: Parsed but not codegen'd; runtime has no dict type yet.
+- **Dict access**: Dicts only support dot access (`d.key`), not bracket indexing (`d['key']`). Dict keys are always identifiers (no string literal keys).
+- **Dict iteration**: No `for key in dict` support yet.
 
 ## Feature Matrix (Grammar vs Implementation)
 
@@ -997,7 +998,8 @@ Key: Yes = implemented, Partial = present but incomplete, No = missing.
 | List literals `list [a, b]` | Yes | Yes | Yes | Yes | Yes | Uses `std::vector<QValue>`. Requires `list` keyword prefix. |
 | Typed parameters `x: int` | Yes | Yes | Yes | Yes | N/A | Basic annotations on params and variable declarations. No generic types. |
 | Indexing `list[idx]` | Yes | Yes | Yes | Yes | Yes | `q_get` supports negative indices. |
-| Dict literals `{k: v}` | Yes | Yes | Partial | No | No | Parsed but no runtime representation. |
+| Dict literals `dict {k: v}` | Yes | Yes | Yes | Yes | Yes | Requires `dict` keyword. Dot access only (`d.key`). |
+| Dict dot access/assignment | Yes | Yes | Yes | Yes | Yes | `d.key` reads, `d.key = val` writes. No bracket indexing. |
 | Modules `module` / `use` | Yes | Yes | Yes | Partial | N/A | Compile-time only, no namespacing. |
 | Structs / impl blocks | No | No | No | No | No | Future. |
 | Result / ok / err | Yes | Yes | Yes | Yes | Yes | `ok`/`err` values and `when` pattern matching on results. `try`/`unwrap` not yet implemented. |
@@ -1017,7 +1019,7 @@ Key: Yes = implemented, Partial = present but incomplete, No = missing.
 | List: `push`, `pop`, `get`, `set`, `insert`, `remove`, `slice`, `reverse` | Yes | Yes | No | Builtins only. |
 | List extras: `size`, `empty`, `clear` | Yes | No | No | Implemented in runtime but not exposed as builtins. |
 | `concat` (overloaded) | Yes | Yes | No | Works for both strings and lists. |
-| Dict / map | No | No | No | Dict literals parse but no runtime or codegen. |
+| Dict: `dict {}`, dot access, `len`, `.size` | Yes | Yes | No | Dot access only. No bracket indexing. |
 | Time / clock | No | No | No | Not yet implemented. |
 | Random | No | No | No | Not yet implemented. |
 | OS / filesystem | No | No | No | Not yet implemented. |

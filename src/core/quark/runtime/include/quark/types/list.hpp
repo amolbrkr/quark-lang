@@ -4,6 +4,7 @@
 
 #include "../core/value.hpp"
 #include "../core/constructors.hpp"
+#include "dict.hpp"
 
 // Push item to end of list
 inline QValue q_push(QValue list, QValue item) {
@@ -26,6 +27,9 @@ inline QValue q_pop(QValue list) {
 
 // Get item at index (supports negative indexing)
 inline QValue q_get(QValue list, QValue index) {
+    if (list.type == QValue::VAL_DICT) {
+        return q_dict_get(list, index);
+    }
     if (list.type != QValue::VAL_LIST || !list.data.list_val) {
         return qv_null();
     }
@@ -44,6 +48,9 @@ inline QValue q_get(QValue list, QValue index) {
 
 // Set item at index (supports negative indexing)
 inline QValue q_set(QValue list, QValue index, QValue value) {
+    if (list.type == QValue::VAL_DICT) {
+        return q_dict_set(list, index, value);
+    }
     if (list.type != QValue::VAL_LIST || !list.data.list_val) {
         return qv_null();
     }
@@ -152,9 +159,9 @@ inline QValue q_concat(QValue a, QValue b) {
         return q_list_concat(a, b);
     }
     // Type mismatch - both arguments must be the same type
-    const char* type_names[] = {"int", "float", "string", "bool", "null", "list", "func"};
-    const char* a_type = (a.type >= 0 && a.type <= 6) ? type_names[a.type] : "unknown";
-    const char* b_type = (b.type >= 0 && b.type <= 6) ? type_names[b.type] : "unknown";
+    const char* type_names[] = {"int", "float", "string", "bool", "null", "list", "dict", "func", "result"};
+    const char* a_type = (a.type >= 0 && a.type <= 8) ? type_names[a.type] : "unknown";
+    const char* b_type = (b.type >= 0 && b.type <= 8) ? type_names[b.type] : "unknown";
     fprintf(stderr, "runtime error: concat expects both arguments to be the same type (string+string or list+list), got %s and %s\n", a_type, b_type);
     return qv_null();
 }

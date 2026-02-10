@@ -550,14 +550,8 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 			a.errorAt(node, "unary '-' expects numeric operand, got %s", operandType.String())
 			return TypeAny
 		case token.BANG, token.NOT:
-			if isBoolLike(operandType) {
-				return TypeBool
-			}
-			if isUnknownType(operandType) {
-				return TypeAny
-			}
-			a.errorAt(node, "logical not expects boolean operand, got %s", operandType.String())
-			return TypeAny
+			// All types support truthiness, so ! works on any value
+			return TypeBool
 		}
 		return operandType
 	}
@@ -567,6 +561,16 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 	if op == token.EQUALS && len(node.Children) == 2 {
 		target := node.Children[0]
 		rightType := a.Analyze(node.Children[1])
+		// Allow member assignment: obj.member = value
+		if target.NodeType == ast.OperatorNode && target.Token != nil && target.Token.Type == token.DOT {
+			a.Analyze(target.Children[0])
+			return rightType
+		}
+		// Allow index assignment: obj[key] = value
+		if target.NodeType == ast.IndexNode {
+			a.Analyze(target)
+			return rightType
+		}
 		if target.NodeType != ast.IdentifierNode {
 			a.errorAt(target, "left side of assignment must be an identifier")
 			return rightType
@@ -736,7 +740,48 @@ func (a *Analyzer) analyzeList(node *ast.TreeNode) Type {
 }
 
 func (a *Analyzer) analyzeDict(node *ast.TreeNode) Type {
-	return &DictType{KeyType: TypeString, ValueType: TypeAny}
+	if len(node.Children) == 0 {
+		return &DictType{KeyType: TypeString, ValueType: TypeAny}
+	}
+
+	seenKeys := make(map[string]struct{})
+	var valueType Type
+
+	for _, pair := range node.Children {
+		if pair == nil || len(pair.Children) < 2 {
+			a.errorAt(node, "invalid dict entry")
+			continue
+		}
+		keyNode := pair.Children[0]
+		valueNode := pair.Children[1]
+
+		keyType := a.Analyze(keyNode)
+		if !keyType.Equals(TypeString) && !isUnknownType(keyType) {
+			a.errorAt(keyNode, "dict keys must be str, got %s", keyType.String())
+		}
+
+		if keyNode != nil && keyNode.Token != nil && keyNode.Token.Type == token.STRING {
+			key := keyNode.Token.Literal
+			if _, exists := seenKeys[key]; exists {
+				a.errorAt(keyNode, "duplicate dict key '%s'", key)
+			} else {
+				seenKeys[key] = struct{}{}
+			}
+		}
+
+		childType := a.Analyze(valueNode)
+		if valueType == nil {
+			valueType = childType
+		} else {
+			valueType = MergeTypes(valueType, childType)
+		}
+	}
+
+	if valueType == nil {
+		valueType = TypeAny
+	}
+
+	return &DictType{KeyType: TypeString, ValueType: valueType}
 }
 
 func (a *Analyzer) analyzeIndex(node *ast.TreeNode) Type {
@@ -745,13 +790,17 @@ func (a *Analyzer) analyzeIndex(node *ast.TreeNode) Type {
 	}
 
 	targetType := a.Analyze(node.Children[0])
-	a.Analyze(node.Children[1]) // index
+	indexType := a.Analyze(node.Children[1])
 
 	if listType, ok := targetType.(*ListType); ok {
+		if !isIntLike(indexType) && !isUnknownType(indexType) {
+			a.errorAt(node.Children[1], "list index must be int, got %s", indexType.String())
+		}
 		return listType.ElementType
 	}
-	if dictType, ok := targetType.(*DictType); ok {
-		return dictType.ValueType
+	if _, ok := targetType.(*DictType); ok {
+		a.errorAt(node, "use dot access for dicts: d.key instead of d['key']")
+		return TypeAny
 	}
 
 	if !isUnknownType(targetType) {
@@ -899,7 +948,6 @@ func (a *Analyzer) analyzeVarDecl(node *ast.TreeNode) Type {
 	a.currentScope.Define(varName, declType, true)
 	return declType
 }
-
 
 func collectParamSpecs(argsNode *ast.TreeNode) []paramSpec {
 	if argsNode == nil {

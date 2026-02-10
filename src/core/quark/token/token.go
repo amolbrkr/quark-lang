@@ -72,6 +72,7 @@ const (
 	OK
 	ERR
 	LIST
+	DICT
 	keyword_end
 )
 
@@ -139,6 +140,7 @@ var tokenNames = map[TokenType]string{
 	OK:     "OK",
 	ERR:    "ERR",
 	LIST:   "LIST",
+	DICT:   "DICT",
 }
 
 func (t TokenType) String() string {
@@ -168,6 +170,7 @@ var keywords = map[string]TokenType{
 	"ok":     OK,
 	"err":    ERR,
 	"list":   LIST,
+	"dict":   DICT,
 }
 
 func LookupIdent(ident string) TokenType {

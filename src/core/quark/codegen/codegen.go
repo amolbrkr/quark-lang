@@ -312,6 +312,8 @@ func (g *Generator) generateExpr(node *ast.TreeNode) string {
 		return g.generateWhile(node)
 	case ast.ListNode:
 		return g.generateList(node)
+	case ast.DictNode:
+		return g.generateDict(node)
 	case ast.IndexNode:
 		return g.generateIndex(node)
 	case ast.ResultNode:
@@ -433,8 +435,23 @@ func (g *Generator) generateOperator(node *ast.TreeNode) string {
 	case token.OR:
 		return fmt.Sprintf("q_or(%s, %s)", left, right)
 	case token.EQUALS:
-		// Assignment - emit as statement and return the value
-		varName := node.Children[0].TokenLiteral()
+		lhs := node.Children[0]
+		// Member assignment: obj.member = value
+		if lhs.NodeType == ast.OperatorNode && lhs.Token != nil && lhs.Token.Type == token.DOT && len(lhs.Children) >= 2 {
+			obj := g.generateExpr(lhs.Children[0])
+			memberName := lhs.Children[1].TokenLiteral()
+			g.emitLine("q_member_set(%s, \"%s\", %s);", obj, memberName, right)
+			return right
+		}
+		// Index assignment: obj[key] = value
+		if lhs.NodeType == ast.IndexNode && len(lhs.Children) >= 2 {
+			target := g.generateExpr(lhs.Children[0])
+			index := g.generateExpr(lhs.Children[1])
+			g.emitLine("q_set(%s, %s, %s);", target, index, right)
+			return right
+		}
+		// Variable assignment
+		varName := lhs.TokenLiteral()
 		cName := sanitizeVarName(varName)
 		if g.declaredVars[varName] {
 			// Variable already declared, just assign
@@ -798,6 +815,22 @@ func (g *Generator) generateList(node *ast.TreeNode) string {
 	for _, child := range node.Children {
 		elem := g.generateExpr(child)
 		g.emitLine("%s = q_push(%s, %s);", temp, temp, elem)
+	}
+
+	return temp
+}
+
+func (g *Generator) generateDict(node *ast.TreeNode) string {
+	temp := g.newTemp()
+	g.emitLine("QValue %s = qv_dict();", temp)
+
+	for _, pair := range node.Children {
+		if pair == nil || len(pair.Children) < 2 {
+			continue
+		}
+		key := g.generateExpr(pair.Children[0])
+		value := g.generateExpr(pair.Children[1])
+		g.emitLine("%s = q_dict_set(%s, %s, %s);", temp, temp, key, value)
 	}
 
 	return temp

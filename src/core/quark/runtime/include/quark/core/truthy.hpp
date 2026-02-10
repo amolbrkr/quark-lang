@@ -3,6 +3,7 @@
 #define QUARK_CORE_TRUTHY_HPP
 
 #include "value.hpp"
+#include "../types/dict.hpp"
 #include <cstring>
 
 // Check if a value is truthy (used for conditions)
@@ -20,6 +21,8 @@ inline bool q_truthy(QValue v) {
             return false;
         case QValue::VAL_LIST:
             return v.data.list_val && !v.data.list_val->empty();
+        case QValue::VAL_DICT:
+            return v.data.dict_val && !v.data.dict_val->entries.empty();
         case QValue::VAL_FUNC:
             return v.data.func_val != nullptr;
         default:

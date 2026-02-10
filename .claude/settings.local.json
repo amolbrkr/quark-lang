@@ -28,7 +28,9 @@
       "Bash(done)",
       "Bash(where:*)",
       "Bash(powershell.exe:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(./quark.exe check:*)",
+      "Bash(pwsh:*)"
     ]
   }
 }

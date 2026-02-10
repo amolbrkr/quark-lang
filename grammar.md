@@ -39,7 +39,7 @@ Quark uses explicit Result types with `ok`/`err` for fallible operations. Result
 ### Keywords (Reserved)
 
 ```
-use, module, tensor, list
+use, module, tensor, list, dict
 in, and, or, not
 if, elseif, else, for, while, when
 fn, return
@@ -115,8 +115,8 @@ Statement       ::= FunctionDef
 Quark supports single-element indexing for lists and strings.
 
 ```
-Accessor        ::= "." <ID>                   // Member access
-                |   "[" Expression "]"          // Single index
+Accessor        ::= "." <ID>                   // Member access / dict key
+                |   "[" Expression "]"          // Single index (lists/strings only)
 ```
 
 ### Examples
@@ -124,11 +124,71 @@ Accessor        ::= "." <ID>                   // Member access
 ```quark
 list[0]         // First element
 list[-1]        // Last element
-list[-2]        // Second to last
 text[0]         // First character
 ```
 
 For slicing, use the `slice` builtin: `slice list, 1, 3`
+
+## Dict Literals
+
+Dicts are key-value maps backed by `std::unordered_map<std::string, QValue>`. Keys are always identifiers (stored as strings internally).
+
+```
+DictLiteral     ::= "dict" "{" [ DictEntries ] "}"
+
+DictEntries     ::= DictEntry { "," DictEntry }
+
+DictEntry       ::= <ID> ":" Expression
+```
+
+Dicts use **dot access** for reading and writing keys. Bracket indexing (`d['key']`) is not supported — use `d.key` instead.
+
+```
+DictAccess      ::= Expression "." <ID>                  // Read key
+DictAssignment  ::= Expression "." <ID> "=" Expression   // Set key
+```
+
+### Examples
+
+```quark
+// Creation (always requires `dict` keyword)
+info = dict { name: 'Alex', age: 30, active: true }
+empty = dict {}
+
+// Dot access (reads dict key)
+println info.name          // Alex
+println info.age           // 30
+
+// Dot assignment (sets dict key)
+info.name = 'James'
+info.city = 'NYC'          // adds new key
+
+// Properties
+println info.size          // number of entries
+println (len info)         // same as .size
+
+// Dict in function
+fn get_name d -> d.name
+println (get_name info)    // James
+
+// Dict truthiness (non-empty = true, empty = false)
+if info:
+    println 'has entries'
+```
+
+### Dict Properties
+
+| Property | Returns | Description |
+|----------|---------|-------------|
+| `.size` | int | Number of entries |
+| `.length` | int | Same as `.size` |
+
+### Dict with `len`
+
+```quark
+info = dict { a: 1, b: 2, c: 3 }
+println (len info)         // 3
+```
 
 ## Error Handling with ok/err
 
@@ -677,7 +737,9 @@ result = normalized @ weights + bias
 | Member access (`.property`, `.method`) | Implemented |
 | Error handling (`ok` / `err` + `when`) | Implemented |
 | Type annotations on params (`x: int`) | Implemented |
-| Dict literals (`{k: v}`) | Parsed, no runtime |
+| Dict literals (`dict {k: v}`) | Implemented |
+| Dict member access (`d.key`, `d['key']`) | Implemented |
+| Dict member assignment (`d.key = val`) | Implemented |
 | Structs / impl blocks | Future |
 | Tensor type | Future |
 

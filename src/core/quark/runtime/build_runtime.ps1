@@ -14,12 +14,14 @@ $HeaderFiles = @(
     "ops/arithmetic.hpp",
     "ops/comparison.hpp",
     "ops/logical.hpp",
+    "types/dict.hpp",
     "types/list.hpp",
     "types/string.hpp",
     "types/function.hpp",
     "builtins/io.hpp",
     "builtins/conversion.hpp",
-    "builtins/math.hpp"
+    "builtins/math.hpp",
+    "ops/member.hpp"
 )
 
 # Start with header comment
@@ -38,6 +40,10 @@ $Output = @"
 #include <cmath>
 #include <cctype>
 #include <cstdarg>
+#include <algorithm>
+#include <vector>
+#include <unordered_map>
+#include <string>
 
 
 "@

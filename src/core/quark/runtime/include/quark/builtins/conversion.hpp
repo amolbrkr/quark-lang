@@ -5,6 +5,7 @@
 #include "../core/value.hpp"
 #include "../core/constructors.hpp"
 #include "../core/truthy.hpp"
+#include "../types/dict.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -16,6 +17,8 @@ inline QValue q_len(QValue v) {
             return qv_int(static_cast<long long>(strlen(v.data.string_val)));
         case QValue::VAL_LIST:
             return qv_int(v.data.list_val ? static_cast<long long>(v.data.list_val->size()) : 0);
+        case QValue::VAL_DICT:
+            return qv_int(v.data.dict_val ? static_cast<long long>(v.data.dict_val->entries.size()) : 0);
         default:
             return qv_int(0);
     }
@@ -40,6 +43,10 @@ inline QValue q_str(QValue v) {
         case QValue::VAL_LIST:
             snprintf(buffer, sizeof(buffer), "[list len=%zu]",
                      v.data.list_val ? v.data.list_val->size() : 0);
+            return qv_string(buffer);
+        case QValue::VAL_DICT:
+            snprintf(buffer, sizeof(buffer), "[dict len=%zu]",
+                     v.data.dict_val ? v.data.dict_val->entries.size() : 0);
             return qv_string(buffer);
         case QValue::VAL_FUNC:
             return qv_string("<function>");

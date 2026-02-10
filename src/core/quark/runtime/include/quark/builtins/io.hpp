@@ -4,6 +4,7 @@
 
 #include "../core/value.hpp"
 #include "../core/constructors.hpp"
+#include "../types/dict.hpp"
 #include <cstdio>
 #include <cstring>
 
@@ -27,6 +28,9 @@ inline void print_qvalue(QValue v) {
             break;
         case QValue::VAL_LIST:
             printf("[list len=%zu]", v.data.list_val ? v.data.list_val->size() : 0);
+            break;
+        case QValue::VAL_DICT:
+            printf("[dict len=%zu]", v.data.dict_val ? v.data.dict_val->entries.size() : 0);
             break;
         case QValue::VAL_FUNC:
             printf("<function>");

@@ -176,7 +176,7 @@ Quark uses punctuation intentionally to convey semantic meaning:
 | List | `[1, 2, 3]` | `std::vector<QValue>*` |
 | Tensor | `tensor [1, 2, 3]` | contiguous buffer (future) |
 | Function | `fn x -> x * 2` | function pointer |
-| Result | `ok value` or `err msg` | tagged union (planned) |
+| Result | `ok value` or `err msg` | tagged union (VAL_OK / VAL_ERR) |
 | Struct | `Point { x: 1, y: 2 }` | struct instance (planned) |
 
 ### Runtime Value (QValue)
@@ -188,7 +188,8 @@ using QList = std::vector<QValue>;
 
 struct QValue {
     enum ValueType {
-        VAL_INT, VAL_FLOAT, VAL_STRING, VAL_BOOL, VAL_NULL, VAL_LIST, VAL_FUNC
+        VAL_INT, VAL_FLOAT, VAL_STRING, VAL_BOOL, VAL_NULL, VAL_LIST, VAL_FUNC,
+        VAL_OK, VAL_ERR
     } type;
 
     union {
@@ -532,9 +533,10 @@ Module {
 | `x \| f` | `q_f(x)` |
 | `sqrt 16` | `q_sqrt(qv_int(16))` |
 | `upper 'hi'` | `q_upper(qv_string("hi"))` |
-| `ok value` | `qv_ok(value)` (planned) |
-| `err msg` | `qv_err(msg)` (planned) |
+| `ok value` | `qv_ok(value)` |
+| `err msg` | `qv_err(msg)` |
 | `unwrap result, default` | `q_unwrap(result, default)` (planned) |
+| `list [1, 2, 3]` | `qv_list_init({qv_int(1), qv_int(2), qv_int(3)})` |
 
 ### Runtime Functions
 
@@ -607,7 +609,11 @@ QValue q_range(QValue end);                          // range(10)
 QValue q_range(QValue start, QValue end);            // range(1, 100)
 QValue q_range(QValue start, QValue end, QValue step); // range(0, 100, 5)
 
-// Error handling (planned)
+// Result types
+QValue qv_ok(QValue value);
+QValue qv_err(const char* message);
+
+// Error handling (unwrap planned)
 QValue q_unwrap(QValue result, QValue default_val);
 ```
 
@@ -665,20 +671,42 @@ module mymodule:
 
 use mymodule
 helper 5 | println
+
+// Lists (require `list` keyword)
+nums = list [1, 2, 3]
+push nums, 4
+
+// ok / err result values
+fn safe_div a, b ->
+    if b == 0:
+        err 'division by zero'
+    else:
+        ok a / b
+
+when safe_div 10, 2:
+    ok value -> println value
+    err msg -> println msg
+
+// Typed parameters
+fn add x: int, y: int -> x + y
+
+// Typed variables
+name: str = 'hello'
+nums: list[int] = list [1, 2, 3]
+
+// Generic type expressions
+fn head xs: list[int] -> get xs, 0
 ```
 
 ### Planned (Per grammar.md)
 
 - **Structs and Impl Blocks** - Define data structures with methods
-- **Error Handling** - `ok`, `err`, `try`, `unwrap` statements
 - **String Interpolation** - `'Hello, {name}!'`
 - **Array Slicing** - `arr[0:5]`, `arr[::2]`, `arr[::-1]`
-- **Type Annotations** - `fn add x: int, y: int -> int`
 - **Tensor Type** - SIMD-accelerated N-dimensional arrays
 
 ### Future Features
 
-- **Boehm GC Integration**
 - **Multi-file Module Imports**
 
 ## Example Programs
@@ -943,7 +971,7 @@ cd runtime && pwsh build_runtime.ps1
 ### Known Limitations
 
 - **Unary operator whitespace**: Unary operators must have no whitespace. `f -5` (function call with negative argument) is valid, but `a -b` (space before, no space after) is a parse error. Use `a - b` for subtraction.
-- **Garbage collection**: Currently no GC - strings are strdup'd and list memory must be manually freed with `q_list_free()`.
+- **Garbage collection**: Boehm GC is enabled by default. GC_init() is called at program start. Requires Boehm GC installed on the system.
 - **Dict literals**: Parsed but not codegen'd; runtime has no dict type yet.
 
 ## Feature Matrix (Grammar vs Implementation)
@@ -972,13 +1000,14 @@ Key: Yes = implemented, Partial = present but incomplete, No = missing.
 | Logical ops `and` / `or` | Yes | Yes | Yes | Yes | Yes | Keyword `not` not implemented. |
 | Unary ops `!` / `-` / `~` | Yes | Yes | Yes | Yes | Yes | `~` maps to logical not. |
 | Member access `.` | Yes | Yes | Yes | Yes | Yes | Properties, no-arg methods, and method calls with args on lists/strings. |
-| List literals `[a, b]` | Yes | Yes | Yes | Yes | Yes | Uses `std::vector<QValue>`. |
+| List literals `list [a, b]` | Yes | Yes | Yes | Yes | Yes | Uses `std::vector<QValue>`. Requires `list` keyword prefix. |
+| Typed parameters `x: int` | Yes | Yes | Yes | Yes | N/A | Supported in functions and variable declarations. Generic types: `list[int]`, `dict[str, int]`. |
 | Indexing `list[idx]` | Yes | Yes | Yes | Yes | Yes | `q_get` supports negative indices. |
 | Slicing `[start:end[:step]]` | No | No | No | No | No | Grammar-only. |
 | Dict literals `{k: v}` | Yes | Yes | Partial | No | No | Parsed but no runtime representation. |
 | Modules `module` / `use` | Yes | Yes | Yes | Partial | N/A | Compile-time only, no namespacing. |
 | Structs / impl blocks | No | No | No | No | No | Grammar-only. |
-| Result / ok / err / try / unwrap | No | No | No | No | No | Grammar-only. |
+| Result / ok / err | Yes | Yes | Yes | Yes | Yes | `ok`/`err` values and `when` pattern matching on results. `try`/`unwrap` not yet implemented. |
 | Tensor types | No | No | No | No | No | Grammar-only. |
 | Builtins (io/math/string/list) | Yes | Yes | Yes | Yes | Yes | Implemented in runtime and codegen. |
 
@@ -1260,6 +1289,84 @@ All core test files now work correctly:
 
 **Fix**: Changed `generateFor()` to iterate block children directly (like `generateWhile()`) instead of delegating to `generateBlock()`, ensuring all statements are emitted.
 
-### Known Issue: test_while.qrk
+### Known Issue: test_while.qrk (RESOLVED)
 
-`test_while.qrk` uses `x` without initializing it (`while x > 0: x = x - 1`). This is a broken test file — `x` is never assigned an initial value. The new scoping correctly surfaces this as a C++ compilation error.
+`test_while.qrk` previously used `x` without initializing it. The test file has been fixed to initialize `x = 5` before the loop.
+
+## Recent Changes (2026-02-09, Batch 2)
+
+### GC Enabled by Default
+
+- Boehm GC initialization (`GC_init()`) is now always emitted in the generated C++ `main()` function
+- Removed `--gc` / `--no-gc` CLI flags; GC is always on
+- Updated usage text in `main.go`
+
+### Implemented ok / err Result Values
+
+Added full support for `ok` and `err` result values with pattern matching:
+
+- **Tokens**: Added `OK` and `ERR` keywords in `token/token.go`
+- **AST**: Added `OkNode` and `ErrNode` node types in `ast/ast.go`
+- **Parser**: `ok expr` and `err expr` parsed as prefix expressions; `when` patterns now match `ok ident ->` and `err ident ->` arms in `parser/parser.go`
+- **Analyzer**: Result scoping — `ok`/`err` arm identifiers are scoped correctly in `types/analyzer.go`
+- **Codegen**: `ok expr` generates `qv_ok(expr)`, `err expr` generates `qv_err(expr_as_string)`; `when` on results generates `if (cond.type == QValue::VAL_OK)` / `else` branches in `codegen/codegen.go`
+- **Runtime**: Added `VAL_OK` and `VAL_ERR` to `QValue::ValueType`, `qv_ok()` and `qv_err()` constructors in `value.hpp` and `constructors.hpp`
+
+Example:
+```quark
+fn load flag ->
+    if flag:
+        ok 'data loaded'
+    else:
+        err 'failed'
+
+when load true:
+    ok value -> println value
+    err message -> println message
+```
+
+### Implemented Typed Parameters and Generic Type Expressions
+
+- **Function parameters**: `fn add x: int, y: int -> x + y`
+- **Variable declarations**: `name: str = 'hello'`
+- **Generic types**: `list[int]`, `dict[str, int]` parsed as type expressions
+- **Analyzer enforcement**: Call-site argument types are validated against declared parameter types; list literal elements are checked when assigning to `list[T]`
+- Files changed: `parser/parser.go`, `ast/ast.go`, `types/analyzer.go`, `codegen/codegen.go`
+
+### Standardized String Type to `str`
+
+- The type name is now `str` everywhere (removed `string` alias in the analyzer)
+- Updated grammar and examples in `grammar.md`
+
+### List Literal Disambiguation
+
+- **Old syntax**: `[1, 2, 3]` (ambiguous with indexing)
+- **New syntax**: `list [1, 2, 3]` (requires `list` keyword prefix)
+- Added `LIST` token to `token/token.go`
+- Updated parser in `expr.go` to require `list` keyword before bracket literals
+- Updated all test files: `test_lists.qrk`, `test_list_extras.qrk`, `test_member.qrk`, `test_method_call.qrk`, `test_typed_params.qrk`
+- Updated `grammar.md`
+
+### Test Results (All Passing)
+
+- test_hello.qrk
+- test_math.qrk
+- test_string.qrk
+- test_module.qrk
+- test_arrow.qrk
+- test_when_arrow.qrk
+- test_clean.qrk
+- test_features.qrk
+- test_for.qrk
+- test_lambda_debug.qrk
+- test_lambda_working.qrk
+- test_functions.qrk
+- test_add_collision.qrk
+- test_full.qrk
+- test_while.qrk
+- test_result_when.qrk
+- test_lists.qrk
+- test_list_extras.qrk
+- test_member.qrk
+- test_method_call.qrk
+- test_typed_params.qrk

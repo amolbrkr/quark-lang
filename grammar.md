@@ -46,7 +46,7 @@ Quark provides simple syntax for `struct` data types and custom behaviour implem
 ### Keywords (Reserved)
 
 ```
-use, module, struct, impl, tensor
+use, module, struct, impl, tensor, list
 in, and, or, not
 if, elseif, else, for, while, when
 fn, return
@@ -169,7 +169,7 @@ Accessor        ::= "." <ID>                                    // Member access
 list[0]         // First element
 list[-1]        // Last element
 list[-2]        // Second to last
-string[0]       // First character
+text[0]         // First character
 ```
 
 ### Basic Slicing `[start:end]`
@@ -298,7 +298,7 @@ ResultType      ::= "Result" [ "[" Type "]" ]
 ```quark
 fn find_user id: int -> Result[User]
 fn get_count -> Result[int]
-fn save_file path: string, data: string -> Result
+fn save_file path: str, data: str -> Result
 ```
 
 ## Function Definitions
@@ -333,7 +333,7 @@ fn greet name -> 'Hello, {name}!'
 // Single-line with type annotations
 fn add x: int, y: int -> x + y
 fn square n: float -> n * n
-fn format_user name: string, age: int -> 'Name: {name}, Age: {age}'
+fn format_user name: str, age: int -> 'Name: {name}, Age: {age}'
 
 // Multi-line function with types
 fn calculate
@@ -388,14 +388,14 @@ struct Point:
     y: float
 
 struct Config:
-    name: string
+    name: str
     port: int = 8080
     debug: bool = false
 
 struct Person:
-    name: string
+    name: str
     age: int
-    email: string
+    email: str
 ```
 
 ## Struct Literals
@@ -620,7 +620,7 @@ ResultExpr      ::= "ok" Expression
 
 UnwrapExpr      ::= "unwrap" Expression "," Expression
 
-ListLiteral     ::= "[" [ Expression { "," Expression } ] "]"
+ListLiteral     ::= "list" "[" [ Expression { "," Expression } ] "]"
 
 DictLiteral     ::= "{" [ DictPair { "," DictPair } ] "}"
 DictPair        ::= Expression ":" Expression
@@ -754,7 +754,7 @@ IndentedBlock   ::= <NEWLINE> <INDENT>
 
 ```
 Type            ::= BaseType
-BaseType        ::= "int" | "float" | "string" | "bool"
+BaseType        ::= "int" | "float" | "str" | "bool"
                 |   "list" [ "[" Type "]" ]
                 |   "dict" [ "[" Type "," Type "]" ]
                 |   "tensor" [ "[" Type "]" ]           // [FUTURE]
@@ -875,14 +875,14 @@ create_user 'alice', admin: true, active: true
 ### Data Processing with Error Handling
 
 ```quark
-fn load_csv path: string -> Result[list]
+fn load_csv path: str -> Result[list]
     if !file_exists path:
         err 'File not found: {path}'
     else:
         content = read_file path
         ok parse_csv content
 
-fn process_data path: string -> list
+fn process_data path: str -> list
     when load_csv path:
         err e -> 
             println 'Error: {e}'
@@ -904,12 +904,12 @@ err e:
 ### Using Unwrap
 
 ```quark
-fn get_config_value key: string, default: string -> string
+fn get_config_value key: str, default: str -> str
     config = unwrap load_config 'app.json', {}
     unwrap config[key], default
 
 // Chained unwraps
-fn process_user_data user_id: int -> string
+fn process_user_data user_id: int -> str
     user = unwrap find_user user_id, default_user
     profile = unwrap user.profile, default_profile
     unwrap profile.display_name, 'Anonymous'
@@ -934,14 +934,14 @@ fn get_page items: list, page: int, page_size: int -> list
 ### String Processing
 
 ```quark
-fn format_user user: User -> string
+fn format_user user: User -> str
     name = user.name
     age = user.age
     status = 'active' if user.active else 'inactive'
     
     'Name: {name}, Age: {age}, Status: {status}'
 
-fn truncate text: string, max_len: int, suffix: string = '...' -> string
+fn truncate text: str, max_len: int, suffix: str = '...' -> str
     if (len text) <= max_len:
         text
     else:
@@ -1008,7 +1008,7 @@ result = normalized @ weights + bias
 
 ```quark
 module io:
-    fn read_json path: string -> Result[dict]
+    fn read_json path: str -> Result[dict]
         if !file_exists path:
             err 'File not found: {path}'
         
@@ -1018,7 +1018,7 @@ module io:
             err e -> err 'Invalid JSON: {e}'
             ok data -> ok data
     
-    fn write_json path: string, data: dict -> Result
+    fn write_json path: str, data: dict -> Result
         content = to_json data
         when write_file path, content:
             err e -> err 'Write failed: {e}'

@@ -7,6 +7,7 @@
     { "include": "#strings" },
     { "include": "#function-definitions" },
     { "include": "#control-keywords" },
+    { "include": "#keyword-values" },
     { "include": "#constants" },
     { "include": "#operators" },
     { "include": "#types" },
@@ -63,11 +64,11 @@
       "patterns": [
         {
           "name": "keyword.control.quark",
-          "match": "\\b(if|else|elseif|for|while|when|in|use|module)\\b"
+          "match": "\\b(if|else|elseif|for|while|when|in|use|module|return)\\b"
         },
         {
           "name": "keyword.operator.logical.quark",
-          "match": "\\b(and|or)\\b"
+          "match": "\\b(and|or|not)\\b"
         },
         {
           "name": "storage.type.function.quark",
@@ -76,6 +77,18 @@
         {
           "name": "variable.language.wildcard.quark",
           "match": "\\b_\\b"
+        }
+      ]
+    },
+    "keyword-values": {
+      "patterns": [
+        {
+          "name": "keyword.declaration.quark",
+          "match": "\\b(dict|list|tensor)\\b"
+        },
+        {
+          "name": "keyword.other.result.quark",
+          "match": "\\b(ok|err)\\b"
         }
       ]
     },
@@ -123,7 +136,7 @@
       "patterns": [
         {
           "name": "support.type.quark",
-          "match": "\\b(int|float|string|bool)\\b"
+          "match": "\\b(int|float|str|bool|list|dict|any)\\b"
         }
       ]
     },
@@ -136,6 +149,14 @@
         {
           "name": "constant.numeric.integer.quark",
           "match": "\\b[0-9]+\\b"
+        }
+      ]
+    },
+    "identifiers": {
+      "patterns": [
+        {
+          "name": "variable.other.property.quark",
+          "match": "(?<=\\.)(length|size|empty|reverse|clear|pop|push|get|set|insert|remove|slice|concat|contains|startswith|endswith|replace|upper|lower|trim)\\b"
         }
       ]
     },

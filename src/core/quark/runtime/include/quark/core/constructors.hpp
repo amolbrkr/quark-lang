@@ -46,11 +46,12 @@ inline QValue qv_null() {
     return q;
 }
 
-// Function value constructor
+// Function value constructor - wraps raw pointer in a QClosure with 0 captures
 inline QValue qv_func(void* f) {
+    QClosure* cl = q_alloc_closure(f, 0);
     QValue q;
     q.type = QValue::VAL_FUNC;
-    q.data.func_val = f;
+    q.data.func_val = cl;
     return q;
 }
 

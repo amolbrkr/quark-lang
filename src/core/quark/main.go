@@ -203,6 +203,7 @@ func compile(filename string) (*codegen.Generator, error) {
 
 	// Code generation phase
 	gen := codegen.New()
+	gen.SetCaptures(analyzer.GetCaptures())
 	gen.Generate(ast)
 
 	return gen, nil
@@ -311,7 +312,12 @@ func runEmit(filename string) {
 		os.Exit(1)
 	}
 
+	// Run analyzer to compute closure captures
+	analyzer := types.NewAnalyzer()
+	analyzer.Analyze(ast)
+
 	gen := codegen.New()
+	gen.SetCaptures(analyzer.GetCaptures())
 	cCode := gen.Generate(ast)
 	fmt.Println(cCode)
 }
@@ -357,6 +363,7 @@ func runBuild(filename string, output string, useGC bool) {
 	}
 
 	gen := codegen.New()
+	gen.SetCaptures(analyzer.GetCaptures())
 	cCode := gen.Generate(ast)
 
 	// Write C++ code to temp file
@@ -450,6 +457,7 @@ func runRun(filename string, debug bool, useGC bool) {
 	}
 
 	gen := codegen.New()
+	gen.SetCaptures(analyzer.GetCaptures())
 	cCode := gen.Generate(ast)
 
 	// Determine file paths

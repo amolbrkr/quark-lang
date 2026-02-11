@@ -32,6 +32,7 @@ type Analyzer struct {
 	modules       map[string]*Module       // Track defined modules
 	currentModule string                   // Current module being defined (empty if global)
 	builtins      map[string]*builtinSignature
+	captures      map[*ast.TreeNode][]string // Lambda node → captured variable names
 }
 
 func NewAnalyzer() *Analyzer {
@@ -97,6 +98,7 @@ func NewAnalyzer() *Analyzer {
 		modules:       make(map[string]*Module),
 		currentModule: "",
 		builtins:      builtins,
+		captures:      make(map[*ast.TreeNode][]string),
 	}
 }
 
@@ -1013,6 +1015,45 @@ func (a *Analyzer) GetModules() map[string]*Module {
 	return a.modules
 }
 
+// GetCaptures returns the captured variable names for each lambda node
+func (a *Analyzer) GetCaptures() map[*ast.TreeNode][]string {
+	return a.captures
+}
+
+// collectFreeVars walks the AST body to find identifiers that are free variables
+// (not parameters, not builtins, not locally defined, but defined in an enclosing scope)
+func (a *Analyzer) collectFreeVars(node *ast.TreeNode, lambdaScope *Scope, params map[string]bool, seen map[string]bool, result *[]string) {
+	if node == nil {
+		return
+	}
+	if node.NodeType == ast.IdentifierNode {
+		name := node.TokenLiteral()
+		if name == "_" || params[name] || seen[name] {
+			return
+		}
+		if _, isBuiltin := a.builtins[name]; isBuiltin {
+			return
+		}
+		// Check: is it defined in the lambda's own scope? If so, not a capture
+		if lambdaScope.LookupLocal(name) != nil {
+			return
+		}
+		// It must come from a parent scope
+		if lambdaScope.Parent != nil && lambdaScope.Parent.Lookup(name) != nil {
+			seen[name] = true
+			*result = append(*result, name)
+		}
+		return
+	}
+	// Don't descend into nested lambdas — they compute their own captures
+	if node.NodeType == ast.LambdaNode {
+		return
+	}
+	for _, child := range node.Children {
+		a.collectFreeVars(child, lambdaScope, params, seen, result)
+	}
+}
+
 func (a *Analyzer) analyzeLambda(node *ast.TreeNode) Type {
 	if len(node.Children) < 2 {
 		a.addError("invalid lambda expression")
@@ -1025,9 +1066,10 @@ func (a *Analyzer) analyzeLambda(node *ast.TreeNode) Type {
 	// Create lambda scope
 	a.pushScope()
 
-	// Define parameters
+	// Define parameters and collect param names
 	paramSpecs := collectParamSpecs(argsNode)
 	paramTypes := make([]Type, 0, len(paramSpecs))
+	paramNames := make(map[string]bool)
 	for _, spec := range paramSpecs {
 		if spec.name == "" {
 			continue
@@ -1035,10 +1077,21 @@ func (a *Analyzer) analyzeLambda(node *ast.TreeNode) Type {
 		paramType := a.resolveTypeNode(spec.typeNode)
 		a.currentScope.Define(spec.name, paramType, true)
 		paramTypes = append(paramTypes, paramType)
+		paramNames[spec.name] = true
 	}
+
+	lambdaScope := a.currentScope
 
 	// Analyze body to infer return type
 	returnType := a.Analyze(bodyNode)
+
+	// Compute free variables (captured from enclosing scopes)
+	freeVars := []string{}
+	seen := map[string]bool{}
+	a.collectFreeVars(bodyNode, lambdaScope, paramNames, seen, &freeVars)
+	if len(freeVars) > 0 {
+		a.captures[node] = freeVars
+	}
 
 	a.popScope()
 

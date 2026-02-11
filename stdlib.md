@@ -10,11 +10,14 @@ This document describes the built-in functions available in Quark. All standard 
 |----------|-----------|-------------|
 | `print` | `any -> void` | Print value without newline |
 | `println` | `any -> void` | Print value with newline |
-| `input` | `-> string` | Read line from stdin |
+| `input` | `[prompt] -> string` | Read line from stdin; optional prompt string |
 
 ```quark
 println 'Hello, World!'
 name = input
+println name
+
+name = input 'Name: '
 println name
 ```
 
@@ -26,7 +29,7 @@ println name
 | `int` | `any -> int` | Convert to integer |
 | `float` | `any -> float` | Convert to float |
 | `bool` | `any -> bool` | Convert to boolean (truthiness) |
-| `len` | `string\|list -> int` | Get length of string or list |
+| `len` | `string\|list\|dict -> int` | Get length of string, list, or dict |
 
 ```quark
 str 42 | println           // '42'
@@ -35,6 +38,22 @@ float '3.14' | println     // 3.14
 bool 0 | println           // false
 bool 1 | println           // true
 len 'hello' | println      // 5
+
+dict { a: 1, b: 2 } | len | println  // 2
+```
+
+### Range
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `range` | `int -> list[int]` | Generate `[0, 1, ... end-1]` |
+| `range` | `int, int -> list[int]` | Generate `[start, ... end-1]` |
+| `range` | `int, int, int -> list[int]` | Generate `[start, start+step, ...]` |
+
+```quark
+range 5 | println          // [0, 1, 2, 3, 4]
+range 2, 5 | println       // [2, 3, 4]
+range 10, 0, -2 | println  // [10, 8, 6, 4, 2]
 ```
 
 ## List Functions
@@ -51,13 +70,14 @@ List operations backed by `std::vector<QValue>` for efficient data processing.
 | `remove` | `list, int -> any` | Remove and return item at index |
 | `slice` | `list, int, int -> list` | Get sublist [start:end) |
 | `reverse` | `list -> list` | Reverse list in place |
+| `concat` | `list, list -> list` | Concatenate two lists |
 | `len` | `list -> int` | Get number of items |
 
 ### Examples
 
 ```quark
-// Note: List literal syntax [1, 2, 3] is not yet implemented
-// Lists are created via runtime functions in generated code
+// List literals use the `list` keyword
+list = list [1, 2, 3]
 
 // Basic operations
 list = push list, 10
@@ -184,6 +204,7 @@ concat 'hello ', 'world' | println                  // hello world
 
 - All string functions return new strings (original is not modified)
 - `replace` replaces all occurrences, not just the first
+- `concat` also supports list + list and returns a list; mixed types return `null`
 - Empty string handling:
   - `upper ''` returns `''`
   - `trim ''` returns `''`
@@ -217,9 +238,8 @@ To add a new built-in function:
 
 1. **Add C++ implementation** in appropriate header under `runtime/include/quark/`
 2. **Regenerate runtime.hpp** by running `build_runtime.ps1`
-3. **Add function call handling** in `generateFunctionCall()`
-4. **Add pipe handling** in `generatePipe()` if it should work with pipes
-5. **Register type signature** in `types/analyzer.go` builtins map
+3. **Register the builtin mapping** in `src/core/quark/codegen/builtins.go`
+4. **Register type signature** in `src/core/quark/types/analyzer.go`
 
 Example C++ implementation pattern:
 ```cpp

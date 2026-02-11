@@ -31,6 +31,7 @@ type Generator struct {
 	declaredVars  map[string]bool   // Tracks declared variables to avoid redeclaration
 	scopeStack    []map[string]bool // Stack of variable scopes for nested blocks
 	embedRuntime  bool              // If true, embed full runtime; if false, use #include
+	captures      map[*ast.TreeNode][]string // Lambda node → captured variable names (from analyzer)
 }
 
 func New() *Generator {
@@ -42,6 +43,14 @@ func New() *Generator {
 		declaredVars: make(map[string]bool),
 		scopeStack:   make([]map[string]bool, 0),
 		embedRuntime: false, // Default: use #include instead of embedding
+		captures:     make(map[*ast.TreeNode][]string),
+	}
+}
+
+// SetCaptures passes the captured variable info from the analyzer to the generator
+func (g *Generator) SetCaptures(captures map[*ast.TreeNode][]string) {
+	if captures != nil {
+		g.captures = captures
 	}
 }
 
@@ -133,10 +142,11 @@ func (g *Generator) Generate(node *ast.TreeNode) string {
 	g.collectFunctions(node)
 
 	// Emit forward declarations with correct parameter counts
+	// All functions take QClosure* as hidden first parameter for closure support
 	for _, fd := range g.funcDecls {
-		params := make([]string, fd.paramCount)
-		for i := range params {
-			params[i] = "QValue"
+		params := []string{"QClosure*"}
+		for i := 0; i < fd.paramCount; i++ {
+			params = append(params, "QValue")
 		}
 		g.emitLine("QValue quark_%s(%s);", fd.name, strings.Join(params, ", "))
 	}
@@ -227,8 +237,8 @@ func (g *Generator) generateFunction(node *ast.TreeNode) {
 	g.inFunction = true
 	g.pushScope() // Create new scope for function
 
-	// Build parameter list and mark parameters as declared
-	params := make([]string, 0)
+	// Build parameter list: QClosure* _cl as hidden first param, then user params
+	params := []string{"QClosure* _cl"}
 	for _, param := range argsNode.Children {
 		paramName := g.paramName(param)
 		if paramName == "" {
@@ -518,8 +528,11 @@ func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
 	}
 
 	if isKnownFunc {
-		// User-defined function - call directly
-		return fmt.Sprintf("quark_%s(%s)", funcName, strings.Join(args, ", "))
+		// User-defined function - call directly with nullptr closure
+		if len(args) == 0 {
+			return fmt.Sprintf("quark_%s(nullptr)", funcName)
+		}
+		return fmt.Sprintf("quark_%s(nullptr, %s)", funcName, strings.Join(args, ", "))
 	}
 
 	// Otherwise, it might be a function value - use dynamic call
@@ -553,12 +566,25 @@ func (g *Generator) generatePipe(node *ast.TreeNode) string {
 	rightNode := node.Children[1]
 
 	if rightNode.NodeType == ast.IdentifierNode {
-		// Simple function name - call with input as argument
 		funcName := rightNode.TokenLiteral()
+		// Check builtins first
 		if result, ok := GenerateBuiltinCall(funcName, []string{input}); ok {
 			return result
 		}
-		return fmt.Sprintf("quark_%s(%s)", funcName, input)
+		// Check if it's a known user-defined function (direct call with nullptr closure)
+		isKnownFunc := false
+		for _, fd := range g.funcDecls {
+			if fd.name == funcName {
+				isKnownFunc = true
+				break
+			}
+		}
+		if isKnownFunc {
+			return fmt.Sprintf("quark_%s(nullptr, %s)", funcName, input)
+		}
+		// Otherwise it's a variable holding a function value — use dynamic call
+		funcExpr := sanitizeVarName(funcName)
+		return fmt.Sprintf("q_call1(%s, %s)", funcExpr, input)
 	} else if rightNode.NodeType == ast.FunctionCallNode {
 		// Function call - prepend input to arguments
 		if len(rightNode.Children) >= 2 {
@@ -575,7 +601,31 @@ func (g *Generator) generatePipe(node *ast.TreeNode) string {
 			if result, ok := GenerateBuiltinCall(funcName, args); ok {
 				return result
 			}
-			return fmt.Sprintf("quark_%s(%s)", funcName, strings.Join(args, ", "))
+
+			// Check if known user function
+			isKnownFunc := false
+			for _, fd := range g.funcDecls {
+				if fd.name == funcName {
+					isKnownFunc = true
+					break
+				}
+			}
+			if isKnownFunc {
+				return fmt.Sprintf("quark_%s(nullptr, %s)", funcName, strings.Join(args, ", "))
+			}
+
+			// Dynamic call for function values
+			funcExpr := g.generateExpr(funcNode)
+			switch len(args) {
+			case 1:
+				return fmt.Sprintf("q_call1(%s, %s)", funcExpr, args[0])
+			case 2:
+				return fmt.Sprintf("q_call2(%s, %s, %s)", funcExpr, args[0], args[1])
+			case 3:
+				return fmt.Sprintf("q_call3(%s, %s, %s, %s)", funcExpr, args[0], args[1], args[2])
+			default:
+				return fmt.Sprintf("q_call1(%s, %s)", funcExpr, args[0])
+			}
 		}
 	}
 
@@ -891,7 +941,21 @@ func (g *Generator) generateLambdaExpr(node *ast.TreeNode) string {
 		g.funcDecls = append(g.funcDecls, funcDecl{name: lambdaName, paramCount: paramCount})
 	}
 
-	// Return a function value wrapping the lambda
+	// Check if this lambda captures any variables
+	caps, hasCaps := g.captures[node]
+	if hasCaps && len(caps) > 0 {
+		// Emit closure allocation with captured values
+		clTemp := g.newTemp()
+		g.emitLine("QClosure* %s = q_alloc_closure((void*)quark_%s, %d);", clTemp, lambdaName, len(caps))
+		for i, capName := range caps {
+			g.emitLine("%s->captures[%d] = %s;", clTemp, i, sanitizeVarName(capName))
+		}
+		valTemp := g.newTemp()
+		g.emitLine("QValue %s; %s.type = QValue::VAL_FUNC; %s.data.func_val = %s;", valTemp, valTemp, valTemp, clTemp)
+		return valTemp
+	}
+
+	// No captures — use qv_func (allocates QClosure with 0 captures)
 	return fmt.Sprintf("qv_func((void*)quark_%s)", lambdaName)
 }
 
@@ -908,8 +972,8 @@ func (g *Generator) generateLambdaFunc(node *ast.TreeNode) {
 	g.currentFunc = lambdaName
 	g.pushScope() // Create new scope for lambda
 
-	// Build parameter list and mark parameters as declared
-	params := make([]string, 0)
+	// Build parameter list: QClosure* _cl as hidden first param, then user params
+	params := []string{"QClosure* _cl"}
 	for _, param := range argsNode.Children {
 		paramName := g.paramName(param)
 		if paramName == "" {
@@ -922,6 +986,15 @@ func (g *Generator) generateLambdaFunc(node *ast.TreeNode) {
 
 	g.emit("QValue quark_%s(%s) {\n", lambdaName, strings.Join(params, ", "))
 	g.indentLevel++
+
+	// Extract captured variables from closure
+	if caps, ok := g.captures[node]; ok {
+		for i, capName := range caps {
+			cName := sanitizeVarName(capName)
+			g.emitLine("QValue %s = _cl->captures[%d];", cName, i)
+			g.declaredVars[capName] = true
+		}
+	}
 
 	// Generate body - for lambdas, the body is a single expression
 	result := g.generateExpr(bodyNode)

@@ -1,5 +1,3 @@
-concat 'hello', 'world', 'amol here'
-| println
+nums = list ['lol']
 
-concat 'hello', 28
-| println
+'yes' if nums else 'no' | println

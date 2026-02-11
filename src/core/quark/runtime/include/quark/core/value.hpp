@@ -5,10 +5,11 @@
 #include <cstdlib>
 #include <vector>
 
-// Forward declaration
+// Forward declarations
 struct QValue;
 struct QResult;
 struct QDict;
+struct QClosure;
 
 // Type alias for list storage
 using QList = std::vector<QValue>;
@@ -39,12 +40,12 @@ struct QValue {
     } data;
 };
 
-// Function pointer types for dynamic calls (different arities)
-using QFunc0 = QValue (*)();
-using QFunc1 = QValue (*)(QValue);
-using QFunc2 = QValue (*)(QValue, QValue);
-using QFunc3 = QValue (*)(QValue, QValue, QValue);
-using QFunc4 = QValue (*)(QValue, QValue, QValue, QValue);
+// Function pointer types: all take QClosure* as hidden first parameter
+using QClFunc0 = QValue (*)(QClosure*);
+using QClFunc1 = QValue (*)(QClosure*, QValue);
+using QClFunc2 = QValue (*)(QClosure*, QValue, QValue);
+using QClFunc3 = QValue (*)(QClosure*, QValue, QValue, QValue);
+using QClFunc4 = QValue (*)(QClosure*, QValue, QValue, QValue, QValue);
 
 struct QResult {
     bool is_ok;

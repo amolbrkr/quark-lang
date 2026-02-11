@@ -4,6 +4,7 @@
 
 #include "../core/value.hpp"
 #include "../core/constructors.hpp"
+#include "closure.hpp"
 #include <cstdio>
 
 inline bool q_require_callable(const QValue& f) {
@@ -17,31 +18,36 @@ inline bool q_require_callable(const QValue& f) {
 // Call function value with 0 arguments
 inline QValue q_call0(QValue f) {
     if (!q_require_callable(f)) return qv_null();
-    return reinterpret_cast<QFunc0>(f.data.func_val)();
+    QClosure* cl = static_cast<QClosure*>(f.data.func_val);
+    return reinterpret_cast<QClFunc0>(cl->func)(cl);
 }
 
 // Call function value with 1 argument
 inline QValue q_call1(QValue f, QValue a) {
     if (!q_require_callable(f)) return qv_null();
-    return reinterpret_cast<QFunc1>(f.data.func_val)(a);
+    QClosure* cl = static_cast<QClosure*>(f.data.func_val);
+    return reinterpret_cast<QClFunc1>(cl->func)(cl, a);
 }
 
 // Call function value with 2 arguments
 inline QValue q_call2(QValue f, QValue a, QValue b) {
     if (!q_require_callable(f)) return qv_null();
-    return reinterpret_cast<QFunc2>(f.data.func_val)(a, b);
+    QClosure* cl = static_cast<QClosure*>(f.data.func_val);
+    return reinterpret_cast<QClFunc2>(cl->func)(cl, a, b);
 }
 
 // Call function value with 3 arguments
 inline QValue q_call3(QValue f, QValue a, QValue b, QValue c) {
     if (!q_require_callable(f)) return qv_null();
-    return reinterpret_cast<QFunc3>(f.data.func_val)(a, b, c);
+    QClosure* cl = static_cast<QClosure*>(f.data.func_val);
+    return reinterpret_cast<QClFunc3>(cl->func)(cl, a, b, c);
 }
 
 // Call function value with 4 arguments
 inline QValue q_call4(QValue f, QValue a, QValue b, QValue c, QValue d) {
     if (!q_require_callable(f)) return qv_null();
-    return reinterpret_cast<QFunc4>(f.data.func_val)(a, b, c, d);
+    QClosure* cl = static_cast<QClosure*>(f.data.func_val);
+    return reinterpret_cast<QClFunc4>(cl->func)(cl, a, b, c, d);
 }
 
 #endif // QUARK_TYPES_FUNCTION_HPP

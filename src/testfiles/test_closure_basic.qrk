@@ -1,0 +1,18 @@
+// Test basic closure: lambda capturing outer variable
+x = 10
+add_x = fn n -> n + x
+println 'add_x 5 (expect 15):'
+add_x 5 | println
+
+// Test closure with different captured value
+factor = 3
+scale = fn n -> n * factor
+println 'scale 7 (expect 21):'
+scale 7 | println
+
+// Test multiple captures
+a = 10
+b = 20
+sum_ab = fn x -> x + a + b
+println 'sum_ab 5 (expect 35):'
+sum_ab 5 | println

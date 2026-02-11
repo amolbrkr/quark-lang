@@ -2,70 +2,70 @@
 // Tests list creation, access, and manipulation
 
 // Test 1: Create empty list
-println 'Creating empty list'
+println('Creating empty list')
 empty = list []
-println 'Empty list length:'
-len empty | println
+println('Empty list length:')
+len(empty) | println()
 
 // Test 2: Create list with elements
-println 'Creating list [1, 2, 3]'
+println('Creating list [1, 2, 3]')
 nums = list [1, 2, 3]
-println 'List length:'
-len nums | println
+println('List length:')
+len(nums) | println()
 
 // Test 3: Access elements
-println 'Element at index 0:'
-nums[0] | println
-println 'Element at index 1:'
-nums[1] | println
-println 'Element at index 2:'
-nums[2] | println
+println('Element at index 0:')
+nums[0] | println()
+println('Element at index 1:')
+nums[1] | println()
+println('Element at index 2:')
+nums[2] | println()
 
 // Test 4: Push elements
-println 'Pushing 4 to list'
-nums = push nums, 4
-println 'New length:'
-len nums | println
-println 'Element at index 3:'
-nums[3] | println
+println('Pushing 4 to list')
+nums = push(nums, 4)
+println('New length:')
+len(nums) | println()
+println('Element at index 3:')
+nums[3] | println()
 
 // Test 5: Pop element
-println 'Popping last element:'
-pop nums | println
-println 'Length after pop:'
-len nums | println
+println('Popping last element:')
+pop(nums) | println()
+println('Length after pop:')
+len(nums) | println()
 
 // Test 6: Set element
-println 'Setting index 1 to 99'
-set nums, 1, 99
-println 'Element at index 1:'
-nums[1] | println
+println('Setting index 1 to 99')
+set(nums, 1, 99)
+println('Element at index 1:')
+nums[1] | println()
 
 // Test 7: Get function
-println 'Using get function for index 2:'
-get nums, 2 | println
+println('Using get function for index 2:')
+get(nums, 2) | println()
 
 // Test 8: List with different types
-println 'Creating mixed list'
+println('Creating mixed list')
 mixed = list [1, 'hello', 3.14, true]
-println 'Mixed list length:'
-len mixed | println
-println 'First element (int):'
-mixed[0] | println
-println 'Second element (string):'
-mixed[1] | println
-println 'Third element (float):'
-mixed[2] | println
-println 'Fourth element (bool):'
-mixed[3] | println
+println('Mixed list length:')
+len(mixed) | println()
+println('First element (int):')
+mixed[0] | println()
+println('Second element (string):')
+mixed[1] | println()
+println('Third element (float):')
+mixed[2] | println()
+println('Fourth element (bool):')
+mixed[3] | println()
 
 // Test 9: Nested access
-println 'Building list in loop'
+println('Building list in loop')
 result = list []
-for i in range 5:
-    result = push result, i * 2
-println 'Result list (0, 2, 4, 6, 8):'
-for i in range 5:
-    result[i] | println
+for i in range(5):
+    result = push(result, i * 2)
+println('Result list (0, 2, 4, 6, 8):')
+for i in range(5):
+    result[i] | println()
 
-println 'All list tests completed!'
+println('All list tests completed!')

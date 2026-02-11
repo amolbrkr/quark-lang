@@ -4,37 +4,37 @@
 info = dict { name: 'Alex', age: 30, active: true }
 
 // Dot access (key lookup)
-println info.name
-println info.age
-println info.active
+println(info.name)
+println(info.age)
+println(info.active)
 
 // Len
-println (len info)
+println(len(info))
 
 // Dot assignment
 info.name = 'James'
-println info.name
+println(info.name)
 
 // Add new key via dot assignment
 info.city = 'NYC'
-println info.city
+println(info.city)
 
 // Empty dict
 empty = dict {}
-println (len empty)
+println(len(empty))
 
 // Mixed value types
 data = dict { x: 1, y: 2.5, label: 'point' }
-println data.x
-println data.y
-println data.label
+println(data.x)
+println(data.y)
+println(data.label)
 
 // Dict in function
-fn get_name d -> d.name
-println (get_name info)
+fn get_name(d) -> d.name
+println(get_name(info))
 
 // Dict truthiness
 if info:
-    println 'has entries'
+    println('has entries')
 if !empty:
-    println 'empty dict is falsy'
+    println('empty dict is falsy')

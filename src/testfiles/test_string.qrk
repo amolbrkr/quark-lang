@@ -1,47 +1,47 @@
 // Test string module functions
 
-println 'Testing String Module'
-println '====================='
+println('Testing String Module')
+println('=====================')
 
 // upper and lower
-println 'upper(hello world):'
-upper 'hello world' | println
+println('upper(hello world):')
+upper('hello world') | println()
 
-println 'lower(HELLO WORLD):'
-lower 'HELLO WORLD' | println
+println('lower(HELLO WORLD):')
+lower('HELLO WORLD') | println()
 
 // trim
-println 'trim with spaces:'
-trim '  hello  ' | println
+println('trim with spaces:')
+trim('  hello  ') | println()
 
 // contains
-println 'contains(hello world, world):'
-contains 'hello world', 'world' | println
+println('contains(hello world, world):')
+contains('hello world', 'world') | println()
 
-println 'contains(hello world, xyz):'
-contains 'hello world', 'xyz' | println
+println('contains(hello world, xyz):')
+contains('hello world', 'xyz') | println()
 
 // startswith and endswith
-println 'startswith(hello world, hello):'
-startswith 'hello world', 'hello' | println
+println('startswith(hello world, hello):')
+startswith('hello world', 'hello') | println()
 
-println 'startswith(hello world, world):'
-startswith 'hello world', 'world' | println
+println('startswith(hello world, world):')
+startswith('hello world', 'world') | println()
 
-println 'endswith(hello world, world):'
-endswith 'hello world', 'world' | println
+println('endswith(hello world, world):')
+endswith('hello world', 'world') | println()
 
-println 'endswith(hello world, hello):'
-endswith 'hello world', 'hello' | println
+println('endswith(hello world, hello):')
+endswith('hello world', 'hello') | println()
 
 // replace
-println 'replace(hello world, world, quark):'
-replace 'hello world', 'world', 'quark' | println
+println('replace(hello world, world, quark):')
+replace('hello world', 'world', 'quark') | println()
 
 // concat
-println 'concat(hello, world):'
-concat 'hello ', 'world' | println
+println('concat(hello, world):')
+concat('hello ', 'world') | println()
 
 // Chained operations
-println 'Chained: trim, upper, replace:'
-'  hello world  ' | trim | upper | println
+println('Chained: trim, upper, replace:')
+'  hello world  ' | trim() | upper() | println()

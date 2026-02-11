@@ -1,2 +1,2 @@
 mysum = fn a, b -> a + b
-mysum 3, 4 | println
+mysum(3, 4) | println()

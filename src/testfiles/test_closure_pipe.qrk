@@ -1,11 +1,11 @@
 // Test closures with pipe operator
 factor = 2
-scale = fn x -> x * factor
-println 'pipe: 10 | scale (expect 20):'
-10 | scale | println
+scale = fn(x) -> x * factor
+println('pipe: 10 | scale (expect 20):')
+10 | scale() | println()
 
 // Pipe chain with closure
 offset = 100
-add_offset = fn x -> x + offset
-println 'pipe chain (expect 120):'
-10 | scale | add_offset | println
+add_offset = fn(x) -> x + offset
+println('pipe chain (expect 120):')
+10 | scale() | add_offset() | println()

@@ -1,19 +1,19 @@
 // Test arithmetic
 x = 10 + 5 * 2
-print x
+print(x)
 
 // Test for loop
-for i in range 5:
-    print i
+for i in range(5):
+    print(i)
 
 // Test if-else
 if x > 15:
-    print 'x is big'
+    print('x is big')
 else:
-    print 'x is small'
+    print('x is small')
 
 // Test function with pipe
-fn double n ->
+fn double(n) ->
     n * 2
 
-5 | double | print
+5 | double() | print()

@@ -794,43 +794,44 @@ func (a *Analyzer) analyzePipe(node *ast.TreeNode) Type {
 		return TypeAny
 	}
 
-	// Left side is the input
-	a.Analyze(node.Children[0])
+	// Left side is the input value
+	inputNode := node.Children[0]
+	a.Analyze(inputNode)
 
-	// Right side is the function (or function call)
+	// Right side must be an explicit function call
 	rightNode := node.Children[1]
-
-	// If the right side is a function call, the pipe injects one extra argument
-	// (the left side). Validate arity with that in mind.
-	if rightNode.NodeType == ast.FunctionCallNode && len(rightNode.Children) >= 2 {
-		funcNode := rightNode.Children[0]
-		argsNode := rightNode.Children[1]
-		funcExprType := a.Analyze(funcNode)
-		for _, arg := range argsNode.Children {
-			a.Analyze(arg)
-		}
-		pipeArgCount := len(argsNode.Children) + 1 // +1 for the piped input
-
-		if funcNode.NodeType == ast.IdentifierNode {
-			name := funcNode.TokenLiteral()
-			if sig, ok := a.builtins[name]; ok {
-				if pipeArgCount < sig.MinArgs || pipeArgCount > sig.MaxArgs {
-					a.errorAt(node, "builtin '%s' expects %d-%d arguments but got %d (including piped input)", name, sig.MinArgs, sig.MaxArgs, pipeArgCount)
-				}
-				return sig.Type.ReturnType
-			}
-		}
-
-		if funcType, ok := funcExprType.(*FunctionType); ok {
-			if pipeArgCount != len(funcType.ParamTypes) {
-				a.errorAt(node, "function expects %d arguments but got %d (including piped input)", len(funcType.ParamTypes), pipeArgCount)
-			}
-			return funcType.ReturnType
-		}
+	if rightNode.NodeType != ast.FunctionCallNode || len(rightNode.Children) < 2 {
+		a.errorAt(rightNode, "pipe target must be a function call; use f(...) or obj.method(...)")
 		return TypeAny
 	}
 
-	return a.Analyze(rightNode)
+	funcNode := rightNode.Children[0]
+	argsNode := rightNode.Children[1]
+	funcExprType := a.Analyze(funcNode)
+	for _, arg := range argsNode.Children {
+		a.Analyze(arg)
+	}
+
+	pipeArgCount := len(argsNode.Children) + 1 // +1 for the piped input
+
+	if funcNode.NodeType == ast.IdentifierNode {
+		name := funcNode.TokenLiteral()
+		if sig, ok := a.builtins[name]; ok {
+			if pipeArgCount < sig.MinArgs || pipeArgCount > sig.MaxArgs {
+				a.errorAt(node, "builtin '%s' expects %d-%d arguments but got %d (including piped input)", name, sig.MinArgs, sig.MaxArgs, pipeArgCount)
+			}
+			return sig.Type.ReturnType
+		}
+	}
+
+	if funcType, ok := funcExprType.(*FunctionType); ok {
+		if pipeArgCount != len(funcType.ParamTypes) {
+			a.errorAt(node, "function expects %d arguments but got %d (including piped input)", len(funcType.ParamTypes), pipeArgCount)
+		}
+		return funcType.ReturnType
+	}
+
+	return TypeAny
 }
 
 func (a *Analyzer) analyzeTernary(node *ast.TreeNode) Type {

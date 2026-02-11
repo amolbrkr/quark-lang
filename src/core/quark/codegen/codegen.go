@@ -28,9 +28,9 @@ type Generator struct {
 	lambdaCounter int
 	inFunction    bool
 	currentFunc   string
-	declaredVars  map[string]bool   // Tracks declared variables to avoid redeclaration
-	scopeStack    []map[string]bool // Stack of variable scopes for nested blocks
-	embedRuntime  bool              // If true, embed full runtime; if false, use #include
+	declaredVars  map[string]bool            // Tracks declared variables to avoid redeclaration
+	scopeStack    []map[string]bool          // Stack of variable scopes for nested blocks
+	embedRuntime  bool                       // If true, embed full runtime; if false, use #include
 	captures      map[*ast.TreeNode][]string // Lambda node → captured variable names (from analyzer)
 }
 
@@ -562,74 +562,52 @@ func (g *Generator) generatePipe(node *ast.TreeNode) string {
 	// Left side is input value
 	input := g.generateExpr(node.Children[0])
 
-	// Right side is function or function call
+	// Right side must be a function call
 	rightNode := node.Children[1]
-
-	if rightNode.NodeType == ast.IdentifierNode {
-		funcName := rightNode.TokenLiteral()
-		// Check builtins first
-		if result, ok := GenerateBuiltinCall(funcName, []string{input}); ok {
-			return result
-		}
-		// Check if it's a known user-defined function (direct call with nullptr closure)
-		isKnownFunc := false
-		for _, fd := range g.funcDecls {
-			if fd.name == funcName {
-				isKnownFunc = true
-				break
-			}
-		}
-		if isKnownFunc {
-			return fmt.Sprintf("quark_%s(nullptr, %s)", funcName, input)
-		}
-		// Otherwise it's a variable holding a function value — use dynamic call
-		funcExpr := sanitizeVarName(funcName)
-		return fmt.Sprintf("q_call1(%s, %s)", funcExpr, input)
-	} else if rightNode.NodeType == ast.FunctionCallNode {
-		// Function call - prepend input to arguments
-		if len(rightNode.Children) >= 2 {
-			funcNode := rightNode.Children[0]
-			argsNode := rightNode.Children[1]
-
-			funcName := funcNode.TokenLiteral()
-			args := []string{input}
-			for _, arg := range argsNode.Children {
-				args = append(args, g.generateExpr(arg))
-			}
-
-			// Built-in functions — lookup from centralized registry
-			if result, ok := GenerateBuiltinCall(funcName, args); ok {
-				return result
-			}
-
-			// Check if known user function
-			isKnownFunc := false
-			for _, fd := range g.funcDecls {
-				if fd.name == funcName {
-					isKnownFunc = true
-					break
-				}
-			}
-			if isKnownFunc {
-				return fmt.Sprintf("quark_%s(nullptr, %s)", funcName, strings.Join(args, ", "))
-			}
-
-			// Dynamic call for function values
-			funcExpr := g.generateExpr(funcNode)
-			switch len(args) {
-			case 1:
-				return fmt.Sprintf("q_call1(%s, %s)", funcExpr, args[0])
-			case 2:
-				return fmt.Sprintf("q_call2(%s, %s, %s)", funcExpr, args[0], args[1])
-			case 3:
-				return fmt.Sprintf("q_call3(%s, %s, %s, %s)", funcExpr, args[0], args[1], args[2])
-			default:
-				return fmt.Sprintf("q_call1(%s, %s)", funcExpr, args[0])
-			}
-		}
+	if rightNode.NodeType != ast.FunctionCallNode || len(rightNode.Children) < 2 {
+		// Analyzer should already report an error; fall back to evaluating the expression
+		return g.generateExpr(rightNode)
 	}
 
-	return g.generateExpr(rightNode)
+	// Function call - prepend input to arguments
+	funcNode := rightNode.Children[0]
+	argsNode := rightNode.Children[1]
+
+	funcName := funcNode.TokenLiteral()
+	args := []string{input}
+	for _, arg := range argsNode.Children {
+		args = append(args, g.generateExpr(arg))
+	}
+
+	// Built-in functions — lookup from centralized registry
+	if result, ok := GenerateBuiltinCall(funcName, args); ok {
+		return result
+	}
+
+	// Check if known user function
+	isKnownFunc := false
+	for _, fd := range g.funcDecls {
+		if fd.name == funcName {
+			isKnownFunc = true
+			break
+		}
+	}
+	if isKnownFunc {
+		return fmt.Sprintf("quark_%s(nullptr, %s)", funcName, strings.Join(args, ", "))
+	}
+
+	// Dynamic call for function values
+	funcExpr := g.generateExpr(funcNode)
+	switch len(args) {
+	case 1:
+		return fmt.Sprintf("q_call1(%s, %s)", funcExpr, args[0])
+	case 2:
+		return fmt.Sprintf("q_call2(%s, %s, %s)", funcExpr, args[0], args[1])
+	case 3:
+		return fmt.Sprintf("q_call3(%s, %s, %s, %s)", funcExpr, args[0], args[1], args[2])
+	default:
+		return fmt.Sprintf("q_call1(%s, %s)", funcExpr, args[0])
+	}
 }
 
 func (g *Generator) generateTernary(node *ast.TreeNode) string {

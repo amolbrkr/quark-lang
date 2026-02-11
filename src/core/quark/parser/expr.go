@@ -74,19 +74,6 @@ func (p *Parser) parseExpression(precedence ast.Precedence) *ast.TreeNode {
 			continue
 		}
 
-		// Check for function application (space operator)
-		if p.canStartExpression(p.curToken.Type) {
-			prec := p.curPrecedence()
-			// Only apply function application if:
-			// 1. We're at precedence that allows it
-			// 2. Next token is NOT an infix operator at current or higher precedence
-			infix := p.infixParseFn(p.curToken.Type)
-			if precedence <= ast.PrecApplication && (infix == nil || prec < precedence) {
-				left = p.parseFunctionApplication(left)
-				continue
-			}
-		}
-
 		// Check precedence for normal infix
 		if p.curPrecedence() < precedence {
 			break
@@ -117,18 +104,6 @@ func (p *Parser) isEndOfExpression() bool {
 		p.curToken.Type == token.RBRACE ||
 		p.curToken.Type == token.COLON ||
 		p.curToken.Type == token.EOF
-}
-
-func (p *Parser) canStartExpression(tokType token.TokenType) bool {
-	switch tokType {
-	case token.ID, token.INT, token.FLOAT, token.STRING,
-		token.LPAR,
-		token.UNDERSCORE, token.BANG, token.NOT, token.MINUS,
-		token.TRUE, token.FALSE, token.NULL, token.FN,
-		token.OK, token.ERR, token.LIST, token.DICT:
-		return true
-	}
-	return false
 }
 
 // Prefix parse functions
@@ -179,6 +154,8 @@ func (p *Parser) infixParseFn(t token.TokenType) func(*ast.TreeNode) *ast.TreeNo
 		return p.parseMemberAccess
 	case token.LBRACKET:
 		return p.parseIndexExpression
+	case token.LPAR:
+		return p.parseCallExpression
 	}
 	return nil
 }
@@ -396,26 +373,44 @@ func (p *Parser) parseIndexExpression(left *ast.TreeNode) *ast.TreeNode {
 	return node
 }
 
-func (p *Parser) parseFunctionApplication(funcExpr *ast.TreeNode) *ast.TreeNode {
-	node := ast.NewNode(ast.FunctionCallNode, nil)
-	node.AddChild(funcExpr)
+func (p *Parser) parseCallExpression(callee *ast.TreeNode) *ast.TreeNode {
+	callTok := p.curToken
+	p.nextToken() // skip '('
 
 	args := ast.NewNode(ast.ArgumentsNode, nil)
 
-	// Parse first argument at Term precedence to allow arithmetic
-	arg := p.parseExpression(ast.PrecTerm)
-	args.AddChild(arg)
-
-	// Handle additional comma-separated arguments
-	for p.curToken.Type == token.COMMA {
+	// Allow zero-argument calls like foo()
+	if p.curToken.Type == token.RPAR {
 		p.nextToken()
-		if p.canStartExpression(p.curToken.Type) {
-			arg := p.parseExpression(ast.PrecTerm)
-			args.AddChild(arg)
-		}
+		node := ast.NewNode(ast.FunctionCallNode, &callTok)
+		node.AddChildren(callee, args)
+		return node
 	}
 
-	node.AddChild(args)
+	// Parse comma-separated arguments until ')'
+	for {
+		arg := p.parseExpression(ast.PrecTernary)
+		if arg != nil {
+			args.AddChild(arg)
+		}
+
+		if p.curToken.Type == token.COMMA {
+			p.nextToken()
+			// Allow trailing comma before ')'
+			if p.curToken.Type == token.RPAR {
+				break
+			}
+			continue
+		}
+		break
+	}
+
+	if !p.expect(token.RPAR) {
+		return nil
+	}
+
+	node := ast.NewNode(ast.FunctionCallNode, &callTok)
+	node.AddChildren(callee, args)
 	return node
 }
 

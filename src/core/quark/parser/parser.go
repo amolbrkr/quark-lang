@@ -241,7 +241,22 @@ func (p *Parser) parseCallArguments() *ast.TreeNode {
 func (p *Parser) parseParameters() *ast.TreeNode {
 	node := ast.NewNode(ast.ArgumentsNode, nil)
 
-	for p.curToken.Type == token.ID {
+	if !p.expect(token.LPAR) {
+		return node
+	}
+
+	// Allow empty parameter list: fn () ->
+	if p.curToken.Type == token.RPAR {
+		p.nextToken()
+		return node
+	}
+
+	for {
+		if p.curToken.Type != token.ID {
+			p.addError("expected parameter name")
+			return node
+		}
+
 		paramTok := p.curToken
 		paramNode := ast.NewNode(ast.ParameterNode, &paramTok)
 		nameNode := ast.NewNode(ast.IdentifierNode, &paramTok)
@@ -260,9 +275,17 @@ func (p *Parser) parseParameters() *ast.TreeNode {
 
 		if p.curToken.Type == token.COMMA {
 			p.nextToken()
+			// Allow trailing comma before ')'
+			if p.curToken.Type == token.RPAR {
+				break
+			}
 			continue
 		}
 		break
+	}
+
+	if !p.expect(token.RPAR) {
+		return node
 	}
 
 	return node

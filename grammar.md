@@ -26,8 +26,8 @@ This grammar specification includes proper precedence and associativity rules. I
 
 Quark aims to be readable by minimizing punctuation:
 
-- Function calls use spaces: `print x` not `print(x)`
-- Parentheses only for grouping and nested calls
+- Function calls always use parentheses: `print(x)`
+- Parentheses are used for grouping and for function calls; avoid extra parens elsewhere
 - Indentation defines blocks
 
 ### Error Handling Philosophy
@@ -130,7 +130,7 @@ text[-1]        // Last character
 
 String indexing returns a 1-character string.
 
-For slicing, use the `slice` builtin: `slice list, 1, 3`
+For slicing, use the `slice` builtin: `slice(list, 1, 3)`
 
 ## Dict Literals
 
@@ -159,24 +159,24 @@ info = dict { name: 'Alex', age: 30, active: true }
 empty = dict {}
 
 // Dot access (reads dict key)
-println info.name          // Alex
-println info.age           // 30
+println(info.name)         // Alex
+println(info.age)          // 30
 
 // Dot assignment (sets dict key)
 info.name = 'James'
 info.city = 'NYC'          // adds new key
 
 // Properties
-println info.size          // number of entries
-println (len info)         // same as .size
+println(info.size)         // number of entries
+println(len(info))         // same as .size
 
 // Dict in function
-fn get_name d -> d.name
-println (get_name info)    // James
+fn get_name(d) -> d.name
+println(get_name(info))    // James
 
 // Dict truthiness (non-empty = true, empty = false)
 if info:
-    println 'has entries'
+    println('has entries')
 ```
 
 ### Dict Properties
@@ -190,7 +190,7 @@ if info:
 
 ```quark
 info = dict { a: 1, b: 2, c: 3 }
-println (len info)         // 3
+println(len(info))         // 3
 ```
 
 ## Error Handling with ok/err
@@ -209,7 +209,7 @@ ResultExpr      ::= "ok" Expression
 ### Examples
 
 ```quark
-fn divide a, b ->
+fn divide(a, b) ->
     if b == 0:
         err 'Division by zero'
     else:
@@ -224,8 +224,8 @@ Use `when` to handle both cases:
 result = divide 10, 2
 
 when result:
-    ok value -> println value
-    err msg -> println msg
+    ok value -> println(value)
+    err msg -> println(msg)
 ```
 
 ### Propagating Errors
@@ -233,24 +233,24 @@ when result:
 Functions propagate errors by returning them:
 
 ```quark
-fn full_pipeline path ->
+fn full_pipeline(path) ->
     when load_file path:
         err e -> err e
         ok content ->
             when parse content:
                 err e -> err e
-                ok data -> ok (transform data)
+                ok data -> ok (transform(data))
 ```
 
 ## Function Definitions
 
-Functions use `->` to separate parameters from body. Named functions are hoisted (available before their definition).
+Functions use `->` to separate parameters from body, and **parameter lists are always parenthesized**. Named functions are hoisted (available before their definition).
 
 ```
-FunctionDef     ::= "fn" <ID> Params "->" Expression
-                |   "fn" <ID> Params "->" <NEWLINE> <INDENT> Block <DEDENT>
+FunctionDef     ::= "fn" <ID> "(" [ ParamList ] ")" "->" Expression
+                |   "fn" <ID> "(" [ ParamList ] ")" "->" <NEWLINE> <INDENT> Block <DEDENT>
 
-Params          ::= { Param [ "," ] }
+ParamList       ::= Param { "," Param } [ "," ]
 
 Param           ::= <ID> [ ":" Type ]
 ```
@@ -259,21 +259,21 @@ Param           ::= <ID> [ ":" Type ]
 
 ```quark
 // Single-line functions
-fn double x -> x * 2
-fn add x, y -> x + y
+fn double(x) -> x * 2
+fn add(x, y) -> x + y
 
 // With type annotations
-fn add x: int, y: int -> x + y
-fn square n: float -> n * n
+fn add(x: int, y: int) -> x + y
+fn square(n: float) -> n * n
 
 // Multi-line function
-fn factorial n ->
+fn factorial(n) ->
     when n:
         0 or 1 -> 1
-        _ -> n * factorial (n - 1)
+        _ -> n * factorial(n - 1)
 
 // Function returning result
-fn safe_divide a, b ->
+fn safe_divide(a, b) ->
     if b == 0:
         err 'Division by zero'
     else:
@@ -282,24 +282,24 @@ fn safe_divide a, b ->
 
 ## Anonymous Functions (Lambdas)
 
-Lambdas are expressions — they can be passed as arguments, assigned to variables, or used inline.
+Lambdas are expressions — they can be passed as arguments, assigned to variables, or used inline. Parameter lists are parenthesized just like named functions.
 
 ```
-AnonFunction    ::= "fn" Params "->" Expression
+AnonFunction    ::= "fn" "(" [ ParamList ] ")" "->" Expression
 ```
 
 ### Examples
 
 ```quark
 // Assign lambda to variable
-double = fn x -> x * 2
+double = fn(x) -> x * 2
 
 // Pass lambda inline
-data | filter (fn x -> x > 0)
-data | map (fn row -> row * 2)
+data | filter(fn(x) -> x > 0)
+data | map(fn(row) -> row * 2)
 
 // With type annotations
-add = fn x: int, y: int -> x + y
+add = fn(x: int, y: int) -> x + y
 ```
 
 ## Struct Definitions [FUTURE]
@@ -340,8 +340,8 @@ UseStatement    ::= "use" <ID>
 
 ```quark
 module math:
-    fn square x -> x * x
-    fn cube x -> x * x * x
+    fn square(x) -> x * x
+    fn cube(x) -> x * x * x
 
 use math
 
@@ -381,9 +381,7 @@ Assignment      ::= ( <ID> | MemberAccess ) "=" Assignment
 
 TypedDecl       ::= <ID> ":" Type "=" Expression
 
-PipeExpr        ::= Ternary { "|" PipeTarget }
-PipeTarget      ::= <ID> [ Arguments ]
-                |   Access [ Arguments ]
+PipeExpr        ::= Ternary { "|" Call }
 
 Ternary         ::= LogicalOr [ "if" LogicalOr "else" Ternary ]
 
@@ -402,14 +400,18 @@ Multiplicative  ::= Exponent { ( "*" | "/" | "%" ) Exponent }
 Exponent        ::= Unary [ "**" Exponent ]
 
 Unary           ::= ( "!" | "-" ) Unary          // NO whitespace between operator and operand
-                |   Application
+                |   Call
 
-Application     ::= Access [ Arguments ]
+Call            ::= Postfix
 
-Access          ::= Primary { Accessor }
+Postfix         ::= Primary { Accessor | CallArgs }
+
+Access          ::= Primary { Accessor }            // Retained for clarity; Accessor is also used by Call
 
 Accessor        ::= "." <ID>                      // Member access
                 |   "[" Expression "]"             // Index
+
+CallArgs        ::= "(" [ Arguments ] ")"
 
 Primary         ::= <ID>
                 |   Literal
@@ -434,8 +436,7 @@ ListLiteral     ::= "list" "[" [ Expression { "," Expression } ] "]"
 DictLiteral     ::= "{" [ DictPair { "," DictPair } ] "}"
 DictPair        ::= Expression ":" Expression
 
-Arguments       ::= Arg { "," Arg }
-Arg             ::= Expression
+Arguments       ::= Expression { "," Expression }
 ```
 
 ## Control Flow
@@ -452,11 +453,11 @@ IfStatement     ::= "if" Expression ":" Block
 
 ```quark
 if x > 10:
-    println 'big'
+    println('big')
 elseif x > 5:
-    println 'medium'
+    println('medium')
 else:
-    println 'small'
+    println('small')
 ```
 
 ### When Statement (Pattern Matching)
@@ -484,8 +485,8 @@ when status:
     _ -> 'unknown'
 
 when result:
-    ok value -> process value
-    err msg -> println msg
+    ok value -> process(value)
+    err msg -> println(msg)
 
 when n:
     0 or 1 -> 1
@@ -501,14 +502,14 @@ ForLoop         ::= "for" <ID> "in" Expression ":" Block
 ### Examples
 
 ```quark
-for i in range 10:
-    println i
+for i in range(10):
+    println(i)
 
-for i in range 0, 100, 5:
-    println i
+for i in range(0, 100, 5):
+    println(i)
 
 for item in items:
-    process item
+    process(item)
 ```
 
 ### While Loop
@@ -521,7 +522,7 @@ WhileLoop       ::= "while" Expression ":" Block
 
 ```quark
 while x > 0:
-    println x
+    println(x)
     x = x - 1
 ```
 
@@ -554,8 +555,8 @@ TypeAnnotation  ::= <ID> ":" Type
 
 ```quark
 // Function parameter types
-fn add x: int, y: int -> x + y
-fn greet name: str -> println name
+fn add(x: int, y: int) -> x + y
+fn greet(name: str) -> println(name)
 
 // Typed variable declarations
 count: int = 0
@@ -567,8 +568,7 @@ items: list = list [1, 2, 3]
 
 | Precedence | Operators | Associativity | Rule |
 |------------|-----------|---------------|------|
-| 14 | `.` `[]` | Left | Access |
-| 13 | (space) | Left | Application |
+| 13 | `.` `[]` `()` | Left | Access/Call |
 | 12 | `**` | Right | Exponent |
 | 11 | `!` `-` (unary) | Right | Unary |
 | 10 | `*` `/` `%` | Left | Multiplicative |
@@ -586,24 +586,24 @@ items: list = list [1, 2, 3]
 
 ### Function Application
 
-1. **Space separates function from arguments**: `f x y` means `f(x, y)`
-2. **Comma groups arguments**: `f x, y, z` means `f(x, y, z)`
-3. **Parentheses required for nested calls**: `f (g x), y` means `f(g(x), y)`
-4. **Parentheses required for complex expressions**: `f (x + y)` passes sum to f
+1. **Calls always use parentheses**: `f()` or `f(a, b)`
+2. **Commas separate arguments inside the parens**
+3. **Nested calls are straightforward**: `f(g(x), y)`
+4. **Parenthesize complex arguments**: `calculate(a + b, c * d)`
 
 ```quark
-// Simple calls - no parens
-print x
-add x, y
-sqrt 16
+// Simple calls
+print(x)
+add(x, y)
+sqrt(16)
 
-// Nested calls - parens required
-print (double x)
-foo (bar x, y), z
-process (transform (load path))
+// Nested calls
+print(double(x))
+foo(bar(x, y), z)
+process(transform(load(path)))
 
-// Complex expressions - parens required
-calculate (a + b), (c * d)
+// Complex expressions as arguments
+calculate(a + b, c * d)
 ```
 
 ### Unary Operators and Whitespace
@@ -616,27 +616,27 @@ x = -5              // Negative five
 y = !flag           // Logical not
 
 // Function call with unary argument
-f -5                // f(-5) - function called with negative five
-process !ready      // process(!ready)
+f(-5)               // function called with negative five
+process(!ready)     // explicit call with unary argument
 
 // Binary subtraction (space on both sides)
 a - b               // a minus b (binary subtraction)
 x - 2               // x minus 2 (binary subtraction)
 
 // Function call vs subtraction disambiguation
-add a, -b           // add(a, -b) - second arg is negative b
-fact n - 1          // fact(n-1) - argument is n minus 1
+add(a, -b)          // second arg is negative b
+fact(n - 1)         // argument is n minus 1
 ```
 
 ### Pipe Operator
 
-The pipe passes the left-hand result as the **first argument** to the right:
+The pipe passes the left-hand result as the **first argument** to the right call. The pipe target must be an explicit call:
 
 ```quark
-x | f             // f(x)
-x | f y           // f(x, y)
-x | f y, z        // f(x, y, z)
-a | f | g | h     // h(g(f(a)))
+x | f()               // f(x)
+x | f(y)              // f(x, y)
+x | f(y, z)           // f(x, y, z)
+a | f() | g() | h()   // h(g(f(a)))
 ```
 
 ## Complete Examples
@@ -644,60 +644,60 @@ a | f | g | h     // h(g(f(a)))
 ### Data Processing with Error Handling
 
 ```quark
-fn load_csv path ->
-    if !file_exists path:
+fn load_csv(path) ->
+    if !file_exists(path):
         err 'File not found'
     else:
-        content = read_file path
-        ok parse_csv content
+        content = read_file(path)
+        ok parse_csv(content)
 
-fn process_data path ->
-    when load_csv path:
+fn process_data(path) ->
+    when load_csv(path):
         err e ->
-            println e
+            println(e)
             list []
         ok data ->
             data
-                | filter (fn row -> row > 0)
-                | map (fn row -> row * 2)
+                | filter(fn(row) -> row > 0)
+                | map(fn(row) -> row * 2)
 ```
 
 ### Factorial
 
 ```quark
-fn fact n ->
+fn fact(n) ->
     when n:
         0 or 1 -> 1
-        _ -> n * fact (n - 1)
+    _ -> n * fact(n - 1)
 
-fact 10 | println
+fact(10) | println()
 ```
 
 ### List Operations
 
 ```quark
 nums = list [10, 20, 30, 40, 50]
-reverse nums
+reverse(nums)
 
-for i in range (len nums):
-    print (get nums, i)
-    print ' '
-println ''
+for i in range(len(nums)):
+    print(get(nums, i))
+    print(' ')
+println('')
 
-s = slice nums, 1, 3
+s = slice(nums, 1, 3)
 ```
 
 ### Module with Functions
 
 ```quark
 module math:
-    fn square x -> x * x
-    fn cube x -> x * x * x
+    fn square(x) -> x * x
+    fn cube(x) -> x * x * x
 
 use math
 
-square 5 | println
-cube 3 | println
+square(5) | println()
+cube(3) | println()
 ```
 
 ### Tensor Operations [FUTURE]
@@ -730,8 +730,8 @@ result = normalized @ weights + bias
 | Ternary (`a if cond else b`) | Implemented |
 | While loops | Implemented |
 | For loops | Implemented |
-| Named functions (`fn name params -> body`) | Implemented |
-| Anonymous functions (`fn params -> expr`) | Implemented |
+| Named functions (`fn name(params) -> body`) | Implemented |
+| Anonymous functions (`fn(params) -> expr`) | Implemented |
 | Pattern matching (`when`) | Implemented |
 | Pipes (`\|`) | Implemented |
 | Modules (`module` / `use`) | Implemented |

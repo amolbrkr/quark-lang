@@ -127,8 +127,8 @@ go build -o quark .
 **High-Level + Native Performance:** Quark provides Python-like ergonomics with C++ performance:
 ```quark
 // Clean, readable syntax
-print msg
-data | transform | filter | save
+print(msg)
+data | transform() | filter() | save()
 
 // Compiles to optimized C++ with -O3
 // Uses std::vector for lists, SIMD auto-vectorization
@@ -144,11 +144,11 @@ data | transform | filter | save
 - Dicts backed by `std::unordered_map<std::string, QValue>`
 
 **Syntax Conventions:**
-- Function calls: `print x` (parentheses optional)
-- Nested calls require parens: `outer (inner x)`
-- Arithmetic binds tighter: `fact n - 1` parses as `fact(n-1)`
+- Function calls always use parentheses: `print(x)`
+- Nested calls: `outer(inner(x))`
+- Arithmetic binds tighter: `fact(n - 1)` parses as `fact(n-1)`
 - **Unary operators have no whitespace**: `-5` is negative five; `a - b` is subtraction; `a -b` is invalid
-  - `f -5` → function call with negative argument
+    - `f(-5)` → function call with negative argument
   - `a - b` → binary subtraction
   - Unary `-` and `!` must not have whitespace between operator and operand
 
@@ -176,7 +176,7 @@ Quark uses punctuation intentionally to convey semantic meaning:
 | List | `[1, 2, 3]` | `std::vector<QValue>*` |
 | Dict | `dict { a: 1 }` | `std::unordered_map<std::string, QValue>*` |
 | Tensor | `tensor [1, 2, 3]` | contiguous buffer (future) |
-| Function | `fn x -> x * 2` | function pointer |
+| Function | `fn(x) -> x * 2` | function pointer |
 | Result | `ok value` or `err msg` | tagged union (VAL_RESULT) |
 
 ### Runtime Value (QValue)
@@ -245,9 +245,9 @@ Quark supports a simple module system for organizing code.
 
 ```quark
 module math:
-    fn square n -> n * n
+    fn square(n) -> n * n
 
-    fn cube n -> n * n * n
+    fn cube(n) -> n * n * n
 ```
 
 ### Using Modules
@@ -256,8 +256,8 @@ module math:
 use math
 
 // All symbols from math are now available
-square 5 | println    // 25
-cube 3 | println      // 27
+square(5) | println()    // 25
+cube(3) | println()      // 27
 ```
 
 ### Implementation Details
@@ -315,15 +315,15 @@ Attach methods to structs using impl blocks. Methods receive `self` as first par
 
 ```quark
 impl Point:
-    fn distance self, other -> float
+    fn distance(self, other) -> float
         dx = self.x - other.x
         dy = self.y - other.y
-        sqrt (dx*dx + dy*dy)
+        sqrt(dx*dx + dy*dy)
 
-    fn scale self, factor -> Point
+    fn scale(self, factor) -> Point
         Point { x: self.x * factor, y: self.y * factor }
 
-    fn origin -> Point      // Static method (no self)
+    fn origin() -> Point      // Static method (no self)
         Point { x: 0.0, y: 0.0 }
 ```
 
@@ -335,8 +335,8 @@ Use dot notation to call methods:
 p1 = Point { x: 3.0, y: 4.0 }
 p2 = Point { x: 0.0, y: 0.0 }
 
-dist = p1.distance p2     // Instance method
-scaled = p1.scale 2.0
+dist = p1.distance(p2)     // Instance method
+scaled = p1.scale(2.0)
 
 origin = Point.origin     // Static method
 ```
@@ -352,13 +352,13 @@ Quark uses explicit Result types for error handling, similar to Rust but with si
 Functions that can fail return either `ok value` or `err message`:
 
 ```quark
-fn divide a, b -> Result
+fn divide(a, b) -> Result
     if b == 0:
         err 'Division by zero'
     else:
         ok a / b
 
-fn parse_int text -> Result[int]
+fn parse_int(text) -> Result[int]
     // ... parsing logic
     if valid:
         ok number
@@ -371,11 +371,11 @@ fn parse_int text -> Result[int]
 Use `when` with `ok` and `err` patterns:
 
 ```quark
-result = divide 10, 2
+result = divide(10, 2)
 
 when result:
-    ok value -> println 'Result: {value}'
-    err msg -> println 'Error: {msg}'
+    ok value -> println('Result: {value}')
+    err msg -> println('Error: {msg}')
 ```
 
 ### Try Statement
@@ -388,7 +388,7 @@ try:
     data = fetch_data config.url
     process data
 err e:
-    println 'Operation failed: {e}'
+    println('Operation failed: {e}')
     use_defaults
 ```
 
@@ -397,13 +397,13 @@ err e:
 Functions can propagate errors upward:
 
 ```quark
-fn full_pipeline path -> Result
-    when load_file path:
+fn full_pipeline(path) -> Result
+    when load_file(path):
         err e -> err e              // Propagate error
         ok content ->
-            when parse content:
+            when parse(content):
                 err e -> err e      // Propagate error
-                ok data -> ok (transform data)
+                ok data -> ok (transform(data))
 ```
 
 ### Unwrap Keyword
@@ -412,14 +412,14 @@ The `unwrap` keyword extracts values from Results with a required default for th
 
 ```quark
 // unwrap result, default_value
-value = unwrap divide 10, 2, 0          // Returns 5
-value = unwrap divide 10, 0, -1         // Returns -1 (division failed)
+value = unwrap(divide(10, 2), 0)          // Returns 5
+value = unwrap(divide(10, 0), -1)         // Returns -1 (division failed)
 
-user = unwrap find_user id, default_user
-port = unwrap parse_int port_str, 8080
+user = unwrap(find_user(id), default_user)
+port = unwrap(parse_int(port_str), 8080)
 
 // Chained unwraps
-name = unwrap (unwrap user.profile, default_profile).name, 'Anonymous'
+name = unwrap(unwrap(user.profile, default_profile).name, 'Anonymous')
 ```
 
 The default argument is **always required** - this forces explicit handling of error cases. If you want to crash on error, use pattern matching and call a panic function explicitly.
@@ -435,7 +435,7 @@ Built-in functions are implemented in the C runtime (in `codegen/codegen.go`) fo
 - `len` - Length of strings/lists
 - `input` - Read line from stdin
 - `str`, `int`, `float`, `bool` - Type conversion
-- `range` - Generate integer ranges: `range 10`, `range 1, 100`, `range 0, 100, 5`
+- `range` - Generate integer ranges: `range(10)`, `range(1, 100)`, `range(0, 100, 5)`
 
 ### Math Functions
 - `abs`, `min`, `max` - Basic math
@@ -529,15 +529,15 @@ Module {
 | `'hi'` | `qv_string("hi")` |
 | `x + y` | `q_add(x, y)` |
 | `x > y` | `q_gt(x, y)` |
-| `print x` | `q_print(x)` |
+| `print(x)` | `q_print(x)` |
 | `x = 5` | `QValue x = qv_int(5);` |
-| `fn foo n ->` | `QValue q_foo(QValue n) {` |
-| `x \| f` | `q_f(x)` |
-| `sqrt 16` | `q_sqrt(qv_int(16))` |
-| `upper 'hi'` | `q_upper(qv_string("hi"))` |
+| `fn foo(n) ->` | `QValue q_foo(QValue n) {` |
+| `x \| f()` | `q_f(x)` |
+| `sqrt(16)` | `q_sqrt(qv_int(16))` |
+| `upper('hi')` | `q_upper(qv_string("hi"))` |
 | `ok value` | `qv_ok(value)` |
 | `err msg` | `qv_err(msg)` |
-| `unwrap result, default` | `q_unwrap(result, default)` (planned) |
+| `unwrap(result, default)` | `q_unwrap(result, default)` (planned) |
 | `list [1, 2, 3]` | `qv_list_init({qv_int(1), qv_int(2), qv_int(3)})` |
 
 ### Runtime Functions
@@ -629,20 +629,20 @@ x = 10
 y = x + 5
 
 // Functions (using -> arrow operator)
-fn double n -> n * 2
+fn double(n) -> n * 2
 
-fn fact n ->
+fn fact(n) ->
     when n:
         0 or 1 -> 1
-        _ -> n * fact (n - 1)
+        _ -> n * fact(n - 1)
 
 // Control flow
 if x > 10:
-    println 'big'
+    println('big')
 elseif x > 5:
-    println 'medium'
+    println('medium')
 else:
-    println 'small'
+    println('small')
 
 // Pattern matching (using -> for results)
 when value:
@@ -650,8 +650,8 @@ when value:
     _ -> 'other'
 
 // Loops
-for i in range 10:
-    println i
+for i in range(10):
+    println(i)
 
 while x > 0:
     x = x - 1
@@ -660,7 +660,7 @@ while x > 0:
 result = a if condition else b
 
 // Pipes
-10 | double | println
+10 | double() | println()
 
 // Operators
 a + b, a - b, a * b, a / b, a % b, a ** b
@@ -669,35 +669,35 @@ a and b, a or b, !a
 
 // Modules
 module mymodule:
-    fn helper x -> x * 2
+    fn helper(x) -> x * 2
 
 use mymodule
-helper 5 | println
+helper(5) | println()
 
 // Lists (require `list` keyword)
 nums = list [1, 2, 3]
-push nums, 4
+push(nums, 4)
 
 // ok / err result values
-fn safe_div a, b ->
+fn safe_div(a, b) ->
     if b == 0:
         err 'division by zero'
     else:
         ok a / b
 
-when safe_div 10, 2:
-    ok value -> println value
-    err msg -> println msg
+when safe_div(10, 2):
+    ok value -> println(value)
+    err msg -> println(msg)
 
 // Typed parameters
-fn add x: int, y: int -> x + y
+fn add(x: int, y: int) -> x + y
 
 // Typed variables
 name: str = 'hello'
 nums: list = list [1, 2, 3]
 
 // Lambdas assigned to variables
-double = fn x -> x * 2
+double = fn(x) -> x * 2
 ```
 
 ### Future (Per grammar.md)
@@ -711,49 +711,49 @@ double = fn x -> x * 2
 ### Factorial
 
 ```quark
-fn fact n ->
+fn fact(n) ->
     when n:
         0 or 1 -> 1
-        _ -> n * fact (n - 1)
+    _ -> n * fact(n - 1)
 
-fact 10 | println
+fact(10) | println()
 ```
 
 ### Fibonacci
 
 ```quark
-fn fib n -> n if n <= 1 else fib (n - 1) + fib (n - 2)
+fn fib(n) -> n if n <= 1 else fib(n - 1) + fib(n - 2)
 
-for i in range 10:
-    fib i | println
+for i in range(10):
+    fib(i) | println()
 ```
 
 ### FizzBuzz
 
 ```quark
-for i in range 1, 101:
+for i in range(1, 101):
     if i % 15 == 0:
-        println 'FizzBuzz'
+        println('FizzBuzz')
     elseif i % 3 == 0:
-        println 'Fizz'
+        println('Fizz')
     elseif i % 5 == 0:
-        println 'Buzz'
+        println('Buzz')
     else:
-        println i
+        println(i)
 ```
 
 ### Using Standard Library
 
 ```quark
 // Math operations
-sqrt 16 | println           // 4
-abs (0 - 5) | println       // 5
-max 10, 20 | println        // 20
+sqrt(16) | println()           // 4
+abs(0 - 5) | println()         // 5
+max(10, 20) | println()        // 20
 
 // String operations
-upper 'hello' | println     // HELLO
-'  hi  ' | trim | println   // hi
-replace 'foo', 'o', 'a' | println  // faa
+upper('hello') | println()     // HELLO
+'  hi  ' | trim() | println()   // hi
+replace('foo', 'o', 'a') | println()  // faa
 ```
 
 ### Structs with Methods (Planned)
@@ -764,11 +764,11 @@ struct Rectangle:
     height: float
 
 impl Rectangle:
-    fn area self -> self.width * self.height
+    fn area(self) -> self.width * self.height
 
-    fn perimeter self -> 2 * (self.width + self.height)
+    fn perimeter(self) -> 2 * (self.width + self.height)
 
-    fn scale self, factor -> Result[Rectangle]
+    fn scale(self, factor) -> Result[Rectangle]
         if factor <= 0:
             err 'Scale factor must be positive'
         else:
@@ -778,54 +778,54 @@ impl Rectangle:
             }
 
 rect = Rectangle { width: 10.0, height: 5.0 }
-println (rect.area)
+println(rect.area)
 
-when rect.scale 2.0:
-    ok scaled -> println 'New area: {scaled.area}'
-    err msg -> println 'Error: {msg}'
+when rect.scale(2.0):
+    ok scaled -> println('New area: {scaled.area}')
+    err msg -> println('Error: {msg}')
 
 // Using unwrap with default
-scaled = unwrap rect.scale 2.0, rect   // Returns scaled or original on error
+scaled = unwrap(rect.scale(2.0), rect)   // Returns scaled or original on error
 ```
 
 ### Error Handling (Planned)
 
 ```quark
-fn load_csv path -> Result[list]
-    if !file_exists path:
+fn load_csv(path) -> Result[list]
+    if !file_exists(path):
         err 'File not found: {path}'
     else:
-        content = read_file path
-        ok parse_csv content
+        content = read_file(path)
+        ok parse_csv(content)
 
-fn process_data path ->
-    when load_csv path:
+fn process_data(path) ->
+    when load_csv(path):
         err e ->
-            println 'Error: {e}'
+            println('Error: {e}')
             []
         ok data ->
             data
-                | filter (fn row -> row['value'] > 0)
-                | map (fn row -> row['value'] * 2)
+                | filter(fn(row) -> row['value'] > 0)
+                | map(fn(row) -> row['value'] * 2)
 
 // With try statement
 try:
-    data = load_csv 'data.csv'
-    results = data | map transform | filter valid
-    save_csv results, 'output.csv'
+    data = load_csv('data.csv')
+    results = data | map(transform) | filter(valid)
+    save_csv(results, 'output.csv')
 err e:
-    println 'Pipeline failed: {e}'
+    println('Pipeline failed: {e}')
 
 // Using unwrap with defaults
-data = unwrap load_csv 'data.csv', []
-results = data | map transform | filter valid
+data = unwrap(load_csv('data.csv'), [])
+results = data | map(transform) | filter(valid)
 ```
 
 ## Conventions
 
 - **Arrow `->` for mapping** - Functions and pattern results use `->` (reads as "produces")
-  - `fn double x -> x * 2` (function produces result)
-  - `ok value -> process value` (pattern produces result)
+    - `fn double(x) -> x * 2` (function produces result)
+    - `ok value -> process(value)` (pattern produces result)
 - **Colon `:` for typing/containing** - Type annotations and block containers use `:`
   - `x: int` (x has type int)
   - `if condition:` (if contains block)
@@ -833,11 +833,11 @@ results = data | map transform | filter valid
 - **Unary operators have no whitespace** - `-5` (negative), `!flag` (not), `a - b` (subtraction)
 - **Use `elseif` not `elif`** - More English-like
 - **Single-quoted strings** - `'hello'` not `"hello"`
-- **Space for function calls** - `print x` not `print(x)`
-- **Pipe for chaining** - `x | f | g` not nested calls
+- **Parentheses for function calls** - `print(x)`
+- **Pipe for chaining** - `x | f()` or `x | f(y)` not nested calls
 - **Underscore for wildcard** - `_` in pattern matching
-- **Ranges use `range()` function** - `range 10`, `range 1, 100`, not `0..10`
-- **Unwrap requires default** - `unwrap result, default` forces explicit error handling
+- **Ranges use `range()` function** - `range(10)`, `range(1, 100)`, not `0..10`
+- **Unwrap requires default** - `unwrap(result, default)` forces explicit error handling
 - **Python-style indentation** - Blocks defined by indentation
 - **No bitwise operations** - High-level language focused on readability
 
@@ -848,7 +848,7 @@ results = data | map transform | filter valid
 ### Major Grammar Changes
 
 1. **Arrow Operator `->` Introduced**
-   - Replaces colon `:` in function definitions: `fn name params -> body`
+    - Replaces colon `:` in function definitions: `fn name(params) -> body`
    - Used in pattern matching results: `pattern -> result`
    - Semantically means "produces" or "maps to"
 
@@ -871,7 +871,7 @@ results = data | map transform | filter valid
 
 5. **Range Function (Not Operator)**
    - Removed `..` operator
-   - Use `range()` builtin: `range 10`, `range 1, 100`, `range 0, 100, 5`
+    - Use `range()` builtin: `range(10)`, `range(1, 100)`, `range(0, 100, 5)`
 
 6. **Tensor Type (Future)**
    - Native N-dimensional arrays for SIMD/GPU acceleration
@@ -879,7 +879,7 @@ results = data | map transform | filter valid
    - Homogeneous float64 data, contiguous memory layout
 
 7. **Typed Parameters in One-Line Functions**
-   - Single-line functions support type annotations: `fn add x: int, y: int -> x + y`
+    - Single-line functions support type annotations: `fn add(x: int, y: int) -> x + y`
 
 8. **Unary Operator Whitespace Rule**
    - Unary `-` and `!` must NOT have whitespace before operand
@@ -1282,7 +1282,7 @@ All core test files now work correctly:
 
 **Problem**: `generateBlock()` returns the last expression without emitting it (designed for function return values). When called from `generateFor()`, the returned value was discarded, causing the last (or only) statement in a for loop body to be silently dropped.
 
-**Example**: `for i in range 10: print i` would generate an empty loop body.
+**Example**: `for i in range(10): print(i)` would generate an empty loop body.
 
 **Fix**: Changed `generateFor()` to iterate block children directly (like `generateWhile()`) instead of delegating to `generateBlock()`, ensuring all statements are emitted.
 
@@ -1311,20 +1311,20 @@ Added full support for `ok` and `err` result values with pattern matching:
 
 Example:
 ```quark
-fn load flag ->
+fn load(flag) ->
     if flag:
         ok 'data loaded'
     else:
         err 'failed'
 
-when load true:
-    ok value -> println value
-    err message -> println message
+when load(true):
+    ok value -> println(value)
+    err message -> println(message)
 ```
 
 ### Implemented Typed Parameters
 
-- **Function parameters**: `fn add x: int, y: int -> x + y`
+- **Function parameters**: `fn add(x: int, y: int) -> x + y`
 - **Variable declarations**: `name: str = 'hello'`, `nums: list = list [1, 2, 3]`
 - Basic type annotations only (`int`, `float`, `str`, `bool`, `list`, `dict`). Generic type expressions (`list[int]`) have been removed.
 - Files changed: `parser/parser.go`, `ast/ast.go`, `types/analyzer.go`, `codegen/codegen.go`
@@ -1379,9 +1379,9 @@ Generic type annotations like `list[int]`, `dict[str, int]` have been removed. O
 - `types/types.go` `CanAssign()`: Added list/dict covariance so `list[any]` accepts `list[str]` etc.
 - Removed `checkListLiteralTypes()` from analyzer
 
-### Removed Form 2 Lambda (id = fn special case)
+### Removed Form 2 Lambda (id = fn(...) special case)
 
-The parser previously special-cased `id = fn params -> body` as a `FunctionNode` (Form 2). This was redundant with assigning a lambda expression to a variable. Now `double = fn x -> x * 2` parses as a normal assignment of a lambda expression.
+The parser previously special-cased `id = fn(params) -> body` as a `FunctionNode` (Form 2). This was redundant with assigning a lambda expression to a variable. Now `double = fn(x) -> x * 2` parses as a normal assignment of a lambda expression.
 
 **Changes**:
 - `parser/parser.go`: Removed Form 2 lookahead and special-case branch in `parseFunction()`

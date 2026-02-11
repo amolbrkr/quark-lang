@@ -13,12 +13,12 @@ This document describes the built-in functions available in Quark. All standard 
 | `input` | `[prompt] -> string` | Read line from stdin; optional prompt string |
 
 ```quark
-println 'Hello, World!'
-name = input
-println name
+println('Hello, World!')
+name = input()
+println(name)
 
-name = input 'Name: '
-println name
+name = input('Name: ')
+println(name)
 ```
 
 ### Type Conversion
@@ -32,14 +32,14 @@ println name
 | `len` | `string\|list\|dict -> int` | Get length of string, list, or dict |
 
 ```quark
-str 42 | println           // '42'
-int '123' | println        // 123
-float '3.14' | println     // 3.14
-bool 0 | println           // false
-bool 1 | println           // true
-len 'hello' | println      // 5
+str(42) | println()           // '42'
+int('123') | println()        // 123
+float('3.14') | println()     // 3.14
+bool(0) | println()           // false
+bool(1) | println()           // true
+len('hello') | println()      // 5
 
-dict { a: 1, b: 2 } | len | println  // 2
+dict { a: 1, b: 2 } | len() | println()  // 2
 ```
 
 ### Range
@@ -51,9 +51,9 @@ dict { a: 1, b: 2 } | len | println  // 2
 | `range` | `int, int, int -> list[int]` | Generate `[start, start+step, ...]` |
 
 ```quark
-range 5 | println          // [0, 1, 2, 3, 4]
-range 2, 5 | println       // [2, 3, 4]
-range 10, 0, -2 | println  // [10, 8, 6, 4, 2]
+range(5) | println()          // [0, 1, 2, 3, 4]
+range(2, 5) | println()       // [2, 3, 4]
+range(10, 0, -2) | println()  // [10, 8, 6, 4, 2]
 ```
 
 ## List Functions
@@ -80,23 +80,23 @@ List operations backed by `std::vector<QValue>` for efficient data processing.
 list = list [1, 2, 3]
 
 // Basic operations
-list = push list, 10
-list = push list, 20
-list = push list, 30
+list = push(list, 10)
+list = push(list, 20)
+list = push(list, 30)
 
-get list, 0 | println        // 10
-get list, -1 | println       // 30 (negative index)
+get(list, 0) | println()        // 10
+get(list, -1) | println()       // 30 (negative index)
 
 // Modify
-set list, 1, 99
-get list, 1 | println        // 99
+set(list, 1, 99)
+get(list, 1) | println()        // 99
 
 // Remove
-pop list | println           // 30
-len list | println           // 2
+pop(list) | println()           // 30
+len(list) | println()           // 2
 
 // Slice (returns new list)
-sublist = slice list, 0, 2
+sublist = slice(list, 0, 2)
 ```
 
 ### Notes
@@ -126,28 +126,28 @@ Mathematical operations implemented using C++'s math library.
 ```quark
 // Absolute value
 x = 0 - 5
-abs x | println            // 5
-abs 3.14 | println         // 3.14
+abs(x) | println()            // 5
+abs(3.14) | println()         // 3.14
 
 // Min and max
-min 10, 5 | println        // 5
-max 10, 5 | println        // 10
-min 3.5, 2.1 | println     // 2.1
+min(10, 5) | println()        // 5
+max(10, 5) | println()        // 10
+min(3.5, 2.1) | println()     // 2.1
 
 // Square root
-sqrt 16 | println          // 4
-sqrt 2 | println           // 1.41421
+sqrt(16) | println()          // 4
+sqrt(2) | println()           // 1.41421
 
 // Rounding
-floor 3.7 | println        // 3
-ceil 3.2 | println         // 4
-round 3.5 | println        // 4
-round 3.4 | println        // 3
+floor(3.7) | println()        // 3
+ceil(3.2) | println()         // 4
+round(3.5) | println()        // 4
+round(3.4) | println()        // 3
 
 // Chained operations
 x = 0 - 16
-x | abs | sqrt | println   // 4
-sqrt 10 | floor | println  // 3
+x | abs() | sqrt() | println()   // 4
+sqrt(10) | floor() | println()  // 3
 ```
 
 ### Notes
@@ -176,28 +176,28 @@ String manipulation functions implemented in C.
 
 ```quark
 // Case conversion
-upper 'hello world' | println     // HELLO WORLD
-lower 'HELLO WORLD' | println     // hello world
+upper('hello world') | println()     // HELLO WORLD
+lower('HELLO WORLD') | println()     // hello world
 
 // Whitespace
-trim '  hello  ' | println        // hello
+trim('  hello  ') | println()        // hello
 
 // Searching
-contains 'hello world', 'world' | println    // true
-contains 'hello world', 'xyz' | println      // false
+contains('hello world', 'world') | println()    // true
+contains('hello world', 'xyz') | println()      // false
 
-startswith 'hello world', 'hello' | println  // true
-startswith 'hello world', 'world' | println  // false
+startswith('hello world', 'hello') | println()  // true
+startswith('hello world', 'world') | println()  // false
 
-endswith 'hello world', 'world' | println    // true
-endswith 'hello world', 'hello' | println    // false
+endswith('hello world', 'world') | println()    // true
+endswith('hello world', 'hello') | println()    // false
 
 // Manipulation
-replace 'hello world', 'world', 'quark' | println  // hello quark
-concat 'hello ', 'world' | println                  // hello world
+replace('hello world', 'world', 'quark') | println()  // hello quark
+concat('hello ', 'world') | println()                  // hello world
 
 // Chaining
-'  hello world  ' | trim | upper | println   // HELLO WORLD
+'  hello world  ' | trim() | upper() | println()   // HELLO WORLD
 ```
 
 ### Notes
@@ -217,14 +217,14 @@ All functions work seamlessly with Quark's pipe operator:
 
 ```quark
 // Single argument functions pipe naturally
-'hello' | upper | println
+'hello' | upper() | println()
 
 // Multi-argument functions receive piped value as first argument
-'hello world' | replace 'world', 'quark' | println
-// Equivalent to: replace 'hello world', 'world', 'quark'
+'hello world' | replace('world', 'quark') | println()
+// Equivalent to: replace('hello world', 'world', 'quark')
 
 // Complex chains
-'  HELLO world  ' | trim | lower | replace 'world', 'quark' | println
+'  HELLO world  ' | trim() | lower() | replace('world', 'quark') | println()
 // Output: hello quark
 ```
 

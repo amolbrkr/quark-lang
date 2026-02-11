@@ -741,7 +741,7 @@ result = normalized @ weights + bias
 | Error handling (`ok` / `err` + `when`) | Implemented |
 | Type annotations on params (`x: int`) | Implemented |
 | Dict literals (`dict {k: v}`) | Implemented |
-| Dict member access (`d.key`, `d['key']`) | Implemented |
+| Dict member access (`d.key`) | Implemented |
 | Dict member assignment (`d.key = val`) | Implemented |
 | Structs / impl blocks | Future |
 | Tensor type | Future |

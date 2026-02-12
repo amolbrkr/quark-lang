@@ -1,6 +1,0 @@
-fn fact(n) ->
-    when n:
-        0 or 1 -> 1
-        _ -> n * fact(n - 1)
-
-fact(10) | print()

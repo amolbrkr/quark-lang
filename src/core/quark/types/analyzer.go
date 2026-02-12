@@ -78,6 +78,8 @@ func NewAnalyzer() *Analyzer {
 		{"remove", 2, 2, []Type{TypeAny, TypeInt}, TypeAny},
 		{"slice", 3, 3, []Type{TypeAny, TypeInt, TypeInt}, TypeAny},
 		{"reverse", 1, 1, []Type{TypeAny}, TypeAny},
+		{"dget", 2, 2, []Type{TypeAny, TypeAny}, TypeAny},
+		{"dset", 3, 3, []Type{TypeAny, TypeAny, TypeAny}, TypeAny},
 	}
 
 	builtins := make(map[string]*builtinSignature)

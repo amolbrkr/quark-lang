@@ -1,0 +1,16 @@
+// smoke_module_use.qrk
+// Covers: module/use + calling module-defined functions.
+
+println('== smoke: module/use ==')
+
+module math:
+    fn square(n) -> n * n
+    fn cube(n) -> n * n * n
+
+use math
+
+square(5) | println()    // 25
+cube(3) | println()      // 27
+
+// Ensure builtins still work in same file
+len('hello') | println() // 5

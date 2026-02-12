@@ -1,0 +1,41 @@
+// smoke_types.qrk
+// Covers: core value types + typed declarations + dict static/dynamic keys.
+
+println('== smoke: types ==')
+
+// Basic literals
+i = 42
+f = 3.14
+s = 'hello'
+b = true
+n = null
+
+println(i)
+println(f)
+println(s)
+println(b)
+println(n)
+
+// Typed declarations (parser/analyzer coverage)
+count: int = 3
+name: str = 'quark'
+xs: list = list [1, 2, 3]
+d: dict = dict { a: 1, b: 2 }
+
+println(count)
+println(name)
+println(len(xs))
+println(d.a)
+
+// Dict static key access
+d.c = 99
+println(d.c)
+
+// Dict dynamic key access via helpers
+keys = list ['a', 'b', 'c', 'missing']
+for k in keys:
+    println(dget(d, k))
+
+// Set dynamic key
+d = dset(d, 'z', 123)
+println(d.z)

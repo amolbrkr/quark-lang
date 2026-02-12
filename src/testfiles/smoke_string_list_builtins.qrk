@@ -1,0 +1,49 @@
+// smoke_string_list_builtins.qrk
+// Covers: string + list builtins (pipes + direct calls).
+
+println('== smoke: string/list builtins ==')
+
+// Strings
+upper('hello world') | println()
+lower('HELLO WORLD') | println()
+trim('  hello  ') | println()
+
+contains('hello world', 'world') | println()
+contains('hello world', 'xyz') | println()
+startswith('hello world', 'hello') | println()
+endswith('hello world', 'world') | println()
+
+replace('hello world', 'world', 'quark') | println()
+concat('hello ', 'world') | println()
+
+'  HELLO world  ' | trim() | lower() | replace('world', 'quark') | println()
+
+// Lists
+lst = list [10, 20, 30]
+len(lst) | println()
+
+// Indexing (includes negative index)
+get(lst, 0) | println()
+get(lst, -1) | println()
+get(lst, 999) | println()     // null
+
+// push/pop
+lst = push(lst, 40)
+pop(lst) | println()          // 40
+
+// set/insert/remove
+set(lst, 1, 99) | println()
+lst = insert(lst, 1, 55)
+remove(lst, 0) | println()
+
+// slice/reverse/concat
+slice(lst, 0, 2) | println()
+reverse(lst) | println()
+
+lst2 = list [1, 2]
+concat(lst, lst2) | println()
+
+// range
+range(5) | println()
+range(2, 7) | println()
+range(10, 0, -3) | println()

@@ -1,0 +1,76 @@
+// smoke_syntax.qrk
+// Covers: expressions/precedence, if/elseif/else, when, ternary, lambdas,
+// pipes, ok/err results, for/while.
+
+println('== smoke: syntax ==')
+
+// Arithmetic + precedence
+x = 1 + 2 * 3
+println(x)               // 7
+
+p = 2 ** 3 ** 2
+println(p)               // 512 (right associative)
+
+// Unary
+neg = -5
+println(neg)
+println(!false)
+
+// If/elseif/else
+if x < 0:
+    println('neg')
+elseif x == 7:
+    println('seven')
+else:
+    println('other')
+
+// Ternary
+label = 'big' if x > 5 else 'small'
+println(label)
+
+// When with or + wildcard
+when x:
+    0 -> println('zero')
+    7 or 8 -> println('seven or eight')
+    _ -> println('something else')
+
+// Functions + recursion
+fn fact(n) ->
+    when n:
+        0 or 1 -> 1
+        _ -> n * fact(n - 1)
+
+fact(6) | println()      // 720
+
+// Lambda + pipe
+inc = fn(x) -> x + 1
+5 | inc() | println()    // 6
+
+// for loop
+sum = 0
+for i in range(1, 6):
+    sum = sum + i
+println(sum)             // 15
+
+// while loop
+count = 3
+while count > 0:
+    println(count)
+    count = count - 1
+
+// ok/err results + when pattern binding
+fn safe_div(a, b) ->
+    if b == 0:
+        err 'division by zero'
+    else:
+        ok (a / b)
+
+r1 = safe_div(10, 2)
+when r1:
+    ok v -> println(v)
+    err e -> println(e)
+
+r2 = safe_div(10, 0)
+when r2:
+    ok v -> println(v)
+    err e -> println(e)

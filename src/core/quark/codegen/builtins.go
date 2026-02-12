@@ -58,6 +58,10 @@ var builtinRegistry = map[string]*BuiltinFunc{
 	"remove":  {CFunc: "q_remove", MinArgs: 2, MaxArgs: 2},
 	"slice":   {CFunc: "q_slice", MinArgs: 3, MaxArgs: 3},
 	"reverse": {CFunc: "q_reverse", MinArgs: 1, MaxArgs: 1},
+
+	// Dict helpers
+	"dget": {CFunc: "q_dget", MinArgs: 2, MaxArgs: 2},
+	"dset": {CFunc: "q_dset", MinArgs: 3, MaxArgs: 3},
 }
 
 // LookupBuiltin returns the builtin definition if name is a builtin, nil otherwise.

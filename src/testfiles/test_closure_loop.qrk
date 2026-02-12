@@ -1,6 +1,0 @@
-// Test closure in loop (capture-by-value semantics)
-factor = 3
-println('Scaled values (expect 3, 6, 9, 12, 15):')
-for i in range(1, 6):
-    scale = fn(x) -> x * factor
-    scale(i) | println()

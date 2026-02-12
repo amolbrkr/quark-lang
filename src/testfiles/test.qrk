@@ -1,3 +1,0 @@
-nums = list ['lol']
-
-'yes' if nums else 'no' | println()

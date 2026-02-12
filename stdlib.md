@@ -204,6 +204,7 @@ String manipulation functions implemented in C.
 | `endswith` | `string, string -> bool` | Check if ends with suffix |
 | `replace` | `string, string, string -> string` | Replace all occurrences |
 | `concat` | `string, string -> string` | Concatenate two strings |
+| `split` | `string, string -> list[string]` | Split string by separator |
 
 ### Examples
 
@@ -229,6 +230,11 @@ endswith('hello world', 'hello') | println()    // false
 replace('hello world', 'world', 'quark') | println()  // hello quark
 concat('hello ', 'world') | println()                  // hello world
 
+split('a,b,c', ',') | println()                       // ["a", "b", "c"]
+
+// With pipe
+'a,b,c' | split(',') | println()
+
 // Chaining
 '  hello world  ' | trim() | upper() | println()   // HELLO WORLD
 ```
@@ -238,6 +244,7 @@ concat('hello ', 'world') | println()                  // hello world
 - All string functions return new strings (original is not modified)
 - `replace` replaces all occurrences, not just the first
 - `concat` also supports list + list and returns a list; mixed types return `null`
+- `split` preserves empty fields (`,a,` becomes `['', 'a', '']`)
 - Empty string handling:
   - `upper ''` returns `''`
   - `trim ''` returns `''`

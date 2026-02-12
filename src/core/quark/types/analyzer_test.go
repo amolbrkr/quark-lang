@@ -41,3 +41,13 @@ func TestDictHelpers_BuiltinsRegistered(t *testing.T) {
 		t.Fatalf("unexpected type errors: %v", typeErrs)
 	}
 }
+
+func TestSplit_BuiltinRegistered(t *testing.T) {
+	_, _, parseErrs, typeErrs := testutil.Analyze("println(split('a,b', ','))\n")
+	if len(parseErrs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", parseErrs)
+	}
+	if len(typeErrs) > 0 {
+		t.Fatalf("unexpected type errors: %v", typeErrs)
+	}
+}

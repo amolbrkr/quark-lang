@@ -150,6 +150,7 @@ println(d.c)
 | **Types** | `str`, `int`, `float`, `bool`, `len` |
 | **Math** | `abs`, `min`, `max`, `sqrt`, `floor`, `ceil`, `round` |
 | **String** | `upper`, `lower`, `trim`, `contains`, `startswith`, `endswith`, `replace`, `concat` |
+| **String** | `upper`, `lower`, `trim`, `contains`, `startswith`, `endswith`, `replace`, `concat`, `split` |
 | **List** | `push`, `pop`, `get`, `set`, `insert`, `remove`, `slice`, `reverse`, `range` |
 | **Dict** | `dget`, `dset` |
 

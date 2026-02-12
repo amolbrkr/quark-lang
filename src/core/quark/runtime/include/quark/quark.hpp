@@ -36,6 +36,7 @@
 #include "builtins/conversion.hpp"
 #include "builtins/math.hpp"
 #include "builtins/dict.hpp"
+#include "builtins/strings.hpp"
 
 // Member access (must come after types and builtins)
 #include "ops/member.hpp"

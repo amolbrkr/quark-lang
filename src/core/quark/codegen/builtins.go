@@ -48,6 +48,7 @@ var builtinRegistry = map[string]*BuiltinFunc{
 	"endswith":   {CFunc: "q_endswith", MinArgs: 2, MaxArgs: 2},
 	"replace":    {CFunc: "q_replace", MinArgs: 3, MaxArgs: 3},
 	"concat":     {CFunc: "q_concat", MinArgs: 2, MaxArgs: 2},
+	"split":      {CFunc: "q_split", MinArgs: 2, MaxArgs: 2},
 
 	// List
 	"push":    {CFunc: "q_push", MinArgs: 2, MaxArgs: 2},

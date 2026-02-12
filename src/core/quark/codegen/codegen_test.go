@@ -32,3 +32,16 @@ func TestCodegen_EmitsDictHelpers(t *testing.T) {
 		t.Fatalf("expected codegen to call q_dget, cpp=\n%s", res.CPP)
 	}
 }
+
+func TestCodegen_EmitsSplit(t *testing.T) {
+	res := testutil.GenerateCPP("println(split('a,b', ','))\n")
+	if len(res.ParserErrors) > 0 {
+		t.Fatalf("unexpected parse errors: %v", res.ParserErrors)
+	}
+	if len(res.TypeErrors) > 0 {
+		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
+	}
+	if !strings.Contains(res.CPP, "q_split") {
+		t.Fatalf("expected codegen to call q_split, cpp=\n%s", res.CPP)
+	}
+}

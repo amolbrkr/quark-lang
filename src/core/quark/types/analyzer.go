@@ -70,6 +70,7 @@ func NewAnalyzer() *Analyzer {
 		{"endswith", 2, 2, []Type{TypeString, TypeString}, TypeBool},
 		{"replace", 3, 3, []Type{TypeString, TypeString, TypeString}, TypeString},
 		{"concat", 2, 2, []Type{TypeAny, TypeAny}, TypeAny},
+		{"split", 2, 2, []Type{TypeString, TypeString}, &ListType{ElementType: TypeString}},
 		{"push", 2, 2, []Type{TypeAny, TypeAny}, TypeAny},
 		{"pop", 1, 1, []Type{TypeAny}, TypeAny},
 		{"get", 2, 2, []Type{TypeAny, TypeInt}, TypeAny},

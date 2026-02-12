@@ -8,6 +8,22 @@ CMakeSettings.json
 CppProperties.json
 .claudetest_clean
 
+# C/C++/CMake build output folders (keep sources clean)
+**/build/
+**/build-*/
+**/build-tests/
+**/cmake-build-*/
+**/CMakeFiles/
+**/Testing/
+**/Debug/
+**/Release/
+**/RelWithDebInfo/
+**/MinSizeRel/
+**/x64/
+**/Win32/
+**/out/
+**/dist/
+
 # Generated files
 *.c
 hello

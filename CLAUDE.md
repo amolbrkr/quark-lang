@@ -28,7 +28,7 @@ quark-lang/
 │   │       │   └── builtins/   # io, conversion, math
 │   │       └── tests/          # Catch2 unit tests
 │   ├── legacy/            # Python implementation (reference only)
-│   └── testfiles/         # Test .qrk files for validation
+│   └── testfiles/         # Small set of .qrk smoke programs
 ├── CLAUDE.md              # This file - AI assistant guidance
 ├── stdlib.md              # Standard library documentation
 ```
@@ -119,7 +119,7 @@ go build -o quark .
 ./quark run file.qrk --debug       # Saves file.c for inspection
 
 # Testing
-./quark run ../../../src/testfiles/test_clean.qrk
+./quark run ../../../src/testfiles/smoke_syntax.qrk
 ```
 
 ## Core Language Design
@@ -907,10 +907,10 @@ go build -o quark .
 
 ```bash
 # Run from src/core/quark directory
-./quark run ../../../src/testfiles/test_clean.qrk
-./quark run ../../../src/testfiles/test_math.qrk
-./quark run ../../../src/testfiles/test_string.qrk
-./quark run ../../../src/testfiles/test_module.qrk
+./quark run ../../../src/testfiles/smoke_syntax.qrk
+./quark run ../../../src/testfiles/smoke_types.qrk
+./quark run ../../../src/testfiles/smoke_string_list_builtins.qrk
+./quark run ../../../src/testfiles/smoke_module_use.qrk
 
 # Debug mode (saves .c file)
 ./quark run test.qrk --debug

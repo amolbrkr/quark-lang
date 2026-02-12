@@ -107,6 +107,39 @@ sublist = slice(list, 0, 2)
 - `reverse` modifies the list in place
 - Out-of-bounds access returns `null`
 
+## Dict Functions
+
+Dicts are key-value maps backed by `std::unordered_map<std::string, QValue>`.
+
+### Static keys (dot access)
+
+Use dot access for static, identifier keys:
+
+```quark
+info = dict { name: 'Alex', age: 30 }
+println(info.name)      // 'Alex'
+info.city = 'NYC'
+```
+
+### Dynamic keys (variable/expression)
+
+If the key comes from a variable/expression, use these helpers:
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `dget` | `dict, any -> any` | Get value by key (key is converted to string); missing key returns `null` |
+| `dset` | `dict, any, any -> dict` | Set value by key (key is converted to string); returns the dict |
+
+```quark
+mydict = dict { a: 1, b: 2 }
+
+for item in list ['a', 'b', 'c']:
+  println(dget(mydict, item))
+
+mydict = dset(mydict, 'x', 99)
+println(mydict.x)   // 99
+```
+
 ## Math Functions
 
 Mathematical operations implemented using C++'s math library.

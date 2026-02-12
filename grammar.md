@@ -134,7 +134,9 @@ For slicing, use the `slice` builtin: `slice(list, 1, 3)`
 
 ## Dict Literals
 
-Dicts are key-value maps backed by `std::unordered_map<std::string, QValue>`. Keys are always identifiers (stored as strings internally).
+Dicts are key-value maps backed by `std::unordered_map<std::string, QValue>`.
+
+Dict literals always use the `dict` keyword and **identifier keys** (stored as strings internally):
 
 ```
 DictLiteral     ::= "dict" "{" [ DictEntries ] "}"
@@ -144,7 +146,10 @@ DictEntries     ::= DictEntry { "," DictEntry }
 DictEntry       ::= <ID> ":" Expression
 ```
 
-Dicts use **dot access** for reading and writing keys. Bracket indexing (`d['key']`) is not supported — use `d.key` instead.
+### Dict Access
+
+- **Static keys** use dot access: `d.key`
+- **Dynamic keys** (from variables/expressions) use builtins `dget(d, k)` and `dset(d, k, v)`
 
 ```
 DictAccess      ::= Expression "." <ID>                  // Read key
@@ -433,8 +438,11 @@ ResultExpr      ::= "ok" Expression
 
 ListLiteral     ::= "list" "[" [ Expression { "," Expression } ] "]"
 
-DictLiteral     ::= "{" [ DictPair { "," DictPair } ] "}"
-DictPair        ::= Expression ":" Expression
+DictLiteral     ::= "dict" "{" [ DictEntries ] "}"
+
+DictEntries     ::= DictEntry { "," DictEntry }
+
+DictEntry       ::= <ID> ":" Expression
 
 Arguments       ::= Expression { "," Expression }
 ```

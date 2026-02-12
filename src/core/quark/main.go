@@ -175,40 +175,6 @@ func printUsage() {
 	fmt.Println("  quark test.qrk                    # Shorthand for run")
 }
 
-func compile(filename string) (*codegen.Generator, error) {
-	content, err := os.ReadFile(filename)
-	if err != nil {
-		return nil, fmt.Errorf("error reading file: %w", err)
-	}
-
-	// Lexer phase
-	l := lexer.New(string(content))
-	tokens := l.Tokenize()
-
-	// Parser phase
-	p := parser.New(tokens)
-	ast := p.Parse()
-
-	if len(p.Errors()) > 0 {
-		return nil, fmt.Errorf("parser errors:\n  %s", strings.Join(p.Errors(), "\n  "))
-	}
-
-	// Type checking phase
-	analyzer := types.NewAnalyzer()
-	analyzer.Analyze(ast)
-
-	if len(analyzer.Errors()) > 0 {
-		return nil, fmt.Errorf("type errors:\n  %s", strings.Join(analyzer.Errors(), "\n  "))
-	}
-
-	// Code generation phase
-	gen := codegen.New()
-	gen.SetCaptures(analyzer.GetCaptures())
-	gen.Generate(ast)
-
-	return gen, nil
-}
-
 func runLexer(filename string) {
 	content, err := os.ReadFile(filename)
 	if err != nil {
@@ -315,6 +281,14 @@ func runEmit(filename string) {
 	// Run analyzer to compute closure captures
 	analyzer := types.NewAnalyzer()
 	analyzer.Analyze(ast)
+
+	if len(analyzer.Errors()) > 0 {
+		fmt.Fprintln(os.Stderr, "Type errors:")
+		for _, err := range analyzer.Errors() {
+			fmt.Fprintf(os.Stderr, "  %s\n", err)
+		}
+		os.Exit(1)
+	}
 
 	gen := codegen.New()
 	gen.SetCaptures(analyzer.GetCaptures())

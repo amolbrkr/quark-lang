@@ -32,6 +32,7 @@ type Generator struct {
 	scopeStack    []map[string]bool          // Stack of variable scopes for nested blocks
 	embedRuntime  bool                       // If true, embed full runtime; if false, use #include
 	captures      map[*ast.TreeNode][]string // Lambda node → captured variable names (from analyzer)
+	funcNames     map[string]bool            // Set of declared function names (for first-class funcs)
 }
 
 func New() *Generator {
@@ -44,6 +45,7 @@ func New() *Generator {
 		scopeStack:   make([]map[string]bool, 0),
 		embedRuntime: false, // Default: use #include instead of embedding
 		captures:     make(map[*ast.TreeNode][]string),
+		funcNames:    make(map[string]bool),
 	}
 }
 
@@ -182,6 +184,7 @@ func (g *Generator) collectFunctions(node *ast.TreeNode) {
 			argsNode := node.Children[1]
 			paramCount := len(argsNode.Children)
 			g.funcDecls = append(g.funcDecls, funcDecl{name: name, paramCount: paramCount})
+			g.funcNames[name] = true
 		}
 	case ast.LambdaNode:
 		// Assign a unique name to this lambda
@@ -377,6 +380,9 @@ func (g *Generator) generateIdentifier(node *ast.TreeNode) string {
 	if name == "_" {
 		return "qv_null()"
 	}
+	if g.funcNames[name] {
+		return fmt.Sprintf("qv_func((void*)quark_%s)", name)
+	}
 	return sanitizeVarName(name)
 }
 
@@ -493,6 +499,9 @@ func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
 		for _, arg := range argsNode.Children {
 			args = append(args, g.generateExpr(arg))
 		}
+		if len(args) > 2 {
+			panic(fmt.Sprintf("member call '%s' supports at most 2 arguments, got %d", methodName, len(args)))
+		}
 		switch len(args) {
 		case 0:
 			return fmt.Sprintf("q_member_get(%s, \"%s\")", obj, methodName)
@@ -549,8 +558,8 @@ func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
 	case 4:
 		return fmt.Sprintf("q_call4(%s, %s, %s, %s, %s)", funcExpr, args[0], args[1], args[2], args[3])
 	default:
-		// For more than 4 args, fall back to direct call (won't work for function values)
-		return fmt.Sprintf("quark_%s(%s)", funcName, strings.Join(args, ", "))
+		// For more than 4 args, fall back to direct call including hidden closure param
+		return fmt.Sprintf("quark_%s(nullptr, %s)", funcName, strings.Join(args, ", "))
 	}
 }
 

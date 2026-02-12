@@ -195,25 +195,6 @@ func (p *Parser) parseFunction() *ast.TreeNode {
 	return node
 }
 
-func (p *Parser) parseFunctionCall() *ast.TreeNode {
-	node := ast.NewNode(ast.FunctionCallNode, nil)
-
-	// Parse function name
-	if p.curToken.Type != token.ID {
-		p.addError("expected function name after @")
-		return nil
-	}
-	nameTok := p.curToken
-	nameNode := ast.NewNode(ast.IdentifierNode, &nameTok)
-	p.nextToken()
-
-	// Parse arguments
-	args := p.parseCallArguments()
-
-	node.AddChildren(nameNode, args)
-	return node
-}
-
 func (p *Parser) parseCallArguments() *ast.TreeNode {
 	node := ast.NewNode(ast.ArgumentsNode, nil)
 

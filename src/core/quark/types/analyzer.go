@@ -475,6 +475,14 @@ func (a *Analyzer) analyzeForLoop(node *ast.TreeNode) Type {
 	// Analyze iterable
 	iterType := a.Analyze(iterNode)
 
+	// Enforce list iteration to avoid runtime crashes on non-lists
+	if _, ok := iterType.(*ListType); !ok {
+		if !isUnknownType(iterType) {
+			a.errorAt(iterNode, "for loop expects list iterable, got %s", iterType.String())
+			return TypeVoid
+		}
+	}
+
 	// Create loop scope and define loop variable
 	a.pushScope()
 

@@ -148,7 +148,11 @@ Mathematical operations implemented using C++'s math library.
 |----------|-----------|-------------|
 | `abs` | `number -> number` | Absolute value |
 | `min` | `number, number -> number` | Minimum of two values |
+| `min` | `vector -> float` | Minimum element in vector |
 | `max` | `number, number -> number` | Maximum of two values |
+| `max` | `vector -> float` | Maximum element in vector |
+| `sum` | `vector -> float` | Sum of all vector elements |
+| `vadd_inplace` | `vector, number -> vector` | Add scalar to each vector element in place |
 | `sqrt` | `number -> float` | Square root |
 | `floor` | `float -> int` | Round down to integer |
 | `ceil` | `float -> int` | Round up to integer |
@@ -181,6 +185,16 @@ round(3.4) | println()        // 3
 x = 0 - 16
 x | abs() | sqrt() | println()   // 4
 sqrt(10) | floor() | println()  // 3
+
+// Vector reductions
+v = vector [1, 2, 3, 4]
+sum(v) | println()              // 10
+min(v) | println()              // 1
+max(v) | println()              // 4
+
+// Vector in-place scalar update
+vadd_inplace(v, 1)
+sum(v) | println()              // 14
 ```
 
 ### Notes

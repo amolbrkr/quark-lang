@@ -40,6 +40,7 @@ Quark uses explicit Result types with `ok`/`err` for fallible operations. Result
 
 ```
 use, module, tensor, list, dict
+vector
 in, and, or, not
 if, elseif, else, for, while, when
 fn, return
@@ -424,6 +425,7 @@ Primary         ::= <ID>
                 |   ResultExpr
                 |   "(" Expression ")"
                 |   ListLiteral
+                |   VectorLiteral
                 |   DictLiteral
                 |   TensorLiteral                  // [FUTURE]
 
@@ -437,6 +439,8 @@ ResultExpr      ::= "ok" Expression
                 |   "err" Expression
 
 ListLiteral     ::= "list" "[" [ Expression { "," Expression } ] "]"
+
+VectorLiteral   ::= "vector" "[" [ Expression { "," Expression } ] "]"   // 1D only in MVP
 
 DictLiteral     ::= "dict" "{" [ DictEntries ] "}"
 

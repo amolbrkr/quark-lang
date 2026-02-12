@@ -9,6 +9,7 @@
 - If/elseif/else, `when` pattern matching, `for`/`while` loops, and ternary expressions
 - Pipe operator for data-flow style calls
 - Lists backed by `std::vector<QValue>` with indexing
+- 1D float vectors with elementwise arithmetic and reductions (`sum`, `min`, `max`)
 - Dicts backed by `std::unordered_map<std::string, QValue>` with dot access
 - Builtins for I/O, math, strings, lists, and dict helpers
 - Modules and `use` as compile-time organization (single file)
@@ -129,6 +130,18 @@ first = nums[0]
 nums | push(4)
 ```
 
+### Vectors (MVP)
+
+```quark
+v = vector [1, 2, 3, 4]
+w = v + 1
+u = v * w
+
+println(sum(v))
+println(min(v))
+println(max(v))
+```
+
 ### Dicts
 
 ```quark
@@ -148,7 +161,7 @@ println(d.c)
 | --- | --- |
 | **I/O** | `print`, `println`, `input` |
 | **Types** | `str`, `int`, `float`, `bool`, `len` |
-| **Math** | `abs`, `min`, `max`, `sqrt`, `floor`, `ceil`, `round` |
+| **Math** | `abs`, `min`, `max`, `sum`, `sqrt`, `floor`, `ceil`, `round` |
 | **String** | `upper`, `lower`, `trim`, `contains`, `startswith`, `endswith`, `replace`, `concat` |
 | **String** | `upper`, `lower`, `trim`, `contains`, `startswith`, `endswith`, `replace`, `concat`, `split` |
 | **List** | `push`, `pop`, `get`, `set`, `insert`, `remove`, `slice`, `reverse`, `range` |

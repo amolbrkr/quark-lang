@@ -29,6 +29,7 @@ const (
 	TernaryNode
 	PipeNode
 	ListNode
+	VectorNode
 	DictNode
 	IndexNode
 	ResultNode
@@ -61,6 +62,7 @@ var nodeTypeNames = map[NodeType]string{
 	TernaryNode:         "Ternary",
 	PipeNode:            "Pipe",
 	ListNode:            "List",
+	VectorNode:          "Vector",
 	DictNode:            "Dict",
 	IndexNode:           "Index",
 	ResultNode:          "Result",

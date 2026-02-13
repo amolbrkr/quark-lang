@@ -32,8 +32,9 @@ var builtinRegistry = map[string]*BuiltinFunc{
 
 	// Math
 	"abs":   {CFunc: "q_abs", MinArgs: 1, MaxArgs: 1},
-	"min":   {CFunc: "q_min", MinArgs: 2, MaxArgs: 2},
-	"max":   {CFunc: "q_max", MinArgs: 2, MaxArgs: 2},
+	"min":   {CFunc: "q_min", MinArgs: 1, MaxArgs: 2},
+	"max":   {CFunc: "q_max", MinArgs: 1, MaxArgs: 2},
+	"sum":   {CFunc: "q_sum", MinArgs: 1, MaxArgs: 1},
 	"sqrt":  {CFunc: "q_sqrt", MinArgs: 1, MaxArgs: 1},
 	"floor": {CFunc: "q_floor", MinArgs: 1, MaxArgs: 1},
 	"ceil":  {CFunc: "q_ceil", MinArgs: 1, MaxArgs: 1},
@@ -63,6 +64,9 @@ var builtinRegistry = map[string]*BuiltinFunc{
 	// Dict helpers
 	"dget": {CFunc: "q_dget", MinArgs: 2, MaxArgs: 2},
 	"dset": {CFunc: "q_dset", MinArgs: 3, MaxArgs: 3},
+
+	// Vector helpers
+	"vadd_inplace": {CFunc: "q_vadd_inplace", MinArgs: 2, MaxArgs: 2},
 }
 
 // LookupBuiltin returns the builtin definition if name is a builtin, nil otherwise.

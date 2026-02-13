@@ -273,7 +273,7 @@ func (p *Parser) parseParameters() *ast.TreeNode {
 }
 
 func (p *Parser) parseTypeExpr() *ast.TreeNode {
-	if p.curToken.Type != token.ID && p.curToken.Type != token.LIST && p.curToken.Type != token.DICT {
+	if p.curToken.Type != token.ID && p.curToken.Type != token.LIST && p.curToken.Type != token.DICT && p.curToken.Type != token.VECTOR {
 		p.addError("expected type name")
 		return nil
 	}
@@ -320,6 +320,10 @@ func (p *Parser) parseIfStatement() *ast.TreeNode {
 
 	// Parse condition
 	condition := p.parseExpression(ast.PrecLowest)
+	if condition == nil {
+		p.addError("expected condition after 'if'")
+		return nil
+	}
 	node.AddChild(condition)
 
 	// Expect colon
@@ -335,6 +339,10 @@ func (p *Parser) parseIfStatement() *ast.TreeNode {
 	for p.curToken.Type == token.ELSEIF {
 		p.nextToken() // skip 'elseif'
 		elseifCondition := p.parseExpression(ast.PrecLowest)
+		if elseifCondition == nil {
+			p.addError("expected condition after 'elseif'")
+			return nil
+		}
 
 		if !p.expect(token.COLON) {
 			return nil
@@ -366,6 +374,10 @@ func (p *Parser) parseWhenStatement() *ast.TreeNode {
 
 	// Parse expression to match against
 	expr := p.parseExpression(ast.PrecLowest)
+	if expr == nil {
+		p.addError("expected expression after 'when'")
+		return nil
+	}
 	node.AddChild(expr)
 
 	// Expect colon
@@ -461,6 +473,10 @@ func (p *Parser) finishPatternNode(node *ast.TreeNode) *ast.TreeNode {
 
 	// Parse result expression
 	result := p.parseExpression(ast.PrecLowest)
+	if result == nil {
+		p.addError("expected expression after '->' in pattern")
+		return nil
+	}
 	node.AddChild(result)
 
 	return node
@@ -487,6 +503,10 @@ func (p *Parser) parseForLoop() *ast.TreeNode {
 
 	// Parse iterable expression
 	iterable := p.parseExpression(ast.PrecLowest)
+	if iterable == nil {
+		p.addError("expected iterable expression after 'in'")
+		return nil
+	}
 	node.AddChildren(varNode, iterable)
 
 	// Expect colon
@@ -508,6 +528,10 @@ func (p *Parser) parseWhileLoop() *ast.TreeNode {
 
 	// Parse condition
 	condition := p.parseExpression(ast.PrecLowest)
+	if condition == nil {
+		p.addError("expected condition after 'while'")
+		return nil
+	}
 	node.AddChild(condition)
 
 	// Expect colon

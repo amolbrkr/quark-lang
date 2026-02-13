@@ -64,6 +64,27 @@ func getGCPaths() (includePath string, libPath string) {
 	return gcInclude, gcLib
 }
 
+// getXsimdIncludePath returns the include path for vendored xsimd headers.
+// Expected location: deps/xsimd/include relative to project root.
+func getXsimdIncludePath() string {
+	exePath, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	exeDir := filepath.Dir(exePath)
+	projectRoot := filepath.Join(exeDir, "..", "..", "..")
+	xsimdInclude := filepath.Join(projectRoot, "deps", "xsimd", "include")
+	if _, err := os.Stat(xsimdInclude); err == nil {
+		return xsimdInclude
+	}
+	// Fallback: relative path from cwd
+	xsimdInclude = filepath.Join("deps", "xsimd", "include")
+	if _, err := os.Stat(xsimdInclude); err == nil {
+		return xsimdInclude
+	}
+	return ""
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		printUsage()
@@ -365,6 +386,9 @@ func runBuild(filename string, output string, useGC bool) {
 
 	// Build compilation arguments
 	args := []string{"-std=c++17", "-O3", "-march=native", includePath}
+	if xsimdInclude := getXsimdIncludePath(); xsimdInclude != "" {
+		args = append(args, fmt.Sprintf("-I%s", xsimdInclude))
+	}
 
 	// Add GC flags if enabled
 	if useGC {
@@ -473,6 +497,9 @@ func runRun(filename string, debug bool, useGC bool) {
 
 	// Build compilation arguments
 	args := []string{"-std=c++17", "-O3", "-march=native", includePath}
+	if xsimdInclude := getXsimdIncludePath(); xsimdInclude != "" {
+		args = append(args, fmt.Sprintf("-I%s", xsimdInclude))
+	}
 
 	// Add GC flags if enabled
 	if useGC {

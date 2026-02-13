@@ -56,8 +56,9 @@ func NewAnalyzer() *Analyzer {
 		{"bool", 1, 1, []Type{TypeAny}, TypeBool},
 		{"range", 1, 3, []Type{TypeAny, TypeAny, TypeAny}, TypeAny},
 		{"abs", 1, 1, []Type{TypeAny}, TypeAny},
-		{"min", 2, 2, []Type{TypeAny, TypeAny}, TypeAny},
-		{"max", 2, 2, []Type{TypeAny, TypeAny}, TypeAny},
+		{"min", 1, 2, []Type{TypeAny, TypeAny}, TypeAny},
+		{"max", 1, 2, []Type{TypeAny, TypeAny}, TypeAny},
+		{"sum", 1, 1, []Type{TypeAny}, TypeAny},
 		{"sqrt", 1, 1, []Type{TypeAny}, TypeFloat},
 		{"floor", 1, 1, []Type{TypeAny}, TypeInt},
 		{"ceil", 1, 1, []Type{TypeAny}, TypeInt},
@@ -81,6 +82,7 @@ func NewAnalyzer() *Analyzer {
 		{"reverse", 1, 1, []Type{TypeAny}, TypeAny},
 		{"dget", 2, 2, []Type{TypeAny, TypeAny}, TypeAny},
 		{"dset", 3, 3, []Type{TypeAny, TypeAny, TypeAny}, TypeAny},
+		{"vadd_inplace", 2, 2, []Type{TypeAny, TypeAny}, TypeAny},
 	}
 
 	builtins := make(map[string]*builtinSignature)
@@ -203,6 +205,8 @@ func (a *Analyzer) Analyze(node *ast.TreeNode) Type {
 		return a.analyzeTernary(node)
 	case ast.ListNode:
 		return a.analyzeList(node)
+	case ast.VectorNode:
+		return a.analyzeVector(node)
 	case ast.DictNode:
 		return a.analyzeDict(node)
 	case ast.IndexNode:
@@ -725,6 +729,26 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 	leftType := a.Analyze(node.Children[0])
 	rightType := a.Analyze(node.Children[1])
 
+	leftVec, leftIsVec := leftType.(*VectorType)
+	rightVec, rightIsVec := rightType.(*VectorType)
+
+	isNumericScalar := func(t Type) bool {
+		return t.Equals(TypeInt) || t.Equals(TypeFloat)
+	}
+
+	// Vector arithmetic (MVP): +, -, *, /
+	if op == token.PLUS || op == token.MINUS || op == token.MULTIPLY || op == token.DIVIDE {
+		if leftIsVec && rightIsVec {
+			return &VectorType{ElementType: MergeTypes(leftVec.ElementType, rightVec.ElementType)}
+		}
+		if leftIsVec && (isNumericScalar(rightType) || isUnknownType(rightType)) {
+			return leftType
+		}
+		if rightIsVec && (isNumericScalar(leftType) || isUnknownType(leftType)) {
+			return rightType
+		}
+	}
+
 	switch op {
 	case token.PLUS, token.MINUS, token.MULTIPLY, token.DIVIDE, token.MODULO, token.DOUBLESTAR:
 		if op == token.MODULO {
@@ -871,6 +895,22 @@ func (a *Analyzer) analyzeList(node *ast.TreeNode) Type {
 	}
 
 	return &ListType{ElementType: elemType}
+}
+
+func (a *Analyzer) analyzeVector(node *ast.TreeNode) Type {
+	if len(node.Children) == 0 {
+		return &VectorType{ElementType: TypeFloat}
+	}
+
+	for _, child := range node.Children {
+		childType := a.Analyze(child)
+		if !childType.Equals(TypeInt) && !childType.Equals(TypeFloat) && !isUnknownType(childType) {
+			a.errorAt(child, "vector elements must be numeric, got %s", childType.String())
+		}
+	}
+
+	// MVP vectors are float-based for SIMD runtime kernels.
+	return &VectorType{ElementType: TypeFloat}
 }
 
 func (a *Analyzer) analyzeDict(node *ast.TreeNode) Type {
@@ -1057,8 +1097,26 @@ func (a *Analyzer) collectFreeVars(node *ast.TreeNode, lambdaScope *Scope, param
 		}
 		return
 	}
-	// Don't descend into nested lambdas — they compute their own captures
+	// For nested lambdas: walk their body to find variables from OUR enclosing
+	// scope that they reference. We must capture those vars so nested lambdas
+	// can access them through our closure.
 	if node.NodeType == ast.LambdaNode {
+		// Merge our params with nested lambda's params — skip both
+		mergedParams := make(map[string]bool)
+		for k, v := range params {
+			mergedParams[k] = v
+		}
+		if len(node.Children) >= 1 {
+			for _, p := range node.Children[0].Children {
+				name := p.TokenLiteral()
+				if name != "" {
+					mergedParams[name] = true
+				}
+			}
+		}
+		if len(node.Children) >= 2 {
+			a.collectFreeVars(node.Children[1], lambdaScope, mergedParams, seen, result)
+		}
 		return
 	}
 	for _, child := range node.Children {
@@ -1198,6 +1256,8 @@ func (a *Analyzer) resolveTypeNode(node *ast.TreeNode) Type {
 		return &ListType{ElementType: TypeAny}
 	case "dict":
 		return &DictType{KeyType: TypeAny, ValueType: TypeAny}
+	case "vector":
+		return &VectorType{ElementType: TypeFloat}
 	default:
 		a.errorAt(node, "unknown type '%s'", name)
 		return TypeAny

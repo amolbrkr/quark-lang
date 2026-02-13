@@ -325,6 +325,8 @@ func (g *Generator) generateExpr(node *ast.TreeNode) string {
 		return g.generateWhile(node)
 	case ast.ListNode:
 		return g.generateList(node)
+	case ast.VectorNode:
+		return g.generateVector(node)
 	case ast.DictNode:
 		return g.generateDict(node)
 	case ast.IndexNode:
@@ -359,10 +361,13 @@ func (g *Generator) generateLiteral(node *ast.TreeNode) string {
 	case token.FLOAT:
 		return fmt.Sprintf("qv_float(%s)", node.Token.Literal)
 	case token.STRING:
-		// Escape the string properly
+		// Escape the string properly for C++ output
 		escaped := strings.ReplaceAll(node.Token.Literal, "\\", "\\\\")
 		escaped = strings.ReplaceAll(escaped, "\"", "\\\"")
 		escaped = strings.ReplaceAll(escaped, "\n", "\\n")
+		escaped = strings.ReplaceAll(escaped, "\t", "\\t")
+		escaped = strings.ReplaceAll(escaped, "\r", "\\r")
+		escaped = strings.ReplaceAll(escaped, "\x00", "\\0")
 		return fmt.Sprintf("qv_string(\"%s\")", escaped)
 	case token.TRUE:
 		return "qv_bool(true)"
@@ -499,9 +504,6 @@ func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
 		for _, arg := range argsNode.Children {
 			args = append(args, g.generateExpr(arg))
 		}
-		if len(args) > 2 {
-			panic(fmt.Sprintf("member call '%s' supports at most 2 arguments, got %d", methodName, len(args)))
-		}
 		switch len(args) {
 		case 0:
 			return fmt.Sprintf("q_member_get(%s, \"%s\")", obj, methodName)
@@ -510,7 +512,8 @@ func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
 		case 2:
 			return fmt.Sprintf("q_member_call2(%s, \"%s\", %s, %s)", obj, methodName, args[0], args[1])
 		default:
-			return fmt.Sprintf("q_member_call2(%s, \"%s\", %s, %s)", obj, methodName, args[0], args[1])
+			// Emit runtime error for unsupported arg count
+			return fmt.Sprintf("(fprintf(stderr, \"runtime error: member call '%s' supports at most 2 arguments, got %d\\n\"), qv_null())", methodName, len(args))
 		}
 	}
 
@@ -852,6 +855,18 @@ func (g *Generator) generateList(node *ast.TreeNode) string {
 	for _, child := range node.Children {
 		elem := g.generateExpr(child)
 		g.emitLine("%s = q_push(%s, %s);", temp, temp, elem)
+	}
+
+	return temp
+}
+
+func (g *Generator) generateVector(node *ast.TreeNode) string {
+	temp := g.newTemp()
+	g.emitLine("QValue %s = qv_vector(%d);", temp, len(node.Children))
+
+	for _, child := range node.Children {
+		elem := g.generateExpr(child)
+		g.emitLine("%s = q_vec_push(%s, %s);", temp, temp, elem)
 	}
 
 	return temp

@@ -73,6 +73,7 @@ const (
 	ERR
 	LIST
 	DICT
+	VECTOR
 	keyword_end
 )
 
@@ -141,6 +142,7 @@ var tokenNames = map[TokenType]string{
 	ERR:    "ERR",
 	LIST:   "LIST",
 	DICT:   "DICT",
+	VECTOR: "VECTOR",
 }
 
 func (t TokenType) String() string {
@@ -171,6 +173,7 @@ var keywords = map[string]TokenType{
 	"err":    ERR,
 	"list":   LIST,
 	"dict":   DICT,
+	"vector": VECTOR,
 }
 
 func LookupIdent(ident string) TokenType {

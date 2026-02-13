@@ -311,7 +311,9 @@ func (l *Lexer) nextRawToken() token.Token {
 		l.parenCount++
 		tok = newToken(token.LPAR, l.ch, tok.Line, tok.Column)
 	case ')':
-		l.parenCount--
+		if l.parenCount > 0 {
+			l.parenCount--
+		}
 		tok = newToken(token.RPAR, l.ch, tok.Line, tok.Column)
 	case '[':
 		tok = newToken(token.LBRACKET, l.ch, tok.Line, tok.Column)
@@ -461,23 +463,59 @@ func (l *Lexer) readNumber() (token.TokenType, string) {
 
 func (l *Lexer) readString() string {
 	l.readChar() // skip opening quote
-	position := l.position
+	var buf []byte
 
 	for {
 		if l.ch == '\'' || l.ch == 0 || l.ch == '\n' {
 			break
 		}
-		if l.ch == '\\' && l.peekChar() == '\'' {
-			l.readChar() // skip backslash
+		if l.ch == '\\' {
+			next := l.peekChar()
+			switch next {
+			case '\'':
+				buf = append(buf, '\'')
+				l.readChar() // skip backslash
+				l.readChar() // skip quote
+				continue
+			case 'n':
+				buf = append(buf, '\n')
+				l.readChar()
+				l.readChar()
+				continue
+			case 't':
+				buf = append(buf, '\t')
+				l.readChar()
+				l.readChar()
+				continue
+			case '\\':
+				buf = append(buf, '\\')
+				l.readChar()
+				l.readChar()
+				continue
+			case 'r':
+				buf = append(buf, '\r')
+				l.readChar()
+				l.readChar()
+				continue
+			case '0':
+				buf = append(buf, 0)
+				l.readChar()
+				l.readChar()
+				continue
+			default:
+				// Unknown escape: keep backslash and next char as-is
+				buf = append(buf, l.ch)
+			}
+		} else {
+			buf = append(buf, l.ch)
 		}
 		l.readChar()
 	}
 
-	str := l.input[position:l.position]
 	if l.ch == '\'' {
 		l.readChar() // skip closing quote
 	}
-	return str
+	return string(buf)
 }
 
 func newToken(tokenType token.TokenType, ch byte, line, col int) token.Token {

@@ -48,6 +48,22 @@ func (t *ListType) String() string {
 	return fmt.Sprintf("list[%s]", t.ElementType.String())
 }
 
+// VectorType represents a homogeneous numeric vector (MVP: float element type)
+type VectorType struct {
+	ElementType Type
+}
+
+func (t *VectorType) String() string {
+	return fmt.Sprintf("vector[%s]", t.ElementType.String())
+}
+
+func (t *VectorType) Equals(other Type) bool {
+	if o, ok := other.(*VectorType); ok {
+		return t.ElementType.Equals(o.ElementType)
+	}
+	return false
+}
+
 func (t *ListType) Equals(other Type) bool {
 	if o, ok := other.(*ListType); ok {
 		return t.ElementType.Equals(o.ElementType)
@@ -257,6 +273,15 @@ func CanAssign(dstType, srcType Type) bool {
 			}
 		}
 	}
+	// Vector covariance: vector[any] accepts vector[T]
+	if dstVec, ok := dstType.(*VectorType); ok {
+		if srcVec, ok := srcType.(*VectorType); ok {
+			if dstVec.ElementType.Equals(TypeAny) || srcVec.ElementType.Equals(TypeAny) {
+				return true
+			}
+			return CanAssign(dstVec.ElementType, srcVec.ElementType)
+		}
+	}
 	return dstType.Equals(srcType)
 }
 
@@ -306,6 +331,8 @@ func typeKey(t Type) string {
 		return "list[" + typeKey(v.ElementType) + "]"
 	case *DictType:
 		return "dict[" + typeKey(v.KeyType) + "," + typeKey(v.ValueType) + "]"
+	case *VectorType:
+		return "vector[" + typeKey(v.ElementType) + "]"
 	case *FunctionType:
 		params := make([]string, len(v.ParamTypes))
 		for i, p := range v.ParamTypes {

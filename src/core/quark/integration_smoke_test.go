@@ -133,6 +133,13 @@ func TestSmokePrograms_Run(t *testing.T) {
 				"99",
 				"null",
 				"123",
+				"[vector len=4]",
+				"4",
+				"[vector len=4]",
+				"[vector len=4]",
+				"10",
+				"1",
+				"4",
 			),
 		},
 		{

@@ -45,3 +45,29 @@ func TestCodegen_EmitsSplit(t *testing.T) {
 		t.Fatalf("expected codegen to call q_split, cpp=\n%s", res.CPP)
 	}
 }
+
+func TestCodegen_EmitsVectorLiteral(t *testing.T) {
+	res := testutil.GenerateCPP("v = vector [1, 2, 3]\n")
+	if len(res.ParserErrors) > 0 {
+		t.Fatalf("unexpected parse errors: %v", res.ParserErrors)
+	}
+	if len(res.TypeErrors) > 0 {
+		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
+	}
+	if !strings.Contains(res.CPP, "qv_vector") || !strings.Contains(res.CPP, "q_vec_push") {
+		t.Fatalf("expected codegen to emit vector construction helpers, cpp=\n%s", res.CPP)
+	}
+}
+
+func TestCodegen_EmitsVectorInplaceAdd(t *testing.T) {
+	res := testutil.GenerateCPP("v = vector [1, 2, 3]\nvadd_inplace(v, 1)\n")
+	if len(res.ParserErrors) > 0 {
+		t.Fatalf("unexpected parse errors: %v", res.ParserErrors)
+	}
+	if len(res.TypeErrors) > 0 {
+		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
+	}
+	if !strings.Contains(res.CPP, "q_vadd_inplace") {
+		t.Fatalf("expected codegen to call q_vadd_inplace, cpp=\n%s", res.CPP)
+	}
+}

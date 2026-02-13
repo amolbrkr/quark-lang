@@ -36,3 +36,15 @@ func TestIndentation_MissingIndentAfterColonYieldsIllegal(t *testing.T) {
 	}
 	t.Fatalf("expected ILLEGAL token with 'expected indented block', got=%v", toks)
 }
+
+func TestVectorKeyword_TokenizedAsKeyword(t *testing.T) {
+	src := "x = vector [1, 2, 3]\n"
+	toks := testutil.Lex(src)
+
+	for _, tok := range toks {
+		if tok.Type == token.VECTOR {
+			return
+		}
+	}
+	t.Fatalf("expected VECTOR token, got=%v", toks)
+}

@@ -61,3 +61,44 @@ func TestTernary_ParseOrder(t *testing.T) {
 		t.Fatalf("expected condition TRUE literal, got %v", expr.Children[0])
 	}
 }
+
+func TestVectorLiteral_ParseNode(t *testing.T) {
+	node, errs := testutil.Parse("v = vector [1, 2, 3]\n")
+	if len(errs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", errs)
+	}
+	if len(node.Children) != 1 {
+		t.Fatalf("expected 1 top-level node, got %d", len(node.Children))
+	}
+	assign := node.Children[0]
+	if assign.NodeType != ast.OperatorNode || assign.Token == nil || assign.Token.Type != token.EQUALS {
+		t.Fatalf("expected assignment node, got %v", assign)
+	}
+	if len(assign.Children) != 2 {
+		t.Fatalf("expected assignment children=2, got %d", len(assign.Children))
+	}
+	vec := assign.Children[1]
+	if vec.NodeType != ast.VectorNode {
+		t.Fatalf("expected VectorNode RHS, got %v", vec)
+	}
+	if len(vec.Children) != 3 {
+		t.Fatalf("expected vector literal length 3, got %d", len(vec.Children))
+	}
+}
+
+func TestTypedVectorDecl_Parse(t *testing.T) {
+	node, errs := testutil.Parse("v: vector = vector [1, 2]\n")
+	if len(errs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", errs)
+	}
+	if len(node.Children) != 1 || node.Children[0].NodeType != ast.VarDeclNode {
+		t.Fatalf("expected VarDeclNode, got %v", node.Children)
+	}
+}
+
+func TestVectorLiteral_RejectsSemicolonRows(t *testing.T) {
+	_, errs := testutil.Parse("vector [1, 2; 3, 4]\n")
+	if len(errs) == 0 {
+		t.Fatalf("expected parse error for semicolon row separators in vector literal")
+	}
+}

@@ -39,3 +39,18 @@ for k in keys:
 // Set dynamic key
 d = dset(d, 'z', 123)
 println(d.z)
+
+// Vector MVP (1D only)
+v = vector [1, 2, 3, 4]
+println(v)
+println(len(v))
+
+w = v + 1
+println(w)
+
+u = v * w
+println(u)
+
+println(sum(v))
+println(min(v))
+println(max(v))

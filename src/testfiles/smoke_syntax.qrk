@@ -47,10 +47,10 @@ inc = fn(x) -> x + 1
 5 | inc() | println()    // 6
 
 // for loop
-sum = 0
+total = 0
 for i in range(1, 6):
-    sum = sum + i
-println(sum)             // 15
+    total = total + i
+println(total)             // 15
 
 // while loop
 count = 3

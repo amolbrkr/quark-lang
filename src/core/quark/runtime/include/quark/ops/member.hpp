@@ -67,8 +67,8 @@ inline QValue q_member_get(QValue obj, const char* member) {
     }
 
     // Unsupported type
-    const char* type_names[] = {"int", "float", "string", "bool", "null", "list", "dict", "func", "result"};
-    const char* type_name = (obj.type >= 0 && obj.type <= 8) ? type_names[obj.type] : "unknown";
+    const char* type_names[] = {"int", "float", "string", "bool", "null", "list", "vector", "dict", "func", "result"};
+    const char* type_name = (obj.type >= 0 && obj.type <= 9) ? type_names[obj.type] : "unknown";
     fprintf(stderr, "runtime error: type '%s' has no member '%s'\n", type_name, member);
     return qv_null();
 }
@@ -101,8 +101,8 @@ inline QValue q_member_call1(QValue obj, const char* method, QValue arg1) {
         return qv_null();
     }
 
-    const char* type_names[] = {"int", "float", "string", "bool", "null", "list", "dict", "func", "result"};
-    const char* type_name = (obj.type >= 0 && obj.type <= 8) ? type_names[obj.type] : "unknown";
+    const char* type_names[] = {"int", "float", "string", "bool", "null", "list", "vector", "dict", "func", "result"};
+    const char* type_name = (obj.type >= 0 && obj.type <= 9) ? type_names[obj.type] : "unknown";
     fprintf(stderr, "runtime error: type '%s' has no method '%s'\n", type_name, method);
     return qv_null();
 }
@@ -130,8 +130,8 @@ inline QValue q_member_call2(QValue obj, const char* method, QValue arg1, QValue
         return qv_null();
     }
 
-    const char* type_names[] = {"int", "float", "string", "bool", "null", "list", "dict", "func", "result"};
-    const char* type_name = (obj.type >= 0 && obj.type <= 8) ? type_names[obj.type] : "unknown";
+    const char* type_names[] = {"int", "float", "string", "bool", "null", "list", "vector", "dict", "func", "result"};
+    const char* type_name = (obj.type >= 0 && obj.type <= 9) ? type_names[obj.type] : "unknown";
     fprintf(stderr, "runtime error: type '%s' has no method '%s'\n", type_name, method);
     return qv_null();
 }

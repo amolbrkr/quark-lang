@@ -73,10 +73,12 @@
 #include <cstdlib>
 #include <vector>
 
-// Forward declaration
+// Forward declarations
 struct QValue;
 struct QResult;
 struct QDict;
+struct QClosure;
+struct QVector;
 
 // Type alias for list storage
 using QList = std::vector<QValue>;
@@ -90,6 +92,7 @@ struct QValue {
         VAL_BOOL,
         VAL_NULL,
         VAL_LIST,
+        VAL_VECTOR,
         VAL_DICT,
         VAL_FUNC,
         VAL_RESULT
@@ -101,18 +104,19 @@ struct QValue {
         char* string_val;
         bool bool_val;
         QList* list_val;    // std::vector<QValue>* - automatic memory management
+        QVector* vector_val; // homogeneous float64 vector
         QDict* dict_val;    // std::unordered_map<std::string, QValue>*
         void* func_val;
         QResult* result_val;
     } data;
 };
 
-// Function pointer types for dynamic calls (different arities)
-using QFunc0 = QValue (*)();
-using QFunc1 = QValue (*)(QValue);
-using QFunc2 = QValue (*)(QValue, QValue);
-using QFunc3 = QValue (*)(QValue, QValue, QValue);
-using QFunc4 = QValue (*)(QValue, QValue, QValue, QValue);
+// Function pointer types: all take QClosure* as hidden first parameter
+using QClFunc0 = QValue (*)(QClosure*);
+using QClFunc1 = QValue (*)(QClosure*, QValue);
+using QClFunc2 = QValue (*)(QClosure*, QValue, QValue);
+using QClFunc3 = QValue (*)(QClosure*, QValue, QValue, QValue);
+using QClFunc4 = QValue (*)(QClosure*, QValue, QValue, QValue, QValue);
 
 struct QResult {
     bool is_ok;
@@ -146,6 +150,10 @@ inline QValue qv_float(double v) {
 // String value constructor (makes a copy using GC)
 inline QValue qv_string(const char* v) {
     QValue q;
+    if (!v) {
+        q.type = QValue::VAL_NULL;
+        return q;
+    }
     q.type = QValue::VAL_STRING;
     q.data.string_val = q_strdup(v);
     return q;
@@ -166,18 +174,20 @@ inline QValue qv_null() {
     return q;
 }
 
-// Function value constructor
+// Function value constructor - wraps raw pointer in a QClosure with 0 captures
 inline QValue qv_func(void* f) {
+    QClosure* cl = q_alloc_closure(f, 0);
     QValue q;
     q.type = QValue::VAL_FUNC;
-    q.data.func_val = f;
+    q.data.func_val = cl;
     return q;
 }
 
 inline QValue qv_ok(QValue v) {
     QValue q;
-    q.type = QValue::VAL_RESULT;
     QResult* result = static_cast<QResult*>(q_malloc(sizeof(QResult)));
+    if (!result) { q.type = QValue::VAL_NULL; return q; }
+    q.type = QValue::VAL_RESULT;
     result->is_ok = true;
     result->payload = v;
     q.data.result_val = result;
@@ -186,8 +196,9 @@ inline QValue qv_ok(QValue v) {
 
 inline QValue qv_err(QValue v) {
     QValue q;
-    q.type = QValue::VAL_RESULT;
     QResult* result = static_cast<QResult*>(q_malloc(sizeof(QResult)));
+    if (!result) { q.type = QValue::VAL_NULL; return q; }
+    q.type = QValue::VAL_RESULT;
     result->is_ok = false;
     result->payload = v;
     q.data.result_val = result;
@@ -195,18 +206,18 @@ inline QValue qv_err(QValue v) {
 }
 
 inline bool q_is_ok(const QValue& v) {
-    return v.type == QValue::VAL_RESULT && v.data.result_val->is_ok;
+    return v.type == QValue::VAL_RESULT && v.data.result_val && v.data.result_val->is_ok;
 }
 
 inline QValue q_result_value(const QValue& v) {
-    if (v.type == QValue::VAL_RESULT && v.data.result_val->is_ok) {
+    if (v.type == QValue::VAL_RESULT && v.data.result_val && v.data.result_val->is_ok) {
         return v.data.result_val->payload;
     }
     return qv_null();
 }
 
 inline QValue q_result_error(const QValue& v) {
-    if (v.type == QValue::VAL_RESULT && !v.data.result_val->is_ok) {
+    if (v.type == QValue::VAL_RESULT && v.data.result_val && !v.data.result_val->is_ok) {
         return v.data.result_val->payload;
     }
     return qv_null();
@@ -269,12 +280,16 @@ inline bool q_truthy(QValue v) {
             return false;
         case QValue::VAL_LIST:
             return v.data.list_val && !v.data.list_val->empty();
+        case QValue::VAL_VECTOR:
+            return v.data.vector_val && !v.data.vector_val->data.empty();
         case QValue::VAL_DICT:
             return v.data.dict_val && !v.data.dict_val->entries.empty();
         case QValue::VAL_FUNC:
             return v.data.func_val != nullptr;
+        case QValue::VAL_RESULT:
+            return v.data.result_val && v.data.result_val->is_ok;
         default:
-            return true;
+            return false;
     }
 }
 
@@ -284,6 +299,7 @@ inline bool q_truthy(QValue v) {
 
 // quark/ops/arithmetic.hpp - Arithmetic operations
 #include <cmath>
+#include <climits>
 
 namespace quark {
 namespace detail {
@@ -306,12 +322,19 @@ inline bool either_float(const QValue& a, const QValue& b) {
 
 // Addition: int + int = int, float promotion, string + string = concat
 inline QValue q_add(QValue a, QValue b) {
+    if (a.type == QValue::VAL_VECTOR || b.type == QValue::VAL_VECTOR) {
+        return q_vec_add(a, b);
+    }
     // String concatenation: string + string
     if (a.type == QValue::VAL_STRING && b.type == QValue::VAL_STRING) {
-        size_t len = strlen(a.data.string_val) + strlen(b.data.string_val);
-        char* result = static_cast<char*>(q_malloc_atomic(len + 1));
-        strcpy(result, a.data.string_val);
-        strcat(result, b.data.string_val);
+        if (!a.data.string_val || !b.data.string_val) return qv_null();
+        size_t alen = strlen(a.data.string_val);
+        size_t blen = strlen(b.data.string_val);
+        char* result = static_cast<char*>(q_malloc_atomic(alen + blen + 1));
+        if (!result) return qv_null();
+        memcpy(result, a.data.string_val, alen);
+        memcpy(result + alen, b.data.string_val, blen);
+        result[alen + blen] = '\0';
         QValue q;
         q.type = QValue::VAL_STRING;
         q.data.string_val = result;
@@ -330,6 +353,9 @@ inline QValue q_add(QValue a, QValue b) {
 
 // Subtraction: int - int = int, otherwise float
 inline QValue q_sub(QValue a, QValue b) {
+    if (a.type == QValue::VAL_VECTOR || b.type == QValue::VAL_VECTOR) {
+        return q_vec_sub(a, b);
+    }
     // Type guard: only INT and FLOAT are valid
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
@@ -343,6 +369,9 @@ inline QValue q_sub(QValue a, QValue b) {
 
 // Multiplication: int * int = int, otherwise float
 inline QValue q_mul(QValue a, QValue b) {
+    if (a.type == QValue::VAL_VECTOR || b.type == QValue::VAL_VECTOR) {
+        return q_vec_mul(a, b);
+    }
     // Type guard: only INT and FLOAT are valid
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
@@ -356,6 +385,9 @@ inline QValue q_mul(QValue a, QValue b) {
 
 // Division: always returns float for precision
 inline QValue q_div(QValue a, QValue b) {
+    if (a.type == QValue::VAL_VECTOR || b.type == QValue::VAL_VECTOR) {
+        return q_vec_div(a, b);
+    }
     // Type guard: only INT and FLOAT are valid
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
@@ -394,6 +426,11 @@ inline QValue q_pow(QValue a, QValue b) {
     double result = std::pow(av, bv);
 
     if (quark::detail::either_float(a, b)) {
+        return qv_float(result);
+    }
+    // Overflow guard: if result exceeds long long range, return as float
+    if (result > static_cast<double>(LLONG_MAX) || result < static_cast<double>(LLONG_MIN) ||
+        std::isnan(result) || std::isinf(result)) {
         return qv_float(result);
     }
     return qv_int(static_cast<long long>(result));
@@ -642,8 +679,8 @@ inline QValue q_pop(QValue list) {
 
 // Get item at index (supports negative indexing)
 inline QValue q_get(QValue list, QValue index) {
-    if (list.type == QValue::VAL_DICT) {
-        return q_dict_get(list, index);
+    if (list.type == QValue::VAL_STRING) {
+        return q_str_get(list, index);
     }
     if (list.type != QValue::VAL_LIST || !list.data.list_val) {
         return qv_null();
@@ -663,9 +700,6 @@ inline QValue q_get(QValue list, QValue index) {
 
 // Set item at index (supports negative indexing)
 inline QValue q_set(QValue list, QValue index, QValue value) {
-    if (list.type == QValue::VAL_DICT) {
-        return q_dict_set(list, index, value);
-    }
     if (list.type != QValue::VAL_LIST || !list.data.list_val) {
         return qv_null();
     }
@@ -774,7 +808,7 @@ inline QValue q_concat(QValue a, QValue b) {
         return q_list_concat(a, b);
     }
     // Type mismatch - both arguments must be the same type
-    const char* type_names[] = {"int", "float", "string", "bool", "null", "list", "dict", "func", "result"};
+    const char* type_names[] = {"int", "float", "string", "bool", "null", "list", "vector", "dict", "func", "result"};
     const char* a_type = (a.type >= 0 && a.type <= 8) ? type_names[a.type] : "unknown";
     const char* b_type = (b.type >= 0 && b.type <= 8) ? type_names[b.type] : "unknown";
     fprintf(stderr, "runtime error: concat expects both arguments to be the same type (string+string or list+list), got %s and %s\n", a_type, b_type);
@@ -935,7 +969,7 @@ inline QValue q_range(QValue start, QValue end, QValue step) {
 // Convert string to uppercase
 inline QValue q_upper(QValue v) {
     // Type guard: only STRING is valid
-    if (v.type != QValue::VAL_STRING) return qv_null();
+    if (v.type != QValue::VAL_STRING || !v.data.string_val) return qv_null();
     char* result = q_strdup(v.data.string_val);
     for (int i = 0; result[i]; i++) {
         result[i] = static_cast<char>(toupper(static_cast<unsigned char>(result[i])));
@@ -948,7 +982,7 @@ inline QValue q_upper(QValue v) {
 // Convert string to lowercase
 inline QValue q_lower(QValue v) {
     // Type guard: only STRING is valid
-    if (v.type != QValue::VAL_STRING) return qv_null();
+    if (v.type != QValue::VAL_STRING || !v.data.string_val) return qv_null();
     char* result = q_strdup(v.data.string_val);
     for (int i = 0; result[i]; i++) {
         result[i] = static_cast<char>(tolower(static_cast<unsigned char>(result[i])));
@@ -961,7 +995,7 @@ inline QValue q_lower(QValue v) {
 // Trim whitespace from both ends
 inline QValue q_trim(QValue v) {
     // Type guard: only STRING is valid
-    if (v.type != QValue::VAL_STRING) return qv_null();
+    if (v.type != QValue::VAL_STRING || !v.data.string_val) return qv_null();
     const char* start = v.data.string_val;
     while (*start && isspace(static_cast<unsigned char>(*start))) start++;
     if (*start == '\0') return qv_string("");
@@ -981,8 +1015,9 @@ inline QValue q_trim(QValue v) {
 
 // Check if string contains substring
 inline QValue q_contains(QValue str, QValue sub) {
-    // Type guard: both must be STRING
-    if (str.type != QValue::VAL_STRING || sub.type != QValue::VAL_STRING) {
+    // Type guard: both must be STRING with non-null pointers
+    if (str.type != QValue::VAL_STRING || sub.type != QValue::VAL_STRING ||
+        !str.data.string_val || !sub.data.string_val) {
         return qv_null();
     }
     return qv_bool(strstr(str.data.string_val, sub.data.string_val) != nullptr);
@@ -990,8 +1025,9 @@ inline QValue q_contains(QValue str, QValue sub) {
 
 // Check if string starts with prefix
 inline QValue q_startswith(QValue str, QValue prefix) {
-    // Type guard: both must be STRING
-    if (str.type != QValue::VAL_STRING || prefix.type != QValue::VAL_STRING) {
+    // Type guard: both must be STRING with non-null pointers
+    if (str.type != QValue::VAL_STRING || prefix.type != QValue::VAL_STRING ||
+        !str.data.string_val || !prefix.data.string_val) {
         return qv_null();
     }
     size_t plen = strlen(prefix.data.string_val);
@@ -1000,8 +1036,9 @@ inline QValue q_startswith(QValue str, QValue prefix) {
 
 // Check if string ends with suffix
 inline QValue q_endswith(QValue str, QValue suffix) {
-    // Type guard: both must be STRING
-    if (str.type != QValue::VAL_STRING || suffix.type != QValue::VAL_STRING) {
+    // Type guard: both must be STRING with non-null pointers
+    if (str.type != QValue::VAL_STRING || suffix.type != QValue::VAL_STRING ||
+        !str.data.string_val || !suffix.data.string_val) {
         return qv_null();
     }
     size_t slen = strlen(str.data.string_val);
@@ -1012,9 +1049,10 @@ inline QValue q_endswith(QValue str, QValue suffix) {
 
 // Replace all occurrences of old_str with new_str
 inline QValue q_replace(QValue str, QValue old_str, QValue new_str) {
-    // Type guard: all must be STRING
+    // Type guard: all must be STRING with non-null pointers
     if (str.type != QValue::VAL_STRING || old_str.type != QValue::VAL_STRING ||
-        new_str.type != QValue::VAL_STRING) {
+        new_str.type != QValue::VAL_STRING ||
+        !str.data.string_val || !old_str.data.string_val || !new_str.data.string_val) {
         return qv_null();
     }
 
@@ -1035,13 +1073,24 @@ inline QValue q_replace(QValue str, QValue old_str, QValue new_str) {
 
     // Allocate result (use atomic since it's just chars, no pointers)
     size_t slen = strlen(s);
-    size_t rlen = slen + static_cast<size_t>(count) * (nlen - olen);
+    // Guard against size overflow when replacement is longer than original
+    size_t rlen;
+    if (nlen >= olen) {
+        size_t extra = nlen - olen;
+        if (extra > 0 && static_cast<size_t>(count) > (SIZE_MAX - slen) / extra) {
+            return qv_null(); // overflow
+        }
+        rlen = slen + static_cast<size_t>(count) * extra;
+    } else {
+        rlen = slen - static_cast<size_t>(count) * (olen - nlen);
+    }
     char* result = static_cast<char*>(q_malloc_atomic(rlen + 1));
+    if (!result) return qv_null();
     char* dest = result;
 
     while (*s) {
         if (strncmp(s, o, olen) == 0) {
-            strcpy(dest, n);
+            memcpy(dest, n, nlen);
             dest += nlen;
             s += olen;
         } else {
@@ -1057,15 +1106,38 @@ inline QValue q_replace(QValue str, QValue old_str, QValue new_str) {
 
 // Concatenate two strings
 inline QValue q_str_concat(QValue a, QValue b) {
-    if (a.type != QValue::VAL_STRING || b.type != QValue::VAL_STRING) {
+    if (a.type != QValue::VAL_STRING || b.type != QValue::VAL_STRING ||
+        !a.data.string_val || !b.data.string_val) {
         return qv_null();
     }
-    size_t len = strlen(a.data.string_val) + strlen(b.data.string_val);
-    char* result = static_cast<char*>(q_malloc_atomic(len + 1));
-    strcpy(result, a.data.string_val);
-    strcat(result, b.data.string_val);
-    QValue q = qv_string(result);
-    return q;
+    size_t alen = strlen(a.data.string_val);
+    size_t blen = strlen(b.data.string_val);
+    char* result = static_cast<char*>(q_malloc_atomic(alen + blen + 1));
+    if (!result) return qv_null();
+    memcpy(result, a.data.string_val, alen);
+    memcpy(result + alen, b.data.string_val, blen);
+    result[alen + blen] = '\0';
+    return qv_string(result);
+}
+
+// Get character at index (supports negative indexing)
+inline QValue q_str_get(QValue str, QValue index) {
+    if (str.type != QValue::VAL_STRING || str.data.string_val == nullptr) {
+        return qv_null();
+    }
+    if (index.type != QValue::VAL_INT) {
+        return qv_null();
+    }
+    int len = static_cast<int>(strlen(str.data.string_val));
+    int idx = static_cast<int>(index.data.int_val);
+    if (idx < 0) idx = len + idx;
+    if (idx < 0 || idx >= len) {
+        return qv_null();
+    }
+    char buf[2];
+    buf[0] = str.data.string_val[idx];
+    buf[1] = '\0';
+    return qv_string(buf);
 }
 
 // ============================================================
@@ -1086,31 +1158,36 @@ inline bool q_require_callable(const QValue& f) {
 // Call function value with 0 arguments
 inline QValue q_call0(QValue f) {
     if (!q_require_callable(f)) return qv_null();
-    return reinterpret_cast<QFunc0>(f.data.func_val)();
+    QClosure* cl = static_cast<QClosure*>(f.data.func_val);
+    return reinterpret_cast<QClFunc0>(cl->func)(cl);
 }
 
 // Call function value with 1 argument
 inline QValue q_call1(QValue f, QValue a) {
     if (!q_require_callable(f)) return qv_null();
-    return reinterpret_cast<QFunc1>(f.data.func_val)(a);
+    QClosure* cl = static_cast<QClosure*>(f.data.func_val);
+    return reinterpret_cast<QClFunc1>(cl->func)(cl, a);
 }
 
 // Call function value with 2 arguments
 inline QValue q_call2(QValue f, QValue a, QValue b) {
     if (!q_require_callable(f)) return qv_null();
-    return reinterpret_cast<QFunc2>(f.data.func_val)(a, b);
+    QClosure* cl = static_cast<QClosure*>(f.data.func_val);
+    return reinterpret_cast<QClFunc2>(cl->func)(cl, a, b);
 }
 
 // Call function value with 3 arguments
 inline QValue q_call3(QValue f, QValue a, QValue b, QValue c) {
     if (!q_require_callable(f)) return qv_null();
-    return reinterpret_cast<QFunc3>(f.data.func_val)(a, b, c);
+    QClosure* cl = static_cast<QClosure*>(f.data.func_val);
+    return reinterpret_cast<QClFunc3>(cl->func)(cl, a, b, c);
 }
 
 // Call function value with 4 arguments
 inline QValue q_call4(QValue f, QValue a, QValue b, QValue c, QValue d) {
     if (!q_require_callable(f)) return qv_null();
-    return reinterpret_cast<QFunc4>(f.data.func_val)(a, b, c, d);
+    QClosure* cl = static_cast<QClosure*>(f.data.func_val);
+    return reinterpret_cast<QClFunc4>(cl->func)(cl, a, b, c, d);
 }
 
 // ============================================================
@@ -1131,7 +1208,7 @@ inline void print_qvalue(QValue v) {
             printf("%g", v.data.float_val);
             break;
         case QValue::VAL_STRING:
-            printf("%s", v.data.string_val);
+            printf("%s", v.data.string_val ? v.data.string_val : "null");
             break;
         case QValue::VAL_BOOL:
             printf(v.data.bool_val ? "true" : "false");
@@ -1141,6 +1218,9 @@ inline void print_qvalue(QValue v) {
             break;
         case QValue::VAL_LIST:
             printf("[list len=%zu]", v.data.list_val ? v.data.list_val->size() : 0);
+            break;
+        case QValue::VAL_VECTOR:
+            printf("[vector len=%zu]", v.data.vector_val ? v.data.vector_val->data.size() : 0);
             break;
         case QValue::VAL_DICT:
             printf("[dict len=%zu]", v.data.dict_val ? v.data.dict_val->entries.size() : 0);
@@ -1170,7 +1250,7 @@ inline QValue q_println(QValue v) {
 // Read line from stdin (with optional prompt)
 inline QValue q_input(QValue prompt) {
     // Print prompt if it's a string
-    if (prompt.type == QValue::VAL_STRING) {
+    if (prompt.type == QValue::VAL_STRING && prompt.data.string_val) {
         printf("%s", prompt.data.string_val);
         fflush(stdout);
     }
@@ -1204,9 +1284,11 @@ inline QValue q_input() {
 inline QValue q_len(QValue v) {
     switch (v.type) {
         case QValue::VAL_STRING:
-            return qv_int(static_cast<long long>(strlen(v.data.string_val)));
+            return qv_int(v.data.string_val ? static_cast<long long>(strlen(v.data.string_val)) : 0);
         case QValue::VAL_LIST:
             return qv_int(v.data.list_val ? static_cast<long long>(v.data.list_val->size()) : 0);
+        case QValue::VAL_VECTOR:
+            return qv_int(v.data.vector_val ? static_cast<long long>(v.data.vector_val->data.size()) : 0);
         case QValue::VAL_DICT:
             return qv_int(v.data.dict_val ? static_cast<long long>(v.data.dict_val->entries.size()) : 0);
         default:
@@ -1227,12 +1309,16 @@ inline QValue q_str(QValue v) {
         case QValue::VAL_BOOL:
             return qv_string(v.data.bool_val ? "true" : "false");
         case QValue::VAL_STRING:
-            return v;
+            return v.data.string_val ? v : qv_string("");
         case QValue::VAL_NULL:
             return qv_string("null");
         case QValue::VAL_LIST:
             snprintf(buffer, sizeof(buffer), "[list len=%zu]",
                      v.data.list_val ? v.data.list_val->size() : 0);
+            return qv_string(buffer);
+        case QValue::VAL_VECTOR:
+            snprintf(buffer, sizeof(buffer), "[vector len=%zu]",
+                     v.data.vector_val ? v.data.vector_val->data.size() : 0);
             return qv_string(buffer);
         case QValue::VAL_DICT:
             snprintf(buffer, sizeof(buffer), "[dict len=%zu]",
@@ -1255,7 +1341,7 @@ inline QValue q_int(QValue v) {
         case QValue::VAL_BOOL:
             return qv_int(v.data.bool_val ? 1 : 0);
         case QValue::VAL_STRING:
-            return qv_int(atoll(v.data.string_val));
+            return qv_int(v.data.string_val ? atoll(v.data.string_val) : 0);
         default:
             return qv_int(0);
     }
@@ -1271,7 +1357,7 @@ inline QValue q_float(QValue v) {
         case QValue::VAL_BOOL:
             return qv_float(v.data.bool_val ? 1.0 : 0.0);
         case QValue::VAL_STRING:
-            return qv_float(atof(v.data.string_val));
+            return qv_float(v.data.string_val ? atof(v.data.string_val) : 0.0);
         default:
             return qv_float(0.0);
     }
@@ -1320,6 +1406,14 @@ inline QValue q_min(QValue a, QValue b) {
     return qv_int(a.data.int_val < b.data.int_val ? a.data.int_val : b.data.int_val);
 }
 
+// Minimum of vector values
+inline QValue q_min(QValue v) {
+    if (v.type == QValue::VAL_VECTOR) {
+        return q_vec_min(v);
+    }
+    return qv_null();
+}
+
 // Maximum of two values
 inline QValue q_max(QValue a, QValue b) {
     // Type guard: only INT and FLOAT are valid
@@ -1333,6 +1427,22 @@ inline QValue q_max(QValue a, QValue b) {
         return qv_float(av > bv ? av : bv);
     }
     return qv_int(a.data.int_val > b.data.int_val ? a.data.int_val : b.data.int_val);
+}
+
+// Maximum of vector values
+inline QValue q_max(QValue v) {
+    if (v.type == QValue::VAL_VECTOR) {
+        return q_vec_max(v);
+    }
+    return qv_null();
+}
+
+// Sum of vector values
+inline QValue q_sum(QValue v) {
+    if (v.type == QValue::VAL_VECTOR) {
+        return q_vec_sum(v);
+    }
+    return qv_null();
 }
 
 // Square root (always returns float)
@@ -1447,8 +1557,8 @@ inline QValue q_member_get(QValue obj, const char* member) {
     }
 
     // Unsupported type
-    const char* type_names[] = {"int", "float", "string", "bool", "null", "list", "dict", "func", "result"};
-    const char* type_name = (obj.type >= 0 && obj.type <= 8) ? type_names[obj.type] : "unknown";
+    const char* type_names[] = {"int", "float", "string", "bool", "null", "list", "vector", "dict", "func", "result"};
+    const char* type_name = (obj.type >= 0 && obj.type <= 9) ? type_names[obj.type] : "unknown";
     fprintf(stderr, "runtime error: type '%s' has no member '%s'\n", type_name, member);
     return qv_null();
 }
@@ -1481,8 +1591,8 @@ inline QValue q_member_call1(QValue obj, const char* method, QValue arg1) {
         return qv_null();
     }
 
-    const char* type_names[] = {"int", "float", "string", "bool", "null", "list", "dict", "func", "result"};
-    const char* type_name = (obj.type >= 0 && obj.type <= 8) ? type_names[obj.type] : "unknown";
+    const char* type_names[] = {"int", "float", "string", "bool", "null", "list", "vector", "dict", "func", "result"};
+    const char* type_name = (obj.type >= 0 && obj.type <= 9) ? type_names[obj.type] : "unknown";
     fprintf(stderr, "runtime error: type '%s' has no method '%s'\n", type_name, method);
     return qv_null();
 }
@@ -1510,8 +1620,8 @@ inline QValue q_member_call2(QValue obj, const char* method, QValue arg1, QValue
         return qv_null();
     }
 
-    const char* type_names[] = {"int", "float", "string", "bool", "null", "list", "dict", "func", "result"};
-    const char* type_name = (obj.type >= 0 && obj.type <= 8) ? type_names[obj.type] : "unknown";
+    const char* type_names[] = {"int", "float", "string", "bool", "null", "list", "vector", "dict", "func", "result"};
+    const char* type_name = (obj.type >= 0 && obj.type <= 9) ? type_names[obj.type] : "unknown";
     fprintf(stderr, "runtime error: type '%s' has no method '%s'\n", type_name, method);
     return qv_null();
 }

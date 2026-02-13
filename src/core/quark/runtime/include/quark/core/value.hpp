@@ -10,6 +10,7 @@ struct QValue;
 struct QResult;
 struct QDict;
 struct QClosure;
+struct QVector;
 
 // Type alias for list storage
 using QList = std::vector<QValue>;
@@ -23,6 +24,7 @@ struct QValue {
         VAL_BOOL,
         VAL_NULL,
         VAL_LIST,
+        VAL_VECTOR,
         VAL_DICT,
         VAL_FUNC,
         VAL_RESULT
@@ -34,6 +36,7 @@ struct QValue {
         char* string_val;
         bool bool_val;
         QList* list_val;    // std::vector<QValue>* - automatic memory management
+        QVector* vector_val; // homogeneous float64 vector
         QDict* dict_val;    // std::unordered_map<std::string, QValue>*
         void* func_val;
         QResult* result_val;

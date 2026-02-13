@@ -14,9 +14,11 @@
 inline QValue q_len(QValue v) {
     switch (v.type) {
         case QValue::VAL_STRING:
-            return qv_int(static_cast<long long>(strlen(v.data.string_val)));
+            return qv_int(v.data.string_val ? static_cast<long long>(strlen(v.data.string_val)) : 0);
         case QValue::VAL_LIST:
             return qv_int(v.data.list_val ? static_cast<long long>(v.data.list_val->size()) : 0);
+        case QValue::VAL_VECTOR:
+            return qv_int(v.data.vector_val ? static_cast<long long>(v.data.vector_val->data.size()) : 0);
         case QValue::VAL_DICT:
             return qv_int(v.data.dict_val ? static_cast<long long>(v.data.dict_val->entries.size()) : 0);
         default:
@@ -37,12 +39,16 @@ inline QValue q_str(QValue v) {
         case QValue::VAL_BOOL:
             return qv_string(v.data.bool_val ? "true" : "false");
         case QValue::VAL_STRING:
-            return v;
+            return v.data.string_val ? v : qv_string("");
         case QValue::VAL_NULL:
             return qv_string("null");
         case QValue::VAL_LIST:
             snprintf(buffer, sizeof(buffer), "[list len=%zu]",
                      v.data.list_val ? v.data.list_val->size() : 0);
+            return qv_string(buffer);
+        case QValue::VAL_VECTOR:
+            snprintf(buffer, sizeof(buffer), "[vector len=%zu]",
+                     v.data.vector_val ? v.data.vector_val->data.size() : 0);
             return qv_string(buffer);
         case QValue::VAL_DICT:
             snprintf(buffer, sizeof(buffer), "[dict len=%zu]",
@@ -65,7 +71,7 @@ inline QValue q_int(QValue v) {
         case QValue::VAL_BOOL:
             return qv_int(v.data.bool_val ? 1 : 0);
         case QValue::VAL_STRING:
-            return qv_int(atoll(v.data.string_val));
+            return qv_int(v.data.string_val ? atoll(v.data.string_val) : 0);
         default:
             return qv_int(0);
     }
@@ -81,7 +87,7 @@ inline QValue q_float(QValue v) {
         case QValue::VAL_BOOL:
             return qv_float(v.data.bool_val ? 1.0 : 0.0);
         case QValue::VAL_STRING:
-            return qv_float(atof(v.data.string_val));
+            return qv_float(v.data.string_val ? atof(v.data.string_val) : 0.0);
         default:
             return qv_float(0.0);
     }

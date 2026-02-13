@@ -18,18 +18,21 @@
 #include "core/gc.hpp"
 #include "types/closure.hpp"
 #include "core/constructors.hpp"
+
+// Type-specific operations
+#include "types/string.hpp"
+#include "types/list.hpp"
+#include "types/vector.hpp"
+#include "types/dict.hpp"
+#include "types/function.hpp"
+
+// Core helpers depending on type definitions
 #include "core/truthy.hpp"
 
 // Operations
 #include "ops/arithmetic.hpp"
 #include "ops/comparison.hpp"
 #include "ops/logical.hpp"
-
-// Type-specific operations
-#include "types/string.hpp"
-#include "types/list.hpp"
-#include "types/dict.hpp"
-#include "types/function.hpp"
 
 // Built-in functions
 #include "builtins/io.hpp"

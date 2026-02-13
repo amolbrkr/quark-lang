@@ -37,6 +37,14 @@ inline QValue q_min(QValue a, QValue b) {
     return qv_int(a.data.int_val < b.data.int_val ? a.data.int_val : b.data.int_val);
 }
 
+// Minimum of vector values
+inline QValue q_min(QValue v) {
+    if (v.type == QValue::VAL_VECTOR) {
+        return q_vec_min(v);
+    }
+    return qv_null();
+}
+
 // Maximum of two values
 inline QValue q_max(QValue a, QValue b) {
     // Type guard: only INT and FLOAT are valid
@@ -50,6 +58,22 @@ inline QValue q_max(QValue a, QValue b) {
         return qv_float(av > bv ? av : bv);
     }
     return qv_int(a.data.int_val > b.data.int_val ? a.data.int_val : b.data.int_val);
+}
+
+// Maximum of vector values
+inline QValue q_max(QValue v) {
+    if (v.type == QValue::VAL_VECTOR) {
+        return q_vec_max(v);
+    }
+    return qv_null();
+}
+
+// Sum of vector values
+inline QValue q_sum(QValue v) {
+    if (v.type == QValue::VAL_VECTOR) {
+        return q_vec_sum(v);
+    }
+    return qv_null();
 }
 
 // Square root (always returns float)

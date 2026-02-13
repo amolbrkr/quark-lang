@@ -12,7 +12,7 @@
 // Convert string to uppercase
 inline QValue q_upper(QValue v) {
     // Type guard: only STRING is valid
-    if (v.type != QValue::VAL_STRING) return qv_null();
+    if (v.type != QValue::VAL_STRING || !v.data.string_val) return qv_null();
     char* result = q_strdup(v.data.string_val);
     for (int i = 0; result[i]; i++) {
         result[i] = static_cast<char>(toupper(static_cast<unsigned char>(result[i])));
@@ -25,7 +25,7 @@ inline QValue q_upper(QValue v) {
 // Convert string to lowercase
 inline QValue q_lower(QValue v) {
     // Type guard: only STRING is valid
-    if (v.type != QValue::VAL_STRING) return qv_null();
+    if (v.type != QValue::VAL_STRING || !v.data.string_val) return qv_null();
     char* result = q_strdup(v.data.string_val);
     for (int i = 0; result[i]; i++) {
         result[i] = static_cast<char>(tolower(static_cast<unsigned char>(result[i])));
@@ -38,7 +38,7 @@ inline QValue q_lower(QValue v) {
 // Trim whitespace from both ends
 inline QValue q_trim(QValue v) {
     // Type guard: only STRING is valid
-    if (v.type != QValue::VAL_STRING) return qv_null();
+    if (v.type != QValue::VAL_STRING || !v.data.string_val) return qv_null();
     const char* start = v.data.string_val;
     while (*start && isspace(static_cast<unsigned char>(*start))) start++;
     if (*start == '\0') return qv_string("");
@@ -58,8 +58,9 @@ inline QValue q_trim(QValue v) {
 
 // Check if string contains substring
 inline QValue q_contains(QValue str, QValue sub) {
-    // Type guard: both must be STRING
-    if (str.type != QValue::VAL_STRING || sub.type != QValue::VAL_STRING) {
+    // Type guard: both must be STRING with non-null pointers
+    if (str.type != QValue::VAL_STRING || sub.type != QValue::VAL_STRING ||
+        !str.data.string_val || !sub.data.string_val) {
         return qv_null();
     }
     return qv_bool(strstr(str.data.string_val, sub.data.string_val) != nullptr);
@@ -67,8 +68,9 @@ inline QValue q_contains(QValue str, QValue sub) {
 
 // Check if string starts with prefix
 inline QValue q_startswith(QValue str, QValue prefix) {
-    // Type guard: both must be STRING
-    if (str.type != QValue::VAL_STRING || prefix.type != QValue::VAL_STRING) {
+    // Type guard: both must be STRING with non-null pointers
+    if (str.type != QValue::VAL_STRING || prefix.type != QValue::VAL_STRING ||
+        !str.data.string_val || !prefix.data.string_val) {
         return qv_null();
     }
     size_t plen = strlen(prefix.data.string_val);
@@ -77,8 +79,9 @@ inline QValue q_startswith(QValue str, QValue prefix) {
 
 // Check if string ends with suffix
 inline QValue q_endswith(QValue str, QValue suffix) {
-    // Type guard: both must be STRING
-    if (str.type != QValue::VAL_STRING || suffix.type != QValue::VAL_STRING) {
+    // Type guard: both must be STRING with non-null pointers
+    if (str.type != QValue::VAL_STRING || suffix.type != QValue::VAL_STRING ||
+        !str.data.string_val || !suffix.data.string_val) {
         return qv_null();
     }
     size_t slen = strlen(str.data.string_val);
@@ -89,9 +92,10 @@ inline QValue q_endswith(QValue str, QValue suffix) {
 
 // Replace all occurrences of old_str with new_str
 inline QValue q_replace(QValue str, QValue old_str, QValue new_str) {
-    // Type guard: all must be STRING
+    // Type guard: all must be STRING with non-null pointers
     if (str.type != QValue::VAL_STRING || old_str.type != QValue::VAL_STRING ||
-        new_str.type != QValue::VAL_STRING) {
+        new_str.type != QValue::VAL_STRING ||
+        !str.data.string_val || !old_str.data.string_val || !new_str.data.string_val) {
         return qv_null();
     }
 
@@ -112,13 +116,24 @@ inline QValue q_replace(QValue str, QValue old_str, QValue new_str) {
 
     // Allocate result (use atomic since it's just chars, no pointers)
     size_t slen = strlen(s);
-    size_t rlen = slen + static_cast<size_t>(count) * (nlen - olen);
+    // Guard against size overflow when replacement is longer than original
+    size_t rlen;
+    if (nlen >= olen) {
+        size_t extra = nlen - olen;
+        if (extra > 0 && static_cast<size_t>(count) > (SIZE_MAX - slen) / extra) {
+            return qv_null(); // overflow
+        }
+        rlen = slen + static_cast<size_t>(count) * extra;
+    } else {
+        rlen = slen - static_cast<size_t>(count) * (olen - nlen);
+    }
     char* result = static_cast<char*>(q_malloc_atomic(rlen + 1));
+    if (!result) return qv_null();
     char* dest = result;
 
     while (*s) {
         if (strncmp(s, o, olen) == 0) {
-            strcpy(dest, n);
+            memcpy(dest, n, nlen);
             dest += nlen;
             s += olen;
         } else {
@@ -134,15 +149,18 @@ inline QValue q_replace(QValue str, QValue old_str, QValue new_str) {
 
 // Concatenate two strings
 inline QValue q_str_concat(QValue a, QValue b) {
-    if (a.type != QValue::VAL_STRING || b.type != QValue::VAL_STRING) {
+    if (a.type != QValue::VAL_STRING || b.type != QValue::VAL_STRING ||
+        !a.data.string_val || !b.data.string_val) {
         return qv_null();
     }
-    size_t len = strlen(a.data.string_val) + strlen(b.data.string_val);
-    char* result = static_cast<char*>(q_malloc_atomic(len + 1));
-    strcpy(result, a.data.string_val);
-    strcat(result, b.data.string_val);
-    QValue q = qv_string(result);
-    return q;
+    size_t alen = strlen(a.data.string_val);
+    size_t blen = strlen(b.data.string_val);
+    char* result = static_cast<char*>(q_malloc_atomic(alen + blen + 1));
+    if (!result) return qv_null();
+    memcpy(result, a.data.string_val, alen);
+    memcpy(result + alen, b.data.string_val, blen);
+    result[alen + blen] = '\0';
+    return qv_string(result);
 }
 
 // Get character at index (supports negative indexing)

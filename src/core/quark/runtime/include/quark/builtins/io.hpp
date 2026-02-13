@@ -18,7 +18,7 @@ inline void print_qvalue(QValue v) {
             printf("%g", v.data.float_val);
             break;
         case QValue::VAL_STRING:
-            printf("%s", v.data.string_val);
+            printf("%s", v.data.string_val ? v.data.string_val : "null");
             break;
         case QValue::VAL_BOOL:
             printf(v.data.bool_val ? "true" : "false");
@@ -28,6 +28,9 @@ inline void print_qvalue(QValue v) {
             break;
         case QValue::VAL_LIST:
             printf("[list len=%zu]", v.data.list_val ? v.data.list_val->size() : 0);
+            break;
+        case QValue::VAL_VECTOR:
+            printf("[vector len=%zu]", v.data.vector_val ? v.data.vector_val->data.size() : 0);
             break;
         case QValue::VAL_DICT:
             printf("[dict len=%zu]", v.data.dict_val ? v.data.dict_val->entries.size() : 0);
@@ -57,7 +60,7 @@ inline QValue q_println(QValue v) {
 // Read line from stdin (with optional prompt)
 inline QValue q_input(QValue prompt) {
     // Print prompt if it's a string
-    if (prompt.type == QValue::VAL_STRING) {
+    if (prompt.type == QValue::VAL_STRING && prompt.data.string_val) {
         printf("%s", prompt.data.string_val);
         fflush(stdout);
     }

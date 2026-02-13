@@ -156,7 +156,7 @@ inline QValue q_concat(QValue a, QValue b) {
         return q_list_concat(a, b);
     }
     // Type mismatch - both arguments must be the same type
-    const char* type_names[] = {"int", "float", "string", "bool", "null", "list", "dict", "func", "result"};
+    const char* type_names[] = {"int", "float", "string", "bool", "null", "list", "vector", "dict", "func", "result"};
     const char* a_type = (a.type >= 0 && a.type <= 8) ? type_names[a.type] : "unknown";
     const char* b_type = (b.type >= 0 && b.type <= 8) ? type_names[b.type] : "unknown";
     fprintf(stderr, "runtime error: concat expects both arguments to be the same type (string+string or list+list), got %s and %s\n", a_type, b_type);

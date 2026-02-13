@@ -5,6 +5,7 @@
 #include "../core/value.hpp"
 #include "../core/constructors.hpp"
 #include <cmath>
+#include <climits>
 
 namespace quark {
 namespace detail {
@@ -27,12 +28,19 @@ inline bool either_float(const QValue& a, const QValue& b) {
 
 // Addition: int + int = int, float promotion, string + string = concat
 inline QValue q_add(QValue a, QValue b) {
+    if (a.type == QValue::VAL_VECTOR || b.type == QValue::VAL_VECTOR) {
+        return q_vec_add(a, b);
+    }
     // String concatenation: string + string
     if (a.type == QValue::VAL_STRING && b.type == QValue::VAL_STRING) {
-        size_t len = strlen(a.data.string_val) + strlen(b.data.string_val);
-        char* result = static_cast<char*>(q_malloc_atomic(len + 1));
-        strcpy(result, a.data.string_val);
-        strcat(result, b.data.string_val);
+        if (!a.data.string_val || !b.data.string_val) return qv_null();
+        size_t alen = strlen(a.data.string_val);
+        size_t blen = strlen(b.data.string_val);
+        char* result = static_cast<char*>(q_malloc_atomic(alen + blen + 1));
+        if (!result) return qv_null();
+        memcpy(result, a.data.string_val, alen);
+        memcpy(result + alen, b.data.string_val, blen);
+        result[alen + blen] = '\0';
         QValue q;
         q.type = QValue::VAL_STRING;
         q.data.string_val = result;
@@ -51,6 +59,9 @@ inline QValue q_add(QValue a, QValue b) {
 
 // Subtraction: int - int = int, otherwise float
 inline QValue q_sub(QValue a, QValue b) {
+    if (a.type == QValue::VAL_VECTOR || b.type == QValue::VAL_VECTOR) {
+        return q_vec_sub(a, b);
+    }
     // Type guard: only INT and FLOAT are valid
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
@@ -64,6 +75,9 @@ inline QValue q_sub(QValue a, QValue b) {
 
 // Multiplication: int * int = int, otherwise float
 inline QValue q_mul(QValue a, QValue b) {
+    if (a.type == QValue::VAL_VECTOR || b.type == QValue::VAL_VECTOR) {
+        return q_vec_mul(a, b);
+    }
     // Type guard: only INT and FLOAT are valid
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
@@ -77,6 +91,9 @@ inline QValue q_mul(QValue a, QValue b) {
 
 // Division: always returns float for precision
 inline QValue q_div(QValue a, QValue b) {
+    if (a.type == QValue::VAL_VECTOR || b.type == QValue::VAL_VECTOR) {
+        return q_vec_div(a, b);
+    }
     // Type guard: only INT and FLOAT are valid
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
@@ -115,6 +132,11 @@ inline QValue q_pow(QValue a, QValue b) {
     double result = std::pow(av, bv);
 
     if (quark::detail::either_float(a, b)) {
+        return qv_float(result);
+    }
+    // Overflow guard: if result exceeds long long range, return as float
+    if (result > static_cast<double>(LLONG_MAX) || result < static_cast<double>(LLONG_MIN) ||
+        std::isnan(result) || std::isinf(result)) {
         return qv_float(result);
     }
     return qv_int(static_cast<long long>(result));

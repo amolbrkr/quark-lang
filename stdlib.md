@@ -153,6 +153,8 @@ Mathematical operations implemented using C++'s math library.
 | `max` | `vector -> float` | Maximum element in vector |
 | `sum` | `vector -> float` | Sum of all vector elements |
 | `vadd_inplace` | `vector, number -> vector` | Add scalar to each vector element in place |
+| `fillna` | `vector, any -> vector` | Replace null entries in a vector |
+| `astype` | `vector, string -> vector` | Cast vector dtype (`f64`, `i64`, `bool`) |
 | `sqrt` | `number -> float` | Square root |
 | `floor` | `float -> int` | Round down to integer |
 | `ceil` | `float -> int` | Round up to integer |
@@ -195,6 +197,13 @@ max(v) | println()              // 4
 // Vector in-place scalar update
 vadd_inplace(v, 1)
 sum(v) | println()              // 14
+
+// Vector casts
+iv = astype(v, 'i64')
+println(sum(iv))
+
+// Null fill (when vector has null mask entries)
+filled = fillna(v, 0)
 ```
 
 ### Notes

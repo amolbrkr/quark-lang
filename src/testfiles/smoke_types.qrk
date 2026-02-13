@@ -54,3 +54,22 @@ println(u)
 println(sum(v))
 println(min(v))
 println(max(v))
+
+// Vector phase-2 helpers
+vi = astype(v, 'i64')
+println(vi)
+println(sum(vi))
+println(min(vi))
+println(max(vi))
+
+vplus = vi + 2
+println(vplus)
+
+vmul = vi * vplus
+println(vmul)
+
+vadd_inplace(vi, 1)
+println(sum(vi))
+
+vfilled = fillna(vi, 0)
+println(vfilled)

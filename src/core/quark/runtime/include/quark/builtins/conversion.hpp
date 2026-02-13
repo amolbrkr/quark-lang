@@ -18,7 +18,7 @@ inline QValue q_len(QValue v) {
         case QValue::VAL_LIST:
             return qv_int(v.data.list_val ? static_cast<long long>(v.data.list_val->size()) : 0);
         case QValue::VAL_VECTOR:
-            return qv_int(v.data.vector_val ? static_cast<long long>(v.data.vector_val->data.size()) : 0);
+            return qv_int(static_cast<long long>(q_vec_size(v)));
         case QValue::VAL_DICT:
             return qv_int(v.data.dict_val ? static_cast<long long>(v.data.dict_val->entries.size()) : 0);
         default:
@@ -47,8 +47,7 @@ inline QValue q_str(QValue v) {
                      v.data.list_val ? v.data.list_val->size() : 0);
             return qv_string(buffer);
         case QValue::VAL_VECTOR:
-            snprintf(buffer, sizeof(buffer), "[vector len=%zu]",
-                     v.data.vector_val ? v.data.vector_val->data.size() : 0);
+            snprintf(buffer, sizeof(buffer), "[vector len=%d]", q_vec_size(v));
             return qv_string(buffer);
         case QValue::VAL_DICT:
             snprintf(buffer, sizeof(buffer), "[dict len=%zu]",

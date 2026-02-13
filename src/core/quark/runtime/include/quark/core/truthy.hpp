@@ -3,6 +3,7 @@
 #define QUARK_CORE_TRUTHY_HPP
 
 #include "value.hpp"
+#include "../types/vector.hpp"
 #include "../types/dict.hpp"
 #include <cstring>
 
@@ -22,7 +23,7 @@ inline bool q_truthy(QValue v) {
         case QValue::VAL_LIST:
             return v.data.list_val && !v.data.list_val->empty();
         case QValue::VAL_VECTOR:
-            return v.data.vector_val && !v.data.vector_val->data.empty();
+            return q_vec_size(v) > 0;
         case QValue::VAL_DICT:
             return v.data.dict_val && !v.data.dict_val->entries.empty();
         case QValue::VAL_FUNC:

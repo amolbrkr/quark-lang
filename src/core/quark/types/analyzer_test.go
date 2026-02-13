@@ -114,3 +114,13 @@ func TestVectorInplaceAdd_BuiltinRegistered(t *testing.T) {
 		t.Fatalf("unexpected type errors: %v", typeErrs)
 	}
 }
+
+func TestVectorFillnaAndAstype_BuiltinsRegistered(t *testing.T) {
+	_, _, parseErrs, typeErrs := testutil.Analyze("v = vector [1,2,3]\nprintln(fillna(v, 0))\nprintln(astype(v, 'i64'))\n")
+	if len(parseErrs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", parseErrs)
+	}
+	if len(typeErrs) > 0 {
+		t.Fatalf("unexpected type errors: %v", typeErrs)
+	}
+}

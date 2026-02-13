@@ -36,7 +36,7 @@ struct QValue {
         char* string_val;
         bool bool_val;
         QList* list_val;    // std::vector<QValue>* - automatic memory management
-        QVector* vector_val; // homogeneous float64 vector
+        QVector* vector_val; // typed column vector (f64/i64/bool/str/cat)
         QDict* dict_val;    // std::unordered_map<std::string, QValue>*
         void* func_val;
         QResult* result_val;

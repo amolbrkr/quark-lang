@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"quark/codegen"
@@ -62,27 +63,6 @@ func getGCPaths() (includePath string, libPath string) {
 	}
 
 	return gcInclude, gcLib
-}
-
-// getXsimdIncludePath returns the include path for vendored xsimd headers.
-// Expected location: deps/xsimd/include relative to project root.
-func getXsimdIncludePath() string {
-	exePath, err := os.Executable()
-	if err != nil {
-		return ""
-	}
-	exeDir := filepath.Dir(exePath)
-	projectRoot := filepath.Join(exeDir, "..", "..", "..")
-	xsimdInclude := filepath.Join(projectRoot, "deps", "xsimd", "include")
-	if _, err := os.Stat(xsimdInclude); err == nil {
-		return xsimdInclude
-	}
-	// Fallback: relative path from cwd
-	xsimdInclude = filepath.Join("deps", "xsimd", "include")
-	if _, err := os.Stat(xsimdInclude); err == nil {
-		return xsimdInclude
-	}
-	return ""
 }
 
 func main() {
@@ -385,11 +365,17 @@ func runBuild(filename string, output string, useGC bool) {
 	includePath := fmt.Sprintf("-I%s", runtimeInclude)
 
 	// Build compilation arguments
-	args := []string{"-std=c++17", "-O3", "-march=native", includePath}
-	if xsimdInclude := getXsimdIncludePath(); xsimdInclude != "" {
-		args = append(args, fmt.Sprintf("-I%s", xsimdInclude))
+	args := []string{"-std=c++17", "-O3", includePath}
+	if runtime.GOARCH == "amd64" {
+		args = append(args, "-march=x86-64-v3")
 	}
-
+	if compiler == "clang++" {
+		args = append(args,
+			"-Rpass=loop-vectorize",
+			"-Rpass-missed=loop-vectorize",
+			"-Rpass-analysis=loop-vectorize",
+		)
+	}
 	// Add GC flags if enabled
 	if useGC {
 		gcInclude, gcLib := getGCPaths()
@@ -496,11 +482,17 @@ func runRun(filename string, debug bool, useGC bool) {
 	includePath := fmt.Sprintf("-I%s", runtimeInclude)
 
 	// Build compilation arguments
-	args := []string{"-std=c++17", "-O3", "-march=native", includePath}
-	if xsimdInclude := getXsimdIncludePath(); xsimdInclude != "" {
-		args = append(args, fmt.Sprintf("-I%s", xsimdInclude))
+	args := []string{"-std=c++17", "-O3", includePath}
+	if runtime.GOARCH == "amd64" {
+		args = append(args, "-march=x86-64-v3")
 	}
-
+	if compiler == "clang++" {
+		args = append(args,
+			"-Rpass=loop-vectorize",
+			"-Rpass-missed=loop-vectorize",
+			"-Rpass-analysis=loop-vectorize",
+		)
+	}
 	// Add GC flags if enabled
 	if useGC {
 		gcInclude, gcLib := getGCPaths()

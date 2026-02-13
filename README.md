@@ -9,7 +9,9 @@
 - If/elseif/else, `when` pattern matching, `for`/`while` loops, and ternary expressions
 - Pipe operator for data-flow style calls
 - Lists backed by `std::vector<QValue>` with indexing
-- 1D float vectors with elementwise arithmetic and reductions (`sum`, `min`, `max`)
+- Typed 1D vectors (`f64`, `i64`, `bool`, `str`, `cat`) with invariant checks and null-mask scaffolding
+- Vector arithmetic and reductions (`+`, `-`, `*`, `/`, `sum`, `min`, `max`) for numeric paths
+- Vector helpers `vadd_inplace`, `astype`, and `fillna`
 - Dicts backed by `std::unordered_map<std::string, QValue>` with dot access
 - Builtins for I/O, math, strings, lists, and dict helpers
 - Modules and `use` as compile-time organization (single file)
@@ -137,6 +139,10 @@ v = vector [1, 2, 3, 4]
 w = v + 1
 u = v * w
 
+iv = astype(v, 'i64')
+vadd_inplace(iv, 2)
+filled = fillna(iv, 0)
+
 println(sum(v))
 println(min(v))
 println(max(v))
@@ -162,10 +168,10 @@ println(d.c)
 | **I/O** | `print`, `println`, `input` |
 | **Types** | `str`, `int`, `float`, `bool`, `len` |
 | **Math** | `abs`, `min`, `max`, `sum`, `sqrt`, `floor`, `ceil`, `round` |
-| **String** | `upper`, `lower`, `trim`, `contains`, `startswith`, `endswith`, `replace`, `concat` |
 | **String** | `upper`, `lower`, `trim`, `contains`, `startswith`, `endswith`, `replace`, `concat`, `split` |
 | **List** | `push`, `pop`, `get`, `set`, `insert`, `remove`, `slice`, `reverse`, `range` |
 | **Dict** | `dget`, `dset` |
+| **Vector** | `vadd_inplace`, `fillna`, `astype` |
 
 See [stdlib.md](stdlib.md) for details.
 
@@ -188,6 +194,12 @@ Implemented:
 - Codegen for functions, control flow, pipes, lists, dicts, and builtins
 - Modules (`module`/`use`) as a single-file organization tool
 - Boehm GC integration (via `deps/bdwgc`)
+- Typed vector runtime foundation (`f64`, `i64`, `bool`, `str`, `cat`) with validation helpers
+- Numeric vector arithmetic/reductions with i64 paths and scalar broadcasting
+- Vector builtins `fillna` and `astype`
+- Portable amd64 compile baseline `-march=x86-64-v3` (replacing `-march=native`)
+- Clang loop-vectorization diagnostics enabled during Quark compilation
+- `xsimd` dependency removed from runtime and build flow
 
 Not yet implemented or incomplete:
 
@@ -197,6 +209,10 @@ Not yet implemented or incomplete:
 - Result/try/unwrap-style helpers (beyond `ok`/`err` + `when` patterns)
 - Tensor types
 - Multi-file modules
+- Vector utilities from spec: `where`, `unique`, `value_counts`
+- Category conversion helpers from spec: `cat_from_str`, `cat_as_str`
+- Full null-propagation semantics across all vector kernels
+- `mean` vector reduction
 
 ## Tests
 

@@ -67,6 +67,8 @@ var builtinRegistry = map[string]*BuiltinFunc{
 
 	// Vector helpers
 	"vadd_inplace": {CFunc: "q_vadd_inplace", MinArgs: 2, MaxArgs: 2},
+	"fillna":       {CFunc: "q_fillna", MinArgs: 2, MaxArgs: 2},
+	"astype":       {CFunc: "q_astype", MinArgs: 2, MaxArgs: 2},
 }
 
 // LookupBuiltin returns the builtin definition if name is a builtin, nil otherwise.

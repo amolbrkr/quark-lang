@@ -30,7 +30,7 @@ inline void print_qvalue(QValue v) {
             printf("[list len=%zu]", v.data.list_val ? v.data.list_val->size() : 0);
             break;
         case QValue::VAL_VECTOR:
-            printf("[vector len=%zu]", v.data.vector_val ? v.data.vector_val->data.size() : 0);
+            printf("[vector len=%d]", q_vec_size(v));
             break;
         case QValue::VAL_DICT:
             printf("[dict len=%zu]", v.data.dict_val ? v.data.dict_val->entries.size() : 0);

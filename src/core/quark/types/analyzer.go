@@ -83,6 +83,8 @@ func NewAnalyzer() *Analyzer {
 		{"dget", 2, 2, []Type{TypeAny, TypeAny}, TypeAny},
 		{"dset", 3, 3, []Type{TypeAny, TypeAny, TypeAny}, TypeAny},
 		{"vadd_inplace", 2, 2, []Type{TypeAny, TypeAny}, TypeAny},
+		{"fillna", 2, 2, []Type{TypeAny, TypeAny}, TypeAny},
+		{"astype", 2, 2, []Type{TypeAny, TypeString}, TypeAny},
 	}
 
 	builtins := make(map[string]*builtinSignature)

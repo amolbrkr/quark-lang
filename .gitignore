@@ -41,3 +41,9 @@ quark.exe
 
 # Personal
 thoughts.md
+
+# Benchmark-generated large literals
+benchmarks/generated/
+
+# xsimd
+deps/xsimd/

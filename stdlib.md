@@ -8,9 +8,9 @@ This document describes the built-in functions available in Quark. All standard 
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `print` | `any -> void` | Print value without newline |
-| `println` | `any -> void` | Print value with newline |
-| `input` | `[prompt] -> string` | Read line from stdin; optional prompt string |
+| `print` | `[value] -> void` | Print optional value without newline |
+| `println` | `[value] -> void` | Print optional value with newline |
+| `input` | `[prompt] -> str` | Read line from stdin; optional prompt string |
 
 ```quark
 println('Hello, World!')
@@ -25,11 +25,12 @@ println(name)
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `str` | `any -> string` | Convert to string |
+| `str` | `any -> str` | Convert to string |
 | `int` | `any -> int` | Convert to integer |
 | `float` | `any -> float` | Convert to float |
 | `bool` | `any -> bool` | Convert to boolean (truthiness) |
-| `len` | `string\|list\|dict -> int` | Get length of string, list, or dict |
+| `type` | `any -> str` | Return runtime type name |
+| `len` | `str\|list\|dict -> int` | Get length of string, list, or dict |
 
 ```quark
 str(42) | println()           // '42'
@@ -37,6 +38,7 @@ int('123') | println()        // 123
 float('3.14') | println()     // 3.14
 bool(0) | println()           // false
 bool(1) | println()           // true
+type(42) | println()          // int
 len('hello') | println()      // 5
 
 dict { a: 1, b: 2 } | len() | println()  // 2
@@ -46,9 +48,9 @@ dict { a: 1, b: 2 } | len() | println()  // 2
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `range` | `int -> list[int]` | Generate `[0, 1, ... end-1]` |
-| `range` | `int, int -> list[int]` | Generate `[start, ... end-1]` |
-| `range` | `int, int, int -> list[int]` | Generate `[start, start+step, ...]` |
+| `range` | `number -> list` | Generate `[0, 1, ... end-1]` |
+| `range` | `number, number -> list` | Generate `[start, ... end-1]` |
+| `range` | `number, number, number -> list` | Generate `[start, start+step, ...]` |
 
 ```quark
 range(5) | println()          // [0, 1, 2, 3, 4]
@@ -127,8 +129,8 @@ If the key comes from a variable/expression, use these helpers:
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `dget` | `dict, any -> any` | Get value by key (key is converted to string); missing key returns `null` |
-| `dset` | `dict, any, any -> dict` | Set value by key (key is converted to string); returns the dict |
+| `dget` | `dict, any -> any` | Get value by key (key is converted to str); missing key returns `null` |
+| `dset` | `dict, any, any -> dict` | Set value by key (key is converted to str); returns the dict |
 
 ```quark
 mydict = dict { a: 1, b: 2 }
@@ -152,9 +154,11 @@ Mathematical operations implemented using C++'s math library.
 | `max` | `number, number -> number` | Maximum of two values |
 | `max` | `vector -> float` | Maximum element in vector |
 | `sum` | `vector -> float` | Sum of all vector elements |
-| `vadd_inplace` | `vector, number -> vector` | Add scalar to each vector element in place |
 | `fillna` | `vector, any -> vector` | Replace null entries in a vector |
-| `astype` | `vector, string -> vector` | Cast vector dtype (`f64`, `i64`, `bool`) |
+| `astype` | `vector, str -> vector` | Cast vector dtype (`f64`, `i64`, `bool`) |
+| `to_vector` | `list\|vector -> vector` | Convert list to typed vector (or clone vector) |
+| `cat_from_str` | `list\|vector -> vector` | Build categorical vector from strings |
+| `cat_to_str` | `vector -> list` | Decode categorical vector back to strings |
 | `sqrt` | `number -> float` | Square root |
 | `floor` | `float -> int` | Round down to integer |
 | `ceil` | `float -> int` | Round up to integer |
@@ -194,40 +198,48 @@ sum(v) | println()              // 10
 min(v) | println()              // 1
 max(v) | println()              // 4
 
-// Vector in-place scalar update
-vadd_inplace(v, 1)
-sum(v) | println()              // 14
-
 // Vector casts
 iv = astype(v, 'i64')
 println(sum(iv))
 
+// Convert list to vector
+v2 = to_vector(list [10, 20, 30])
+println(sum(v2))                // 60
+
 // Null fill (when vector has null mask entries)
 filled = fillna(v, 0)
+
+// Categorical encode/decode
+labels = list ['red', 'blue', 'red', 'green']
+cats = cat_from_str(labels)
+println(cats)                    // [vector len=4]
+println(cat_to_str(cats))        // [list len=4]
 ```
 
 ### Notes
 
+- `print()` and `println()` can be called with zero arguments
 - `abs` preserves the input type (int returns int, float returns float)
 - `min` and `max` return float if either argument is float
 - `sqrt` always returns float
 - `floor`, `ceil`, `round` return int
+- `range` accepts int or float inputs; float values are converted to integers internally
 
 ## String Functions
 
-String manipulation functions implemented in C.
+String manipulation functions implemented in the C++ runtime.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `upper` | `string -> string` | Convert to uppercase |
-| `lower` | `string -> string` | Convert to lowercase |
-| `trim` | `string -> string` | Remove leading/trailing whitespace |
-| `contains` | `string, string -> bool` | Check if contains substring |
-| `startswith` | `string, string -> bool` | Check if starts with prefix |
-| `endswith` | `string, string -> bool` | Check if ends with suffix |
-| `replace` | `string, string, string -> string` | Replace all occurrences |
-| `concat` | `string, string -> string` | Concatenate two strings |
-| `split` | `string, string -> list[string]` | Split string by separator |
+| `upper` | `str -> str` | Convert to uppercase |
+| `lower` | `str -> str` | Convert to lowercase |
+| `trim` | `str -> str` | Remove leading/trailing whitespace |
+| `contains` | `str, str -> bool` | Check if contains substring |
+| `startswith` | `str, str -> bool` | Check if starts with prefix |
+| `endswith` | `str, str -> bool` | Check if ends with suffix |
+| `replace` | `str, str, str -> str` | Replace all occurrences |
+| `concat` | `str, str -> str` | Concatenate two strings |
+| `split` | `str, str -> list` | Split string by separator |
 
 ### Examples
 
@@ -269,10 +281,10 @@ split('a,b,c', ',') | println()                       // ["a", "b", "c"]
 - `concat` also supports list + list and returns a list; mixed types return `null`
 - `split` preserves empty fields (`,a,` becomes `['', 'a', '']`)
 - Empty string handling:
-  - `upper ''` returns `''`
-  - `trim ''` returns `''`
-  - `contains '', 'x'` returns `false`
-  - `replace 'hello', '', 'x'` returns `'hello'` (no-op for empty pattern)
+  - `upper('')` returns `''`
+  - `trim('')` returns `''`
+  - `contains('', 'x')` returns `false`
+  - `replace('hello', '', 'x')` returns `'hello'` (no-op for empty pattern)
 
 ## Pipes
 
@@ -293,14 +305,14 @@ All functions work seamlessly with Quark's pipe operator:
 
 ## Implementation Details
 
-All standard library functions are implemented as C++ functions in the header-only runtime library at `runtime/include/quark/`. The concatenated header is embedded in `codegen/runtime.hpp` and compiled directly into the output binary, requiring no external dependencies except the C++ standard library and math library (`-lm`).
+All standard library functions are implemented as C++ functions in the header-only runtime library at `runtime/include/quark/`. Generated C++ includes `quark/quark.hpp` (via compiler `-I` include path) rather than embedding the full runtime by default.
 
 ### Adding New Functions
 
 To add a new built-in function:
 
 1. **Add C++ implementation** in appropriate header under `runtime/include/quark/`
-2. **Regenerate runtime.hpp** by running `build_runtime.ps1`
+2. **Regenerate `runtime.hpp`** by running `build_runtime.ps1` (only needed for embedded-runtime fallback mode)
 3. **Register the builtin mapping** in `src/core/quark/codegen/builtins.go`
 4. **Register type signature** in `src/core/quark/types/analyzer.go`
 

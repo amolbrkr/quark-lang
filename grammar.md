@@ -39,11 +39,11 @@ Quark uses explicit Result types with `ok`/`err` for fallible operations. Result
 ### Keywords (Reserved)
 
 ```
-use, module, tensor, list, dict
+use, module, list, dict
 vector
-in, and, or, not
+in, and, or
 if, elseif, else, for, while, when
-fn, return
+fn, class
 ok, err
 true, false, null
 ```
@@ -56,9 +56,11 @@ true, false, null
 =                   (assignment)
 ->                  (arrow: function body, pattern result)
 !                   (logical not)
+~                   (logical not alias)
 |                   (pipe)
 . ,                 (member access, comma)
 :                   (type annotation, dict entry, block start)
+&                   (bitwise and; currently parsed)
 ```
 
 ### Delimiters
@@ -227,7 +229,7 @@ fn divide(a, b) ->
 Use `when` to handle both cases:
 
 ```quark
-result = divide 10, 2
+result = divide(10, 2)
 
 when result:
     ok value -> println(value)
@@ -240,10 +242,10 @@ Functions propagate errors by returning them:
 
 ```quark
 fn full_pipeline(path) ->
-    when load_file path:
+    when load_file(path):
         err e -> err e
         ok content ->
-            when parse content:
+            when parse(content):
                 err e -> err e
                 ok data -> ok (transform(data))
 ```
@@ -300,9 +302,9 @@ AnonFunction    ::= "fn" "(" [ ParamList ] ")" "->" Expression
 // Assign lambda to variable
 double = fn(x) -> x * 2
 
-// Pass lambda inline
-data | filter(fn(x) -> x > 0)
-data | map(fn(row) -> row * 2)
+// Pass lambda inline to user-defined higher-order functions
+apply(data, fn(x) -> x * 2)
+combine(list [1, 2], fn(row) -> row + 1)
 
 // With type annotations
 add = fn(x: int, y: int) -> x + y
@@ -351,7 +353,7 @@ module math:
 
 use math
 
-result = square 5.0
+result = square(5.0)
 ```
 
 ## Tensor Type [FUTURE]
@@ -591,7 +593,6 @@ items: list = list [1, 2, 3]
 | 5 | `or` | Left | LogicalOr |
 | 4 | `if-else` | Right | Ternary |
 | 3 | `\|` | Left | Pipe |
-| 2 | `->` | Right | Arrow |
 | 1 | `=` | Right | Assignment |
 
 ## Semantic Rules
@@ -620,7 +621,9 @@ calculate(a + b, c * d)
 
 ### Unary Operators and Whitespace
 
-**CRITICAL RULE**: Unary operators (`-` and `!`) MUST NOT have whitespace between the operator and operand.
+**Current behavior**: Unary operators (`-`, `!`, `~`) are parsed as unary forms. Prefer no whitespace in unary style (`-5`, `!flag`) and spaces for binary operators (`a - b`) for readability.
+
+> Note: the current lexer ignores non-line-start spaces, so forms like `a -b` may still parse. Treat spacing guidance here as style and clarity guidance.
 
 ```quark
 // Unary negation (no space)
@@ -653,25 +656,21 @@ a | f() | g() | h()   // h(g(f(a)))
 
 ## Complete Examples
 
-### Data Processing with Error Handling
+### Result Handling Example
 
 ```quark
-fn load_csv(path) ->
-    if !file_exists(path):
-        err 'File not found'
+fn safe_sqrt(n) ->
+    if n < 0:
+        err 'negative input'
     else:
-        content = read_file(path)
-        ok parse_csv(content)
+        ok sqrt(n)
 
-fn process_data(path) ->
-    when load_csv(path):
+fn process_value(n) ->
+    when safe_sqrt(n):
         err e ->
             println(e)
-            list []
-        ok data ->
-            data
-                | filter(fn(row) -> row > 0)
-                | map(fn(row) -> row * 2)
+            0
+        ok value -> round(value)
 ```
 
 ### Factorial
@@ -680,7 +679,7 @@ fn process_data(path) ->
 fn fact(n) ->
     when n:
         0 or 1 -> 1
-    _ -> n * fact(n - 1)
+        _ -> n * fact(n - 1)
 
 fact(10) | println()
 ```
@@ -726,9 +725,9 @@ m2 = tensor [5, 6; 7, 8]
 m3 = m1 @ m2                    // Matrix multiply
 
 // Data science workflow
-data = tensor (load_floats 'data.bin')
-normalized = (data - (mean data)) / (std data)
-result = normalized @ weights + bias
+data = tensor [1.0, 2.0, 3.0, 4.0]
+scaled = data * 0.5
+result = scaled + 1.0
 ```
 
 ## Implementation Status
@@ -761,7 +760,7 @@ result = normalized @ weights + bias
 ## Notes on Implementation
 
 1. **Indentation**: Lexer emits `INDENT`/`DEDENT` tokens (like Python)
-2. **Arrow Lookahead**: When parsing parameters, look for `->` to determine if in function context
+2. **Function/Lambda Params**: Parameter lists are parsed in parentheses before `->`
 3. **Result Type**: `ok` and `err` are keywords that wrap values into a tagged union
 4. **Range Function**: `range` is a builtin function, not an operator
 5. **Tensor Literals**: Use `;` as row separator inside `tensor [...]`

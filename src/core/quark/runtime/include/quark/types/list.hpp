@@ -33,7 +33,6 @@ inline QValue q_get(QValue list, QValue index) {
     if (list.type != QValue::VAL_LIST || !list.data.list_val) {
         return qv_null();
     }
-    // Type guard: index must be INT
     if (index.type != QValue::VAL_INT) {
         return qv_null();
     }
@@ -51,7 +50,6 @@ inline QValue q_set(QValue list, QValue index, QValue value) {
     if (list.type != QValue::VAL_LIST || !list.data.list_val) {
         return qv_null();
     }
-    // Type guard: index must be INT
     if (index.type != QValue::VAL_INT) {
         return qv_null();
     }

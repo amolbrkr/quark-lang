@@ -789,13 +789,13 @@ func (g *Generator) generateFor(node *ast.TreeNode) string {
 	idxTemp := g.newTemp()
 
 	g.emitLine("QValue %s = %s;", listTemp, listExpr)
-	g.emitLine("long long %s = (long long)%s.data.list_val->size();", lenTemp, listTemp)
+	g.emitLine("long long %s = q_len(%s).data.int_val;", lenTemp, listTemp)
 	g.emitLine("for (long long %s = 0; %s < %s; %s++) {", idxTemp, idxTemp, lenTemp, idxTemp)
 	g.indentLevel++
 
 	g.pushBlockScope()
 	g.declaredVars[varName] = true // Loop variable is declared
-	g.emitLine("QValue %s = q_get(%s, qv_int(%s));", cVarName, listTemp, idxTemp)
+	g.emitLine("QValue %s = q_iter_get(%s, qv_int(%s));", cVarName, listTemp, idxTemp)
 
 	if bodyNode.NodeType == ast.BlockNode {
 		for _, stmt := range bodyNode.Children {

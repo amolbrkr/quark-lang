@@ -26,6 +26,7 @@ var builtinRegistry = map[string]*BuiltinFunc{
 	"int":   {CFunc: "q_int", MinArgs: 1, MaxArgs: 1},
 	"float": {CFunc: "q_float", MinArgs: 1, MaxArgs: 1},
 	"bool":  {CFunc: "q_bool", MinArgs: 1, MaxArgs: 1},
+	"type":  {CFunc: "q_type", MinArgs: 1, MaxArgs: 1},
 
 	// Range (variadic: 1-3 args)
 	"range": {CFunc: "q_range", MinArgs: 1, MaxArgs: 3},
@@ -66,9 +67,11 @@ var builtinRegistry = map[string]*BuiltinFunc{
 	"dset": {CFunc: "q_dset", MinArgs: 3, MaxArgs: 3},
 
 	// Vector helpers
-	"vadd_inplace": {CFunc: "q_vadd_inplace", MinArgs: 2, MaxArgs: 2},
 	"fillna":       {CFunc: "q_fillna", MinArgs: 2, MaxArgs: 2},
 	"astype":       {CFunc: "q_astype", MinArgs: 2, MaxArgs: 2},
+	"to_vector":    {CFunc: "q_to_vector", MinArgs: 1, MaxArgs: 1},
+	"cat_from_str": {CFunc: "q_cat_from_str", MinArgs: 1, MaxArgs: 1},
+	"cat_to_str":   {CFunc: "q_cat_to_str", MinArgs: 1, MaxArgs: 1},
 }
 
 // LookupBuiltin returns the builtin definition if name is a builtin, nil otherwise.

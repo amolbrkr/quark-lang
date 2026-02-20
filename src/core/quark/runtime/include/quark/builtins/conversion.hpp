@@ -26,6 +26,67 @@ inline QValue q_len(QValue v) {
     }
 }
 
+// Generic iterable index access used by for-loop lowering
+inline QValue q_iter_get(QValue iterable, QValue index) {
+    if (iterable.type == QValue::VAL_LIST || iterable.type == QValue::VAL_STRING) {
+        return q_get(iterable, index);
+    }
+    if (iterable.type != QValue::VAL_VECTOR) {
+        return qv_null();
+    }
+    if (!q_vec_has_valid_handle(iterable) || !q_vec_validate(*iterable.data.vector_val)) {
+        return qv_null();
+    }
+    if (index.type != QValue::VAL_INT) {
+        return qv_null();
+    }
+
+    long long idx = index.data.int_val;
+    long long len = static_cast<long long>(iterable.data.vector_val->count);
+    if (idx < 0) idx = len + idx;
+    if (idx < 0 || idx >= len) {
+        return qv_null();
+    }
+
+    size_t pos = static_cast<size_t>(idx);
+    const QVector& vec = *iterable.data.vector_val;
+    if (q_vec_is_null_at(vec, pos)) {
+        return qv_null();
+    }
+
+    switch (vec.type) {
+        case QVector::Type::F64: {
+            const auto& values = std::get<std::vector<double>>(vec.storage);
+            return qv_float(values[pos]);
+        }
+        case QVector::Type::I64: {
+            const auto& values = std::get<std::vector<int64_t>>(vec.storage);
+            return qv_int(static_cast<long long>(values[pos]));
+        }
+        case QVector::Type::BOOL: {
+            const auto& values = std::get<std::vector<uint8_t>>(vec.storage);
+            return qv_bool(values[pos] != 0);
+        }
+        case QVector::Type::STR: {
+            const auto& values = std::get<QStringStorage>(vec.storage);
+            uint32_t start = values.offsets[pos];
+            uint32_t end = values.offsets[pos + 1];
+            std::string s(values.bytes.data() + start, values.bytes.data() + end);
+            return qv_string(s.c_str());
+        }
+        case QVector::Type::CAT: {
+            const auto& values = std::get<QCategoricalStorage>(vec.storage);
+            int32_t code = values.codes[pos];
+            if (code < 0 || static_cast<size_t>(code) >= values.dictionary.size()) {
+                return qv_null();
+            }
+            return qv_string(values.dictionary[code].c_str());
+        }
+        default:
+            return qv_null();
+    }
+}
+
 // Convert value to string
 inline QValue q_str(QValue v) {
     char buffer[256];
@@ -95,6 +156,40 @@ inline QValue q_float(QValue v) {
 // Convert value to boolean
 inline QValue q_bool(QValue v) {
     return qv_bool(q_truthy(v));
+}
+
+// Return runtime type name as string
+inline QValue q_type(QValue v) {
+    switch (v.type) {
+        case QValue::VAL_INT:
+            return qv_string("int");
+        case QValue::VAL_FLOAT:
+            return qv_string("float");
+        case QValue::VAL_STRING:
+            return qv_string("str");
+        case QValue::VAL_BOOL:
+            return qv_string("bool");
+        case QValue::VAL_NULL:
+            return qv_string("null");
+        case QValue::VAL_LIST:
+            return qv_string("list");
+        case QValue::VAL_DICT:
+            return qv_string("dict");
+        case QValue::VAL_FUNC:
+            return qv_string("func");
+        case QValue::VAL_RESULT:
+            return qv_string("result");
+        case QValue::VAL_VECTOR: {
+            if (!q_vec_has_valid_handle(v) || !q_vec_validate(*v.data.vector_val)) {
+                return qv_string("vector[invalid]");
+            }
+            char buffer[64];
+            std::snprintf(buffer, sizeof(buffer), "vector[%s]", q_vec_dtype_name(*v.data.vector_val));
+            return qv_string(buffer);
+        }
+        default:
+            return qv_string("unknown");
+    }
 }
 
 #endif // QUARK_BUILTINS_CONVERSION_HPP

@@ -4,6 +4,7 @@
 
 #include "../core/value.hpp"
 #include "../core/constructors.hpp"
+#include <cstdio>
 #include <cmath>
 #include <climits>
 
@@ -25,6 +26,19 @@ inline bool either_float(const QValue& a, const QValue& b) {
 
 } // namespace detail
 } // namespace quark
+
+inline const char* q_type_name_arith(QValue::ValueType t) {
+    static const char* type_names[] = {"int", "float", "str", "bool", "null", "list", "vector", "dict", "func", "result"};
+    return (t >= 0 && t <= 9) ? type_names[t] : "unknown";
+}
+
+inline void q_arith_type_error(const char* op, QValue a, QValue b) {
+    std::fprintf(stderr, "runtime error: operator '%s' expects numeric operands (or str+str for '+'), got %s and %s\n", op, q_type_name_arith(a.type), q_type_name_arith(b.type));
+}
+
+inline void q_unary_type_error(const char* op, QValue a) {
+    std::fprintf(stderr, "runtime error: unary operator '%s' expects numeric operand, got %s\n", op, q_type_name_arith(a.type));
+}
 
 // Addition: int + int = int, float promotion, string + string = concat
 inline QValue q_add(QValue a, QValue b) {
@@ -49,6 +63,7 @@ inline QValue q_add(QValue a, QValue b) {
     // Type guard: only INT and FLOAT are valid for numeric addition
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
+        q_arith_type_error("+", a, b);
         return qv_null();
     }
     if (quark::detail::either_float(a, b)) {
@@ -65,6 +80,7 @@ inline QValue q_sub(QValue a, QValue b) {
     // Type guard: only INT and FLOAT are valid
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
+        q_arith_type_error("-", a, b);
         return qv_null();
     }
     if (quark::detail::either_float(a, b)) {
@@ -81,6 +97,7 @@ inline QValue q_mul(QValue a, QValue b) {
     // Type guard: only INT and FLOAT are valid
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
+        q_arith_type_error("*", a, b);
         return qv_null();
     }
     if (quark::detail::either_float(a, b)) {
@@ -97,11 +114,13 @@ inline QValue q_div(QValue a, QValue b) {
     // Type guard: only INT and FLOAT are valid
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
+        q_arith_type_error("/", a, b);
         return qv_null();
     }
     double bv = quark::detail::to_double(b);
     // Check for division by zero
     if (bv == 0.0) {
+        std::fprintf(stderr, "runtime error: division by zero\n");
         return qv_null();
     }
     return qv_float(quark::detail::to_double(a) / bv);
@@ -111,10 +130,12 @@ inline QValue q_div(QValue a, QValue b) {
 inline QValue q_mod(QValue a, QValue b) {
     // Type guard: only INT is valid for modulo
     if (a.type != QValue::VAL_INT || b.type != QValue::VAL_INT) {
+        std::fprintf(stderr, "runtime error: operator '%%' expects int operands, got %s and %s\n", q_type_name_arith(a.type), q_type_name_arith(b.type));
         return qv_null();
     }
     // Check for modulo by zero
     if (b.data.int_val == 0) {
+        std::fprintf(stderr, "runtime error: modulo by zero\n");
         return qv_null();
     }
     return qv_int(a.data.int_val % b.data.int_val);
@@ -125,6 +146,7 @@ inline QValue q_pow(QValue a, QValue b) {
     // Type guard: only INT and FLOAT are valid
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
+        q_arith_type_error("**", a, b);
         return qv_null();
     }
     double av = quark::detail::to_double(a);
@@ -146,6 +168,7 @@ inline QValue q_pow(QValue a, QValue b) {
 inline QValue q_neg(QValue a) {
     // Type guard: only INT and FLOAT are valid
     if (a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) {
+        q_unary_type_error("-", a);
         return qv_null();
     }
     if (a.type == QValue::VAL_FLOAT) {

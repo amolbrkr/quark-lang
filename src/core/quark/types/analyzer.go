@@ -54,7 +54,8 @@ func NewAnalyzer() *Analyzer {
 		{"int", 1, 1, []Type{TypeAny}, TypeInt},
 		{"float", 1, 1, []Type{TypeAny}, TypeFloat},
 		{"bool", 1, 1, []Type{TypeAny}, TypeBool},
-		{"range", 1, 3, []Type{TypeAny, TypeAny, TypeAny}, TypeAny},
+		{"type", 1, 1, []Type{TypeAny}, TypeString},
+		{"range", 1, 3, []Type{TypeAny, TypeAny, TypeAny}, &ListType{ElementType: TypeInt}},
 		{"abs", 1, 1, []Type{TypeAny}, TypeAny},
 		{"min", 1, 2, []Type{TypeAny, TypeAny}, TypeAny},
 		{"max", 1, 2, []Type{TypeAny, TypeAny}, TypeAny},
@@ -82,9 +83,11 @@ func NewAnalyzer() *Analyzer {
 		{"reverse", 1, 1, []Type{TypeAny}, TypeAny},
 		{"dget", 2, 2, []Type{TypeAny, TypeAny}, TypeAny},
 		{"dset", 3, 3, []Type{TypeAny, TypeAny, TypeAny}, TypeAny},
-		{"vadd_inplace", 2, 2, []Type{TypeAny, TypeAny}, TypeAny},
 		{"fillna", 2, 2, []Type{TypeAny, TypeAny}, TypeAny},
 		{"astype", 2, 2, []Type{TypeAny, TypeString}, TypeAny},
+		{"to_vector", 1, 1, []Type{TypeAny}, TypeAny},
+		{"cat_from_str", 1, 1, []Type{TypeAny}, TypeAny},
+		{"cat_to_str", 1, 1, []Type{TypeAny}, TypeAny},
 	}
 
 	builtins := make(map[string]*builtinSignature)
@@ -356,8 +359,9 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 
 	funcExprType := a.Analyze(funcNode)
 	argCount := len(argsNode.Children)
+	argTypes := make([]Type, 0, argCount)
 	for _, arg := range argsNode.Children {
-		a.Analyze(arg)
+		argTypes = append(argTypes, a.Analyze(arg))
 	}
 
 	if funcNode.NodeType == ast.IdentifierNode {
@@ -366,7 +370,7 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 			if argCount < sig.MinArgs || argCount > sig.MaxArgs {
 				a.errorAt(node, "builtin '%s' expects %d-%d arguments but got %d", name, sig.MinArgs, sig.MaxArgs, argCount)
 			}
-			return sig.Type.ReturnType
+			return a.inferBuiltinReturnType(name, argTypes, node)
 		}
 	}
 
@@ -484,11 +488,13 @@ func (a *Analyzer) analyzeForLoop(node *ast.TreeNode) Type {
 	// Analyze iterable
 	iterType := a.Analyze(iterNode)
 
-	// Enforce list iteration to avoid runtime crashes on non-lists
+	// Enforce supported iterable types for runtime/codegen compatibility
 	if _, ok := iterType.(*ListType); !ok {
-		if !isUnknownType(iterType) {
-			a.errorAt(iterNode, "for loop expects list iterable, got %s", iterType.String())
-			return TypeVoid
+		if _, isVector := iterType.(*VectorType); !isVector {
+			if !isUnknownType(iterType) {
+				a.errorAt(iterNode, "for loop expects list or vector iterable, got %s", iterType.String())
+				return TypeVoid
+			}
 		}
 	}
 
@@ -500,8 +506,8 @@ func (a *Analyzer) analyzeForLoop(node *ast.TreeNode) Type {
 	switch t := iterType.(type) {
 	case *ListType:
 		varType = t.ElementType
-	case *DictType:
-		varType = t.ValueType
+	case *VectorType:
+		varType = t.ElementType
 	default:
 		if !isUnknownType(iterType) {
 			a.errorAt(iterNode, "value of type '%s' is not iterable", iterType.String())
@@ -833,7 +839,7 @@ func (a *Analyzer) analyzePipe(node *ast.TreeNode) Type {
 
 	// Left side is the input value
 	inputNode := node.Children[0]
-	a.Analyze(inputNode)
+	inputType := a.Analyze(inputNode)
 
 	// Right side must be an explicit function call
 	rightNode := node.Children[1]
@@ -845,8 +851,9 @@ func (a *Analyzer) analyzePipe(node *ast.TreeNode) Type {
 	funcNode := rightNode.Children[0]
 	argsNode := rightNode.Children[1]
 	funcExprType := a.Analyze(funcNode)
+	argTypes := make([]Type, 0, len(argsNode.Children))
 	for _, arg := range argsNode.Children {
-		a.Analyze(arg)
+		argTypes = append(argTypes, a.Analyze(arg))
 	}
 
 	pipeArgCount := len(argsNode.Children) + 1 // +1 for the piped input
@@ -857,7 +864,10 @@ func (a *Analyzer) analyzePipe(node *ast.TreeNode) Type {
 			if pipeArgCount < sig.MinArgs || pipeArgCount > sig.MaxArgs {
 				a.errorAt(node, "builtin '%s' expects %d-%d arguments but got %d (including piped input)", name, sig.MinArgs, sig.MaxArgs, pipeArgCount)
 			}
-			return sig.Type.ReturnType
+			pipeArgTypes := make([]Type, 0, pipeArgCount)
+			pipeArgTypes = append(pipeArgTypes, inputType)
+			pipeArgTypes = append(pipeArgTypes, argTypes...)
+			return a.inferBuiltinReturnType(name, pipeArgTypes, node)
 		}
 	}
 
@@ -868,6 +878,77 @@ func (a *Analyzer) analyzePipe(node *ast.TreeNode) Type {
 		return funcType.ReturnType
 	}
 
+	return TypeAny
+}
+
+func (a *Analyzer) inferBuiltinReturnType(name string, argTypes []Type, callNode *ast.TreeNode) Type {
+	if name != "to_vector" {
+		if sig, ok := a.builtins[name]; ok {
+			return sig.Type.ReturnType
+		}
+		return TypeAny
+	}
+
+	if len(argTypes) != 1 {
+		return TypeAny
+	}
+
+	srcType := argTypes[0]
+	if vec, ok := srcType.(*VectorType); ok {
+		return &VectorType{ElementType: vec.ElementType}
+	}
+
+	listType, ok := srcType.(*ListType)
+	if !ok {
+		if !isUnknownType(srcType) {
+			a.errorAt(callNode, "to_vector expects list or vector input, got %s", srcType.String())
+		}
+		return TypeAny
+	}
+
+	elem := listType.ElementType
+	if elem.Equals(TypeInt) {
+		return &VectorType{ElementType: TypeInt}
+	}
+	if elem.Equals(TypeFloat) {
+		return &VectorType{ElementType: TypeFloat}
+	}
+	if union, ok := elem.(*UnionType); ok {
+		onlyNumeric := true
+		hasInt := false
+		hasFloat := false
+		for _, opt := range union.Options {
+			if opt.Equals(TypeInt) {
+				hasInt = true
+				continue
+			}
+			if opt.Equals(TypeFloat) {
+				hasFloat = true
+				continue
+			}
+			if opt.Equals(TypeNull) {
+				continue
+			}
+			onlyNumeric = false
+			break
+		}
+		if onlyNumeric {
+			if hasInt && !hasFloat {
+				return &VectorType{ElementType: TypeInt}
+			}
+			if hasFloat && !hasInt {
+				return &VectorType{ElementType: TypeFloat}
+			}
+			a.errorAt(callNode, "to_vector requires homogeneous numeric list elements (all int or all float)")
+			return TypeAny
+		}
+	}
+
+	if isUnknownType(elem) {
+		return TypeAny
+	}
+
+	a.errorAt(callNode, "to_vector requires list elements of type int or float, got %s", elem.String())
 	return TypeAny
 }
 

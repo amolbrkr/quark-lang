@@ -2,7 +2,7 @@
 
 ## List vs Vector
 
-Compares Quark `list` (boxed `QValue` elements, scalar `get`/`set` loop) against Quark `vector` (contiguous `double` buffer, `vadd_inplace`) for the same workload: add 1 to every element, repeated many times.
+Compares Quark `list` (boxed `QValue` elements, scalar `get`/`set` loop) against Quark `vector` (contiguous numeric buffer, `nums = nums + 1`) for the same workload: add 1 to every element, repeated many times.
 
 Python list and NumPy baselines are included for context.
 
@@ -28,14 +28,14 @@ The script generates `.qrk` source files (with N-element literals) into `benchma
 
 ### Benchmark code
 
-**Quark vector** (`vadd_inplace` -- single call updates all elements):
+**Quark vector** (vector-scalar add assignment):
 
 ```quark
 nums = vector [1, 2, ..., N]
 
 iter = 0
 while iter < ITERATIONS:
-    vadd_inplace(nums, 1)
+    nums = nums + 1
     iter = iter + 1
 
 println(sum(nums))
@@ -90,7 +90,7 @@ N=5000 elements, 5000 iterations (25M element updates). Quark compiled with `g++
 | Implementation | Time (ms) | vs Python list |
 |---|---|---|
 | NumPy (vectorized) | 6.8 | 158x |
-| **Quark vector** (`vadd_inplace`) | **11.5** | **93x** |
+| **Quark vector** (`nums = nums + 1`) | **11.5** | **93x** |
 | **Quark list** (scalar `get`/`set`) | **47.7** | **23x** |
 | Python list (scalar loop) | 1074 | 1x |
 

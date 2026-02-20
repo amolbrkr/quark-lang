@@ -105,8 +105,88 @@ func TestVectorReductions_Builtins(t *testing.T) {
 	}
 }
 
-func TestVectorInplaceAdd_BuiltinRegistered(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("v = vector [1,2,3]\nvadd_inplace(v, 1)\n")
+func TestToVector_InfersVectorIntType(t *testing.T) {
+	analyzer, node, parseErrs, typeErrs := testutil.Analyze("xs = list [1,2,3]\nv = to_vector(xs)\nv\n")
+	if len(parseErrs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", parseErrs)
+	}
+	if len(typeErrs) > 0 {
+		t.Fatalf("unexpected type errors: %v", typeErrs)
+	}
+	if len(node.Children) < 3 {
+		t.Fatalf("expected at least 3 top-level nodes, got %d", len(node.Children))
+	}
+	typ := analyzer.Analyze(node.Children[2])
+	vec, ok := typ.(*qtypes.VectorType)
+	if !ok {
+		t.Fatalf("expected VectorType, got %T (%v)", typ, typ)
+	}
+	if !vec.ElementType.Equals(qtypes.TypeInt) {
+		t.Fatalf("expected vector element type int, got %s", vec.ElementType.String())
+	}
+}
+
+func TestToVector_InfersVectorFloatType(t *testing.T) {
+	analyzer, node, parseErrs, typeErrs := testutil.Analyze("xs = list [1.0,2.0,3.0]\nv = to_vector(xs)\nv\n")
+	if len(parseErrs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", parseErrs)
+	}
+	if len(typeErrs) > 0 {
+		t.Fatalf("unexpected type errors: %v", typeErrs)
+	}
+	if len(node.Children) < 3 {
+		t.Fatalf("expected at least 3 top-level nodes, got %d", len(node.Children))
+	}
+	typ := analyzer.Analyze(node.Children[2])
+	vec, ok := typ.(*qtypes.VectorType)
+	if !ok {
+		t.Fatalf("expected VectorType, got %T (%v)", typ, typ)
+	}
+	if !vec.ElementType.Equals(qtypes.TypeFloat) {
+		t.Fatalf("expected vector element type float, got %s", vec.ElementType.String())
+	}
+}
+
+func TestToVector_RejectsMixedNumericList(t *testing.T) {
+	_, _, parseErrs, typeErrs := testutil.Analyze("xs = list [1, 2.0, 3]\nv = to_vector(xs)\n")
+	if len(parseErrs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", parseErrs)
+	}
+	if len(typeErrs) == 0 {
+		t.Fatalf("expected type error for mixed int/float list in to_vector")
+	}
+	joined := strings.Join(typeErrs, "\n")
+	if !strings.Contains(joined, "homogeneous numeric") {
+		t.Fatalf("expected homogeneous numeric error, got: %v", typeErrs)
+	}
+}
+
+func TestArithmetic_RejectsListPlusInt(t *testing.T) {
+	_, _, parseErrs, typeErrs := testutil.Analyze("nums = list [1, 2, 3]\nprintln(nums + 1)\n")
+	if len(parseErrs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", parseErrs)
+	}
+	if len(typeErrs) == 0 {
+		t.Fatalf("expected type error for list + int")
+	}
+	joined := strings.Join(typeErrs, "\n")
+	if !strings.Contains(joined, "requires numeric operands") {
+		t.Fatalf("expected numeric operand error, got: %v", typeErrs)
+	}
+}
+
+func TestForLoop_AllowsVectorIterable(t *testing.T) {
+	_, _, parseErrs, typeErrs := testutil.Analyze("for x in to_vector(range(3)):\n    println(x)\n")
+	if len(parseErrs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", parseErrs)
+	}
+	if len(typeErrs) > 0 {
+		t.Fatalf("unexpected type errors: %v", typeErrs)
+	}
+}
+
+func TestType_BuiltinRegistered(t *testing.T) {
+	_, _, parseErrs, typeErrs := testutil.Analyze("v = vector [1,2,3]\nprintln(type(v))\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -117,6 +197,16 @@ func TestVectorInplaceAdd_BuiltinRegistered(t *testing.T) {
 
 func TestVectorFillnaAndAstype_BuiltinsRegistered(t *testing.T) {
 	_, _, parseErrs, typeErrs := testutil.Analyze("v = vector [1,2,3]\nprintln(fillna(v, 0))\nprintln(astype(v, 'i64'))\n")
+	if len(parseErrs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", parseErrs)
+	}
+	if len(typeErrs) > 0 {
+		t.Fatalf("unexpected type errors: %v", typeErrs)
+	}
+}
+
+func TestVectorCategoricalBuiltinsRegistered(t *testing.T) {
+	_, _, parseErrs, typeErrs := testutil.Analyze("xs = list ['red','blue','red']\nc = cat_from_str(xs)\nprintln(cat_to_str(c))\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}

@@ -26,7 +26,7 @@ def bench_list(n: int, iterations: int) -> float:
 
 
 def bench_numpy(n: int, iterations: int) -> float:
-    """Vectorized arr += 1 (equivalent to Quark vadd_inplace)."""
+    """Vectorized arr += 1 (equivalent to Quark nums = nums + 1)."""
     import numpy as np
 
     nums = np.arange(1, n + 1, dtype=np.float64)

@@ -68,8 +68,23 @@ println(vplus)
 vmul = vi * vplus
 println(vmul)
 
-vadd_inplace(vi, 1)
-println(sum(vi))
-
 vfilled = fillna(vi, 0)
 println(vfilled)
+
+println(type(v))
+println(type(vi))
+
+v_from_list = to_vector(list [10, 20, 30])
+println(v_from_list)
+println(sum(v_from_list))
+
+// Categorical helpers (list[str] -> cat -> list[str])
+labels = list ['red', 'blue', 'red', 'green']
+cats = cat_from_str(labels)
+println(cats)
+
+labels2 = cat_to_str(cats)
+println(labels2)
+println(get(labels2, 0))
+println(get(labels2, 1))
+println(type(labels2))

@@ -37,16 +37,16 @@ $nums = (1..$N) -join ", "
 #   nums = vector [1, 2, ..., N]
 #   iter = 0
 #   while iter < ITERATIONS:
-#       vadd_inplace(nums, 1)
+#       nums = nums + 1
 #       iter = iter + 1
 #   println(sum(nums))
 $vectorProgram = @"
-// Auto-generated benchmark: vector in-place SIMD update
+// Auto-generated benchmark: vector scalar update
 nums = vector [$nums]
 
 iter = 0
 while iter < ${Iterations}:
-    vadd_inplace(nums, 1)
+    nums = nums + 1
     iter = iter + 1
 
 println(sum(nums))

@@ -1,0 +1,5 @@
+use './core'
+
+module composed:
+    fn double_square(n) -> double(square(n))
+    fn square(n) -> n * n

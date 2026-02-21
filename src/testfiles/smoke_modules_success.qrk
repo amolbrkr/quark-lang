@@ -1,0 +1,18 @@
+// Consolidated module smoke: success paths
+// Covers local imports, multiple imports, transitive import, duplicate import dedup, and same-file module use.
+
+use './lib/core'
+use './lib/composed'
+use './lib/core'
+
+module localmod:
+    fn inc(n) -> n + 1
+
+use localmod
+
+println('== smoke: modules success ==')
+double(5) | println()
+triple(3) | println()
+square(4) | println()
+double_square(3) | println()
+inc(41) | println()

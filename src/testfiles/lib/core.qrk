@@ -1,0 +1,9 @@
+module helpers:
+    fn double(x) -> x * 2
+    fn triple(x) -> x * 3
+
+module collision_a:
+    fn foo() -> 1
+
+module collision_b:
+    fn foo() -> 2

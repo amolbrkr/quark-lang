@@ -104,13 +104,15 @@ func TestSmokePrograms_Run(t *testing.T) {
 			),
 		},
 		{
-			name: "module_use",
-			file: filepath.Join(testfilesDir, "smoke_module_use.qrk"),
+			name: "modules_success",
+			file: filepath.Join(testfilesDir, "smoke_modules_success.qrk"),
 			expected: join(
-				"== smoke: module/use ==",
-				"25",
-				"27",
-				"5",
+				"== smoke: modules success ==",
+				"10",
+				"9",
+				"16",
+				"18",
+				"42",
 			),
 		},
 		{

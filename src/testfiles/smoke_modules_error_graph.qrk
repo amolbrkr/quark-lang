@@ -1,0 +1,6 @@
+// Consolidated module smoke: graph/import-graph failures
+// Expected: compile-time error due to symbol collision from two modules.
+
+use './lib/core'
+use collision_a
+foo() | println()

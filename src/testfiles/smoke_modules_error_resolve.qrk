@@ -1,0 +1,5 @@
+// Consolidated module smoke: resolver failures
+// Expected: compile-time import error (missing file).
+
+use './nonexistent'
+println('should not reach here')

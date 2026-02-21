@@ -927,7 +927,7 @@ go build -o quark .
 ./quark run ../../../src/testfiles/smoke_syntax.qrk
 ./quark run ../../../src/testfiles/smoke_types.qrk
 ./quark run ../../../src/testfiles/smoke_string_list_builtins.qrk
-./quark run ../../../src/testfiles/smoke_module_use.qrk
+./quark run ../../../src/testfiles/smoke_modules_success.qrk
 
 # Debug mode (saves .c file)
 ./quark run test.qrk --debug

@@ -1,7 +1,10 @@
-a = list [1, 2, 3, 4, 5]
-push(a, 6)
+module test:
+    fn make_upper(string) ->
+        upper(string)
 
-println(len(a))
+names = list['a','b','c']
 
-for i in a:
-    println(i)
+use test
+
+for item in names:
+    println(make_upper(item))

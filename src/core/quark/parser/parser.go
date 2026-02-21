@@ -576,21 +576,29 @@ func (p *Parser) parseModule() *ast.TreeNode {
 	return node
 }
 
-// parseUse parses: use module_name
+// parseUse parses: use module_name  OR  use './path/to/module'
 func (p *Parser) parseUse() *ast.TreeNode {
 	tok := p.curToken
 	node := ast.NewNode(ast.UseNode, &tok)
 	p.nextToken() // skip 'use'
 
-	// Parse module name
-	if p.curToken.Type != token.ID {
-		p.addError("expected module name after 'use'")
+	switch p.curToken.Type {
+	case token.STRING:
+		// File import: use './helpers' or use 'csv'
+		pathTok := p.curToken
+		pathNode := ast.NewNode(ast.LiteralNode, &pathTok)
+		node.AddChild(pathNode)
+		p.nextToken()
+	case token.ID:
+		// Same-file module reference: use math
+		nameTok := p.curToken
+		nameNode := ast.NewNode(ast.IdentifierNode, &nameTok)
+		node.AddChild(nameNode)
+		p.nextToken()
+	default:
+		p.addError("expected module path string or module name after 'use'")
 		return nil
 	}
-	nameTok := p.curToken
-	nameNode := ast.NewNode(ast.IdentifierNode, &nameTok)
-	node.AddChild(nameNode)
-	p.nextToken()
 
 	return node
 }

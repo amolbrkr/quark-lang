@@ -1169,8 +1169,14 @@ func (a *Analyzer) analyzeUse(node *ast.TreeNode) Type {
 		return TypeVoid
 	}
 
-	// Import all symbols from module into current scope
+	// Import all symbols from module into current scope, checking for collisions
 	for name, sym := range module.Symbols {
+		if existing := a.currentScope.LookupLocal(name); existing != nil {
+			// Allow re-importing the same symbol from the same module (dedup)
+			// but reject conflicts with other definitions
+			a.errorAt(node, "symbol '%s' from module '%s' conflicts with existing definition", name, moduleName)
+			continue
+		}
 		a.currentScope.Define(name, sym.Type, sym.Mutable)
 	}
 

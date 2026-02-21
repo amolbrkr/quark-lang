@@ -8,8 +8,10 @@ import (
 	"runtime"
 	"strings"
 
+	"quark/ast"
 	"quark/codegen"
 	"quark/lexer"
+	"quark/loader"
 	"quark/parser"
 	"quark/types"
 )
@@ -176,6 +178,28 @@ func printUsage() {
 	fmt.Println("  quark test.qrk                    # Shorthand for run")
 }
 
+// resolveImports runs the module loader on the parsed AST to splice in external file imports.
+// Returns true if successful, false if there were errors (printed to stderr).
+func resolveImports(tree *ast.TreeNode, filename string) bool {
+	absPath, err := filepath.Abs(filename)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error resolving path: %s\n", err)
+		return false
+	}
+
+	ml := loader.NewModuleLoader()
+	ml.ResolveImports(tree, absPath)
+
+	if len(ml.Errors()) > 0 {
+		fmt.Fprintln(os.Stderr, "Import errors:")
+		for _, e := range ml.Errors() {
+			fmt.Fprintf(os.Stderr, "  %s\n", e)
+		}
+		return false
+	}
+	return true
+}
+
 func runLexer(filename string) {
 	content, err := os.ReadFile(filename)
 	if err != nil {
@@ -207,7 +231,7 @@ func runParser(filename string) {
 	tokens := l.Tokenize()
 
 	p := parser.New(tokens)
-	ast := p.Parse()
+	tree := p.Parse()
 
 	if len(p.Errors()) > 0 {
 		fmt.Println("Parser errors:")
@@ -217,9 +241,13 @@ func runParser(filename string) {
 		os.Exit(1)
 	}
 
+	if !resolveImports(tree, filename) {
+		os.Exit(1)
+	}
+
 	fmt.Printf("AST for %s:\n", filename)
 	fmt.Println("========================================")
-	ast.PrintTree()
+	tree.PrintTree()
 	fmt.Println("========================================")
 }
 
@@ -234,7 +262,7 @@ func runCheck(filename string) {
 	tokens := l.Tokenize()
 
 	p := parser.New(tokens)
-	ast := p.Parse()
+	tree := p.Parse()
 
 	if len(p.Errors()) > 0 {
 		fmt.Println("Parser errors:")
@@ -244,8 +272,12 @@ func runCheck(filename string) {
 		os.Exit(1)
 	}
 
+	if !resolveImports(tree, filename) {
+		os.Exit(1)
+	}
+
 	analyzer := types.NewAnalyzer()
-	analyzer.Analyze(ast)
+	analyzer.Analyze(tree)
 
 	if len(analyzer.Errors()) > 0 {
 		fmt.Println("Type errors:")
@@ -269,7 +301,7 @@ func runEmit(filename string) {
 	tokens := l.Tokenize()
 
 	p := parser.New(tokens)
-	ast := p.Parse()
+	tree := p.Parse()
 
 	if len(p.Errors()) > 0 {
 		fmt.Println("Parser errors:")
@@ -279,9 +311,13 @@ func runEmit(filename string) {
 		os.Exit(1)
 	}
 
+	if !resolveImports(tree, filename) {
+		os.Exit(1)
+	}
+
 	// Run analyzer to compute closure captures
 	analyzer := types.NewAnalyzer()
-	analyzer.Analyze(ast)
+	analyzer.Analyze(tree)
 
 	if len(analyzer.Errors()) > 0 {
 		fmt.Fprintln(os.Stderr, "Type errors:")
@@ -293,7 +329,7 @@ func runEmit(filename string) {
 
 	gen := codegen.New()
 	gen.SetCaptures(analyzer.GetCaptures())
-	cCode := gen.Generate(ast)
+	cCode := gen.Generate(tree)
 	fmt.Println(cCode)
 }
 
@@ -315,7 +351,7 @@ func runBuild(filename string, output string, useGC bool) {
 	tokens := l.Tokenize()
 
 	p := parser.New(tokens)
-	ast := p.Parse()
+	tree := p.Parse()
 
 	if len(p.Errors()) > 0 {
 		fmt.Fprintln(os.Stderr, "Parser errors:")
@@ -325,9 +361,13 @@ func runBuild(filename string, output string, useGC bool) {
 		os.Exit(1)
 	}
 
+	if !resolveImports(tree, filename) {
+		os.Exit(1)
+	}
+
 	// Type checking phase
 	analyzer := types.NewAnalyzer()
-	analyzer.Analyze(ast)
+	analyzer.Analyze(tree)
 
 	if len(analyzer.Errors()) > 0 {
 		fmt.Fprintln(os.Stderr, "Type errors:")
@@ -339,7 +379,7 @@ func runBuild(filename string, output string, useGC bool) {
 
 	gen := codegen.New()
 	gen.SetCaptures(analyzer.GetCaptures())
-	cCode := gen.Generate(ast)
+	cCode := gen.Generate(tree)
 
 	// Write C++ code to temp file
 	tmpDir := os.TempDir()
@@ -418,7 +458,7 @@ func runRun(filename string, debug bool, useGC bool) {
 	tokens := l.Tokenize()
 
 	p := parser.New(tokens)
-	ast := p.Parse()
+	tree := p.Parse()
 
 	if len(p.Errors()) > 0 {
 		fmt.Fprintln(os.Stderr, "Parser errors:")
@@ -428,9 +468,13 @@ func runRun(filename string, debug bool, useGC bool) {
 		os.Exit(1)
 	}
 
+	if !resolveImports(tree, filename) {
+		os.Exit(1)
+	}
+
 	// Type checking phase
 	analyzer := types.NewAnalyzer()
-	analyzer.Analyze(ast)
+	analyzer.Analyze(tree)
 
 	if len(analyzer.Errors()) > 0 {
 		fmt.Fprintln(os.Stderr, "Type errors:")
@@ -442,7 +486,7 @@ func runRun(filename string, debug bool, useGC bool) {
 
 	gen := codegen.New()
 	gen.SetCaptures(analyzer.GetCaptures())
-	cCode := gen.Generate(ast)
+	cCode := gen.Generate(tree)
 
 	// Determine file paths
 	var cFile, exeFile string

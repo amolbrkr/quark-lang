@@ -2,6 +2,8 @@
 
 This document describes the built-in functions available in Quark. All standard library functions are implemented in C++ for performance and are automatically available without any imports.
 
+**Invocation model**: All builtins use function-call syntax: `callable(entity, ...)`. Dot syntax (`entity.method()`) is not supported — dot is reserved for dict key access only. Use pipes for chaining: `entity | callable() | next()`.
+
 ## Core Functions
 
 ### I/O Functions
@@ -115,12 +117,13 @@ Dicts are key-value maps backed by `std::unordered_map<std::string, QValue>`.
 
 ### Static keys (dot access)
 
-Use dot access for static, identifier keys:
+Dot syntax is exclusively for dict key read/write (not method calls):
 
 ```quark
 info = dict { name: 'Alex', age: 30 }
 println(info.name)      // 'Alex'
 info.city = 'NYC'
+len(info) | println()   // 3
 ```
 
 ### Dynamic keys (variable/expression)

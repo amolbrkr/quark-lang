@@ -152,6 +152,12 @@ data | transform() | filter() | save()
 - Lists backed by `std::vector<QValue>`
 - Dicts backed by `std::unordered_map<std::string, QValue>`
 
+**Invocation Model:**
+- **Canonical**: `callable(entity, ...)` — all builtins and user functions use function-call syntax
+- **Pipe equivalent**: `entity | callable(...)` => `callable(entity, ...)`
+- **Dot is data-only**: `dict.member` reads/writes dict keys; `entity.method(...)` is a compile error
+- No method dispatch on any type (list, string, etc.) — use `len(mylist)`, `upper(mystr)`, `push(mylist, item)`
+
 **Syntax Conventions:**
 - Function calls always use parentheses: `print(x)`
 - Nested calls: `outer(inner(x))`
@@ -170,6 +176,7 @@ Quark uses punctuation intentionally to convey semantic meaning:
 | `->` | "produces" / "maps to" | Function bodies, pattern results |
 | `:` | "has type" / "contains" | Type annotations, block containers, dict entries |
 | `\|` | "then" / "pipe to" | Data flow pipelines |
+| `.` | "member of" | Dict key access only (`d.key`); not for method calls |
 
 ## Type System
 
@@ -842,7 +849,8 @@ results = data | map(transform) | filter(valid)
 - **Unary operators have no whitespace** - `-5` (negative), `!flag` (not), `a - b` (subtraction)
 - **Use `elseif` not `elif`** - More English-like
 - **Single-quoted strings** - `'hello'` not `"hello"`
-- **Parentheses for function calls** - `print(x)`
+- **Parentheses for function calls** - `print(x)`, `push(list, item)`, `upper(str)`
+- **Dot for dict data access only** - `d.key` reads, `d.key = val` writes; never `entity.method()`
 - **Pipe for chaining** - `x | f()` or `x | f(y)` not nested calls
 - **Underscore for wildcard** - `_` in pattern matching
 - **Ranges use `range()` function** - `range(10)`, `range(1, 100)`, not `0..10`
@@ -978,7 +986,8 @@ cd runtime && pwsh build_runtime.ps1
 
 - **Unary operator whitespace**: Unary operators must have no whitespace. `f -5` (function call with negative argument) is valid, but `a -b` (space before, no space after) is a parse error. Use `a - b` for subtraction.
 - **Garbage collection**: Boehm GC is enabled by default. GC_init() is called at program start. Requires Boehm GC installed on the system.
-- **Dict access**: Dicts only support dot access (`d.key`), not bracket indexing (`d['key']`). Dict keys are always identifiers (no string literal keys).
+- **No dot-call syntax**: Dot is data-access only (dict keys). `entity.method()` is a compile error. Use `callable(entity, ...)` or pipes instead.
+- **Dict access**: Dicts only support dot access (`d.key`), not bracket indexing (`d['key']`). Dict keys are always identifiers (no string literal keys). For dynamic keys use `dget(d, key)` and `dset(d, key, value)`.
 - **Dict iteration**: No `for key in dict` support yet.
 
 ## Feature Matrix (Grammar vs Implementation)
@@ -1005,7 +1014,7 @@ Key: Yes = implemented, Partial = present but incomplete, No = missing.
 | Comparison ops `< <= > >= == !=` | Yes | Yes | Yes | Yes | Yes | Enforces comparable operand checks. |
 | Logical ops `and` / `or` | Yes | Yes | Yes | Yes | Yes | Keyword `not` not implemented. |
 | Unary ops `!` / `-` / `~` | Yes | Yes | Yes | Yes | Yes | `~` maps to logical not. |
-| Member access `.` | Yes | Yes | Yes | Yes | Yes | Properties, no-arg methods, and method calls with args on lists/strings. |
+| Member access `.` | Yes | Yes | Yes | Yes | Yes | Dict key read/write only. Dot-call (`entity.method()`) is a compile error. |
 | List literals `list [a, b]` | Yes | Yes | Yes | Yes | Yes | Uses `std::vector<QValue>`. Requires `list` keyword prefix. |
 | Vector literals `vector [a, b]` | Yes | Yes | Yes | Yes | Yes | Homogeneous only: all `int` -> `vector[i64]`, all `float` -> `vector[f64]`, all `str` -> `vector[str]`. Mixed element types are rejected. |
 | Typed parameters `x: int` | Yes | Yes | Yes | Yes | N/A | Basic annotations on params and variable declarations. No generic types. |
@@ -1029,10 +1038,10 @@ Key: Yes = implemented, Partial = present but incomplete, No = missing.
 | Math: `abs`, `min`, `max`, `sqrt`, `floor`, `ceil`, `round` | Yes | Yes | No | Builtins only. |
 | String: `upper`, `lower`, `trim`, `contains`, `startswith`, `endswith`, `replace`, `concat` | Yes | Yes | No | Builtins only. |
 | List: `push`, `pop`, `get`, `set`, `insert`, `remove`, `slice`, `reverse` | Yes | Yes | No | Builtins only. |
-| List extras: `size`, `empty`, `clear` | Yes | No | No | Implemented in runtime but not exposed as builtins. |
+| List extras: `size`, `empty`, `clear` | Yes | No | No | Implemented in runtime but not exposed as builtins. Not accessible via dot syntax. |
 | `concat` (overloaded) | Yes | Yes | No | Works for both strings and lists. |
 | Vector: `to_vector`, `astype`, `fillna`, `cat_from_str`, `cat_to_str` | Yes | Yes | No | `to_vector` requires homogeneous list elements (`int`, `float`, or `str`); mixed lists return error/null. Vector arithmetic `+ - * /` is numeric-only. |
-| Dict: `dict {}`, dot access, `len`, `.size` | Yes | Yes | No | Dot access only. No bracket indexing. |
+| Dict: `dict {}`, dot access, `len`, `dget`, `dset` | Yes | Yes | No | Dot access for key read/write. Use `len(d)` for size. No bracket indexing. |
 | Time / clock | No | No | No | Not yet implemented. |
 | Random | No | No | No | Not yet implemented. |
 | OS / filesystem | No | No | No | Not yet implemented. |
@@ -1414,3 +1423,42 @@ Removed from `grammar.md`:
 - Generic type expressions
 - Form 2 lambda special case
 - Struct/impl marked as [FUTURE]
+
+## Recent Changes (2026-02-21)
+
+### Unified Invocation Semantics: Removed Dot-Call Syntax
+
+**Problem**: Quark supported both `callable(entity, ...)` and `entity.callable(...)` invocation styles. This overlap created user confusion and compiler/runtime complexity because Quark has no class/method model — dot-call on lists/strings was ad-hoc dispatch.
+
+**Decision**: Adopt a single canonical invocation model:
+- **Canonical**: `callable(entity, ...)`
+- **Pipe equivalent**: `entity | callable(...)` => `callable(entity, ...)`
+- **Dot is data-only**: `dict.member` for dict key read/write; `entity.method(...)` is a compile error
+
+**Changes Made**:
+
+1. **Analyzer** (`types/analyzer.go`):
+   - `entity.method(args)` now produces compile error: `"dot-call syntax is not supported; use method(entity, ...) instead"`
+   - `entity.member` on non-dict types (list, string, etc.) now produces: `"dot access is only supported on dict"`
+   - Dict dot access (`d.key`) and assignment (`d.key = val`) still work
+
+2. **Codegen** (`codegen/codegen.go`):
+   - Removed `q_member_call1`/`q_member_call2` emission paths
+   - Dict member access (`q_member_get`) and assignment (`q_member_set`) preserved
+
+3. **Runtime** (`runtime/include/quark/ops/member.hpp`):
+   - Removed `q_member_call1()` and `q_member_call2()` functions
+   - Simplified `q_member_get()` to dict-only (removed list/string property dispatch)
+   - `q_member_set()` unchanged (was already dict-only)
+
+4. **Test files**: Updated `test.qrk` — `a.push(6)` → `push(a, 6)`, `a.size` → `len(a)`
+
+**Migration guide** (old → new):
+- `mylist.push(x)` → `push(mylist, x)`
+- `mylist.size` → `len(mylist)`
+- `mystr.upper()` → `upper(mystr)`
+- `mystr.contains(sub)` → `contains(mystr, sub)`
+- `mylist.slice(0, 3)` → `slice(mylist, 0, 3)`
+- `d.key` → `d.key` (unchanged, dict access still works)
+
+**Future**: When structs/impl are implemented, dot-call will be reintroduced only for declared user methods in impl blocks.

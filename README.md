@@ -5,14 +5,15 @@
 ## What Works Today
 
 - Indentation-based blocks and a Pratt parser for expressions
-- Functions and lambdas
+- Functions, lambdas, and closures (capture-by-value)
 - If/elseif/else, `when` pattern matching, `for`/`while` loops, and ternary expressions
 - Pipe operator for data-flow style calls
+- Unified invocation model: `callable(entity, ...)` for all builtins and user functions
 - Lists backed by `std::vector<QValue>` with indexing
 - Typed 1D vectors (`f64`, `i64`, `bool`, `str`, `cat`) with invariant checks and null-mask scaffolding
 - Vector arithmetic and reductions (`+`, `-`, `*`, `/`, `sum`, `min`, `max`) for numeric paths
 - Vector helpers `astype`, `fillna`, `to_vector`, `cat_from_str`, and `cat_to_str`
-- Dicts backed by `std::unordered_map<std::string, QValue>` with dot access
+- Dicts backed by `std::unordered_map<std::string, QValue>` with dot access (data only, no method dispatch)
 - Builtins for I/O, math, strings, lists, and dict helpers
 - Modules and `use` as compile-time organization (single file)
 
@@ -83,6 +84,27 @@ cmake --build build
 
 ## Language Notes
 
+### Invocation Model
+
+Quark uses a single canonical call form for all operations — no method-style dispatch:
+
+```quark
+// Canonical: callable(entity, ...)
+push(mylist, 42)
+upper('hello')
+len(mylist)
+
+// Pipe equivalent: entity | callable(...)
+'hello' | upper() | println()
+mylist | len() | println()
+
+// Dot is data-only (dict key access)
+d = dict { name: 'Quark' }
+println(d.name)        // OK: dict key read
+d.version = 1          // OK: dict key write
+// mylist.push(42)     // ERROR: dot-call not supported
+```
+
 ### Variables and Functions
 
 ```quark
@@ -129,7 +151,8 @@ while x > 0:
 ```quark
 nums = list [1, 2, 3]
 first = nums[0]
-nums | push(4)
+push(nums, 4)
+len(nums) | println()
 ```
 
 ### Vectors (MVP)
@@ -212,6 +235,8 @@ Implemented:
 - Lexer with indentation and a Pratt parser
 - Analyzer with basic type inference
 - Codegen for functions, control flow, pipes, lists, dicts, and builtins
+- Unified invocation model: `callable(entity, ...)` — no dot-call/method dispatch
+- Closures with capture-by-value semantics
 - Modules (`module`/`use`) as a single-file organization tool
 - Boehm GC integration (via `deps/bdwgc`)
 - Typed vector runtime foundation (`f64`, `i64`, `bool`, `str`, `cat`) with validation helpers

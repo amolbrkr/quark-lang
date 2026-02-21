@@ -134,7 +134,7 @@ Supported on `F64` and `I64`:
 
 - `+`, `-`, `*`, `/` vector-vector
 - `+`, `-`, `*`, `/` vector-scalar
-- In-place scalar updates for hot paths (`vadd_inplace`, later `vmul_inplace`, etc.)
+- Scalar updates through vector-scalar arithmetic (`v = v + s`, `v = v * s`) with optional in-place kernels as future optimization
 
 Type promotion:
 

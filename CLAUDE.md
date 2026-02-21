@@ -2,6 +2,15 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Development Process
+
+**IMPORTANT:** Before implementing ANY feature or fix:
+1. Create a thorough implementation plan covering all layers (token, parser, analyzer, codegen, runtime)
+2. Identify edge cases and error conditions upfront
+3. Plan proper error messages for invalid usage (compile-time in analyzer, runtime in C++)
+4. Report the plan for approval BEFORE touching the codebase
+5. Do not just implement the happy path — reliability of the compiler is the priority
+
 ## Project Overview
 
 **Quark** is a high-level, dynamically-typed language that compiles to C++, designed for fast data-heavy applications. It combines Python-like syntax with native performance through aggressive compiler optimizations.

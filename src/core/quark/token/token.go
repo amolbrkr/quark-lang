@@ -25,8 +25,6 @@ const (
 	MODULO     // %
 	DOUBLESTAR // **
 
-	AMPER // &
-	NOT   // ~
 	BANG  // !
 
 	EQUALS // =
@@ -65,7 +63,6 @@ const (
 	WHILE
 	WHEN
 	FN
-	CLASS
 	TRUE
 	FALSE
 	NULL
@@ -97,8 +94,6 @@ var tokenNames = map[TokenType]string{
 	MODULO:     "MODULO",
 	DOUBLESTAR: "DOUBLESTAR",
 
-	AMPER: "AMPER",
-	NOT:   "NOT",
 	BANG:  "BANG",
 
 	EQUALS: "EQUALS",
@@ -134,7 +129,6 @@ var tokenNames = map[TokenType]string{
 	WHILE:  "WHILE",
 	WHEN:   "WHEN",
 	FN:     "FN",
-	CLASS:  "CLASS",
 	TRUE:   "TRUE",
 	FALSE:  "FALSE",
 	NULL:   "NULL",
@@ -165,7 +159,6 @@ var keywords = map[string]TokenType{
 	"while":  WHILE,
 	"when":   WHEN,
 	"fn":     FN,
-	"class":  CLASS,
 	"true":   TRUE,
 	"false":  FALSE,
 	"null":   NULL,

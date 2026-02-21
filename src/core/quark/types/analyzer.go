@@ -594,7 +594,7 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 			}
 			a.errorAt(node, "unary '-' expects numeric operand, got %s", operandType.String())
 			return TypeAny
-		case token.BANG, token.NOT:
+		case token.BANG:
 			// All types support truthiness, so ! works on any value
 			return TypeBool
 		}
@@ -799,19 +799,6 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 		a.errorAt(node, "logical operator '%s' expects boolean operands, got %s and %s", node.Token.Type.String(), leftType.String(), rightType.String())
 		return TypeBool
 
-	case token.AMPER:
-		if isIntLike(leftType) && isIntLike(rightType) {
-			return TypeInt
-		}
-		if isUnknownType(leftType) || isUnknownType(rightType) {
-			return TypeAny
-		}
-		a.errorAt(node, "'&' operator expects numeric operands, got %s and %s", leftType.String(), rightType.String())
-		return TypeAny
-
-	case token.COMMA:
-		// Comma returns the right operand's type
-		return rightType
 	}
 
 	a.errorAt(node, "unsupported operator '%s'", node.Token.Type.String())

@@ -404,7 +404,7 @@ func (g *Generator) generateOperator(node *ast.TreeNode) string {
 		switch op {
 		case token.MINUS:
 			return fmt.Sprintf("q_neg(%s)", operand)
-		case token.BANG, token.NOT:
+		case token.BANG:
 			return fmt.Sprintf("q_not(%s)", operand)
 		}
 		return operand

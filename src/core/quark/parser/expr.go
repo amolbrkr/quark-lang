@@ -9,10 +9,8 @@ import (
 var precedences = map[token.TokenType]ast.Precedence{
 	token.EQUALS:     ast.PrecAssignment,
 	token.PIPE:       ast.PrecPipe,
-	token.COMMA:      ast.PrecComma,
 	token.OR:         ast.PrecOr,
 	token.AND:        ast.PrecAnd,
-	token.AMPER:      ast.PrecBitwiseAnd,
 	token.DEQ:        ast.PrecEquality,
 	token.NE:         ast.PrecEquality,
 	token.LT:         ast.PrecComparison,
@@ -124,7 +122,7 @@ func (p *Parser) prefixParseFn(t token.TokenType) func() *ast.TreeNode {
 		return p.parseWildcard
 	case token.LPAR:
 		return p.parseGroupedExpression
-	case token.BANG, token.NOT, token.MINUS:
+	case token.BANG, token.MINUS:
 		return p.parseUnary
 	case token.FN:
 		return p.parseLambda
@@ -146,7 +144,7 @@ func (p *Parser) infixParseFn(t token.TokenType) func(*ast.TreeNode) *ast.TreeNo
 	switch t {
 	case token.PLUS, token.MINUS, token.MULTIPLY, token.DIVIDE, token.MODULO,
 		token.LT, token.LTE, token.GT, token.GTE, token.DEQ, token.NE,
-		token.AND, token.OR, token.AMPER, token.EQUALS, token.COMMA:
+		token.AND, token.OR, token.EQUALS:
 		return p.parseBinaryOp
 	case token.DOUBLESTAR:
 		return p.parseExponent

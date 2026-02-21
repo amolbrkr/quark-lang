@@ -150,11 +150,9 @@ const (
 	PrecLowest     Precedence = iota
 	PrecAssignment            // =
 	PrecPipe                  // |
-	PrecComma                 // ,
 	PrecTernary               // if-else
 	PrecOr                    // or
 	PrecAnd                   // and
-	PrecBitwiseAnd            // &
 	PrecEquality              // == !=
 	PrecComparison            // < <= > >=
 	PrecTerm                  // + -
@@ -168,11 +166,9 @@ var precedenceNames = map[Precedence]string{
 	PrecLowest:     "Lowest",
 	PrecAssignment: "Assignment",
 	PrecPipe:       "Pipe",
-	PrecComma:      "Comma",
 	PrecTernary:    "Ternary",
 	PrecOr:         "Or",
 	PrecAnd:        "And",
-	PrecBitwiseAnd: "BitwiseAnd",
 	PrecEquality:   "Equality",
 	PrecComparison: "Comparison",
 	PrecTerm:       "Term",

@@ -282,10 +282,6 @@ func (l *Lexer) nextRawToken() token.Token {
 		tok = newToken(token.DIVIDE, l.ch, tok.Line, tok.Column)
 	case '%':
 		tok = newToken(token.MODULO, l.ch, tok.Line, tok.Column)
-	case '&':
-		tok = newToken(token.AMPER, l.ch, tok.Line, tok.Column)
-	case '~':
-		tok = newToken(token.NOT, l.ch, tok.Line, tok.Column)
 	case '!':
 		if l.peekChar() == '=' {
 			l.readChar()

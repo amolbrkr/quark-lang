@@ -150,15 +150,7 @@ Mathematical operations implemented using C++'s math library.
 |----------|-----------|-------------|
 | `abs` | `number -> number` | Absolute value |
 | `min` | `number, number -> number` | Minimum of two values |
-| `min` | `vector -> float` | Minimum element in vector |
 | `max` | `number, number -> number` | Maximum of two values |
-| `max` | `vector -> float` | Maximum element in vector |
-| `sum` | `vector -> float` | Sum of all vector elements |
-| `fillna` | `vector, any -> vector` | Replace null entries in a vector |
-| `astype` | `vector, str -> vector` | Cast vector dtype (`f64`, `i64`, `bool`) |
-| `to_vector` | `list\|vector -> vector` | Convert list to typed vector (or clone vector) |
-| `cat_from_str` | `list\|vector -> vector` | Build categorical vector from strings |
-| `cat_to_str` | `vector -> list` | Decode categorical vector back to strings |
 | `sqrt` | `number -> float` | Square root |
 | `floor` | `float -> int` | Round down to integer |
 | `ceil` | `float -> int` | Round up to integer |
@@ -191,29 +183,6 @@ round(3.4) | println()        // 3
 x = 0 - 16
 x | abs() | sqrt() | println()   // 4
 sqrt(10) | floor() | println()  // 3
-
-// Vector reductions
-v = vector [1, 2, 3, 4]
-sum(v) | println()              // 10
-min(v) | println()              // 1
-max(v) | println()              // 4
-
-// Vector casts
-iv = astype(v, 'i64')
-println(sum(iv))
-
-// Convert list to vector
-v2 = to_vector(list [10, 20, 30])
-println(sum(v2))                // 60
-
-// Null fill (when vector has null mask entries)
-filled = fillna(v, 0)
-
-// Categorical encode/decode
-labels = list ['red', 'blue', 'red', 'green']
-cats = cat_from_str(labels)
-println(cats)                    // [vector len=4]
-println(cat_to_str(cats))        // [list len=4]
 ```
 
 ### Notes
@@ -224,6 +193,75 @@ println(cat_to_str(cats))        // [list len=4]
 - `sqrt` always returns float
 - `floor`, `ceil`, `round` return int
 - `range` accepts int or float inputs; float values are converted to integers internally
+
+## Vector Functions
+
+Typed vector operations for data-oriented workloads.
+
+### Construction and Conversion
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `to_vector` | `list\|vector -> vector` | Convert list to typed vector (or clone vector) |
+| `astype` | `vector, str -> vector` | Cast vector dtype (`f64`, `i64`, `bool`) |
+| `cat_from_str` | `list\|vector -> vector` | Build categorical vector from strings |
+| `cat_to_str` | `vector -> list` | Decode categorical vector back to strings |
+
+### Reductions and Utilities
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `sum` | `vector -> float` | Sum of all vector elements |
+| `min` | `vector -> float` | Minimum element in vector |
+| `max` | `vector -> float` | Maximum element in vector |
+| `fillna` | `vector, any -> vector` | Replace null entries in a vector |
+
+### Examples
+
+```quark
+// Literal inference
+vi = vector [1, 2, 3, 4]          // vector[i64]
+vf = vector [1.0, 2.0, 3.0]       // vector[f64]
+vs = vector ['a', 'b', 'c']       // vector[str]
+
+println(type(vi))
+println(type(vf))
+println(type(vs))
+
+// Homogeneous conversion from list
+v2 = to_vector(list [10, 20, 30])
+println(type(v2))
+
+// Mixed list conversion is invalid
+// to_vector(list [1, '2', 3])     // error
+
+// Numeric vector arithmetic
+a = vector [10, 20, 30, 40]
+b = vector [1, 2, 3, 4]
+z = a - b
+println(sum(z))
+
+// String vectors support equality/inequality comparisons,
+// but arithmetic (+, -, *, /) is not supported.
+
+// Null fill and casts
+filled = fillna(a, 0)
+iv = astype(vf, 'i64')
+
+// Categorical encode/decode
+labels = list ['red', 'blue', 'red', 'green']
+cats = cat_from_str(labels)
+println(cats)                    // [vector len=4]
+println(cat_to_str(cats))        // [list len=4]
+```
+
+### Notes
+
+- Vector literals must be homogeneous (`int`, `float`, or `str`)
+- `to_vector` enforces the same homogeneity rule as vector literals
+- Numeric vector arithmetic (`+`, `-`, `*`, `/`) supports numeric vectors only
+- `sum`, `min`, and `max` return float
+- `astype` currently supports casts among numeric/bool vector dtypes
 
 ## String Functions
 
@@ -305,32 +343,56 @@ All functions work seamlessly with Quark's pipe operator:
 
 ## Implementation Details
 
-All standard library functions are implemented as C++ functions in the header-only runtime library at `runtime/include/quark/`. Generated C++ includes `quark/quark.hpp` (via compiler `-I` include path) rather than embedding the full runtime by default.
+All standard library functions are implemented in the header-only C++ runtime under `src/core/quark/runtime/include/quark/`. Generated programs include `quark/quark.hpp` through compiler include paths.
 
-### Adding New Functions
+### Runtime Data Model
 
-To add a new built-in function:
+Quark values are boxed at runtime using a tagged value model:
+
+- Primitive: `int`, `float`, `str`, `bool`, `null`
+- Collections: `list`, `dict`, `vector`
+- Callable/result: `func`, `result`
+
+Container implementation choices:
+
+- `list` uses `std::vector<QValue>`
+- `dict` uses `std::unordered_map<std::string, QValue>`
+- `vector` uses typed storage (`f64`, `i64`, `bool`, `str`, `cat`) with runtime invariants
+
+### Typing and Validation Layers
+
+Builtins are validated in two phases:
+
+1. Compile-time analyzer checks argument counts and inferred types
+2. Runtime guards validate concrete value kinds and return `null` or runtime errors when invalid
+
+Vector-specific typing behavior:
+
+- Vector literals infer homogeneous element type (`vector[i64]`, `vector[f64]`, `vector[str]`)
+- Mixed element vector literals are analyzer errors
+- `to_vector(list [...])` applies the same homogeneity rule
+- Numeric vector arithmetic is allowed for numeric vectors; string vector arithmetic is rejected
+
+### Builtin Wiring
+
+Builtin functions are connected across three layers:
+
+1. Runtime implementation in the C++ headers
+2. Codegen builtin mapping (`src/core/quark/codegen/builtins.go`)
+3. Analyzer builtin signatures (`src/core/quark/types/analyzer.go`)
+
+All three layers must stay in sync for arity, naming, and return-type behavior.
+
+### Adding New Builtins
+
+To add a new builtin function:
 
 1. **Add C++ implementation** in appropriate header under `runtime/include/quark/`
 2. **Regenerate `runtime.hpp`** by running `build_runtime.ps1` (only needed for embedded-runtime fallback mode)
 3. **Register the builtin mapping** in `src/core/quark/codegen/builtins.go`
 4. **Register type signature** in `src/core/quark/types/analyzer.go`
 
-Example C++ implementation pattern:
-```cpp
-inline QValue q_myfunc(QValue v) {
-    // Type checking
-    if (v.type != QValue::VAL_STRING) return qv_string("");
-
-    // Implementation
-    char* result = do_something(v.data.string_val);
-
-    // Return boxed value
-    QValue q = qv_string(result);
-    free(result);  // Clean up temporary
-    return q;
-}
-```
+For changes that impact syntax and semantics (for example new literal rules), update smoke files and both Go and runtime unit tests to preserve analyzer/runtime consistency.
 
 ## Future Modules
 

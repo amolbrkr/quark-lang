@@ -1007,6 +1007,7 @@ Key: Yes = implemented, Partial = present but incomplete, No = missing.
 | Unary ops `!` / `-` / `~` | Yes | Yes | Yes | Yes | Yes | `~` maps to logical not. |
 | Member access `.` | Yes | Yes | Yes | Yes | Yes | Properties, no-arg methods, and method calls with args on lists/strings. |
 | List literals `list [a, b]` | Yes | Yes | Yes | Yes | Yes | Uses `std::vector<QValue>`. Requires `list` keyword prefix. |
+| Vector literals `vector [a, b]` | Yes | Yes | Yes | Yes | Yes | Homogeneous only: all `int` -> `vector[i64]`, all `float` -> `vector[f64]`, all `str` -> `vector[str]`. Mixed element types are rejected. |
 | Typed parameters `x: int` | Yes | Yes | Yes | Yes | N/A | Basic annotations on params and variable declarations. No generic types. |
 | Indexing `list[idx]` | Yes | Yes | Yes | Yes | Yes | `q_get` supports negative indices. |
 | Dict literals `dict {k: v}` | Yes | Yes | Yes | Yes | Yes | Requires `dict` keyword. Dot access only (`d.key`). |
@@ -1030,6 +1031,7 @@ Key: Yes = implemented, Partial = present but incomplete, No = missing.
 | List: `push`, `pop`, `get`, `set`, `insert`, `remove`, `slice`, `reverse` | Yes | Yes | No | Builtins only. |
 | List extras: `size`, `empty`, `clear` | Yes | No | No | Implemented in runtime but not exposed as builtins. |
 | `concat` (overloaded) | Yes | Yes | No | Works for both strings and lists. |
+| Vector: `to_vector`, `astype`, `fillna`, `cat_from_str`, `cat_to_str` | Yes | Yes | No | `to_vector` requires homogeneous list elements (`int`, `float`, or `str`); mixed lists return error/null. Vector arithmetic `+ - * /` is numeric-only. |
 | Dict: `dict {}`, dot access, `len`, `.size` | Yes | Yes | No | Dot access only. No bracket indexing. |
 | Time / clock | No | No | No | Not yet implemented. |
 | Random | No | No | No | Not yet implemented. |

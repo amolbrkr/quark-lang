@@ -139,6 +139,10 @@ v = vector [1, 2, 3, 4]
 w = v + 1
 u = v * w
 
+// Literal inference
+vi = vector [1, 2, 3]          // vector[i64]
+vs = vector ['a', 'b', 'c']    // vector[str]
+
 iv = astype(v, 'i64')
 iv = iv + 2
 filled = fillna(iv, 0)
@@ -154,6 +158,15 @@ println(sum(v))
 println(min(v))
 println(max(v))
 ```
+
+Vector literal and `to_vector(...)` rules are homogeneous:
+
+- `vector [1, 2, 3]` -> `vector[i64]`
+- `vector [1.0, 2.0]` -> `vector[f64]`
+- `vector ['a', 'b']` -> `vector[str]`
+- Mixed literals (for example `vector [1, '2', 3]`) are a type error
+- `to_vector(list [...])` follows the same homogeneous rule and rejects mixed element types
+- Vector arithmetic `+ - * /` is numeric-only (`vector[str]` arithmetic is rejected)
 
 ### Dicts
 
@@ -204,6 +217,7 @@ Implemented:
 - Typed vector runtime foundation (`f64`, `i64`, `bool`, `str`, `cat`) with validation helpers
 - Numeric vector arithmetic/reductions with i64 paths and scalar broadcasting
 - Vector builtins `fillna`, `astype`, `cat_from_str`, and `cat_to_str`
+- Homogeneous vector literal inference (`i64`, `f64`, `str`) and aligned `to_vector(...)` type checks
 - Portable amd64 compile baseline `-march=x86-64-v3` (replacing `-march=native`)
 - Clang loop-vectorization diagnostics enabled during Quark compilation
 - `xsimd` dependency removed from runtime and build flow
@@ -214,7 +228,6 @@ Not yet implemented or incomplete:
 - String interpolation
 - Structs and impl blocks
 - Result/try/unwrap-style helpers (beyond `ok`/`err` + `when` patterns)
-- Tensor types
 - Multi-file modules
 - Vector utilities from spec: `where`, `unique`, `value_counts`
 - Full null-propagation semantics across all vector kernels

@@ -21,8 +21,8 @@
 
 // Type-specific operations
 #include "types/string.hpp"
-#include "types/list.hpp"
 #include "types/vector.hpp"
+#include "types/list.hpp"
 #include "types/dict.hpp"
 #include "types/function.hpp"
 

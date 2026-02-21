@@ -11,6 +11,9 @@
 
 // Less than
 inline QValue q_lt(QValue a, QValue b) {
+    if (a.type == QValue::VAL_VECTOR || b.type == QValue::VAL_VECTOR) {
+        return q_vec_lt(a, b);
+    }
     // Type guard: only INT and FLOAT are valid
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
@@ -24,6 +27,9 @@ inline QValue q_lt(QValue a, QValue b) {
 
 // Less than or equal
 inline QValue q_lte(QValue a, QValue b) {
+    if (a.type == QValue::VAL_VECTOR || b.type == QValue::VAL_VECTOR) {
+        return q_vec_lte(a, b);
+    }
     // Type guard: only INT and FLOAT are valid
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
@@ -37,6 +43,9 @@ inline QValue q_lte(QValue a, QValue b) {
 
 // Greater than
 inline QValue q_gt(QValue a, QValue b) {
+    if (a.type == QValue::VAL_VECTOR || b.type == QValue::VAL_VECTOR) {
+        return q_vec_gt(a, b);
+    }
     // Type guard: only INT and FLOAT are valid
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
@@ -50,6 +59,9 @@ inline QValue q_gt(QValue a, QValue b) {
 
 // Greater than or equal
 inline QValue q_gte(QValue a, QValue b) {
+    if (a.type == QValue::VAL_VECTOR || b.type == QValue::VAL_VECTOR) {
+        return q_vec_gte(a, b);
+    }
     // Type guard: only INT and FLOAT are valid
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
@@ -63,6 +75,9 @@ inline QValue q_gte(QValue a, QValue b) {
 
 // Equality (type-sensitive)
 inline QValue q_eq(QValue a, QValue b) {
+    if (a.type == QValue::VAL_VECTOR || b.type == QValue::VAL_VECTOR) {
+        return q_vec_eq(a, b);
+    }
     if (a.type != b.type) {
         // Allow int/float comparison
         if ((a.type == QValue::VAL_INT || a.type == QValue::VAL_FLOAT) &&
@@ -90,6 +105,9 @@ inline QValue q_eq(QValue a, QValue b) {
 
 // Not equal
 inline QValue q_neq(QValue a, QValue b) {
+    if (a.type == QValue::VAL_VECTOR || b.type == QValue::VAL_VECTOR) {
+        return q_vec_neq(a, b);
+    }
     return qv_bool(!q_eq(a, b).data.bool_val);
 }
 

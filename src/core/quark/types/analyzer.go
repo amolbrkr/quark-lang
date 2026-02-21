@@ -791,6 +791,22 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 		return TypeAny
 
 	case token.LT, token.LTE, token.GT, token.GTE:
+		// Vector ordering comparisons (numeric vectors only)
+		if leftIsVec || rightIsVec {
+			if leftIsVec && !IsNumeric(leftVec.ElementType) && !isUnknownType(leftVec.ElementType) {
+				a.errorAt(node, "ordering comparison requires numeric vector, got %s", leftType.String())
+			}
+			if rightIsVec && !IsNumeric(rightVec.ElementType) && !isUnknownType(rightVec.ElementType) {
+				a.errorAt(node, "ordering comparison requires numeric vector, got %s", rightType.String())
+			}
+			if leftIsVec && !rightIsVec && !isNumericScalar(rightType) && !isUnknownType(rightType) {
+				a.errorAt(node, "cannot compare vector with %s", rightType.String())
+			}
+			if rightIsVec && !leftIsVec && !isNumericScalar(leftType) && !isUnknownType(leftType) {
+				a.errorAt(node, "cannot compare vector with %s", leftType.String())
+			}
+			return &VectorType{ElementType: TypeBool}
+		}
 		if IsComparable(leftType) && IsComparable(rightType) {
 			return TypeBool
 		}
@@ -801,6 +817,10 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 		return TypeBool
 
 	case token.DEQ, token.NE:
+		// Vector equality (all vector element types allowed)
+		if leftIsVec || rightIsVec {
+			return &VectorType{ElementType: TypeBool}
+		}
 		return TypeBool
 
 	case token.AND, token.OR:
@@ -1048,6 +1068,24 @@ func (a *Analyzer) analyzeIndex(node *ast.TreeNode) Type {
 
 	targetType := a.Analyze(node.Children[0])
 	indexType := a.Analyze(node.Children[1])
+
+	// Vector indexing: scalar int or boolean mask
+	if vecType, ok := targetType.(*VectorType); ok {
+		if isIntLike(indexType) || isUnknownType(indexType) {
+			// Scalar index returns element type as scalar
+			return vecType.ElementType
+		}
+		if idxVec, ok := indexType.(*VectorType); ok {
+			if idxVec.ElementType.Equals(TypeBool) || isUnknownType(idxVec.ElementType) {
+				// Boolean mask: returns same vector type (filtered)
+				return vecType
+			}
+			a.errorAt(node.Children[1], "vector mask index requires bool vector, got %s", indexType.String())
+			return vecType
+		}
+		a.errorAt(node.Children[1], "vector index must be int or bool vector, got %s", indexType.String())
+		return TypeAny
+	}
 
 	if listType, ok := targetType.(*ListType); ok {
 		if !isIntLike(indexType) && !isUnknownType(indexType) {

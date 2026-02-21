@@ -30,6 +30,17 @@ inline QValue q_get(QValue list, QValue index) {
     if (list.type == QValue::VAL_STRING) {
         return q_str_get(list, index);
     }
+    // Vector indexing: scalar int or boolean mask
+    if (list.type == QValue::VAL_VECTOR) {
+        if (index.type == QValue::VAL_INT) {
+            return q_vec_get_scalar(list, index);
+        }
+        if (index.type == QValue::VAL_VECTOR) {
+            return q_vec_mask_filter(list, index);
+        }
+        std::fprintf(stderr, "runtime error: vector index must be int or bool vector\n");
+        return qv_null();
+    }
     if (list.type != QValue::VAL_LIST || !list.data.list_val) {
         return qv_null();
     }

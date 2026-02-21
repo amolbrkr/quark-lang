@@ -1,0 +1,55 @@
+// smoke_vectors.qrk - Vector comparison operators & boolean mask indexing
+
+// --- Ordering comparisons (vec vs scalar) ---
+v = vector [10, 20, 30, 40, 50]
+
+mask = v > 25
+println(mask)
+println(sum(mask))
+
+mask2 = v < 30
+println(sum(mask2))
+
+mask3 = v >= 30
+println(sum(mask3))
+
+mask4 = v <= 30
+println(sum(mask4))
+
+// --- Equality (vec vs scalar) ---
+eq_mask = v == 30
+println(sum(eq_mask))
+
+neq_mask = v != 30
+println(sum(neq_mask))
+
+// --- Vec vs vec comparison ---
+w = vector [10, 25, 30, 35, 50]
+cmp = v > w
+println(sum(cmp))
+
+// --- Boolean mask indexing ---
+big = v[v > 25]
+println(big)
+println(len(big))
+
+// --- Scalar indexing on vectors ---
+println(v[0])
+println(v[4])
+println(v[-1])
+
+// --- Chained: filter then reduce ---
+total = sum(v[v > 25])
+println(total)
+
+// --- Empty result ---
+none = v[v > 100]
+println(len(none))
+
+// --- I64 vectors ---
+vi = vector [1, 2, 3, 4, 5]
+println(vi[vi > 3])
+
+// --- Scalar comparison with I64 ---
+println(sum(vi == 3))
+println(sum(vi >= 2))

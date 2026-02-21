@@ -1,5 +1,17 @@
 // smoke_vectors.qrk - Vector comparison operators & boolean mask indexing
 
+println('== smoke: vectors ==')
+
+// --- Vector literal dtype inference ---
+vi_lit = vector [1, 2, 3]
+vs_lit = vector ['a', 'b', 'c']
+println(type(vi_lit))
+println(type(vs_lit))
+
+// --- to_vector homogeneous string list ---
+vs_from_list = to_vector(list ['x', 'y', 'z'])
+println(type(vs_from_list))
+
 // --- Ordering comparisons (vec vs scalar) ---
 v = vector [10, 20, 30, 40, 50]
 

@@ -147,7 +147,7 @@ func TestSmokePrograms_Run(t *testing.T) {
 				"[vector len=4]",
 				"[vector len=4]",
 				"[vector len=4]",
-				"vector[f64]",
+				"vector[i64]",
 				"vector[i64]",
 				"[vector len=3]",
 				"60",

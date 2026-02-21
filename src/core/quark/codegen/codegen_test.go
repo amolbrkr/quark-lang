@@ -54,8 +54,8 @@ func TestCodegen_EmitsVectorLiteral(t *testing.T) {
 	if len(res.TypeErrors) > 0 {
 		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
 	}
-	if !strings.Contains(res.CPP, "qv_vector") || !strings.Contains(res.CPP, "q_vec_push") {
-		t.Fatalf("expected codegen to emit vector construction helpers, cpp=\n%s", res.CPP)
+	if !strings.Contains(res.CPP, "qv_list") || !strings.Contains(res.CPP, "q_push") || !strings.Contains(res.CPP, "q_to_vector") {
+		t.Fatalf("expected codegen to lower vector literal through list + q_to_vector, cpp=\n%s", res.CPP)
 	}
 }
 

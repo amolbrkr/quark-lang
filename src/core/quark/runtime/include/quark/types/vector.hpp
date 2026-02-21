@@ -960,7 +960,7 @@ inline QValue q_to_vector(QValue input) {
     const QList& items = *input.data.list_val;
     const size_t n = items.size();
 
-    enum class Mode { UNKNOWN, I64, F64, INVALID };
+    enum class Mode { UNKNOWN, I64, F64, STR, INVALID };
     Mode mode = Mode::UNKNOWN;
 
     auto type_name = [](QValue::ValueType t) -> const char* {
@@ -994,15 +994,19 @@ inline QValue q_to_vector(QValue input) {
                 if (mode == Mode::UNKNOWN) mode = Mode::F64;
                 else if (mode != Mode::F64) mode = Mode::INVALID;
                 break;
+                case QValue::VAL_STRING:
+                    if (mode == Mode::UNKNOWN) mode = Mode::STR;
+                    else if (mode != Mode::STR) mode = Mode::INVALID;
+                    break;
             default:
-                std::fprintf(stderr, "runtime error: to_vector only supports int/float lists (null allowed), got %s at index %zu\n", type_name(item.type), i);
+                    std::fprintf(stderr, "runtime error: to_vector only supports int/float/str lists (null allowed), got %s at index %zu\n", type_name(item.type), i);
                 mode = Mode::INVALID;
                 break;
         }
 
         if (mode == Mode::INVALID) {
-            if (item.type == QValue::VAL_INT || item.type == QValue::VAL_FLOAT) {
-                std::fprintf(stderr, "runtime error: to_vector requires homogeneous element types (all int or all float)\n");
+                if (item.type == QValue::VAL_INT || item.type == QValue::VAL_FLOAT || item.type == QValue::VAL_STRING) {
+                    std::fprintf(stderr, "runtime error: to_vector requires homogeneous element types (all int, all float, or all str)\n");
             }
             return qv_null();
         }
@@ -1054,6 +1058,37 @@ inline QValue q_to_vector(QValue input) {
             }
             values[i] = static_cast<int64_t>(item.data.int_val);
         }
+
+        if (hasNulls) {
+            q_vec_ensure_null_mask(*out.data.vector_val);
+            for (size_t i = 0; i < n; i++) {
+                if (items[i].type == QValue::VAL_NULL) {
+                    out.data.vector_val->nulls.is_null[i] = 1;
+                }
+            }
+        }
+        return out;
+    }
+
+    if (mode == Mode::STR) {
+        std::vector<std::string> values(n);
+        bool hasNulls = false;
+        for (size_t i = 0; i < n; i++) {
+            const QValue& item = items[i];
+            if (item.type == QValue::VAL_NULL) {
+                hasNulls = true;
+                continue;
+            }
+            if (item.type != QValue::VAL_STRING || item.data.string_val == nullptr) {
+                std::fprintf(stderr, "runtime error: to_vector requires homogeneous element types (all int, all float, or all str)\n");
+                return qv_null();
+            }
+            values[i] = item.data.string_val;
+        }
+
+        QValue out = qv_vector_str(static_cast<int>(n), 0);
+        out.data.vector_val->storage = q_vec_encode_strings(values);
+        out.data.vector_val->count = n;
 
         if (hasNulls) {
             q_vec_ensure_null_mask(*out.data.vector_val);

@@ -747,12 +747,43 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 	// Vector arithmetic (MVP): +, -, *, /
 	if op == token.PLUS || op == token.MINUS || op == token.MULTIPLY || op == token.DIVIDE {
 		if leftIsVec && rightIsVec {
-			return &VectorType{ElementType: MergeTypes(leftVec.ElementType, rightVec.ElementType)}
+			if !IsNumeric(leftVec.ElementType) && !isUnknownType(leftVec.ElementType) {
+				a.errorAt(node, "operator '%s' requires numeric vector operands, got %s", node.Token.Type.String(), leftType.String())
+				return TypeAny
+			}
+			if !IsNumeric(rightVec.ElementType) && !isUnknownType(rightVec.ElementType) {
+				a.errorAt(node, "operator '%s' requires numeric vector operands, got %s", node.Token.Type.String(), rightType.String())
+				return TypeAny
+			}
+			if leftVec.ElementType.Equals(TypeFloat) || rightVec.ElementType.Equals(TypeFloat) {
+				return &VectorType{ElementType: TypeFloat}
+			}
+			if leftVec.ElementType.Equals(TypeInt) && rightVec.ElementType.Equals(TypeInt) {
+				if op == token.DIVIDE {
+					return &VectorType{ElementType: TypeFloat}
+				}
+				return &VectorType{ElementType: TypeInt}
+			}
+			return &VectorType{ElementType: TypeAny}
 		}
 		if leftIsVec && (isNumericScalar(rightType) || isUnknownType(rightType)) {
+			if !IsNumeric(leftVec.ElementType) && !isUnknownType(leftVec.ElementType) {
+				a.errorAt(node, "operator '%s' requires numeric vector operands, got %s", node.Token.Type.String(), leftType.String())
+				return TypeAny
+			}
+			if op == token.DIVIDE && leftVec.ElementType.Equals(TypeInt) && rightType.Equals(TypeInt) {
+				return &VectorType{ElementType: TypeFloat}
+			}
 			return leftType
 		}
 		if rightIsVec && (isNumericScalar(leftType) || isUnknownType(leftType)) {
+			if !IsNumeric(rightVec.ElementType) && !isUnknownType(rightVec.ElementType) {
+				a.errorAt(node, "operator '%s' requires numeric vector operands, got %s", node.Token.Type.String(), rightType.String())
+				return TypeAny
+			}
+			if op == token.DIVIDE && rightVec.ElementType.Equals(TypeInt) && leftType.Equals(TypeInt) {
+				return &VectorType{ElementType: TypeFloat}
+			}
 			return rightType
 		}
 	}
@@ -933,10 +964,14 @@ func (a *Analyzer) inferBuiltinReturnType(name string, argTypes []Type, callNode
 	if elem.Equals(TypeFloat) {
 		return &VectorType{ElementType: TypeFloat}
 	}
+	if elem.Equals(TypeString) {
+		return &VectorType{ElementType: TypeString}
+	}
 	if union, ok := elem.(*UnionType); ok {
-		onlyNumeric := true
+		onlyAllowed := true
 		hasInt := false
 		hasFloat := false
+		hasString := false
 		for _, opt := range union.Options {
 			if opt.Equals(TypeInt) {
 				hasInt = true
@@ -946,21 +981,41 @@ func (a *Analyzer) inferBuiltinReturnType(name string, argTypes []Type, callNode
 				hasFloat = true
 				continue
 			}
+			if opt.Equals(TypeString) {
+				hasString = true
+				continue
+			}
 			if opt.Equals(TypeNull) {
 				continue
 			}
-			onlyNumeric = false
+			onlyAllowed = false
 			break
 		}
-		if onlyNumeric {
+		if onlyAllowed {
+			kinds := 0
+			if hasInt {
+				kinds++
+			}
+			if hasFloat {
+				kinds++
+			}
+			if hasString {
+				kinds++
+			}
+			if kinds > 1 {
+				a.errorAt(callNode, "to_vector requires homogeneous list elements (all int, all float, or all str)")
+				return TypeAny
+			}
 			if hasInt && !hasFloat {
 				return &VectorType{ElementType: TypeInt}
 			}
 			if hasFloat && !hasInt {
 				return &VectorType{ElementType: TypeFloat}
 			}
-			a.errorAt(callNode, "to_vector requires homogeneous numeric list elements (all int or all float)")
-			return TypeAny
+			if hasString {
+				return &VectorType{ElementType: TypeString}
+			}
+			return &VectorType{ElementType: TypeInt}
 		}
 	}
 
@@ -968,7 +1023,7 @@ func (a *Analyzer) inferBuiltinReturnType(name string, argTypes []Type, callNode
 		return TypeAny
 	}
 
-	a.errorAt(callNode, "to_vector requires list elements of type int or float, got %s", elem.String())
+	a.errorAt(callNode, "to_vector requires list elements of type int, float, or str, got %s", elem.String())
 	return TypeAny
 }
 
@@ -1005,15 +1060,32 @@ func (a *Analyzer) analyzeVector(node *ast.TreeNode) Type {
 		return &VectorType{ElementType: TypeFloat}
 	}
 
+	var elemType Type
 	for _, child := range node.Children {
 		childType := a.Analyze(child)
-		if !childType.Equals(TypeInt) && !childType.Equals(TypeFloat) && !isUnknownType(childType) {
-			a.errorAt(child, "vector elements must be numeric, got %s", childType.String())
+		if isUnknownType(childType) {
+			elemType = MergeTypes(elemType, childType)
+			continue
+		}
+		if !childType.Equals(TypeInt) && !childType.Equals(TypeFloat) && !childType.Equals(TypeString) {
+			a.errorAt(child, "vector elements must be homogeneous int, float, or str, got %s", childType.String())
+			elemType = MergeTypes(elemType, TypeAny)
+			continue
+		}
+		if elemType == nil || elemType.Equals(TypeAny) {
+			elemType = childType
+			continue
+		}
+		if !elemType.Equals(childType) {
+			a.errorAt(child, "vector literal requires homogeneous element types; found %s and %s", elemType.String(), childType.String())
+			elemType = TypeAny
 		}
 	}
 
-	// MVP vectors are float-based for SIMD runtime kernels.
-	return &VectorType{ElementType: TypeFloat}
+	if elemType == nil {
+		return &VectorType{ElementType: TypeFloat}
+	}
+	return &VectorType{ElementType: elemType}
 }
 
 func (a *Analyzer) analyzeDict(node *ast.TreeNode) Type {

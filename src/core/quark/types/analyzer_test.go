@@ -54,7 +54,7 @@ func TestSplit_BuiltinRegistered(t *testing.T) {
 	}
 }
 
-func TestVectorLiteral_InfersVectorFloat(t *testing.T) {
+func TestVectorLiteral_InfersVectorInt(t *testing.T) {
 	analyzer, node, parseErrs, typeErrs := testutil.Analyze("vector [1, 2, 3]\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
@@ -70,8 +70,43 @@ func TestVectorLiteral_InfersVectorFloat(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected VectorType, got %T (%v)", typ, typ)
 	}
-	if !vec.ElementType.Equals(qtypes.TypeFloat) {
-		t.Fatalf("expected vector element type float, got %s", vec.ElementType.String())
+	if !vec.ElementType.Equals(qtypes.TypeInt) {
+		t.Fatalf("expected vector element type int, got %s", vec.ElementType.String())
+	}
+}
+
+func TestVectorLiteral_InfersVectorString(t *testing.T) {
+	analyzer, node, parseErrs, typeErrs := testutil.Analyze("vector ['a', 'b', 'c']\n")
+	if len(parseErrs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", parseErrs)
+	}
+	if len(typeErrs) > 0 {
+		t.Fatalf("unexpected type errors: %v", typeErrs)
+	}
+	if len(node.Children) != 1 {
+		t.Fatalf("expected one top-level expression, got %d", len(node.Children))
+	}
+	typ := analyzer.Analyze(node.Children[0])
+	vec, ok := typ.(*qtypes.VectorType)
+	if !ok {
+		t.Fatalf("expected VectorType, got %T (%v)", typ, typ)
+	}
+	if !vec.ElementType.Equals(qtypes.TypeString) {
+		t.Fatalf("expected vector element type str, got %s", vec.ElementType.String())
+	}
+}
+
+func TestVectorLiteral_RejectsMixedTypes(t *testing.T) {
+	_, _, parseErrs, typeErrs := testutil.Analyze("vector [1, '2', 3]\n")
+	if len(parseErrs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", parseErrs)
+	}
+	if len(typeErrs) == 0 {
+		t.Fatalf("expected type error for mixed vector literal elements")
+	}
+	joined := strings.Join(typeErrs, "\n")
+	if !strings.Contains(joined, "homogeneous element types") {
+		t.Fatalf("expected homogeneous element types error, got: %v", typeErrs)
 	}
 }
 
@@ -156,8 +191,57 @@ func TestToVector_RejectsMixedNumericList(t *testing.T) {
 		t.Fatalf("expected type error for mixed int/float list in to_vector")
 	}
 	joined := strings.Join(typeErrs, "\n")
-	if !strings.Contains(joined, "homogeneous numeric") {
-		t.Fatalf("expected homogeneous numeric error, got: %v", typeErrs)
+	if !strings.Contains(joined, "homogeneous list elements") {
+		t.Fatalf("expected homogeneous list elements error, got: %v", typeErrs)
+	}
+}
+
+func TestToVector_InfersVectorStringType(t *testing.T) {
+	analyzer, node, parseErrs, typeErrs := testutil.Analyze("xs = list ['a','b','c']\nv = to_vector(xs)\nv\n")
+	if len(parseErrs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", parseErrs)
+	}
+	if len(typeErrs) > 0 {
+		t.Fatalf("unexpected type errors: %v", typeErrs)
+	}
+	if len(node.Children) < 3 {
+		t.Fatalf("expected at least 3 top-level nodes, got %d", len(node.Children))
+	}
+	typ := analyzer.Analyze(node.Children[2])
+	vec, ok := typ.(*qtypes.VectorType)
+	if !ok {
+		t.Fatalf("expected VectorType, got %T (%v)", typ, typ)
+	}
+	if !vec.ElementType.Equals(qtypes.TypeString) {
+		t.Fatalf("expected vector element type str, got %s", vec.ElementType.String())
+	}
+}
+
+func TestToVector_RejectsMixedIntStringList(t *testing.T) {
+	_, _, parseErrs, typeErrs := testutil.Analyze("xs = list [1, '2', 3]\nv = to_vector(xs)\n")
+	if len(parseErrs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", parseErrs)
+	}
+	if len(typeErrs) == 0 {
+		t.Fatalf("expected type error for mixed int/str list in to_vector")
+	}
+	joined := strings.Join(typeErrs, "\n")
+	if !strings.Contains(joined, "homogeneous list elements") {
+		t.Fatalf("expected homogeneous list elements error, got: %v", typeErrs)
+	}
+}
+
+func TestVectorArithmetic_RejectsStringVectors(t *testing.T) {
+	_, _, parseErrs, typeErrs := testutil.Analyze("v = vector ['a', 'b']\nw = vector ['x', 'y']\nprintln(v + w)\n")
+	if len(parseErrs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", parseErrs)
+	}
+	if len(typeErrs) == 0 {
+		t.Fatalf("expected type error for string vector arithmetic")
+	}
+	joined := strings.Join(typeErrs, "\n")
+	if !strings.Contains(joined, "requires numeric vector operands") {
+		t.Fatalf("expected numeric vector operand error, got: %v", typeErrs)
 	}
 }
 

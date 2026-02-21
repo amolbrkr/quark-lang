@@ -861,15 +861,15 @@ func (g *Generator) generateList(node *ast.TreeNode) string {
 }
 
 func (g *Generator) generateVector(node *ast.TreeNode) string {
-	temp := g.newTemp()
-	g.emitLine("QValue %s = qv_vector(%d);", temp, len(node.Children))
+	tempList := g.newTemp()
+	g.emitLine("QValue %s = qv_list(%d);", tempList, len(node.Children))
 
 	for _, child := range node.Children {
 		elem := g.generateExpr(child)
-		g.emitLine("%s = q_vec_push(%s, %s);", temp, temp, elem)
+		g.emitLine("%s = q_push(%s, %s);", tempList, tempList, elem)
 	}
 
-	return temp
+	return fmt.Sprintf("q_to_vector(%s)", tempList)
 }
 
 func (g *Generator) generateDict(node *ast.TreeNode) string {

@@ -1,1 +1,7 @@
-println(type(vector [1, 2, 3]))
+a = list [1, 2, 3, 4, 5]
+push(a, 6)
+
+println(len(a))
+
+for i in a:
+    println(i)

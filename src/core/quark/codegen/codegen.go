@@ -410,8 +410,7 @@ func (g *Generator) generateOperator(node *ast.TreeNode) string {
 		return operand
 	}
 
-	// Member access - handle before binary operators to avoid evaluating
-	// the member name as a variable reference
+	// Dict member access: d.key → q_member_get(d, "key")
 	if op == token.DOT && len(node.Children) >= 2 {
 		obj := g.generateExpr(node.Children[0])
 		memberName := node.Children[1].TokenLiteral()
@@ -496,25 +495,9 @@ func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
 	funcNode := node.Children[0]
 	argsNode := node.Children[1]
 
-	// Member method call: obj.method(args) → q_member_callN(obj, "method", args...)
-	if funcNode.NodeType == ast.OperatorNode && funcNode.Token != nil && funcNode.Token.Type == token.DOT && len(funcNode.Children) >= 2 {
-		obj := g.generateExpr(funcNode.Children[0])
-		methodName := funcNode.Children[1].TokenLiteral()
-		args := make([]string, 0)
-		for _, arg := range argsNode.Children {
-			args = append(args, g.generateExpr(arg))
-		}
-		switch len(args) {
-		case 0:
-			return fmt.Sprintf("q_member_get(%s, \"%s\")", obj, methodName)
-		case 1:
-			return fmt.Sprintf("q_member_call1(%s, \"%s\", %s)", obj, methodName, args[0])
-		case 2:
-			return fmt.Sprintf("q_member_call2(%s, \"%s\", %s, %s)", obj, methodName, args[0], args[1])
-		default:
-			// Emit runtime error for unsupported arg count
-			return fmt.Sprintf("(fprintf(stderr, \"runtime error: member call '%s' supports at most 2 arguments, got %d\\n\"), qv_null())", methodName, len(args))
-		}
+	// Dot-call syntax is rejected by the analyzer; if it somehow reaches codegen, fail
+	if funcNode.NodeType == ast.OperatorNode && funcNode.Token != nil && funcNode.Token.Type == token.DOT {
+		return "(fprintf(stderr, \"compile error: dot-call syntax is not supported\\n\"), qv_null())"
 	}
 
 	funcName := funcNode.TokenLiteral()

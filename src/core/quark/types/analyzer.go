@@ -315,41 +315,12 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 	funcNode := node.Children[0]
 	argsNode := node.Children[1]
 
-	// Method calls (obj.method()) are handled dynamically at runtime
+	// Dot-call syntax is not supported — reject with diagnostic
 	if funcNode.NodeType == ast.OperatorNode && funcNode.Token != nil && funcNode.Token.Type == token.DOT {
 		if len(funcNode.Children) >= 2 {
-			targetType := a.Analyze(funcNode.Children[0])
 			method := funcNode.Children[1].TokenLiteral()
-			if targetType.Equals(TypeNull) {
-				a.errorAt(funcNode.Children[0], "cannot call method '%s' on null", method)
-			} else {
-				switch t := targetType.(type) {
-				case *ListType:
-					switch method {
-					case "push", "get", "remove", "concat", "set", "insert", "slice":
-						// Valid list methods
-					default:
-						a.errorAt(funcNode.Children[1], "list has no method '%s'", method)
-					}
-				case *BasicType:
-					if t.Name == "str" {
-						switch method {
-						case "contains", "startswith", "endswith", "concat", "replace":
-							// Valid string methods
-						default:
-							a.errorAt(funcNode.Children[1], "string has no method '%s'", method)
-						}
-					} else if t.Name != "any" {
-						a.errorAt(funcNode.Children[1], "type '%s' has no methods", t.Name)
-					}
-				case *DictType:
-					a.errorAt(funcNode.Children[1], "dict has no methods")
-				default:
-					if !isUnknownType(targetType) {
-						a.errorAt(funcNode.Children[1], "type '%s' has no methods", targetType.String())
-					}
-				}
-			}
+			a.Analyze(funcNode.Children[0])
+			a.errorAt(funcNode, "dot-call syntax is not supported; use %s(entity, ...) instead", method)
 		}
 		for _, arg := range argsNode.Children {
 			a.Analyze(arg)
@@ -587,7 +558,7 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 	op := node.Token.Type
 
 	if op == token.DOT {
-		// Member access: only analyze the target to avoid treating the member name as an identifier lookup
+		// Dot access: only allowed on dict types for member read
 		if len(node.Children) < 2 {
 			return TypeAny
 		}
@@ -599,49 +570,13 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 		}
 
 		switch t := targetType.(type) {
-		case *ListType:
-			switch member {
-			case "length", "size":
-				return TypeInt
-			case "empty":
-				return TypeBool
-			case "reverse", "clear":
-				return targetType
-			case "pop":
-				return t.ElementType
-			default:
-				a.errorAt(node.Children[1], "list has no member '%s'", member)
-				return TypeAny
-			}
 		case *DictType:
-			if member == "length" || member == "size" {
-				return TypeInt
-			}
 			return t.ValueType
-		case *BasicType:
-			if t.Name == "str" {
-				switch member {
-				case "length", "size":
-					return TypeInt
-				case "upper", "lower", "trim":
-					return TypeString
-				default:
-					a.errorAt(node.Children[1], "string has no member '%s'", member)
-					return TypeAny
-				}
-			}
-			if t.Name == "any" {
-				return TypeAny
-			}
-			a.errorAt(node.Children[1], "type '%s' has no members", t.Name)
-			return TypeAny
-		case *UnionType:
-			return TypeAny
 		default:
 			if isUnknownType(targetType) {
 				return TypeAny
 			}
-			a.errorAt(node.Children[1], "type '%s' has no members", targetType.String())
+			a.errorAt(node, "dot access is only supported on dict; use len(entity), upper(entity), etc. instead of entity.%s", member)
 			return TypeAny
 		}
 	}

@@ -450,7 +450,7 @@ Built-in functions are implemented in the C runtime (in `codegen/codegen.go`) fo
 - `print`, `println` - Output
 - `len` - Length of strings/lists
 - `input` - Read line from stdin
-- `str`, `int`, `float`, `bool` - Type conversion
+- `to_str`, `to_int`, `to_float`, `to_bool` - Type conversion
 - `range` - Generate integer ranges: `range(10)`, `range(1, 100)`, `range(0, 100, 5)`
 
 ### Math Functions
@@ -1034,13 +1034,13 @@ Key: Yes = implemented, Partial = present but incomplete, No = missing.
 | Area / API | C++ Runtime | Compiler Wired | Quark Module | Notes |
 | --- | --- | --- | --- | --- |
 | I/O: `print`, `println`, `input` | Yes | Yes | No | Builtins only. |
-| Conversions: `len`, `str`, `int`, `float`, `bool` | Yes | Yes | No | Builtins only. |
+| Conversions: `len`, `to_str`, `to_int`, `to_float`, `to_bool` | Yes | Yes | No | Builtins only. |
 | Math: `abs`, `min`, `max`, `sqrt`, `floor`, `ceil`, `round` | Yes | Yes | No | Builtins only. |
 | String: `upper`, `lower`, `trim`, `contains`, `startswith`, `endswith`, `replace`, `concat` | Yes | Yes | No | Builtins only. |
 | List: `push`, `pop`, `get`, `set`, `insert`, `remove`, `slice`, `reverse` | Yes | Yes | No | Builtins only. |
 | List extras: `size`, `empty`, `clear` | Yes | No | No | Implemented in runtime but not exposed as builtins. Not accessible via dot syntax. |
 | `concat` (overloaded) | Yes | Yes | No | Works for both strings and lists. |
-| Vector: `to_vector`, `astype`, `fillna`, `cat_from_str`, `cat_to_str` | Yes | Yes | No | `to_vector` requires homogeneous list elements (`int`, `float`, or `str`); mixed lists return error/null. Vector arithmetic `+ - * /` is numeric-only. |
+| Vector: `to_vector`, `to_list`, `astype`, `fillna` | Yes | Yes | No | `to_vector` requires homogeneous list elements (`int`, `float`, or `str`); mixed lists return error/null. `to_list` converts vector back to list. Vector arithmetic `+ - * /` is numeric-only. |
 | Dict: `dict {}`, dot access, `len`, `dget`, `dset` | Yes | Yes | No | Dot access for key read/write. Use `len(d)` for size. No bracket indexing. |
 | Time / clock | No | No | No | Not yet implemented. |
 | Random | No | No | No | Not yet implemented. |

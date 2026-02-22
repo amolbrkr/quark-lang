@@ -4,6 +4,12 @@ This document describes the built-in functions available in Quark. All standard 
 
 **Invocation model**: All builtins use function-call syntax: `callable(entity, ...)`. Dot syntax (`entity.method()`) is not supported — dot is reserved for dict key access only. Use pipes for chaining: `entity | callable() | next()`.
 
+### Design principles
+
+- Prefer explicit failure for I/O and parsing: return `result` (`ok`/`err`) instead of silent fallbacks.
+- Keep hot numeric/vector kernels fast; compose higher-level behavior in stdlib modules.
+- Keep APIs predictable: pure functions by default; in-place behavior must be clearly named/documented.
+
 ## Core Functions
 
 ### I/O Functions
@@ -27,10 +33,10 @@ println(name)
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `str` | `any -> str` | Convert to string |
-| `int` | `any -> int` | Convert to integer |
-| `float` | `any -> float` | Convert to float |
-| `bool` | `any -> bool` | Convert to boolean (truthiness) |
+| `to_str` | `any -> str` | Convert to string |
+| `to_int` | `any -> int` | Convert to integer |
+| `to_float` | `any -> float` | Convert to float |
+| `to_bool` | `any -> bool` | Convert to boolean (truthiness) |
 | `type` | `any -> str` | Return runtime type name |
 | `len` | `str\|list\|dict -> int` | Get length of string, list, or dict |
 
@@ -206,9 +212,8 @@ Typed vector operations for data-oriented workloads.
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `to_vector` | `list\|vector -> vector` | Convert list to typed vector (or clone vector) |
+| `to_list` | `vector\|list -> list` | Convert vector back to list (identity for lists) |
 | `astype` | `vector, str -> vector` | Cast vector dtype (`f64`, `i64`, `bool`) |
-| `cat_from_str` | `list\|vector -> vector` | Build categorical vector from strings |
-| `cat_to_str` | `vector -> list` | Decode categorical vector back to strings |
 
 ### Reductions and Utilities
 
@@ -251,11 +256,9 @@ println(sum(z))
 filled = fillna(a, 0)
 iv = astype(vf, 'i64')
 
-// Categorical encode/decode
-labels = list ['red', 'blue', 'red', 'green']
-cats = cat_from_str(labels)
-println(cats)                    // [vector len=4]
-println(cat_to_str(cats))        // [list len=4]
+// Convert vector back to list
+back = to_list(v2)
+println(type(back))              // list
 ```
 
 ### Notes
@@ -397,12 +400,194 @@ To add a new builtin function:
 
 For changes that impact syntax and semantics (for example new literal rules), update smoke files and both Go and runtime unit tests to preserve analyzer/runtime consistency.
 
-## Future Modules
+## Stdlib Roadmap (v0.1)
 
-Planned but not yet implemented:
+This section defines the v1 standard library, the goal is a practical baseline for data-heavy programs with explicit behavior and error contracts.
 
-- **Higher-order list functions**: `map`, `filter`, `reduce`, `sort`
-- **File I/O**: `read_file`, `write_file`, `exists`
-- **JSON**: `parse_json`, `to_json`
-- **Time**: `now`, `sleep`, `format_time`
-- **Random**: `random`, `random_int`, `shuffle`
+### Proposed v1 modules and APIs
+
+#### 1) `string`
+
+Baseline text APIs beyond existing `upper/lower/trim/contains/startswith/endswith/replace/concat/split`:
+
+- `join(parts, sep) -> str`
+- `lstrip(s) -> str`
+- `rstrip(s) -> str`
+- `repeat(s, n) -> str`
+- `index(s, sub) -> int` (`-1` if not found)
+- `rindex(s, sub) -> int` (`-1` if not found)
+- `count(s, sub) -> int`
+- `substr(s, start, len) -> str`
+- `slice_str(s, start, end) -> str`
+- `is_alpha(s) -> bool`
+- `is_digit(s) -> bool`
+- `is_alnum(s) -> bool`
+- `is_space(s) -> bool`
+- `pad_left(s, width, fill=' ') -> str`
+- `pad_right(s, width, fill=' ') -> str`
+- `center(s, width, fill=' ') -> str`
+
+Behavior notes:
+
+- v1 is byte-oriented string indexing/slicing unless full Unicode semantics are explicitly introduced.
+- `index`/`rindex` return `-1` when not found (no exception/panic behavior).
+
+#### 2) `random`
+
+Small, deterministic-friendly utilities:
+
+- `seed(n) -> null`
+- `rand_float() -> float` (range `[0, 1)`)
+- `rand_int(min, max) -> int` (inclusive bounds)
+- `choice(items) -> result[any]` (`err` on empty list)
+- `shuffle(items) -> list` (pure copy)
+- `shuffle_inplace(items) -> list` (mutates and returns list)
+
+Behavior notes:
+
+- Same seed should produce stable sequences for the same runtime/version.
+
+#### 3) `fs` (base file I/O)
+
+Minimal file and directory operations:
+
+- `exists(path) -> bool`
+- `is_file(path) -> bool`
+- `is_dir(path) -> bool`
+- `read_text(path) -> result[str]`
+- `read_lines(path) -> result[list]`
+- `write_text(path, text) -> result[null]`
+- `append_text(path, text) -> result[null]`
+- `write_lines(path, lines) -> result[null]`
+- `list_dir(path) -> result[list]`
+- `mkdir(path, parents=false) -> result[null]`
+- `remove(path) -> result[null]`
+
+Behavior notes:
+
+- On failure, return `err` with path + operation context.
+- Use UTF-8 text behavior as default.
+
+#### 4) `csv`
+
+Practical row-oriented CSV support:
+
+- `read_csv(path, options=dict {}) -> result[list]`
+- `write_csv(path, rows, options=dict {}) -> result[null]`
+- `parse_csv(text, options=dict {}) -> result[list]`
+- `to_csv(rows, options=dict {}) -> result[str]`
+
+Minimum option support:
+
+- `header` (default `true`)
+- `delimiter` (default `','`)
+- `quote` (default `'"'`)
+
+Behavior notes:
+
+- Supports quoted fields, escaped quotes, empty cells.
+- Column/header shape errors return `err` (no silent truncation).
+
+#### 5) `json`
+
+Core JSON decode/encode APIs:
+
+- `json_parse(text) -> result[any]`
+- `json_stringify(value, pretty=false, indent=2) -> result[str]`
+- `json_read(path) -> result[any]`
+- `json_write(path, value, pretty=false, indent=2) -> result[null]`
+
+Behavior notes:
+
+- v1 is strict JSON (no comments/trailing commas).
+- Decode returns plain Quark values (`dict`, `list`, primitives, `null`).
+
+#### 6) `math`
+
+Current functions remain (`abs`, `min`, `max`, `sqrt`, `floor`, `ceil`, `round`) plus:
+
+- `clamp(x, lo, hi) -> number`
+- `sign(x) -> int` (`-1`, `0`, `1`)
+- `pow(x, y) -> number`
+- `sum(values) -> number`
+- `mean(values) -> float`
+- `median(values) -> float`
+- `variance(values) -> float`
+- `stddev(values) -> float`
+- Constants: `PI`, `E`
+
+Behavior notes:
+
+- Domain errors for safe APIs should return `err`; low-level numeric primitives may keep existing null-return semantics if required for compatibility.
+
+#### 7) `vector`
+
+Current core (`to_vector`, `to_list`, `astype`, `fillna`, arithmetic/reductions) plus QoL:
+
+- `dtype(v) -> str`
+- `head(v, n=5) -> vector`
+- `tail(v, n=5) -> vector`
+- `take(v, indices) -> vector`
+- `unique(v) -> vector|list`
+- `nunique(v) -> int`
+- `count(v) -> int` (non-null count)
+- `mean(v) -> float`
+- `any(v) -> bool`
+- `all(v) -> bool`
+- `is_null(v) -> vector[bool]`
+- `not_null(v) -> vector[bool]`
+- `where(mask, a, b) -> vector`
+- `clip(v, lo, hi) -> vector`
+
+Behavior notes:
+
+- Null propagation rules must be documented per function.
+- Numeric kernels remain optimized for data-heavy workloads.
+
+#### 8) `functional`
+
+Small higher-order function set:
+
+- `map(iterable, fn) -> list|vector`
+- `filter(iterable, pred) -> list|vector`
+- `reduce(iterable, init, fn) -> any`
+- `find(iterable, pred) -> result[any]`
+- `take(iterable, n) -> list|vector`
+- `any(iterable, pred=null) -> bool`
+- `all(iterable, pred=null) -> bool`
+
+Behavior notes:
+
+- Stable iteration order.
+- Prefer pure returns; in-place variants must be explicitly named.
+
+#### 9) `result` and QoL error helpers
+
+Language-level `ok`/`err` remains central, plus helper utilities:
+
+- `is_ok(res) -> bool`
+- `is_err(res) -> bool`
+- `unwrap_or(res, default) -> any`
+- `unwrap_or_else(res, fn) -> any`
+- `map_ok(res, fn) -> result`
+- `map_err(res, fn) -> result`
+- `panic(message) -> never`
+- `assert(cond, message='assertion failed') -> null`
+
+Behavior notes:
+
+- `panic` terminates execution with a non-zero exit code and readable message.
+- `assert` is for invariants; it panics when false.
+
+#### 10) Additional high-value small modules
+
+- `time`: `now_ms()`, `sleep_ms(ms)`
+- `path`: `join_path(...)`, `basename(path)`, `dirname(path)`, `extname(path)`
+- `collections`: `keys(dict)`, `values(dict)`, `items(dict)`, `has_key(dict, key)`
+
+### Suggested delivery phases
+
+1. Phase 1: `result`, `string`, `math`, `functional`
+2. Phase 2: `fs`, `path`, `random`
+3. Phase 3: `csv`, `json`
+4. Phase 4: extended `vector` QoL/statistics

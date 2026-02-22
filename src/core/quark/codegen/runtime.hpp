@@ -551,17 +551,12 @@ struct QStringStorage {
     std::vector<char> bytes;
 };
 
-struct QCategoricalStorage {
-    std::vector<int32_t> codes;
-    std::vector<std::string> dictionary;
-};
-
 struct QNullMask {
     std::vector<uint8_t> is_null; // 0 = valid, 1 = null
 };
 
 struct QVector {
-    enum class Type { F64, I64, BOOL, STR, CAT };
+    enum class Type { F64, I64, BOOL, STR };
 
     Type type;
     size_t count;
@@ -570,8 +565,7 @@ struct QVector {
         std::vector<double>,
         std::vector<int64_t>,
         std::vector<uint8_t>,
-        QStringStorage,
-        QCategoricalStorage
+        QStringStorage
     > storage;
     QNullMask nulls;
 
@@ -593,7 +587,6 @@ inline bool q_vec_storage_matches_type(const QVector& vec) {
         case QVector::Type::I64: return std::holds_alternative<std::vector<int64_t>>(vec.storage);
         case QVector::Type::BOOL: return std::holds_alternative<std::vector<uint8_t>>(vec.storage);
         case QVector::Type::STR: return std::holds_alternative<QStringStorage>(vec.storage);
-        case QVector::Type::CAT: return std::holds_alternative<QCategoricalStorage>(vec.storage);
         default: return false;
     }
 }
@@ -634,18 +627,6 @@ inline bool q_vec_validate(const QVector& vec) {
             }
             break;
         }
-        case QVector::Type::CAT: {
-            const QCategoricalStorage& c = std::get<QCategoricalStorage>(vec.storage);
-            if (c.codes.size() != vec.count) {
-                return false;
-            }
-            for (int32_t code : c.codes) {
-                if (code < -1 || (code >= 0 && static_cast<size_t>(code) >= c.dictionary.size())) {
-                    return false;
-                }
-            }
-            break;
-        }
     }
 
     if (!vec.has_nulls) {
@@ -661,7 +642,6 @@ inline const char* q_vec_dtype_name(const QVector& vec) {
         case QVector::Type::I64: return "i64";
         case QVector::Type::BOOL: return "bool";
         case QVector::Type::STR: return "str";
-        case QVector::Type::CAT: return "cat";
         default: return "unknown";
     }
 }
@@ -810,18 +790,6 @@ inline QValue qv_vector_str(int initial_string_cap = 0, int initial_byte_cap = 0
         storage.bytes.reserve(static_cast<size_t>(initial_byte_cap));
     }
     q.data.vector_val->storage = std::move(storage);
-    return q;
-}
-
-inline QValue qv_vector_cat(int initial_cap = 0) {
-    QValue q;
-    q.type = QValue::VAL_VECTOR;
-    q.data.vector_val = new QVector();
-    q.data.vector_val->type = QVector::Type::CAT;
-    q.data.vector_val->storage = QCategoricalStorage{};
-    if (initial_cap > 0) {
-        std::get<QCategoricalStorage>(q.data.vector_val->storage).codes.reserve(static_cast<size_t>(initial_cap));
-    }
     return q;
 }
 
@@ -1383,102 +1351,6 @@ inline QValue q_astype(QValue vec, QValue dtype) {
     return qv_null();
 }
 
-inline QValue q_cat_from_str(QValue input) {
-    std::vector<std::string> values;
-    std::vector<uint8_t> nulls;
-
-    if (input.type == QValue::VAL_LIST && input.data.list_val) {
-        const size_t n = input.data.list_val->size();
-        values.resize(n);
-        nulls.assign(n, 0);
-        for (size_t i = 0; i < n; i++) {
-            const QValue& item = (*input.data.list_val)[i];
-            if (item.type == QValue::VAL_NULL) {
-                nulls[i] = 1;
-                continue;
-            }
-            if (item.type != QValue::VAL_STRING || item.data.string_val == nullptr) {
-                return qv_null();
-            }
-            values[i] = item.data.string_val;
-        }
-    } else if (q_vec_is_type(input, QVector::Type::STR)) {
-        const QVector& src = *input.data.vector_val;
-        const QStringStorage& storage = std::get<QStringStorage>(src.storage);
-        values = q_vec_decode_strings(storage, src.count);
-        nulls.assign(src.count, 0);
-        if (src.has_nulls && src.nulls.is_null.size() == src.count) {
-            nulls = src.nulls.is_null;
-        }
-    } else {
-        return qv_null();
-    }
-
-    QValue out = qv_vector_cat(static_cast<int>(values.size()));
-    QVector& outVec = *out.data.vector_val;
-    QCategoricalStorage& cat = std::get<QCategoricalStorage>(outVec.storage);
-    cat.codes.resize(values.size(), -1);
-
-    std::unordered_map<std::string, int32_t> dictIndex;
-    bool hasNulls = false;
-    for (size_t i = 0; i < values.size(); i++) {
-        if (i < nulls.size() && nulls[i] != 0) {
-            hasNulls = true;
-            cat.codes[i] = -1;
-            continue;
-        }
-
-        auto it = dictIndex.find(values[i]);
-        if (it == dictIndex.end()) {
-            const int32_t code = static_cast<int32_t>(cat.dictionary.size());
-            cat.dictionary.push_back(values[i]);
-            dictIndex.emplace(values[i], code);
-            cat.codes[i] = code;
-        } else {
-            cat.codes[i] = it->second;
-        }
-    }
-
-    outVec.count = values.size();
-    outVec.has_nulls = hasNulls;
-    if (hasNulls) {
-        outVec.nulls.is_null = nulls;
-    } else {
-        outVec.nulls.is_null.clear();
-    }
-
-    if (!q_vec_validate(outVec)) {
-        return qv_null();
-    }
-    return out;
-}
-
-inline QValue q_cat_to_str(QValue input) {
-    if (!q_vec_is_type(input, QVector::Type::CAT)) {
-        return qv_null();
-    }
-
-    const QVector& vec = *input.data.vector_val;
-    const QCategoricalStorage& cat = std::get<QCategoricalStorage>(vec.storage);
-
-    QValue out = qv_list(static_cast<int>(vec.count));
-    for (size_t i = 0; i < vec.count; i++) {
-        const bool isNull = q_vec_is_null_at(vec, i) || cat.codes[i] < 0;
-        if (isNull) {
-            out.data.list_val->push_back(qv_null());
-            continue;
-        }
-
-        const int32_t code = cat.codes[i];
-        if (static_cast<size_t>(code) >= cat.dictionary.size()) {
-            return qv_null();
-        }
-
-        out.data.list_val->push_back(qv_string(cat.dictionary[code].c_str()));
-    }
-    return out;
-}
-
 inline QValue q_to_vector(QValue input) {
     if (q_vec_has_valid_handle(input) && q_vec_validate(*input.data.vector_val)) {
         return q_vec_clone(input);
@@ -1635,6 +1507,67 @@ inline QValue q_to_vector(QValue input) {
 
     std::fprintf(stderr, "runtime error: to_vector could not determine output vector type\n");
     return qv_null();
+}
+
+// ============================================================
+// Vector-to-List Conversion
+// ============================================================
+
+inline QValue q_to_list(QValue input) {
+    // Identity: already a list
+    if (input.type == QValue::VAL_LIST) {
+        return input;
+    }
+
+    if (!q_vec_has_valid_handle(input)) {
+        std::fprintf(stderr, "runtime error: to_list expects a vector or list input\n");
+        return qv_null();
+    }
+
+    const QVector& v = *input.data.vector_val;
+    const size_t n = v.count;
+    QValue out = qv_list(static_cast<int>(n));
+    QList& items = *out.data.list_val;
+    items.reserve(n);
+
+    for (size_t i = 0; i < n; i++) {
+        // Check null mask
+        if (v.has_nulls && i < v.nulls.is_null.size() && v.nulls.is_null[i]) {
+            items.push_back(qv_null());
+            continue;
+        }
+
+        switch (v.type) {
+            case QVector::Type::I64: {
+                const auto& vals = std::get<std::vector<int64_t>>(v.storage);
+                items.push_back(qv_int(vals[i]));
+                break;
+            }
+            case QVector::Type::F64: {
+                const auto& vals = std::get<std::vector<double>>(v.storage);
+                items.push_back(qv_float(vals[i]));
+                break;
+            }
+            case QVector::Type::BOOL: {
+                const auto& vals = std::get<std::vector<uint8_t>>(v.storage);
+                items.push_back(qv_bool(vals[i] != 0));
+                break;
+            }
+            case QVector::Type::STR: {
+                auto strs = q_vec_decode_strings(std::get<QStringStorage>(v.storage), n);
+                // Bulk add remaining strings from this point
+                for (size_t j = i; j < n; j++) {
+                    if (v.has_nulls && j < v.nulls.is_null.size() && v.nulls.is_null[j]) {
+                        items.push_back(qv_null());
+                    } else {
+                        items.push_back(qv_string(q_strdup(strs[j].c_str())));
+                    }
+                }
+                return out;
+            }
+        }
+    }
+    return out;
 }
 
 // ============================================================
@@ -1994,157 +1927,6 @@ inline QValue q_vec_cmp_str_eq(QValue a, QValue b, bool negate) {
     return qv_null();
 }
 
-// CAT equality: vec-vec or vec-scalar → BOOL vector
-inline QValue q_vec_cmp_cat_eq(QValue a, QValue b, bool negate) {
-    const bool aCat = q_vec_is_type(a, QVector::Type::CAT);
-    const bool bCat = q_vec_is_type(b, QVector::Type::CAT);
-
-    // CAT vec vs CAT vec
-    if (aCat && bCat) {
-        const QVector& av = *a.data.vector_val;
-        const QVector& bv = *b.data.vector_val;
-        if (av.count != bv.count) return qv_null();
-        const size_t n = av.count;
-        const auto& aCat_ = std::get<QCategoricalStorage>(av.storage);
-        const auto& bCat_ = std::get<QCategoricalStorage>(bv.storage);
-
-        // Check if same dictionary (pointer equality on dictionary vector)
-        const bool sameDicts = (&aCat_.dictionary == &bCat_.dictionary) ||
-            (aCat_.dictionary.size() == bCat_.dictionary.size() &&
-             aCat_.dictionary == bCat_.dictionary);
-
-        const bool aNull = av.has_nulls;
-        const bool bNull = bv.has_nulls;
-        QValue out = q_vec_cmp_alloc_bool(n, aNull || bNull);
-        auto& outv = std::get<std::vector<uint8_t>>(out.data.vector_val->storage);
-
-        if (sameDicts) {
-            // Fast path: compare codes directly
-            if (!aNull && !bNull) {
-                for (size_t i = 0; i < n; i++) {
-                    bool eq = (aCat_.codes[i] == bCat_.codes[i]);
-                    outv[i] = static_cast<uint8_t>((negate ? !eq : eq) ? 1 : 0);
-                }
-            } else {
-                auto& outNulls = out.data.vector_val->nulls.is_null;
-                for (size_t i = 0; i < n; i++) {
-                    bool aN = q_vec_is_null_at(av, i) || aCat_.codes[i] < 0;
-                    bool bN = q_vec_is_null_at(bv, i) || bCat_.codes[i] < 0;
-                    if (aN || bN) {
-                        outNulls[i] = 1;
-                    } else {
-                        bool eq = (aCat_.codes[i] == bCat_.codes[i]);
-                        outv[i] = static_cast<uint8_t>((negate ? !eq : eq) ? 1 : 0);
-                    }
-                }
-            }
-        } else {
-            // Slow path: decode both to strings and compare
-            std::vector<std::string> aStrs(n), bStrs(n);
-            for (size_t i = 0; i < n; i++) {
-                if (aCat_.codes[i] >= 0 && static_cast<size_t>(aCat_.codes[i]) < aCat_.dictionary.size())
-                    aStrs[i] = aCat_.dictionary[aCat_.codes[i]];
-                if (bCat_.codes[i] >= 0 && static_cast<size_t>(bCat_.codes[i]) < bCat_.dictionary.size())
-                    bStrs[i] = bCat_.dictionary[bCat_.codes[i]];
-            }
-            if (!aNull && !bNull) {
-                for (size_t i = 0; i < n; i++) {
-                    bool eq = (aStrs[i] == bStrs[i]);
-                    outv[i] = static_cast<uint8_t>((negate ? !eq : eq) ? 1 : 0);
-                }
-            } else {
-                auto& outNulls = out.data.vector_val->nulls.is_null;
-                for (size_t i = 0; i < n; i++) {
-                    bool aN = q_vec_is_null_at(av, i) || aCat_.codes[i] < 0;
-                    bool bN = q_vec_is_null_at(bv, i) || bCat_.codes[i] < 0;
-                    if (aN || bN) {
-                        outNulls[i] = 1;
-                    } else {
-                        bool eq = (aStrs[i] == bStrs[i]);
-                        outv[i] = static_cast<uint8_t>((negate ? !eq : eq) ? 1 : 0);
-                    }
-                }
-            }
-        }
-        return out;
-    }
-
-    // CAT vec vs scalar string
-    if (aCat && b.type == QValue::VAL_STRING && b.data.string_val) {
-        const QVector& av = *a.data.vector_val;
-        const size_t n = av.count;
-        const auto& cat = std::get<QCategoricalStorage>(av.storage);
-        const std::string scalar(b.data.string_val);
-        const bool aNull = av.has_nulls;
-
-        // Look up scalar in dictionary
-        int32_t scalarCode = -1;
-        for (size_t d = 0; d < cat.dictionary.size(); d++) {
-            if (cat.dictionary[d] == scalar) {
-                scalarCode = static_cast<int32_t>(d);
-                break;
-            }
-        }
-
-        QValue out = q_vec_cmp_alloc_bool(n, aNull);
-        auto& outv = std::get<std::vector<uint8_t>>(out.data.vector_val->storage);
-
-        if (scalarCode < 0) {
-            // Scalar not in dictionary: all false (or all true if negate)
-            if (negate) {
-                if (!aNull) {
-                    for (size_t i = 0; i < n; i++) outv[i] = 1;
-                } else {
-                    auto& outNulls = out.data.vector_val->nulls.is_null;
-                    for (size_t i = 0; i < n; i++) {
-                        if (q_vec_is_null_at(av, i) || cat.codes[i] < 0) {
-                            outNulls[i] = 1;
-                        } else {
-                            outv[i] = 1;
-                        }
-                    }
-                }
-            } else {
-                // Already initialized to 0; just propagate nulls
-                if (aNull) {
-                    auto& outNulls = out.data.vector_val->nulls.is_null;
-                    for (size_t i = 0; i < n; i++) {
-                        if (q_vec_is_null_at(av, i) || cat.codes[i] < 0) {
-                            outNulls[i] = 1;
-                        }
-                    }
-                }
-            }
-        } else {
-            // Compare codes to scalarCode
-            if (!aNull) {
-                for (size_t i = 0; i < n; i++) {
-                    bool eq = (cat.codes[i] == scalarCode);
-                    outv[i] = static_cast<uint8_t>((negate ? !eq : eq) ? 1 : 0);
-                }
-            } else {
-                auto& outNulls = out.data.vector_val->nulls.is_null;
-                for (size_t i = 0; i < n; i++) {
-                    if (q_vec_is_null_at(av, i) || cat.codes[i] < 0) {
-                        outNulls[i] = 1;
-                    } else {
-                        bool eq = (cat.codes[i] == scalarCode);
-                        outv[i] = static_cast<uint8_t>((negate ? !eq : eq) ? 1 : 0);
-                    }
-                }
-            }
-        }
-        return out;
-    }
-
-    // scalar string vs CAT vec
-    if (bCat && a.type == QValue::VAL_STRING && a.data.string_val) {
-        return q_vec_cmp_cat_eq(b, a, negate);
-    }
-
-    return qv_null();
-}
-
 // ---- Dispatch functions (called from comparison.hpp) ----
 
 inline QValue q_vec_lt(QValue a, QValue b) {
@@ -2211,11 +1993,6 @@ inline QValue q_vec_eq(QValue a, QValue b) {
         QValue out = q_vec_cmp_str_eq(a, b, false);
         if (out.type != QValue::VAL_NULL) return out;
     }
-    // CAT equality
-    {
-        QValue out = q_vec_cmp_cat_eq(a, b, false);
-        if (out.type != QValue::VAL_NULL) return out;
-    }
     std::fprintf(stderr, "runtime error: operator '==' not supported for these vector types\n");
     return qv_null();
 }
@@ -2238,11 +2015,6 @@ inline QValue q_vec_neq(QValue a, QValue b) {
     // STR inequality
     {
         QValue out = q_vec_cmp_str_eq(a, b, true);
-        if (out.type != QValue::VAL_NULL) return out;
-    }
-    // CAT inequality
-    {
-        QValue out = q_vec_cmp_cat_eq(a, b, true);
         if (out.type != QValue::VAL_NULL) return out;
     }
     std::fprintf(stderr, "runtime error: operator '!=' not supported for these vector types\n");
@@ -2280,12 +2052,6 @@ inline QValue q_vec_get_scalar(QValue vec, QValue index) {
             uint32_t end = s.offsets[i + 1];
             std::string elem(s.bytes.data() + start, s.bytes.data() + end);
             return qv_string(elem.c_str());
-        }
-        case QVector::Type::CAT: {
-            const auto& cat = std::get<QCategoricalStorage>(v.storage);
-            if (cat.codes[i] < 0 || static_cast<size_t>(cat.codes[i]) >= cat.dictionary.size())
-                return qv_null();
-            return qv_string(cat.dictionary[cat.codes[i]].c_str());
         }
         default:
             return qv_null();
@@ -2413,28 +2179,6 @@ inline QValue q_vec_mask_filter(QValue data, QValue mask) {
             QValue out = qv_vector_str(static_cast<int>(filtered.size()), 0);
             out.data.vector_val->storage = q_vec_encode_strings(filtered);
             out.data.vector_val->count = filtered.size();
-            if (hasNulls) {
-                out.data.vector_val->has_nulls = true;
-                out.data.vector_val->nulls.is_null = filteredNulls;
-            }
-            return out;
-        }
-        case QVector::Type::CAT: {
-            const auto& cat = std::get<QCategoricalStorage>(dv.storage);
-            QValue out = qv_vector_cat(static_cast<int>(selected));
-            auto& outCat = std::get<QCategoricalStorage>(out.data.vector_val->storage);
-            outCat.dictionary = cat.dictionary;  // Clone dictionary
-            outCat.codes.reserve(selected);
-            std::vector<uint8_t> filteredNulls;
-            bool hasNulls = false;
-            for (size_t i = 0; i < n; i++) {
-                if (q_vec_is_null_at(mv, i) || maskBits[i] == 0) continue;
-                outCat.codes.push_back(cat.codes[i]);
-                bool isNull = q_vec_is_null_at(dv, i) || cat.codes[i] < 0;
-                filteredNulls.push_back(isNull ? 1 : 0);
-                if (isNull) hasNulls = true;
-            }
-            out.data.vector_val->count = outCat.codes.size();
             if (hasNulls) {
                 out.data.vector_val->has_nulls = true;
                 out.data.vector_val->nulls.is_null = filteredNulls;
@@ -3307,14 +3051,6 @@ inline QValue q_iter_get(QValue iterable, QValue index) {
             uint32_t end = values.offsets[pos + 1];
             std::string s(values.bytes.data() + start, values.bytes.data() + end);
             return qv_string(s.c_str());
-        }
-        case QVector::Type::CAT: {
-            const auto& values = std::get<QCategoricalStorage>(vec.storage);
-            int32_t code = values.codes[pos];
-            if (code < 0 || static_cast<size_t>(code) >= values.dictionary.size()) {
-                return qv_null();
-            }
-            return qv_string(values.dictionary[code].c_str());
         }
         default:
             return qv_null();

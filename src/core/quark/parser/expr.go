@@ -222,6 +222,13 @@ func (p *Parser) parseGroupedExpression() *ast.TreeNode {
 	return expr
 }
 
+// skipNewlines skips any NEWLINE tokens (defense-in-depth for multi-line literals)
+func (p *Parser) skipNewlines() {
+	for p.curToken.Type == token.NEWLINE {
+		p.nextToken()
+	}
+}
+
 func (p *Parser) parseListLiteral() *ast.TreeNode {
 	tok := p.curToken
 	node := ast.NewNode(ast.ListNode, &tok)
@@ -231,13 +238,18 @@ func (p *Parser) parseListLiteral() *ast.TreeNode {
 		return nil
 	}
 
+	p.skipNewlines()
 	if p.curToken.Type != token.RBRACKET {
 		for {
-			// Parse at PrecTernary to stop before comma (which has lower precedence)
+			p.skipNewlines()
+			if p.curToken.Type == token.RBRACKET {
+				break // trailing comma
+			}
 			elem := p.parseExpression(ast.PrecTernary)
 			if elem != nil {
 				node.AddChild(elem)
 			}
+			p.skipNewlines()
 			if p.curToken.Type == token.COMMA {
 				p.nextToken()
 			} else {
@@ -245,6 +257,7 @@ func (p *Parser) parseListLiteral() *ast.TreeNode {
 			}
 		}
 	}
+	p.skipNewlines()
 
 	if !p.expect(token.RBRACKET) {
 		return nil
@@ -260,8 +273,13 @@ func (p *Parser) parseDictLiteral() *ast.TreeNode {
 		return nil
 	}
 
+	p.skipNewlines()
 	if p.curToken.Type != token.RBRACE {
 		for {
+			p.skipNewlines()
+			if p.curToken.Type == token.RBRACE {
+				break // trailing comma
+			}
 			if p.curToken.Type != token.ID {
 				p.addError("expected identifier as dict key")
 				return nil
@@ -289,6 +307,7 @@ func (p *Parser) parseDictLiteral() *ast.TreeNode {
 			pair.AddChildren(key, value)
 			node.AddChild(pair)
 
+			p.skipNewlines()
 			if p.curToken.Type == token.COMMA {
 				p.nextToken()
 			} else {
@@ -296,6 +315,7 @@ func (p *Parser) parseDictLiteral() *ast.TreeNode {
 			}
 		}
 	}
+	p.skipNewlines()
 
 	if !p.expect(token.RBRACE) {
 		return nil
@@ -312,8 +332,13 @@ func (p *Parser) parseVectorLiteral() *ast.TreeNode {
 		return nil
 	}
 
+	p.skipNewlines()
 	if p.curToken.Type != token.RBRACKET {
 		for {
+			p.skipNewlines()
+			if p.curToken.Type == token.RBRACKET {
+				break // trailing comma
+			}
 			// 1D vectors only in MVP: reject ';' row separators for now.
 			if p.curToken.Type == token.ILLEGAL && p.curToken.Literal == ";" {
 				p.addError("vector literal currently supports 1D only; ';' rows are not supported yet")
@@ -324,6 +349,7 @@ func (p *Parser) parseVectorLiteral() *ast.TreeNode {
 			if elem != nil {
 				node.AddChild(elem)
 			}
+			p.skipNewlines()
 			if p.curToken.Type == token.COMMA {
 				p.nextToken()
 			} else {
@@ -331,6 +357,7 @@ func (p *Parser) parseVectorLiteral() *ast.TreeNode {
 			}
 		}
 	}
+	p.skipNewlines()
 
 	if !p.expect(token.RBRACKET) {
 		return nil

@@ -50,10 +50,10 @@ func NewAnalyzer() *Analyzer {
 		{"println", 0, 1, []Type{TypeAny}, TypeVoid},
 		{"input", 0, 1, []Type{TypeAny}, TypeString},
 		{"len", 1, 1, []Type{TypeAny}, TypeInt},
-		{"str", 1, 1, []Type{TypeAny}, TypeString},
-		{"int", 1, 1, []Type{TypeAny}, TypeInt},
-		{"float", 1, 1, []Type{TypeAny}, TypeFloat},
-		{"bool", 1, 1, []Type{TypeAny}, TypeBool},
+		{"to_str", 1, 1, []Type{TypeAny}, TypeString},
+		{"to_int", 1, 1, []Type{TypeAny}, TypeInt},
+		{"to_float", 1, 1, []Type{TypeAny}, TypeFloat},
+		{"to_bool", 1, 1, []Type{TypeAny}, TypeBool},
 		{"type", 1, 1, []Type{TypeAny}, TypeString},
 		{"range", 1, 3, []Type{TypeAny, TypeAny, TypeAny}, &ListType{ElementType: TypeInt}},
 		{"abs", 1, 1, []Type{TypeAny}, TypeAny},
@@ -86,8 +86,7 @@ func NewAnalyzer() *Analyzer {
 		{"fillna", 2, 2, []Type{TypeAny, TypeAny}, TypeAny},
 		{"astype", 2, 2, []Type{TypeAny, TypeString}, TypeAny},
 		{"to_vector", 1, 1, []Type{TypeAny}, TypeAny},
-		{"cat_from_str", 1, 1, []Type{TypeAny}, TypeAny},
-		{"cat_to_str", 1, 1, []Type{TypeAny}, TypeAny},
+		{"to_list", 1, 1, []Type{TypeAny}, TypeAny},
 	}
 
 	builtins := make(map[string]*builtinSignature)

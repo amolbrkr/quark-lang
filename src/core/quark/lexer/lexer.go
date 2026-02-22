@@ -15,6 +15,8 @@ type Lexer struct {
 
 	// For indentation handling
 	parenCount   int
+	bracketCount int // tracks [] nesting
+	braceCount   int // tracks {} nesting
 	atLineStart  bool
 	indentLevels []int
 
@@ -57,6 +59,11 @@ func (l *Lexer) peekChar() byte {
 		return 0
 	}
 	return l.input[l.readPosition]
+}
+
+// insideBrackets returns true when inside (), [] or {} — suppresses indentation
+func (l *Lexer) insideBrackets() bool {
+	return l.parenCount > 0 || l.bracketCount > 0 || l.braceCount > 0
 }
 
 // Tokenize processes all tokens and handles indentation
@@ -245,7 +252,7 @@ func (l *Lexer) nextRawToken() token.Token {
 	var tok token.Token
 
 	// Handle whitespace at line start (for indentation tracking)
-	if l.atLineStart && l.parenCount == 0 && (l.ch == ' ' || l.ch == '\t') {
+	if l.atLineStart && !l.insideBrackets() && (l.ch == ' ' || l.ch == '\t') {
 		return l.readWhitespace()
 	}
 
@@ -312,12 +319,20 @@ func (l *Lexer) nextRawToken() token.Token {
 		}
 		tok = newToken(token.RPAR, l.ch, tok.Line, tok.Column)
 	case '[':
+		l.bracketCount++
 		tok = newToken(token.LBRACKET, l.ch, tok.Line, tok.Column)
 	case ']':
+		if l.bracketCount > 0 {
+			l.bracketCount--
+		}
 		tok = newToken(token.RBRACKET, l.ch, tok.Line, tok.Column)
 	case '{':
+		l.braceCount++
 		tok = newToken(token.LBRACE, l.ch, tok.Line, tok.Column)
 	case '}':
+		if l.braceCount > 0 {
+			l.braceCount--
+		}
 		tok = newToken(token.RBRACE, l.ch, tok.Line, tok.Column)
 	case '.':
 		tok = newToken(token.DOT, l.ch, tok.Line, tok.Column)
@@ -340,17 +355,24 @@ func (l *Lexer) nextRawToken() token.Token {
 		tok.Literal = l.readString()
 		return tok
 	case '\n':
-		tok = newToken(token.NEWLINE, l.ch, tok.Line, tok.Column)
-		l.atLineStart = true
 		l.readChar()
+		if l.insideBrackets() {
+			// Inside [], {}, or () — skip newlines, don't emit
+			return l.nextRawToken()
+		}
+		tok = newToken(token.NEWLINE, '\n', tok.Line, tok.Column)
+		l.atLineStart = true
 		return tok
 	case '\r':
 		if l.peekChar() == '\n' {
 			l.readChar()
 		}
+		l.readChar()
+		if l.insideBrackets() {
+			return l.nextRawToken()
+		}
 		tok = newToken(token.NEWLINE, '\n', tok.Line, tok.Column)
 		l.atLineStart = true
-		l.readChar()
 		return tok
 	case ' ', '\t':
 		// Non-line-start whitespace - skip it

@@ -74,14 +74,6 @@ inline QValue q_iter_get(QValue iterable, QValue index) {
             std::string s(values.bytes.data() + start, values.bytes.data() + end);
             return qv_string(s.c_str());
         }
-        case QVector::Type::CAT: {
-            const auto& values = std::get<QCategoricalStorage>(vec.storage);
-            int32_t code = values.codes[pos];
-            if (code < 0 || static_cast<size_t>(code) >= values.dictionary.size()) {
-                return qv_null();
-            }
-            return qv_string(values.dictionary[code].c_str());
-        }
         default:
             return qv_null();
     }

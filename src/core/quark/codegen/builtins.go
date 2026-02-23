@@ -21,12 +21,15 @@ var builtinRegistry = map[string]*BuiltinFunc{
 	"input":   {CFunc: "q_input", MinArgs: 0, MaxArgs: 1},
 
 	// Conversions
-	"len":   {CFunc: "q_len", MinArgs: 1, MaxArgs: 1},
+	"len":      {CFunc: "q_len", MinArgs: 1, MaxArgs: 1},
 	"to_str":   {CFunc: "q_str", MinArgs: 1, MaxArgs: 1},
 	"to_int":   {CFunc: "q_int", MinArgs: 1, MaxArgs: 1},
 	"to_float": {CFunc: "q_float", MinArgs: 1, MaxArgs: 1},
 	"to_bool":  {CFunc: "q_bool", MinArgs: 1, MaxArgs: 1},
-	"type":  {CFunc: "q_type", MinArgs: 1, MaxArgs: 1},
+	"type":     {CFunc: "q_type", MinArgs: 1, MaxArgs: 1},
+	"is_ok":    {CFunc: "q_is_ok_builtin", MinArgs: 1, MaxArgs: 1},
+	"is_err":   {CFunc: "q_is_err_builtin", MinArgs: 1, MaxArgs: 1},
+	"unwrap":   {CFunc: "q_unwrap", MinArgs: 1, MaxArgs: 1},
 
 	// Range (variadic: 1-3 args)
 	"range": {CFunc: "q_range", MinArgs: 1, MaxArgs: 3},
@@ -67,10 +70,10 @@ var builtinRegistry = map[string]*BuiltinFunc{
 	"dset": {CFunc: "q_dset", MinArgs: 3, MaxArgs: 3},
 
 	// Vector helpers
-	"fillna":       {CFunc: "q_fillna", MinArgs: 2, MaxArgs: 2},
-	"astype":       {CFunc: "q_astype", MinArgs: 2, MaxArgs: 2},
-	"to_vector":    {CFunc: "q_to_vector", MinArgs: 1, MaxArgs: 1},
-	"to_list":      {CFunc: "q_to_list", MinArgs: 1, MaxArgs: 1},
+	"fillna":    {CFunc: "q_fillna", MinArgs: 2, MaxArgs: 2},
+	"astype":    {CFunc: "q_astype", MinArgs: 2, MaxArgs: 2},
+	"to_vector": {CFunc: "q_to_vector", MinArgs: 1, MaxArgs: 1},
+	"to_list":   {CFunc: "q_to_list", MinArgs: 1, MaxArgs: 1},
 }
 
 // LookupBuiltin returns the builtin definition if name is a builtin, nil otherwise.

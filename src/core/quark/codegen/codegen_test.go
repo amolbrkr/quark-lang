@@ -90,3 +90,22 @@ func TestCodegen_ForLoopUsesGenericLenForVector(t *testing.T) {
 		t.Fatalf("for-loop should not assume list storage directly, cpp=\n%s", res.CPP)
 	}
 }
+
+func TestCodegen_EmitsResultHelperBuiltins(t *testing.T) {
+	res := testutil.GenerateCPP("r = ok 1\nprintln(is_ok(r))\nprintln(is_err(r))\nx = unwrap(r)\n")
+	if len(res.ParserErrors) > 0 {
+		t.Fatalf("unexpected parse errors: %v", res.ParserErrors)
+	}
+	if len(res.TypeErrors) > 0 {
+		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
+	}
+	if !strings.Contains(res.CPP, "q_is_ok_builtin") {
+		t.Fatalf("expected codegen to call q_is_ok_builtin, cpp=\n%s", res.CPP)
+	}
+	if !strings.Contains(res.CPP, "q_is_err_builtin") {
+		t.Fatalf("expected codegen to call q_is_err_builtin, cpp=\n%s", res.CPP)
+	}
+	if !strings.Contains(res.CPP, "q_unwrap") {
+		t.Fatalf("expected codegen to call q_unwrap, cpp=\n%s", res.CPP)
+	}
+}

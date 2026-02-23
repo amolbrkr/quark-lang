@@ -55,6 +55,9 @@ func NewAnalyzer() *Analyzer {
 		{"to_float", 1, 1, []Type{TypeAny}, TypeFloat},
 		{"to_bool", 1, 1, []Type{TypeAny}, TypeBool},
 		{"type", 1, 1, []Type{TypeAny}, TypeString},
+		{"is_ok", 1, 1, []Type{TypeAny}, TypeBool},
+		{"is_err", 1, 1, []Type{TypeAny}, TypeBool},
+		{"unwrap", 1, 1, []Type{TypeAny}, TypeAny},
 		{"range", 1, 3, []Type{TypeAny, TypeAny, TypeAny}, &ListType{ElementType: TypeInt}},
 		{"abs", 1, 1, []Type{TypeAny}, TypeAny},
 		{"min", 1, 2, []Type{TypeAny, TypeAny}, TypeAny},
@@ -387,7 +390,8 @@ func (a *Analyzer) analyzeWhenStatement(node *ast.TreeNode) Type {
 	}
 
 	// Analyze expression being matched
-	a.Analyze(node.Children[0])
+	matchType := a.Analyze(node.Children[0])
+	resultMatchType, isResultMatch := matchType.(*ResultType)
 
 	// Analyze patterns
 	var resultType Type = TypeVoid
@@ -398,11 +402,24 @@ func (a *Analyzer) analyzeWhenStatement(node *ast.TreeNode) Type {
 		}
 
 		resultExpr := pattern.Children[len(pattern.Children)-1]
-		bindName, hasBinding := extractResultPatternBinding(pattern)
+		bindName, hasBinding, bindingIsErr, resultPatternNode := extractResultPatternBinding(pattern)
+
+		if hasBinding && !isResultMatch && !isUnknownType(matchType) {
+			a.errorAt(resultPatternNode, "result pattern requires result value, got %s", matchType.String())
+		}
+
+		bindingType := TypeAny
+		if isResultMatch {
+			if bindingIsErr {
+				bindingType = resultMatchType.ErrType
+			} else {
+				bindingType = resultMatchType.OkType
+			}
+		}
 
 		if hasBinding && bindName != "" {
 			a.pushScope()
-			a.currentScope.Define(bindName, TypeAny, true)
+			a.currentScope.Define(bindName, bindingType, true)
 			branchType := a.Analyze(resultExpr)
 			a.popScope()
 			resultType = MergeTypes(resultType, branchType)
@@ -416,9 +433,9 @@ func (a *Analyzer) analyzeWhenStatement(node *ast.TreeNode) Type {
 	return resultType
 }
 
-func extractResultPatternBinding(pattern *ast.TreeNode) (string, bool) {
+func extractResultPatternBinding(pattern *ast.TreeNode) (string, bool, bool, *ast.TreeNode) {
 	if pattern == nil || len(pattern.Children) == 0 {
-		return "", false
+		return "", false, false, nil
 	}
 	for i := 0; i < len(pattern.Children)-1; i++ {
 		child := pattern.Children[i]
@@ -426,24 +443,28 @@ func extractResultPatternBinding(pattern *ast.TreeNode) (string, bool) {
 			continue
 		}
 		bindNode := child.Children[0]
+		isErr := child.Token != nil && child.Token.Type == token.ERR
 		if bindNode == nil {
-			return "", true
+			return "", true, isErr, child
 		}
 		name := bindNode.TokenLiteral()
 		if name == "_" {
-			return "", true
+			return "", true, isErr, child
 		}
-		return name, true
+		return name, true, isErr, child
 	}
-	return "", false
+	return "", false, false, nil
 }
 
 func (a *Analyzer) analyzeResult(node *ast.TreeNode) Type {
 	if len(node.Children) == 0 {
-		return TypeAny
+		return &ResultType{OkType: TypeAny, ErrType: TypeAny}
 	}
-	a.Analyze(node.Children[0])
-	return TypeAny
+	payloadType := a.Analyze(node.Children[0])
+	if node.Token != nil && node.Token.Type == token.ERR {
+		return &ResultType{OkType: TypeAny, ErrType: payloadType}
+	}
+	return &ResultType{OkType: payloadType, ErrType: TypeAny}
 }
 
 func (a *Analyzer) analyzeForLoop(node *ast.TreeNode) Type {
@@ -854,6 +875,18 @@ func (a *Analyzer) analyzePipe(node *ast.TreeNode) Type {
 }
 
 func (a *Analyzer) inferBuiltinReturnType(name string, argTypes []Type, callNode *ast.TreeNode) Type {
+	if name == "unwrap" {
+		if len(argTypes) == 1 {
+			if res, ok := argTypes[0].(*ResultType); ok {
+				return res.OkType
+			}
+		}
+		if sig, ok := a.builtins[name]; ok {
+			return sig.Type.ReturnType
+		}
+		return TypeAny
+	}
+
 	if name != "to_vector" {
 		if sig, ok := a.builtins[name]; ok {
 			return sig.Type.ReturnType

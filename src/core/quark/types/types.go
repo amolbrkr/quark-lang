@@ -94,6 +94,12 @@ type FunctionType struct {
 	ReturnType Type
 }
 
+// ResultType represents an explicit ok/err result value
+type ResultType struct {
+	OkType  Type
+	ErrType Type
+}
+
 func (t *FunctionType) String() string {
 	params := ""
 	for i, p := range t.ParamTypes {
@@ -116,6 +122,17 @@ func (t *FunctionType) Equals(other Type) bool {
 			}
 		}
 		return t.ReturnType.Equals(o.ReturnType)
+	}
+	return false
+}
+
+func (t *ResultType) String() string {
+	return fmt.Sprintf("result[%s, %s]", t.OkType.String(), t.ErrType.String())
+}
+
+func (t *ResultType) Equals(other Type) bool {
+	if o, ok := other.(*ResultType); ok {
+		return t.OkType.Equals(o.OkType) && t.ErrType.Equals(o.ErrType)
 	}
 	return false
 }
@@ -249,7 +266,8 @@ func CanAssign(dstType, srcType Type) bool {
 		_, isList := dstType.(*ListType)
 		_, isDict := dstType.(*DictType)
 		_, isFunc := dstType.(*FunctionType)
-		return isList || isDict || isFunc
+		_, isResult := dstType.(*ResultType)
+		return isList || isDict || isFunc || isResult
 	}
 	// Int can be promoted to float
 	if dstType.Equals(TypeFloat) && srcType.Equals(TypeInt) {
@@ -282,11 +300,51 @@ func CanAssign(dstType, srcType Type) bool {
 			return CanAssign(dstVec.ElementType, srcVec.ElementType)
 		}
 	}
+	if dstResult, ok := dstType.(*ResultType); ok {
+		if srcResult, ok := srcType.(*ResultType); ok {
+			okAssignable := dstResult.OkType.Equals(TypeAny) || CanAssign(dstResult.OkType, srcResult.OkType)
+			errAssignable := dstResult.ErrType.Equals(TypeAny) || CanAssign(dstResult.ErrType, srcResult.ErrType)
+			return okAssignable && errAssignable
+		}
+	}
 	return dstType.Equals(srcType)
 }
 
 // MergeTypes combines multiple type possibilities into the most precise representation.
 func MergeTypes(types ...Type) Type {
+	resultTypes := make([]*ResultType, 0)
+	hasNonResult := false
+	for _, t := range types {
+		if t == nil {
+			continue
+		}
+		if union, ok := t.(*UnionType); ok {
+			for _, opt := range union.Options {
+				if rt, ok := opt.(*ResultType); ok {
+					resultTypes = append(resultTypes, rt)
+				} else {
+					hasNonResult = true
+				}
+			}
+			continue
+		}
+		if rt, ok := t.(*ResultType); ok {
+			resultTypes = append(resultTypes, rt)
+		} else {
+			hasNonResult = true
+		}
+	}
+
+	if len(resultTypes) > 0 && !hasNonResult {
+		okTypes := make([]Type, 0, len(resultTypes))
+		errTypes := make([]Type, 0, len(resultTypes))
+		for _, rt := range resultTypes {
+			okTypes = append(okTypes, rt.OkType)
+			errTypes = append(errTypes, rt.ErrType)
+		}
+		return &ResultType{OkType: MergeTypes(okTypes...), ErrType: MergeTypes(errTypes...)}
+	}
+
 	unique := make(map[string]Type)
 	for _, t := range types {
 		if t == nil {
@@ -339,6 +397,8 @@ func typeKey(t Type) string {
 			params[i] = typeKey(p)
 		}
 		return "fn[" + strings.Join(params, "|") + ":" + typeKey(v.ReturnType) + "]"
+	case *ResultType:
+		return "result[" + typeKey(v.OkType) + "," + typeKey(v.ErrType) + "]"
 	case *UnionType:
 		parts := make([]string, len(v.Options))
 		for i, opt := range v.Options {

@@ -298,3 +298,77 @@ func TestVectorCategoricalBuiltinsRegistered(t *testing.T) {
 		t.Fatalf("unexpected type errors: %v", typeErrs)
 	}
 }
+
+func TestResultLiteral_InfersTypedResult(t *testing.T) {
+	analyzer, node, parseErrs, typeErrs := testutil.Analyze("ok 1\nerr 'boom'\n")
+	if len(parseErrs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", parseErrs)
+	}
+	if len(typeErrs) > 0 {
+		t.Fatalf("unexpected type errors: %v", typeErrs)
+	}
+	if len(node.Children) < 2 {
+		t.Fatalf("expected two top-level expressions, got %d", len(node.Children))
+	}
+
+	okType := analyzer.Analyze(node.Children[0])
+	okResult, ok := okType.(*qtypes.ResultType)
+	if !ok {
+		t.Fatalf("expected ResultType for ok literal, got %T (%v)", okType, okType)
+	}
+	if !okResult.OkType.Equals(qtypes.TypeInt) {
+		t.Fatalf("expected ok payload int, got %s", okResult.OkType.String())
+	}
+
+	errType := analyzer.Analyze(node.Children[1])
+	errResult, ok := errType.(*qtypes.ResultType)
+	if !ok {
+		t.Fatalf("expected ResultType for err literal, got %T (%v)", errType, errType)
+	}
+	if !errResult.ErrType.Equals(qtypes.TypeString) {
+		t.Fatalf("expected err payload str, got %s", errResult.ErrType.String())
+	}
+}
+
+func TestWhenResultPattern_RefinesBindingType(t *testing.T) {
+	src := "r = ok 1\nx = when r:\n    ok v -> v\n    err e -> 0\nx\n"
+	analyzer, node, parseErrs, typeErrs := testutil.Analyze(src)
+	if len(parseErrs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", parseErrs)
+	}
+	if len(typeErrs) > 0 {
+		t.Fatalf("unexpected type errors: %v", typeErrs)
+	}
+	if len(node.Children) < 3 {
+		t.Fatalf("expected at least 3 top-level expressions, got %d", len(node.Children))
+	}
+
+	finalType := analyzer.Analyze(node.Children[len(node.Children)-1])
+	if !finalType.Equals(qtypes.TypeInt) {
+		t.Fatalf("expected final type int from refined ok binding, got %s", finalType.String())
+	}
+}
+
+func TestWhenResultPattern_NonResultMatchError(t *testing.T) {
+	_, _, parseErrs, typeErrs := testutil.Analyze("when 1:\n    ok v -> v\n    _ -> 0\n")
+	if len(parseErrs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", parseErrs)
+	}
+	if len(typeErrs) == 0 {
+		t.Fatalf("expected type error for result pattern on non-result value")
+	}
+	joined := strings.Join(typeErrs, "\n")
+	if !strings.Contains(joined, "result pattern requires result value") {
+		t.Fatalf("expected result-pattern diagnostic, got: %v", typeErrs)
+	}
+}
+
+func TestResultHelpers_BuiltinsRegistered(t *testing.T) {
+	_, _, parseErrs, typeErrs := testutil.Analyze("r = ok 1\nprintln(is_ok(r))\nprintln(is_err(r))\nprintln(unwrap(r))\n")
+	if len(parseErrs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", parseErrs)
+	}
+	if len(typeErrs) > 0 {
+		t.Fatalf("unexpected type errors: %v", typeErrs)
+	}
+}

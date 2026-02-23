@@ -184,4 +184,30 @@ inline QValue q_type(QValue v) {
     }
 }
 
+inline QValue q_is_ok_builtin(QValue v) {
+    return qv_bool(q_is_ok(v));
+}
+
+inline QValue q_is_err_builtin(QValue v) {
+    return qv_bool(v.type == QValue::VAL_RESULT && v.data.result_val && !v.data.result_val->is_ok);
+}
+
+inline QValue q_unwrap(QValue v) {
+    if (v.type != QValue::VAL_RESULT || !v.data.result_val) {
+        std::fprintf(stderr, "runtime panic: unwrap expects result\n");
+        std::abort();
+    }
+    if (v.data.result_val->is_ok) {
+        return v.data.result_val->payload;
+    }
+
+    QValue err = v.data.result_val->payload;
+    QValue errText = q_str(err);
+    const char* msg = (errText.type == QValue::VAL_STRING && errText.data.string_val)
+        ? errText.data.string_val
+        : "<error>";
+    std::fprintf(stderr, "runtime panic: unwrap on err: %s\n", msg);
+    std::abort();
+}
+
 #endif // QUARK_BUILTINS_CONVERSION_HPP

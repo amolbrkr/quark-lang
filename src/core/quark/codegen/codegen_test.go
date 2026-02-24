@@ -109,3 +109,33 @@ func TestCodegen_EmitsResultHelperBuiltins(t *testing.T) {
 		t.Fatalf("expected codegen to call q_unwrap, cpp=\n%s", res.CPP)
 	}
 }
+
+func TestCodegen_WhenResultPatternBindingScopeRegression(t *testing.T) {
+	program := "fn safe_div(a, b) ->\n" +
+		"    if b == 0:\n" +
+		"        err 'divide by zero'\n" +
+		"    else:\n" +
+		"        ok a / b\n" +
+		"\n" +
+		"fn compute(x, y) ->\n" +
+		"    when safe_div(x, y):\n" +
+		"        ok v -> println(v)\n" +
+		"        err e -> dict { error: e }\n"
+
+	res := testutil.GenerateCPP(program)
+	if len(res.ParserErrors) > 0 {
+		t.Fatalf("unexpected parse errors: %v", res.ParserErrors)
+	}
+	if len(res.TypeErrors) > 0 {
+		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
+	}
+
+	bindDecl := strings.Index(res.CPP, "QValue quark_e = q_result_error")
+	bindUse := strings.Index(res.CPP, "q_dict_set")
+	if bindDecl == -1 || bindUse == -1 {
+		t.Fatalf("expected generated code to include err-binding and dict set usage, cpp=\n%s", res.CPP)
+	}
+	if bindDecl > bindUse {
+		t.Fatalf("expected err-binding declaration before usage in when arm, cpp=\n%s", res.CPP)
+	}
+}

@@ -408,7 +408,7 @@ func (a *Analyzer) analyzeWhenStatement(node *ast.TreeNode) Type {
 			a.errorAt(resultPatternNode, "result pattern requires result value, got %s", matchType.String())
 		}
 
-		bindingType := TypeAny
+		var bindingType Type = TypeAny
 		if isResultMatch {
 			if bindingIsErr {
 				bindingType = resultMatchType.ErrType

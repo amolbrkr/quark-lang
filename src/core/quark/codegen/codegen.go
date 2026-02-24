@@ -682,7 +682,7 @@ func (g *Generator) generateWhen(node *ast.TreeNode) string {
 
 		// Last child is the result, others are patterns
 		resultIdx := len(pattern.Children) - 1
-		result := g.generateExpr(pattern.Children[resultIdx])
+		resultExprNode := pattern.Children[resultIdx]
 
 		// Build condition from patterns
 		conditions := make([]string, 0)
@@ -742,6 +742,7 @@ func (g *Generator) generateWhen(node *ast.TreeNode) string {
 			}
 			g.emitLine("QValue %s = %s(%s);", sanitizeVarName(bind.name), accessor, matchTemp)
 		}
+		result := g.generateExpr(resultExprNode)
 		g.emitLine("%s = %s;", temp, result)
 		g.indentLevel--
 	}

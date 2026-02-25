@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -42,29 +43,118 @@ func getRuntimeIncludePath() string {
 	return filepath.Join("runtime", "include")
 }
 
-// getGCPaths returns the include and library paths for the Boehm GC dependency
-// relative to the quark executable (deps/bdwgc)
-func getGCPaths() (includePath string, libPath string) {
-	exePath, err := os.Executable()
+func findGCSourceDir() (string, error) {
+	candidates := []string{}
+
+	if exePath, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exePath)
+		candidates = append(candidates,
+			filepath.Join(exeDir, "..", "..", "..", "deps", "bdwgc"),
+			filepath.Join(exeDir, "deps", "bdwgc"),
+		)
+	}
+
+	if wd, err := os.Getwd(); err == nil {
+		candidates = append(candidates, filepath.Join(wd, "deps", "bdwgc"))
+		for cur := wd; ; {
+			parent := filepath.Dir(cur)
+			if parent == cur {
+				break
+			}
+			candidates = append(candidates, filepath.Join(parent, "deps", "bdwgc"))
+			cur = parent
+		}
+	}
+
+	seen := map[string]struct{}{}
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+		abs, err := filepath.Abs(candidate)
+		if err != nil {
+			continue
+		}
+		if _, ok := seen[abs]; ok {
+			continue
+		}
+		seen[abs] = struct{}{}
+		if _, err := os.Stat(filepath.Join(abs, "CMakeLists.txt")); err == nil {
+			return abs, nil
+		}
+	}
+
+	return "", errors.New("could not locate deps/bdwgc (expected vendored Boehm GC source in repository)")
+}
+
+func findGCLibrary(buildDir string) (string, error) {
+	candidates := []string{
+		filepath.Join(buildDir, "libgc.a"),
+		filepath.Join(buildDir, "libgc.so"),
+		filepath.Join(buildDir, "libgc.dylib"),
+		filepath.Join(buildDir, "gc.lib"),
+		filepath.Join(buildDir, "libgc.lib"),
+		filepath.Join(buildDir, "Release", "gc.lib"),
+		filepath.Join(buildDir, "Release", "libgc.lib"),
+		filepath.Join(buildDir, "Debug", "gc.lib"),
+		filepath.Join(buildDir, "Debug", "libgc.lib"),
+	}
+
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, nil
+		}
+	}
+
+	return "", fmt.Errorf("could not find built Boehm GC library under %s", buildDir)
+}
+
+func ensureGC() (includePath string, libPath string, err error) {
+	gcSourceDir, err := findGCSourceDir()
 	if err != nil {
-		return "", ""
-	}
-	exeDir := filepath.Dir(exePath)
-
-	// GC is in deps/bdwgc relative to the project root
-	// exe is in src/core/quark, so go up 3 levels
-	projectRoot := filepath.Join(exeDir, "..", "..", "..")
-	gcInclude := filepath.Join(projectRoot, "deps", "bdwgc", "include")
-	gcLib := filepath.Join(projectRoot, "deps", "bdwgc", "build")
-
-	// Check if paths exist
-	if _, err := os.Stat(gcInclude); err != nil {
-		// Fallback: try relative to current directory
-		gcInclude = filepath.Join("deps", "bdwgc", "include")
-		gcLib = filepath.Join("deps", "bdwgc", "build")
+		return "", "", err
 	}
 
-	return gcInclude, gcLib
+	includePath = filepath.Join(gcSourceDir, "include")
+	if _, statErr := os.Stat(filepath.Join(includePath, "gc", "gc.h")); statErr != nil {
+		return "", "", fmt.Errorf("Boehm GC headers not found at %s", includePath)
+	}
+
+	buildDir := filepath.Join(gcSourceDir, "build")
+	if libPath, err = findGCLibrary(buildDir); err == nil {
+		return includePath, libPath, nil
+	}
+
+	if _, lookErr := exec.LookPath("cmake"); lookErr != nil {
+		return "", "", fmt.Errorf("Boehm GC is not built and cmake is not available in PATH; install cmake or build deps/bdwgc manually")
+	}
+
+	fmt.Fprintln(os.Stderr, "Boehm GC library not found; bootstrapping deps/bdwgc/build with CMake...")
+
+	configureCmd := exec.Command("cmake", "-S", gcSourceDir, "-B", buildDir)
+	configureCmd.Stdout = os.Stdout
+	configureCmd.Stderr = os.Stderr
+	if runErr := configureCmd.Run(); runErr != nil {
+		return "", "", fmt.Errorf("failed to configure Boehm GC with CMake: %w", runErr)
+	}
+
+	buildArgs := []string{"--build", buildDir}
+	if runtime.GOOS == "windows" {
+		buildArgs = append(buildArgs, "--config", "Release")
+	}
+	buildCmd := exec.Command("cmake", buildArgs...)
+	buildCmd.Stdout = os.Stdout
+	buildCmd.Stderr = os.Stderr
+	if runErr := buildCmd.Run(); runErr != nil {
+		return "", "", fmt.Errorf("failed to build Boehm GC with CMake: %w", runErr)
+	}
+
+	libPath, err = findGCLibrary(buildDir)
+	if err != nil {
+		return "", "", err
+	}
+
+	return includePath, libPath, nil
 }
 
 func main() {
@@ -416,17 +506,23 @@ func runBuild(filename string, output string, useGC bool) {
 			"-Rpass-analysis=loop-vectorize",
 		)
 	}
+	var gcLibPath string
 	// Add GC flags if enabled
 	if useGC {
-		gcInclude, gcLib := getGCPaths()
-		args = append(args, "-DQUARK_USE_GC", fmt.Sprintf("-I%s", gcInclude), fmt.Sprintf("-L%s", gcLib))
+		gcInclude, resolvedLibPath, gcErr := ensureGC()
+		if gcErr != nil {
+			fmt.Fprintf(os.Stderr, "Error preparing Boehm GC: %s\n", gcErr)
+			os.Exit(1)
+		}
+		gcLibPath = resolvedLibPath
+		args = append(args, "-DQUARK_USE_GC", fmt.Sprintf("-I%s", gcInclude))
 	}
 
 	args = append(args, "-o", output, cFile)
 
 	// Add linker flags
 	if useGC {
-		args = append(args, "-lgc")
+		args = append(args, gcLibPath)
 	}
 	args = append(args, "-lm")
 
@@ -537,17 +633,23 @@ func runRun(filename string, debug bool, useGC bool) {
 			"-Rpass-analysis=loop-vectorize",
 		)
 	}
+	var gcLibPath string
 	// Add GC flags if enabled
 	if useGC {
-		gcInclude, gcLib := getGCPaths()
-		args = append(args, "-DQUARK_USE_GC", fmt.Sprintf("-I%s", gcInclude), fmt.Sprintf("-L%s", gcLib))
+		gcInclude, resolvedLibPath, gcErr := ensureGC()
+		if gcErr != nil {
+			fmt.Fprintf(os.Stderr, "Error preparing Boehm GC: %s\n", gcErr)
+			os.Exit(1)
+		}
+		gcLibPath = resolvedLibPath
+		args = append(args, "-DQUARK_USE_GC", fmt.Sprintf("-I%s", gcInclude))
 	}
 
 	args = append(args, "-o", exeFile, cFile)
 
 	// Add linker flags
 	if useGC {
-		args = append(args, "-lgc")
+		args = append(args, gcLibPath)
 	}
 	args = append(args, "-lm")
 

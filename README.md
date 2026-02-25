@@ -56,14 +56,14 @@ go build -o quark .
 
 - **Go 1.21+**
 - **clang++ or g++** in PATH (for C++17 codegen)
-- **Boehm GC** headers + library (built from `deps/bdwgc`, see below)
+- **CMake** in PATH (used to auto-build vendored Boehm GC on first run/build)
 - **Windows, Linux, or macOS**
 
-### Boehm GC (required for `quark run/build`)
+### Boehm GC (auto-bootstrapped)
 
-Quark defaults to compiling generated C++ with `-DQUARK_USE_GC` and links against `libgc`.
+Quark vendors Boehm GC source under `deps/bdwgc`. When you run `quark run` or `quark build`, the compiler automatically configures/builds `deps/bdwgc/build` if no GC library is present, then links it.
 
-From the repo root:
+Manual build is still possible if you prefer:
 
 ```bash
 cd deps/bdwgc
@@ -265,15 +265,9 @@ Quark has two test layers:
 - **Go tests** for the compiler frontend (lexer/parser/analyzer/codegen) plus an **end-to-end smoke** test that compiles and runs Quark programs.
 - **C++ Catch2 tests** for the runtime library.
 
-### Prerequisite: build Boehm GC
+### Boehm GC for tests
 
-The end-to-end tests compile generated C++ with `-DQUARK_USE_GC` and link `libgc`, so build the dependency once:
-
-```bash
-cd deps/bdwgc
-cmake -S . -B build
-cmake --build build
-```
+The end-to-end tests use the same auto-bootstrap behavior as `quark run/build`: if `deps/bdwgc/build` is missing, Quark attempts to build it automatically (requires `cmake`).
 
 ### End-to-end smoke (Go)
 

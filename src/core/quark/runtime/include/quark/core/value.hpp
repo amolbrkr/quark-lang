@@ -49,6 +49,14 @@ using QClFunc1 = QValue (*)(QClosure*, QValue);
 using QClFunc2 = QValue (*)(QClosure*, QValue, QValue);
 using QClFunc3 = QValue (*)(QClosure*, QValue, QValue, QValue);
 using QClFunc4 = QValue (*)(QClosure*, QValue, QValue, QValue, QValue);
+using QClFunc5 = QValue (*)(QClosure*, QValue, QValue, QValue, QValue, QValue);
+using QClFunc6 = QValue (*)(QClosure*, QValue, QValue, QValue, QValue, QValue, QValue);
+using QClFunc7 = QValue (*)(QClosure*, QValue, QValue, QValue, QValue, QValue, QValue, QValue);
+using QClFunc8 = QValue (*)(QClosure*, QValue, QValue, QValue, QValue, QValue, QValue, QValue, QValue);
+using QClFunc9 = QValue (*)(QClosure*, QValue, QValue, QValue, QValue, QValue, QValue, QValue, QValue, QValue);
+using QClFunc10 = QValue (*)(QClosure*, QValue, QValue, QValue, QValue, QValue, QValue, QValue, QValue, QValue, QValue);
+using QClFunc11 = QValue (*)(QClosure*, QValue, QValue, QValue, QValue, QValue, QValue, QValue, QValue, QValue, QValue, QValue);
+using QClFunc12 = QValue (*)(QClosure*, QValue, QValue, QValue, QValue, QValue, QValue, QValue, QValue, QValue, QValue, QValue, QValue);
 
 struct QResult {
     bool is_ok;

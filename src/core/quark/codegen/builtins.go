@@ -96,9 +96,9 @@ func GenerateBuiltinCall(name string, args []string) (string, bool) {
 		return "qv_null()", true
 	}
 
-	// Clamp to MaxArgs (ignore extra args)
+	// Too many arguments — emit explicit runtime error fallback (no silent truncation)
 	if nargs > b.MaxArgs {
-		args = args[:b.MaxArgs]
+		return fmt.Sprintf("(std::fprintf(stderr, \"runtime error: builtin '%s' expects at most %d args, got %d\\n\"), qv_null())", name, b.MaxArgs, nargs), true
 	}
 
 	return fmt.Sprintf("%s(%s)", b.CFunc, strings.Join(args, ", ")), true

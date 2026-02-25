@@ -16,6 +16,7 @@
 // Core types and constructors
 #include "core/value.hpp"
 #include "core/gc.hpp"
+#include "core/cell.hpp"
 #include "types/closure.hpp"
 #include "core/constructors.hpp"
 

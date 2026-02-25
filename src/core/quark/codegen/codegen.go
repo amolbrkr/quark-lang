@@ -68,6 +68,20 @@ func sanitizeVarName(name string) string {
 	return "quark_" + name
 }
 
+func sanitizeArgName(name string) string {
+	return "_arg_" + sanitizeVarName(name)
+}
+
+func isFunctionBindingAssignmentNode(node *ast.TreeNode) bool {
+	if node == nil || node.NodeType != ast.OperatorNode || node.Token == nil || node.Token.Type != token.EQUALS {
+		return false
+	}
+	if len(node.Children) != 2 {
+		return false
+	}
+	return node.Children[0].NodeType == ast.IdentifierNode && node.Children[1].NodeType == ast.LambdaNode
+}
+
 func (g *Generator) indent() string {
 	return strings.Repeat("    ", g.indentLevel)
 }
@@ -161,6 +175,14 @@ func (g *Generator) Generate(node *ast.TreeNode) string {
 	g.emit("\nint main() {\n")
 	g.indentLevel++
 	g.emitLine("q_gc_init();")
+	g.predeclareMainFunctionBindings(node)
+
+	// Initialize module body bindings so imported symbols are available at runtime.
+	for _, child := range node.Children {
+		if child.NodeType == ast.ModuleNode {
+			g.generateModuleBindings(child)
+		}
+	}
 
 	// Generate top-level statements that aren't function/module definitions
 	for _, child := range node.Children {
@@ -174,6 +196,39 @@ func (g *Generator) Generate(node *ast.TreeNode) string {
 	g.emit("}\n")
 
 	return g.output.String()
+}
+
+func (g *Generator) predeclareMainFunctionBindings(root *ast.TreeNode) {
+	if root == nil {
+		return
+	}
+	declareBinding := func(name string) {
+		if name == "" || g.declaredVars[name] {
+			return
+		}
+		cName := sanitizeVarName(name)
+		g.emitLine("QCell* %s = q_new_cell(qv_null());", cName)
+		g.declaredVars[name] = true
+	}
+
+	for _, child := range root.Children {
+		if isFunctionBindingAssignmentNode(child) {
+			declareBinding(child.Children[0].TokenLiteral())
+			continue
+		}
+		if child.NodeType != ast.ModuleNode || len(child.Children) < 2 {
+			continue
+		}
+		body := child.Children[1]
+		if body == nil || body.NodeType != ast.BlockNode {
+			continue
+		}
+		for _, stmt := range body.Children {
+			if isFunctionBindingAssignmentNode(stmt) {
+				declareBinding(stmt.Children[0].TokenLiteral())
+			}
+		}
+	}
 }
 
 func (g *Generator) collectFunctions(node *ast.TreeNode) {
@@ -247,13 +302,23 @@ func (g *Generator) generateFunction(node *ast.TreeNode) {
 		if paramName == "" {
 			continue
 		}
-		cParamName := sanitizeVarName(paramName)
+		cParamName := sanitizeArgName(paramName)
 		params = append(params, fmt.Sprintf("QValue %s", cParamName))
-		g.declaredVars[paramName] = true // Parameters are already declared
 	}
 
 	g.emit("QValue quark_%s(%s) {\n", funcName, strings.Join(params, ", "))
 	g.indentLevel++
+
+	for _, param := range argsNode.Children {
+		paramName := g.paramName(param)
+		if paramName == "" {
+			continue
+		}
+		cName := sanitizeVarName(paramName)
+		argName := sanitizeArgName(paramName)
+		g.emitLine("QCell* %s = q_new_cell(%s);", cName, argName)
+		g.declaredVars[paramName] = true // Parameters are already declared
+	}
 
 	// Generate body
 	result := g.generateBlock(bodyNode)
@@ -278,6 +343,23 @@ func (g *Generator) generateModule(node *ast.TreeNode) {
 		if child.NodeType == ast.FunctionNode {
 			g.generateFunction(child)
 		}
+	}
+}
+
+func (g *Generator) generateModuleBindings(node *ast.TreeNode) {
+	if len(node.Children) < 2 {
+		return
+	}
+	bodyNode := node.Children[1]
+	if bodyNode == nil || bodyNode.NodeType != ast.BlockNode {
+		return
+	}
+	for _, child := range bodyNode.Children {
+		if child == nil || child.NodeType == ast.UseNode || child.NodeType == ast.ModuleNode {
+			continue
+		}
+		expr := g.generateExpr(child)
+		g.emitLine("%s;", expr)
 	}
 }
 
@@ -385,6 +467,9 @@ func (g *Generator) generateIdentifier(node *ast.TreeNode) string {
 	if name == "_" {
 		return "qv_null()"
 	}
+	if g.declaredVars[name] {
+		return fmt.Sprintf("%s->value", sanitizeVarName(name))
+	}
 	if g.funcNames[name] {
 		return fmt.Sprintf("qv_func((void*)quark_%s)", name)
 	}
@@ -474,14 +559,15 @@ func (g *Generator) generateOperator(node *ast.TreeNode) string {
 		varName := lhs.TokenLiteral()
 		cName := sanitizeVarName(varName)
 		if g.declaredVars[varName] {
-			// Variable already declared, just assign
-			g.emitLine("%s = %s;", cName, right)
+			// Variable already declared, assign cell value
+			g.emitLine("%s->value = %s;", cName, right)
 		} else {
-			// First declaration
-			g.emitLine("QValue %s = %s;", cName, right)
+			// First declaration: allocate mutable cell before RHS use (supports self-recursive lambdas)
+			g.emitLine("QCell* %s = q_new_cell(qv_null());", cName)
+			g.emitLine("%s->value = %s;", cName, right)
 			g.declaredVars[varName] = true
 		}
-		return cName
+		return fmt.Sprintf("%s->value", cName)
 	}
 
 	return "qv_null()"
@@ -522,7 +608,7 @@ func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
 		}
 	}
 
-	if isKnownFunc {
+	if isKnownFunc && !g.declaredVars[funcName] {
 		// User-defined function - call directly with nullptr closure
 		if len(args) == 0 {
 			return fmt.Sprintf("quark_%s(nullptr)", funcName)
@@ -532,21 +618,7 @@ func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
 
 	// Otherwise, it might be a function value - use dynamic call
 	funcExpr := g.generateExpr(funcNode)
-	switch len(args) {
-	case 0:
-		return fmt.Sprintf("q_call0(%s)", funcExpr)
-	case 1:
-		return fmt.Sprintf("q_call1(%s, %s)", funcExpr, args[0])
-	case 2:
-		return fmt.Sprintf("q_call2(%s, %s, %s)", funcExpr, args[0], args[1])
-	case 3:
-		return fmt.Sprintf("q_call3(%s, %s, %s, %s)", funcExpr, args[0], args[1], args[2])
-	case 4:
-		return fmt.Sprintf("q_call4(%s, %s, %s, %s, %s)", funcExpr, args[0], args[1], args[2], args[3])
-	default:
-		// For more than 4 args, fall back to direct call including hidden closure param
-		return fmt.Sprintf("quark_%s(nullptr, %s)", funcName, strings.Join(args, ", "))
-	}
+	return fmt.Sprintf("q_calln(%s, std::vector<QValue>{%s})", funcExpr, strings.Join(args, ", "))
 }
 
 func (g *Generator) generatePipe(node *ast.TreeNode) string {
@@ -587,22 +659,13 @@ func (g *Generator) generatePipe(node *ast.TreeNode) string {
 			break
 		}
 	}
-	if isKnownFunc {
+	if isKnownFunc && !g.declaredVars[funcName] {
 		return fmt.Sprintf("quark_%s(nullptr, %s)", funcName, strings.Join(args, ", "))
 	}
 
 	// Dynamic call for function values
 	funcExpr := g.generateExpr(funcNode)
-	switch len(args) {
-	case 1:
-		return fmt.Sprintf("q_call1(%s, %s)", funcExpr, args[0])
-	case 2:
-		return fmt.Sprintf("q_call2(%s, %s, %s)", funcExpr, args[0], args[1])
-	case 3:
-		return fmt.Sprintf("q_call3(%s, %s, %s, %s)", funcExpr, args[0], args[1], args[2])
-	default:
-		return fmt.Sprintf("q_call1(%s, %s)", funcExpr, args[0])
-	}
+	return fmt.Sprintf("q_calln(%s, std::vector<QValue>{%s})", funcExpr, strings.Join(args, ", "))
 }
 
 func (g *Generator) generateTernary(node *ast.TreeNode) string {
@@ -735,15 +798,19 @@ func (g *Generator) generateWhen(node *ast.TreeNode) string {
 			g.emit(g.indent()+"} else if (%s) {\n", condStr)
 		}
 		g.indentLevel++
+		g.pushBlockScope()
 		for _, bind := range bindings {
 			accessor := "q_result_value"
 			if !bind.isOk {
 				accessor = "q_result_error"
 			}
-			g.emitLine("QValue %s = %s(%s);", sanitizeVarName(bind.name), accessor, matchTemp)
+			cName := sanitizeVarName(bind.name)
+			g.emitLine("QCell* %s = q_new_cell(%s(%s));", cName, accessor, matchTemp)
+			g.declaredVars[bind.name] = true
 		}
 		result := g.generateExpr(resultExprNode)
 		g.emitLine("%s = %s;", temp, result)
+		g.popScope()
 		g.indentLevel--
 	}
 
@@ -779,7 +846,7 @@ func (g *Generator) generateFor(node *ast.TreeNode) string {
 
 	g.pushBlockScope()
 	g.declaredVars[varName] = true // Loop variable is declared
-	g.emitLine("QValue %s = q_iter_get(%s, qv_int(%s));", cVarName, listTemp, idxTemp)
+	g.emitLine("QCell* %s = q_new_cell(q_iter_get(%s, qv_int(%s)));", cVarName, listTemp, idxTemp)
 
 	if bodyNode.NodeType == ast.BlockNode {
 		for _, stmt := range bodyNode.Children {
@@ -904,12 +971,13 @@ func (g *Generator) generateVarDecl(node *ast.TreeNode) string {
 	cName := sanitizeVarName(name)
 	value := g.generateExpr(valueNode)
 	if g.declaredVars[name] {
-		g.emitLine("%s = %s;", cName, value)
-		return cName
+		g.emitLine("%s->value = %s;", cName, value)
+		return fmt.Sprintf("%s->value", cName)
 	}
-	g.emitLine("QValue %s = %s;", cName, value)
+	g.emitLine("QCell* %s = q_new_cell(qv_null());", cName)
+	g.emitLine("%s->value = %s;", cName, value)
 	g.declaredVars[name] = true
-	return cName
+	return fmt.Sprintf("%s->value", cName)
 }
 
 func (g *Generator) generateLambdaExpr(node *ast.TreeNode) string {
@@ -965,19 +1033,29 @@ func (g *Generator) generateLambdaFunc(node *ast.TreeNode) {
 		if paramName == "" {
 			continue
 		}
-		cParamName := sanitizeVarName(paramName)
+		cParamName := sanitizeArgName(paramName)
 		params = append(params, fmt.Sprintf("QValue %s", cParamName))
-		g.declaredVars[paramName] = true // Parameters are already declared
 	}
 
 	g.emit("QValue quark_%s(%s) {\n", lambdaName, strings.Join(params, ", "))
 	g.indentLevel++
 
+	for _, param := range argsNode.Children {
+		paramName := g.paramName(param)
+		if paramName == "" {
+			continue
+		}
+		cName := sanitizeVarName(paramName)
+		argName := sanitizeArgName(paramName)
+		g.emitLine("QCell* %s = q_new_cell(%s);", cName, argName)
+		g.declaredVars[paramName] = true // Parameters are already declared
+	}
+
 	// Extract captured variables from closure
 	if caps, ok := g.captures[node]; ok {
 		for i, capName := range caps {
 			cName := sanitizeVarName(capName)
-			g.emitLine("QValue %s = _cl->captures[%d];", cName, i)
+			g.emitLine("QCell* %s = _cl->captures[%d];", cName, i)
 			g.declaredVars[capName] = true
 		}
 	}

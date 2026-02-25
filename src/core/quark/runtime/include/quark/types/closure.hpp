@@ -3,6 +3,7 @@
 #define QUARK_TYPES_CLOSURE_HPP
 
 #include "../core/value.hpp"
+#include "../core/cell.hpp"
 #include "../core/gc.hpp"
 
 // QClosure: holds a function pointer + captured values
@@ -11,7 +12,7 @@
 struct QClosure {
     void* func;           // The actual function pointer (takes QClosure* as first arg)
     int capture_count;    // Number of captured values (0 for non-capturing)
-    QValue captures[];    // Flexible array of captured values
+    QCell* captures[];    // Flexible array of shared captured variable cells
 };
 
 // Allocate a closure with N captures via GC

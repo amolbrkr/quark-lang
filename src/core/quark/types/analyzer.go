@@ -145,8 +145,85 @@ func (a *Analyzer) predeclareFunctions(nodes []*ast.TreeNode) {
 		}
 		if child.NodeType == ast.FunctionNode {
 			a.declareFunctionSignature(child)
+			continue
+		}
+		if isFunctionBindingAssignment(child) {
+			a.declareFunctionAssignmentSignature(child)
 		}
 	}
+}
+
+func isFunctionBindingAssignment(node *ast.TreeNode) bool {
+	if node == nil || node.NodeType != ast.OperatorNode || node.Token == nil || node.Token.Type != token.EQUALS {
+		return false
+	}
+	if len(node.Children) != 2 {
+		return false
+	}
+	return node.Children[0].NodeType == ast.IdentifierNode && node.Children[1].NodeType == ast.LambdaNode
+}
+
+func functionTypeFromLambdaNode(lambdaNode *ast.TreeNode) *FunctionType {
+	if lambdaNode == nil || len(lambdaNode.Children) < 1 {
+		return &FunctionType{ParamTypes: []Type{}, ReturnType: TypeAny}
+	}
+	argsNode := lambdaNode.Children[0]
+	paramSpecs := collectParamSpecs(argsNode)
+	paramTypes := make([]Type, len(paramSpecs))
+	for i, spec := range paramSpecs {
+		if spec.typeNode == nil {
+			paramTypes[i] = TypeAny
+			continue
+		}
+		typeName := spec.typeNode.TokenLiteral()
+		switch typeName {
+		case "int":
+			paramTypes[i] = TypeInt
+		case "float":
+			paramTypes[i] = TypeFloat
+		case "str":
+			paramTypes[i] = TypeString
+		case "bool":
+			paramTypes[i] = TypeBool
+		case "null":
+			paramTypes[i] = TypeNull
+		case "list":
+			paramTypes[i] = &ListType{ElementType: TypeAny}
+		case "dict":
+			paramTypes[i] = &DictType{KeyType: TypeAny, ValueType: TypeAny}
+		case "vector":
+			paramTypes[i] = &VectorType{ElementType: TypeAny}
+		default:
+			paramTypes[i] = TypeAny
+		}
+	}
+	return &FunctionType{ParamTypes: paramTypes, ReturnType: TypeAny}
+}
+
+func (a *Analyzer) declareFunctionAssignmentSignature(node *ast.TreeNode) *FunctionType {
+	if !isFunctionBindingAssignment(node) {
+		return nil
+	}
+
+	nameNode := node.Children[0]
+	lambdaNode := node.Children[1]
+	funcName := nameNode.TokenLiteral()
+	if funcName == "" {
+		return nil
+	}
+
+	if existing := a.currentScope.LookupLocal(funcName); existing != nil {
+		if ft, ok := existing.Type.(*FunctionType); ok {
+			return ft
+		}
+		a.errorAt(nameNode, "symbol '%s' already defined and is not a function", funcName)
+		return nil
+	}
+
+	funcType := functionTypeFromLambdaNode(lambdaNode)
+	a.currentScope.Define(funcName, funcType, true)
+	a.functions[funcName] = funcType
+	return funcType
 }
 
 func (a *Analyzer) declareFunctionSignature(node *ast.TreeNode) *FunctionType {
@@ -625,6 +702,14 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 	// because the left side may be a new variable being defined.
 	if op == token.EQUALS && len(node.Children) == 2 {
 		target := node.Children[0]
+		if target.NodeType == ast.IdentifierNode && node.Children[1].NodeType == ast.LambdaNode {
+			varName := target.TokenLiteral()
+			if a.currentScope.LookupLocal(varName) == nil {
+				funcType := functionTypeFromLambdaNode(node.Children[1])
+				a.currentScope.Define(varName, funcType, true)
+				a.functions[varName] = funcType
+			}
+		}
 		rightType := a.Analyze(node.Children[1])
 		// Allow member assignment: obj.member = value
 		if target.NodeType == ast.OperatorNode && target.Token != nil && target.Token.Type == token.DOT {
@@ -680,6 +765,13 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 		if sym == nil {
 			a.currentScope.Define(varName, rightType, true)
 		} else {
+			if _, dstIsFunc := sym.Type.(*FunctionType); dstIsFunc {
+				if srcFunc, srcIsFunc := rightType.(*FunctionType); srcIsFunc {
+					sym.Type = srcFunc
+					a.functions[varName] = srcFunc
+					return rightType
+				}
+			}
 			if !CanAssign(sym.Type, rightType) && !isUnknownType(rightType) {
 				a.errorAt(target, "cannot assign value of type '%s' to '%s'", rightType.String(), sym.Type.String())
 			}

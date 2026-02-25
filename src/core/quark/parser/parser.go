@@ -160,39 +160,40 @@ func (p *Parser) parseBlock() *ast.TreeNode {
 }
 
 func (p *Parser) parseFunction() *ast.TreeNode {
-	var node *ast.TreeNode
-
-	if p.curToken.Type == token.FN {
-		// Named function: fn name params -> body
-		tok := p.curToken
-		node = ast.NewNode(ast.FunctionNode, &tok)
-		p.nextToken() // skip 'fn'
-
-		// Parse function name
-		if p.curToken.Type != token.ID {
-			p.addError("expected function name")
-			return nil
-		}
-		nameTok := p.curToken
-		nameNode := ast.NewNode(ast.IdentifierNode, &nameTok)
-		p.nextToken()
-
-		// Parse parameters
-		args := p.parseParameters()
-
-		node.AddChildren(nameNode, args)
-
-		// Expect arrow
-		if !p.expect(token.ARROW) {
-			return nil
-		}
-
-		// Parse body
-		body := p.parseBlock()
-		node.AddChild(body)
+	if p.curToken.Type != token.FN {
+		return nil
 	}
 
-	return node
+	// Normalize named function form into assignment-to-lambda:
+	// fn name(params) -> body  ==>  name = fn(params) -> body
+	fnTok := p.curToken
+	p.nextToken() // skip 'fn'
+
+	if p.curToken.Type != token.ID {
+		p.addError("expected function name")
+		return nil
+	}
+
+	nameTok := p.curToken
+	nameNode := ast.NewNode(ast.IdentifierNode, &nameTok)
+	p.nextToken()
+
+	args := p.parseParameters()
+
+	if !p.expect(token.ARROW) {
+		return nil
+	}
+
+	body := p.parseBlock()
+
+	lambdaNode := ast.NewNode(ast.LambdaNode, &fnTok)
+	lambdaNode.AddChildren(args, body)
+
+	eqTok := token.Token{Type: token.EQUALS, Literal: "=", Line: fnTok.Line, Column: fnTok.Column}
+	assignNode := ast.NewNode(ast.OperatorNode, &eqTok)
+	assignNode.AddChildren(nameNode, lambdaNode)
+
+	return assignNode
 }
 
 func (p *Parser) parseCallArguments() *ast.TreeNode {

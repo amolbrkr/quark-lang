@@ -130,7 +130,7 @@ func TestCodegen_WhenResultPatternBindingScopeRegression(t *testing.T) {
 		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
 	}
 
-	bindDecl := strings.Index(res.CPP, "QValue quark_e = q_result_error")
+	bindDecl := strings.Index(res.CPP, "QCell* quark_e = q_new_cell(q_result_error")
 	bindUse := strings.Index(res.CPP, "q_dict_set")
 	if bindDecl == -1 || bindUse == -1 {
 		t.Fatalf("expected generated code to include err-binding and dict set usage, cpp=\n%s", res.CPP)

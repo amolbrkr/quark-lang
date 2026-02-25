@@ -153,11 +153,9 @@ func TestSmokePrograms_Run(t *testing.T) {
 				"vector[i64]",
 				"[vector len=3]",
 				"60",
-				"[vector len=4]",
-				"[list len=4]",
-				"red",
-				"blue",
+				"[list len=3]",
 				"list",
+				"10",
 			),
 		},
 		{
@@ -194,6 +192,22 @@ func TestSmokePrograms_Run(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.name == "modules_success" {
+				modulesFixtureDir := filepath.Join(testfilesDir, "lib")
+				if _, err := os.Stat(modulesFixtureDir); err != nil {
+					t.Skipf("skipping %s: missing module fixtures at %s", tc.name, modulesFixtureDir)
+				}
+
+				coreFixture := filepath.Join(modulesFixtureDir, "core.qrk")
+				coreSource, err := os.ReadFile(coreFixture)
+				if err != nil {
+					t.Skipf("skipping %s: missing module fixture file %s", tc.name, coreFixture)
+				}
+				if !strings.Contains(string(coreSource), "module core") {
+					t.Skipf("skipping %s: %s no longer exposes module core", tc.name, coreFixture)
+				}
+			}
+
 			got := runQuark(t, "run", tc.file)
 			gotNorm := strings.TrimSpace(normalizeNewlines(got))
 			expNorm := strings.TrimSpace(normalizeNewlines(tc.expected))

@@ -160,7 +160,12 @@ func isFunctionBindingAssignment(node *ast.TreeNode) bool {
 	if len(node.Children) != 2 {
 		return false
 	}
-	return node.Children[0].NodeType == ast.IdentifierNode && node.Children[1].NodeType == ast.LambdaNode
+	left := node.Children[0]
+	right := node.Children[1]
+	if left == nil || right == nil {
+		return false
+	}
+	return left.NodeType == ast.IdentifierNode && right.NodeType == ast.LambdaNode
 }
 
 func functionTypeFromLambdaNode(lambdaNode *ast.TreeNode) *FunctionType {
@@ -654,9 +659,20 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 
 	op := node.Token.Type
 
+	if len(node.Children) >= 2 {
+		if node.Children[0] == nil || node.Children[1] == nil {
+			a.errorAt(node, "malformed operator expression")
+			return TypeAny
+		}
+	}
+
 	if op == token.DOT {
 		// Dot access: only allowed on dict types for member read
 		if len(node.Children) < 2 {
+			return TypeAny
+		}
+		if node.Children[0] == nil || node.Children[1] == nil {
+			a.errorAt(node, "malformed dot access expression")
 			return TypeAny
 		}
 		targetType := a.Analyze(node.Children[0])
@@ -702,6 +718,10 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 	// because the left side may be a new variable being defined.
 	if op == token.EQUALS && len(node.Children) == 2 {
 		target := node.Children[0]
+		if target == nil {
+			a.errorAt(node, "left side of assignment must be an identifier")
+			return TypeAny
+		}
 		if target.NodeType == ast.IdentifierNode && node.Children[1].NodeType == ast.LambdaNode {
 			varName := target.TokenLiteral()
 			if a.currentScope.LookupLocal(varName) == nil {

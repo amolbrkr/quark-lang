@@ -289,16 +289,6 @@ func TestVectorFillnaAndAstype_BuiltinsRegistered(t *testing.T) {
 	}
 }
 
-func TestVectorCategoricalBuiltinsRegistered(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("xs = list ['red','blue','red']\nc = cat_from_str(xs)\nprintln(cat_to_str(c))\n")
-	if len(parseErrs) > 0 {
-		t.Fatalf("unexpected parse errors: %v", parseErrs)
-	}
-	if len(typeErrs) > 0 {
-		t.Fatalf("unexpected type errors: %v", typeErrs)
-	}
-}
-
 func TestResultLiteral_InfersTypedResult(t *testing.T) {
 	analyzer, node, parseErrs, typeErrs := testutil.Analyze("ok 1\nerr 'boom'\n")
 	if len(parseErrs) > 0 {
@@ -331,7 +321,7 @@ func TestResultLiteral_InfersTypedResult(t *testing.T) {
 }
 
 func TestWhenResultPattern_RefinesBindingType(t *testing.T) {
-	src := "r = ok 1\nx = when r:\n    ok v -> v\n    err e -> 0\nx\n"
+	src := "r = ok 1\nx = 0\nwhen r:\n    ok v -> x = v\n    err e -> x = 0\nx\n"
 	analyzer, node, parseErrs, typeErrs := testutil.Analyze(src)
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)

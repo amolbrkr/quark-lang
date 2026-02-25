@@ -1,10 +1,9 @@
-module test:
-    fn make_upper(string) ->
-        upper(string)
+fn make_counter() ->
+    count = 0
+    fn x() ->
+        count = count + 1
+        count
 
-names = list['a','b','c']
-
-use test
-
-for item in names:
-    println(make_upper(item))
+next_id = make_counter()
+println(next_id()) // 1
+println(next_id()) // 2

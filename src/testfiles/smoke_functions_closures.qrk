@@ -1,0 +1,18 @@
+// Function/closure semantics smoke
+// - both fn forms normalize to function-value bindings
+// - recursive assignment-form function works
+// - mutable captured state is shared across closure calls
+
+fib = fn(n) -> n if n <= 1 else fib(n - 1) + fib(n - 2)
+println(fib(10)) // 55
+
+fn make_counter() ->
+    count = 0
+    fn next() ->
+        count = count + 1
+        count
+    next
+
+next_id = make_counter()
+println(next_id()) // 1
+println(next_id()) // 2

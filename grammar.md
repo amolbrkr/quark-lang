@@ -1,106 +1,65 @@
-# Quark Language Grammar
+# Quark Language Grammar (Implementation-Synced)
 
-This grammar specification includes proper precedence and associativity rules. It uses extended BNF notation with precedence climbing for expressions.
+This document is the grammar and semantic reference for the Quark compiler in `src/core/quark`.
 
-## Notation
+## 1) Notation
 
-- `::=` means "is defined as"
+- `::=` means “is defined as”
 - `|` separates alternatives
-- `{ }` means zero or more repetitions
-- `[ ]` means optional (zero or one)
-- `( )` groups elements
-- `<TOKEN>` represents terminal symbols from the lexer
-- Everything else is a non-terminal
+- `{ ... }` means zero or more repetitions
+- `[ ... ]` means optional
+- `TOKEN` names refer to lexer token categories
 
-## Language Philosophy
+## 2) Language Philosophy
 
-### Symbols and Their Meanings
+### Symbol meanings
 
-| Symbol | Meaning | Used For |
-|--------|---------|----------|
-| `->` | "produces" / "maps to" | Function bodies, pattern results |
-| `:` | "has type" / "contains" | Type annotations, block containers, dict entries |
-| `\|` | "then" / "pipe to" | Data flow pipelines |
+| Symbol | Meaning | Primary use |
+|---|---|---|
+| `->` | produces/maps to | function bodies, `when` pattern results |
+| `:` | contains/has type | block headers, type annotations, dict entries |
+| `\|` | pipe to | dataflow chaining |
+| `.` | member of | dict key access only |
 
-### Minimal Punctuation
+## 3) Lexical Elements
 
-Quark aims to be readable by minimizing punctuation:
+### 3.1 Keywords (reserved)
 
-- Function calls always use parentheses: `print(x)`
-- Parentheses are used for grouping and for function calls; avoid extra parens elsewhere
-- Indentation defines blocks
+`use, module, fn, if, elseif, else, for, while, break, continue, when, in, and, or, true, false, null, ok, err, list, dict, vector`
 
-### Error Handling Philosophy
+### 3.2 Operators and delimiters
 
-Quark uses explicit Result types with `ok`/`err` for fallible operations. Results are handled via `when` pattern matching.
+- Arithmetic: `+ - * / % **`
+- Comparison/equality: `< <= > >= == !=`
+- Assignment: `=`
+- Unary: `! -`
+- Flow: `-> |`
+- Access/call: `. [] ()`
+- Punctuation: `, : { } [ ]`
 
-## Lexical Elements (Terminals)
+### 3.3 Literals
 
-### Keywords (Reserved)
+- `INT`
+- `FLOAT`
+- `STRING` (single-quoted or double-quoted in source)
+- `BOOL` (`true`, `false`)
+- `NULL` (`null`)
 
-```
-use, module, list, dict
-vector
-in, and, or
-if, elseif, else, for, while, when
-fn, class
-ok, err
-true, false, null
-```
+Planned lexical additions for interpolation:
+- Interpolation opener: `!{`
+- Interpolation closer: `}`
+- Interpolation is only recognized inside string literals
 
-### Operators
+### 3.4 Comments and layout
 
-```
-+ - * / % **        (arithmetic)
-< > <= >= == !=     (comparison, equality)
-=                   (assignment)
-->                  (arrow: function body, pattern result)
-!                   (logical not)
-~                   (logical not alias)
-|                   (pipe)
-. ,                 (member access, comma)
-:                   (type annotation, dict entry, block start)
-&                   (bitwise and; currently parsed)
-```
+- Line comments: `// ...`
+- Python-style indentation blocks with `INDENT`/`DEDENT` token injection
+- Indentation blocks are triggered after `:` and `->`
 
-### Delimiters
+## 4) Program Structure
 
-```
-( ) [ ] { }
-'
-```
-
-### Literals
-
-```
-<INT>       ::= [0-9]+
-<FLOAT>     ::= [0-9]*\.[0-9]+ | [0-9]+\.[0-9]*
-<STRING>    ::= '([^'\n]|\\'|\\n|\\t|\\\\)*'
-<BOOL>      ::= true | false
-<NULL>      ::= null
-```
-
-### Identifiers
-
-```
-<ID>        ::= [a-zA-Z_][a-zA-Z0-9_]*
-```
-
-### Special
-
-```
-<NEWLINE>   ::= \n
-<INDENT>    ::= (increase in indentation)
-<DEDENT>    ::= (decrease in indentation)
-<EOF>       ::= (end of file)
-```
-
-## Grammar Rules
-
-### Program Structure
-
-```
-Program         ::= { Statement <NEWLINE> } <EOF>
+```ebnf
+Program         ::= { Statement NEWLINE } EOF
 
 Statement       ::= FunctionDef
                 |   ModuleDef
@@ -109,659 +68,330 @@ Statement       ::= FunctionDef
                 |   WhenStatement
                 |   ForLoop
                 |   WhileLoop
-                |   Expression
-                |   <NEWLINE>
-```
-
-## Indexing
-
-Quark supports single-element indexing for lists and strings.
-
-```
-Accessor        ::= "." <ID>                   // Member access / dict key
-                |   "[" Expression "]"          // Single index (lists/strings only)
-```
-
-### Examples
-
-```quark
-list[0]         // First element
-list[-1]        // Last element
-text[0]         // First character
-text[-1]        // Last character
-```
-
-String indexing returns a 1-character string.
-
-For slicing, use the `slice` builtin: `slice(list, 1, 3)`
-
-## Dict Literals
-
-Dicts are key-value maps backed by `std::unordered_map<std::string, QValue>`.
-
-Dict literals always use the `dict` keyword and **identifier keys** (stored as strings internally):
-
-```
-DictLiteral     ::= "dict" "{" [ DictEntries ] "}"
-
-DictEntries     ::= DictEntry { "," DictEntry }
-
-DictEntry       ::= <ID> ":" Expression
-```
-
-### Dict Access
-
-- **Static keys** use dot access: `d.key`
-- **Dynamic keys** (from variables/expressions) use builtins `dget(d, k)` and `dset(d, k, v)`
-
-```
-DictAccess      ::= Expression "." <ID>                  // Read key
-DictAssignment  ::= Expression "." <ID> "=" Expression   // Set key
-```
-
-### Examples
-
-```quark
-// Creation (always requires `dict` keyword)
-info = dict { name: 'Alex', age: 30, active: true }
-empty = dict {}
-
-// Dot access (reads dict key)
-println(info.name)         // Alex
-println(info.age)          // 30
-
-// Dot assignment (sets dict key)
-info.name = 'James'
-info.city = 'NYC'          // adds new key
-
-// Properties
-println(info.size)         // number of entries
-println(len(info))         // same as .size
-
-// Dict in function
-fn get_name(d) -> d.name
-println(get_name(info))    // James
-
-// Dict truthiness (non-empty = true, empty = false)
-if info:
-    println('has entries')
-```
-
-### Dict Properties
-
-| Property | Returns | Description |
-|----------|---------|-------------|
-| `.size` | int | Number of entries |
-| `.length` | int | Same as `.size` |
-
-### Dict with `len`
-
-```quark
-info = dict { a: 1, b: 2, c: 3 }
-println(len(info))         // 3
-```
-
-## Error Handling with ok/err
-
-Quark uses explicit Result types for error handling. Fallible operations return `ok` or `err` and are handled via `when` pattern matching.
-
-### Result Values
-
-Functions that can fail return either `ok value` or `err message`:
-
-```
-ResultExpr      ::= "ok" Expression
-                |   "err" Expression
-```
-
-### Examples
-
-```quark
-fn divide(a, b) ->
-    if b == 0:
-        err 'Division by zero'
-    else:
-        ok a / b
-```
-
-### Pattern Matching on Results
-
-Use `when` to handle both cases:
-
-```quark
-result = divide(10, 2)
-
-when result:
-    ok value -> println(value)
-    err msg -> println(msg)
-```
-
-### Propagating Errors
-
-Functions propagate errors by returning them:
-
-```quark
-fn full_pipeline(path) ->
-    when load_file(path):
-        err e -> err e
-        ok content ->
-            when parse(content):
-                err e -> err e
-                ok data -> ok (transform(data))
-```
-
-## Function Definitions
-
-Functions use `->` to separate parameters from body, and **parameter lists are always parenthesized**. Named functions are hoisted (available before their definition).
-
-```
-FunctionDef     ::= "fn" <ID> "(" [ ParamList ] ")" "->" Expression
-                |   "fn" <ID> "(" [ ParamList ] ")" "->" <NEWLINE> <INDENT> Block <DEDENT>
-
-ParamList       ::= Param { "," Param } [ "," ]
-
-Param           ::= <ID> [ ":" Type ]
-```
-
-### Examples
-
-```quark
-// Single-line functions
-fn double(x) -> x * 2
-fn add(x, y) -> x + y
-
-// With type annotations
-fn add(x: int, y: int) -> x + y
-fn square(n: float) -> n * n
-
-// Multi-line function
-fn factorial(n) ->
-    when n:
-        0 or 1 -> 1
-        _ -> n * factorial(n - 1)
-
-// Function returning result
-fn safe_divide(a, b) ->
-    if b == 0:
-        err 'Division by zero'
-    else:
-        ok a / b
-```
-
-## Anonymous Functions (Lambdas)
-
-Lambdas are expressions — they can be passed as arguments, assigned to variables, or used inline. Parameter lists are parenthesized just like named functions.
-
-```
-AnonFunction    ::= "fn" "(" [ ParamList ] ")" "->" Expression
-```
-
-### Examples
-
-```quark
-// Assign lambda to variable
-double = fn(x) -> x * 2
-
-// Pass lambda inline to user-defined higher-order functions
-apply(data, fn(x) -> x * 2)
-combine(list [1, 2], fn(row) -> row + 1)
-
-// With type annotations
-add = fn(x: int, y: int) -> x + y
-```
-
-## Struct Definitions [FUTURE]
-
-> **Note**: Structs and impl blocks are planned but not yet implemented.
-
-```
-StructDef       ::= "struct" <ID> ":" <NEWLINE> <INDENT>
-                    { FieldDef <NEWLINE> }
-                    <DEDENT>
-
-FieldDef        ::= <ID> ":" Type [ "=" Expression ]
-```
-
-## Impl Blocks [FUTURE]
-
-> **Note**: Impl blocks are planned but not yet implemented.
-
-```
-ImplDef         ::= "impl" <ID> ":" <NEWLINE> <INDENT>
-                    { FunctionDef <NEWLINE> }
-                    <DEDENT>
-```
-
-## Module Definitions
-
-Modules group related definitions.
-
-```
-ModuleDef       ::= "module" <ID> ":" <NEWLINE> <INDENT>
-                    { Statement <NEWLINE> }
-                    <DEDENT>
-
-UseStatement    ::= "use" <ID>
-```
-
-### Examples
-
-```quark
-module math:
-    fn square(x) -> x * x
-    fn cube(x) -> x * x * x
-
-use math
-
-result = square(5.0)
-```
-
-## Tensor Type [FUTURE]
-
-> **Note**: Tensor types are planned for SIMD/GPU acceleration but not yet implemented.
-
-```
-TensorDef       ::= "tensor" "[" Expression { "," Expression } "]"
-                |   "tensor" "[" TensorLiteral "]"
-
-TensorLiteral   ::= Expression { "," Expression } { ";" Expression { "," Expression } }
-```
-
-### Tensor vs List
-
-| Feature | List | Tensor |
-|---------|------|--------|
-| Element types | Mixed (any QValue) | Homogeneous (float64) |
-| Memory layout | Pointer array | Contiguous buffer |
-| Operations | General purpose | SIMD-accelerated |
-| Indexing | `list[i]` | `tensor[i]` or `tensor[i, j]` |
-
-## Expressions (with Precedence)
-
-Expressions use precedence climbing. Listed from lowest to highest precedence:
-
-```
-Expression      ::= Assignment
-
-Assignment      ::= ( <ID> | MemberAccess ) "=" Assignment
+                |   BreakStatement
+                |   ContinueStatement
                 |   TypedDecl
-                |   PipeExpr
+                |   Expression
+                |   NEWLINE
+```
 
-TypedDecl       ::= <ID> ":" Type "=" Expression
+## 5) Modules and Imports
 
-PipeExpr        ::= Ternary { "|" Call }
+### 5.1 Module definition
 
-Ternary         ::= LogicalOr [ "if" LogicalOr "else" Ternary ]
+```ebnf
+ModuleDef       ::= "module" ID ":" Block
+```
 
-LogicalOr       ::= LogicalAnd { "or" LogicalAnd }
+### 5.2 Use forms
 
-LogicalAnd      ::= Equality { "and" Equality }
+```ebnf
+UseStatement    ::= "use" ID
+                |   "use" STRING
+```
 
-Equality        ::= Comparison { ( "==" | "!=" ) Comparison }
+Semantics:
+- `use ID`: same-file module import
+- `use './path'` or `use '../path'`: file import resolved by loader
+- `use 'name'` (non-relative string): currently rejected by loader as stdlib-import-not-yet-supported
 
-Comparison      ::= Additive { ( "<" | "<=" | ">" | ">=" ) Additive }
+## 6) Functions and Lambdas
 
-Additive        ::= Multiplicative { ( "+" | "-" ) Multiplicative }
+### 6.1 Named function
 
-Multiplicative  ::= Exponent { ( "*" | "/" | "%" ) Exponent }
+```ebnf
+FunctionDef     ::= "fn" ID Parameters "->" BlockOrExpr
+Parameters      ::= "(" [ ParamList ] ")"
+ParamList       ::= Param { "," Param } [ "," ]
+Param           ::= ID [ ":" Type ]
+```
 
-Exponent        ::= Unary [ "**" Exponent ]
+### 6.2 Lambda expression
 
-Unary           ::= ( "!" | "-" ) Unary          // NO whitespace between operator and operand
-                |   Call
+```ebnf
+LambdaExpr      ::= "fn" Parameters "->" Expression
+```
 
-Call            ::= Postfix
+Notes:
+- Parentheses are required for both named and lambda parameters
+- Named functions may have inline or indented bodies
+- Lambda body is expression form
 
-Postfix         ::= Primary { Accessor | CallArgs }
+## 7) Result Values and Matching
 
-Access          ::= Primary { Accessor }            // Retained for clarity; Accessor is also used by Call
+### 7.1 Result constructors
 
-Accessor        ::= "." <ID>                      // Member access
-                |   "[" Expression "]"             // Index
-
-CallArgs        ::= "(" [ Arguments ] ")"
-
-Primary         ::= <ID>
-                |   Literal
-                |   AnonFunction
-                |   ResultExpr
-                |   "(" Expression ")"
-                |   ListLiteral
-                |   VectorLiteral
-                |   DictLiteral
-                |   TensorLiteral                  // [FUTURE]
-
-Literal         ::= <INT>
-                |   <FLOAT>
-                |   <STRING>
-                |   <BOOL>
-                |   <NULL>
-
+```ebnf
 ResultExpr      ::= "ok" Expression
                 |   "err" Expression
-
-ListLiteral     ::= "list" "[" [ Expression { "," Expression } ] "]"
-
-VectorLiteral   ::= "vector" "[" [ Expression { "," Expression } ] "]"   // 1D only in MVP
-
-DictLiteral     ::= "dict" "{" [ DictEntries ] "}"
-
-DictEntries     ::= DictEntry { "," DictEntry }
-
-DictEntry       ::= <ID> ":" Expression
-
-Arguments       ::= Expression { "," Expression }
 ```
 
-## Control Flow
+### 7.2 When statement
 
-### If Statement
+```ebnf
+WhenStatement   ::= "when" Expression ":" NEWLINE INDENT
+                    { Pattern "->" Expression NEWLINE }
+                    DEDENT
 
+Pattern         ::= ResultPattern
+                |   WildcardPattern
+                |   Expression { "or" Expression }
+
+ResultPattern   ::= "ok" (ID | "_")
+                |   "err" (ID | "_")
+
+WildcardPattern ::= "_"
 ```
+
+Semantics:
+- Pattern arms are checked in source order
+- Result propagation is explicit (no implicit bubbling)
+- Nested `when` is supported
+
+## 8) Control Flow
+
+### 8.1 If / elseif / else
+
+```ebnf
 IfStatement     ::= "if" Expression ":" Block
                     { "elseif" Expression ":" Block }
                     [ "else" ":" Block ]
 ```
 
-### Examples
+### 8.2 For loop
 
-```quark
-if x > 10:
-    println('big')
-elseif x > 5:
-    println('medium')
-else:
-    println('small')
+```ebnf
+ForLoop         ::= "for" ID "in" Expression ":" Block
 ```
 
-### When Statement (Pattern Matching)
+Current semantic restriction:
+- Iterable must be `list` or `vector`
 
-Pattern matching uses `->` for results.
+### 8.3 While loop
 
-```
-WhenStatement   ::= "when" Expression ":" <NEWLINE> <INDENT>
-                    { Pattern "->" Expression <NEWLINE> }
-                    <DEDENT>
-
-Pattern         ::= "ok" <ID>                     // Match ok result
-                |   "err" <ID>                    // Match err result
-                |   Expression { "or" Expression }
-                |   "_"
-```
-
-### Examples
-
-```quark
-when status:
-    200 -> 'ok'
-    404 -> 'not found'
-    500 or 502 or 503 -> 'server error'
-    _ -> 'unknown'
-
-when result:
-    ok value -> process(value)
-    err msg -> println(msg)
-
-when n:
-    0 or 1 -> 1
-    _ -> n * fact (n - 1)
-```
-
-### For Loop
-
-```
-ForLoop         ::= "for" <ID> "in" Expression ":" Block
-```
-
-### Examples
-
-```quark
-for i in range(10):
-    println(i)
-
-for i in range(0, 100, 5):
-    println(i)
-
-for item in items:
-    process(item)
-```
-
-### While Loop
-
-```
+```ebnf
 WhileLoop       ::= "while" Expression ":" Block
 ```
 
-### Examples
+### 8.4 Loop control (planned)
 
-```quark
-while x > 0:
-    println(x)
-    x = x - 1
+```ebnf
+BreakStatement      ::= "break"
+ContinueStatement   ::= "continue"
 ```
 
-## Blocks
+Planned semantics:
+- `break` exits the nearest enclosing `for`/`while`
+- `continue` skips to the next iteration of the nearest enclosing `for`/`while`
+- Using either outside a loop is a compile-time error
 
-```
-Block           ::= SimpleBlock | IndentedBlock
+## 9) Types and Typed Declarations
 
-SimpleBlock     ::= Expression
-
-IndentedBlock   ::= <NEWLINE> <INDENT>
-                    { Statement <NEWLINE> }
-                    <DEDENT>
-```
-
-## Type Annotations
-
-Type annotations are used on function parameters and typed variable declarations.
-
-```
-Type            ::= "int" | "float" | "str" | "bool"
-                |   "list"
-                |   "dict"
-                |   <ID>
-
-TypeAnnotation  ::= <ID> ":" Type
+```ebnf
+TypedDecl       ::= ID ":" Type "=" Expression
+Type            ::= "int" | "float" | "str" | "bool" | "null" | "any"
+                |   "list" | "dict" | "vector"
+                |   ID
 ```
 
-### Examples
+Notes:
+- Generic type syntax like `list[int]` is not implemented
+- `result` is modeled in analyzer/runtime semantics but not yet exposed as a user type annotation keyword
 
-```quark
-// Function parameter types
-fn add(x: int, y: int) -> x + y
-fn greet(name: str) -> println(name)
+## 10) Expressions and Precedence
 
-// Typed variable declarations
-count: int = 0
-name: str = 'alice'
-items: list = list [1, 2, 3]
+### 10.1 Expression grammar
+
+```ebnf
+Expression      ::= Assignment
+
+Assignment      ::= PipeExpr
+                |   AssignTarget "=" Assignment
+
+AssignTarget    ::= ID
+                |   MemberAccess
+                |   IndexExpr
+
+PipeExpr        ::= Ternary { "|" CallExpr }
+
+Ternary         ::= LogicalOr [ "if" LogicalOr "else" Ternary ]
+
+LogicalOr       ::= LogicalAnd { "or" LogicalAnd }
+LogicalAnd      ::= Equality { "and" Equality }
+Equality        ::= Comparison { ("==" | "!=") Comparison }
+Comparison      ::= Additive { ("<" | "<=" | ">" | ">=") Additive }
+Additive        ::= Multiplicative { ("+" | "-") Multiplicative }
+Multiplicative  ::= Exponent { ("*" | "/" | "%") Exponent }
+Exponent        ::= Unary [ "**" Exponent ]
+Unary           ::= ("!" | "-") Unary | Postfix
+
+Postfix         ::= Primary { Accessor | CallArgs }
+Accessor        ::= "." ID | "[" Expression "]"
+CallArgs        ::= "(" [ Arguments ] ")"
+Arguments       ::= Expression { "," Expression } [ "," ]
+
+Primary         ::= ID
+                |   Literal
+                |   ResultExpr
+                |   LambdaExpr
+                |   ListLiteral
+                |   VectorLiteral
+                |   DictLiteral
+                |   "(" Expression ")"
 ```
 
-## Precedence Table Summary
+### 10.2 Literal forms
 
-| Precedence | Operators | Associativity | Rule |
-|------------|-----------|---------------|------|
-| 13 | `.` `[]` `()` | Left | Access/Call |
-| 12 | `**` | Right | Exponent |
-| 11 | `!` `-` (unary) | Right | Unary |
-| 10 | `*` `/` `%` | Left | Multiplicative |
-| 9 | `+` `-` | Left | Additive |
-| 8 | `<` `<=` `>` `>=` | Left | Comparison |
-| 7 | `==` `!=` | Left | Equality |
-| 6 | `and` | Left | LogicalAnd |
-| 5 | `or` | Left | LogicalOr |
-| 4 | `if-else` | Right | Ternary |
-| 3 | `\|` | Left | Pipe |
-| 1 | `=` | Right | Assignment |
+```ebnf
+Literal         ::= INT
+                |   FLOAT
+                |   StringLiteral
+                |   BOOL
+                |   NULL
 
-## Semantic Rules
+StringLiteral   ::= PlainString
+                |   InterpolatedString
 
-### Function Application
+PlainString     ::= SQString | DQString
+SQString        ::= "'" { SQChar } "'"
+DQString        ::= '"' { DQChar } '"'
 
-1. **Calls always use parentheses**: `f()` or `f(a, b)`
-2. **Commas separate arguments inside the parens**
-3. **Nested calls are straightforward**: `f(g(x), y)`
-4. **Parenthesize complex arguments**: `calculate(a + b, c * d)`
+InterpolatedString ::= "'" { SQSegment } "'"
+                    | '"' { DQSegment } '"'
 
-```quark
-// Simple calls
-print(x)
-add(x, y)
-sqrt(16)
+SQSegment       ::= SQText | Interpolation
+DQSegment       ::= DQText | Interpolation
+Interpolation   ::= "!{" Expression "}"
 
-// Nested calls
-print(double(x))
-foo(bar(x, y), z)
-process(transform(load(path)))
-
-// Complex expressions as arguments
-calculate(a + b, c * d)
+ListLiteral     ::= "list" "[" [ Expression { "," Expression } [ "," ] ] "]"
+VectorLiteral   ::= "vector" "[" [ Expression { "," Expression } [ "," ] ] "]"
+DictLiteral     ::= "dict" "{" [ DictEntries ] "}"
+DictEntries     ::= DictEntry { "," DictEntry } [ "," ]
+DictEntry       ::= ID ":" Expression
 ```
 
-### Unary Operators and Whitespace
+Interpolation parsing rules (planned):
+- Anything between `!{` and the matching `}` is parsed as a normal `Expression`
+- Interpolations may appear multiple times in one string
+- `!{` without a matching `}` is a compile-time error
+- Unescaped delimiter quotes must match the opening quote style
+- Nested interpolation is not allowed inside interpolation expressions
 
-**Current behavior**: Unary operators (`-`, `!`, `~`) are parsed as unary forms. Prefer no whitespace in unary style (`-5`, `!flag`) and spaces for binary operators (`a - b`) for readability.
+### 10.3 Precedence (low to high)
 
-> Note: the current lexer ignores non-line-start spaces, so forms like `a -b` may still parse. Treat spacing guidance here as style and clarity guidance.
+| Level | Operators |
+|---|---|
+| 1 | `=` |
+| 2 | `|` |
+| 3 | ternary `a if cond else b` |
+| 4 | `or` |
+| 5 | `and` |
+| 6 | `== !=` |
+| 7 | `< <= > >=` |
+| 8 | `+ -` |
+| 9 | `* / %` |
+| 10 | `**` (right-associative) |
+| 11 | unary `! -` |
+| 12 | postfix `. [] ()` |
 
-```quark
-// Unary negation (no space)
-x = -5              // Negative five
-y = !flag           // Logical not
+## 11) Runtime-Oriented Semantic Rules
 
-// Function call with unary argument
-f(-5)               // function called with negative five
-process(!ready)     // explicit call with unary argument
+### 11.1 Dict/member rules
 
-// Binary subtraction (space on both sides)
-a - b               // a minus b (binary subtraction)
-x - 2               // x minus 2 (binary subtraction)
+- `d.key` reads dict key
+- `d.key = value` writes dict key
+- Dot access on non-dict is an analyzer/runtime error
+- Dot-call (`x.f()`) is unsupported
 
-// Function call vs subtraction disambiguation
-add(a, -b)          // second arg is negative b
-fact(n - 1)         // argument is n minus 1
-```
+### 11.2 Indexing
 
-### Pipe Operator
+- `list[idx]` supported (negative indices supported at runtime)
+- `str[idx]` supported (returns single-character string)
+- `vector[idx]` supported
+- `vector[mask]` where `mask` is bool vector supported
+- Dict bracket indexing is not supported; use dot access or `dget/dset`
 
-The pipe passes the left-hand result as the **first argument** to the right call. The pipe target must be an explicit call:
+### 11.3 Assignment targets
 
-```quark
-x | f()               // f(x)
-x | f(y)              // f(x, y)
-x | f(y, z)           // f(x, y, z)
-a | f() | g() | h()   // h(g(f(a)))
-```
+Allowed:
+- `x = expr`
+- `d.key = expr`
+- `list[i] = expr`
 
-## Complete Examples
+Disallowed/diagnosed:
+- assigning through non-assignable expressions
+- string index assignment (strings are immutable)
 
-### Result Handling Example
+### 11.4 Result helpers
 
-```quark
-fn safe_sqrt(n) ->
-    if n < 0:
-        err 'negative input'
-    else:
-        ok sqrt(n)
+Builtins currently available:
+- `is_ok(result) -> bool`
+- `is_err(result) -> bool`
+- `unwrap(result) -> any` (panics on `err` or non-result)
 
-fn process_value(n) ->
-    when safe_sqrt(n):
-        err e ->
-            println(e)
-            0
-        ok value -> round(value)
-```
+## 12) Builtin Surface (Current)
 
-### Factorial
+### 12.1 I/O
+- `print`, `println`, `input`
 
-```quark
-fn fact(n) ->
-    when n:
-        0 or 1 -> 1
-        _ -> n * fact(n - 1)
+### 12.2 Conversion/introspection
+- `len`, `to_str`, `to_int`, `to_float`, `to_bool`, `type`
+- `is_ok`, `is_err`, `unwrap`
 
-fact(10) | println()
-```
+### 12.3 Math and range
+- `range`, `abs`, `min`, `max`, `sum`, `sqrt`, `floor`, `ceil`, `round`
 
-### List Operations
+### 12.4 String
+- `upper`, `lower`, `trim`, `contains`, `startswith`, `endswith`, `replace`, `concat`, `split`
 
-```quark
-nums = list [10, 20, 30, 40, 50]
-reverse(nums)
+### 12.5 List
+- `push`, `pop`, `get`, `set`, `insert`, `remove`, `slice`, `reverse`, `concat`
 
-for i in range(len(nums)):
-    print(get(nums, i))
-    print(' ')
-println('')
+### 12.6 Dict
+- `dget`, `dset`
 
-s = slice(nums, 1, 3)
-```
+### 12.7 Vector
+- `to_vector`, `to_list`, `fillna`, `astype`
 
-### Module with Functions
+## 13) Feature Status Matrix
 
-```quark
-module math:
-    fn square(x) -> x * x
-    fn cube(x) -> x * x * x
+| Feature | Status | Notes |
+|---|---|---|
+| Indentation blocks | Implemented | Triggered after `:` and `->` |
+| `module` / `use` same-file | Implemented | `use ID` |
+| `use STRING` file imports | Implemented | Relative paths only (`./`, `../`) |
+| Stdlib string imports (`use 'csv'`) | Not implemented | Loader emits error |
+| Named functions and lambdas | Implemented | Parenthesized params required |
+| Typed params / typed var declarations | Implemented | Basic types + list/dict/vector |
+| Generic type expressions | Not implemented | e.g. `list[int]` unsupported |
+| List literals (`list [...]`) | Implemented | Keyword required |
+| Vector literals (`vector [...]`) | Implemented | 1D only |
+| Dict literals (`dict {k: v}`) | Implemented | Keys are identifiers in source |
+| Loop control (`break`, `continue`) | Not implemented | Keywords reserved; parser/analyzer/codegen pending |
+| Dot-call syntax | Not implemented | Use function-call/pipe model |
+| Dot data access on dict | Implemented | read/write |
+| Result values `ok` / `err` | Implemented | Analyzer has `ResultType` |
+| `when` result patterns | Implemented | `ok x`, `err e` |
+| Double-quoted strings | Not implemented | Grammar reserved; current source convention is single quotes |
+| String interpolation (`!{expr}`) | Not implemented | Grammar reserved; lexer/parser/analyzer/codegen/runtime pending |
+| `unwrap_or`, `map_ok`, etc. | Future | Not implemented yet |
+| Structs / impl blocks | Future | Not implemented |
+| Tensor type | Future | Not implemented |
 
-use math
+## 14) Known Limits / Current Diagnostics
 
-square(5) | println()
-cube(3) | println()
-```
+- `for` iterables are currently restricted to list/vector
+- `break` and `continue` are reserved keywords but not implemented yet
+- `use 'name'` (non-relative string) is rejected pending stdlib import support
+- Dict bracket indexing is rejected by analyzer
+- Dot access is dict-only; non-dict dot access is diagnosed
+- Double-quoted strings and interpolation (`!{...}`) are grammar-defined but not implemented yet
 
-### Tensor Operations [FUTURE]
+## 15) Source of Truth Policy
 
-```quark
-// Vector operations
-v1 = tensor [1.0, 2.0, 3.0]
-v2 = tensor [4.0, 5.0, 6.0]
-v3 = v1 + v2                    // [5.0, 7.0, 9.0]
+To reduce drift:
+- Parser/lexer behavior in `src/core/quark/{lexer,parser}` is canonical for syntax
+- Analyzer behavior in `src/core/quark/types/analyzer.go` is canonical for semantic checks
+- Builtin registry in `src/core/quark/codegen/builtins.go` is canonical for available builtins
 
-// Matrix operations
-m1 = tensor [1, 2; 3, 4]
-m2 = tensor [5, 6; 7, 8]
-m3 = m1 @ m2                    // Matrix multiply
-
-// Data science workflow
-data = tensor [1.0, 2.0, 3.0, 4.0]
-scaled = data * 0.5
-result = scaled + 1.0
-```
-
-## Implementation Status
-
-| Feature | Status |
-|---------|--------|
-| Basic expressions (arithmetic, comparison) | Implemented |
-| Variables and assignment | Implemented |
-| Typed variable declarations (`name: str = val`) | Implemented |
-| If/elseif/else | Implemented |
-| Ternary (`a if cond else b`) | Implemented |
-| While loops | Implemented |
-| For loops | Implemented |
-| Named functions (`fn name(params) -> body`) | Implemented |
-| Anonymous functions (`fn(params) -> expr`) | Implemented |
-| Pattern matching (`when`) | Implemented |
-| Pipes (`\|`) | Implemented |
-| Modules (`module` / `use`) | Implemented |
-| Lists (`list [...]`) | Implemented |
-| Indexing (`list[i]`) | Implemented |
-| Member access (`.property`, `.method`) | Implemented |
-| Error handling (`ok` / `err` + `when`) | Implemented |
-| Type annotations on params (`x: int`) | Implemented |
-| Dict literals (`dict {k: v}`) | Implemented |
-| Dict member access (`d.key`) | Implemented |
-| Dict member assignment (`d.key = val`) | Implemented |
-| Structs / impl blocks | Future |
-| Tensor type | Future |
-
-## Notes on Implementation
-
-1. **Indentation**: Lexer emits `INDENT`/`DEDENT` tokens (like Python)
-2. **Function/Lambda Params**: Parameter lists are parsed in parentheses before `->`
-3. **Result Type**: `ok` and `err` are keywords that wrap values into a tagged union
-4. **Range Function**: `range` is a builtin function, not an operator
-5. **Tensor Literals**: Use `;` as row separator inside `tensor [...]`
-6. **Precedence Climbing**: Use table above for expression parsing
+If this document conflicts with code, update this document immediately after code changes.

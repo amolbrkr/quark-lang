@@ -36,6 +36,17 @@
               "match": "\\\\."
             }
           ]
+        },
+        {
+          "name": "string.quoted.double.quark",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.quark",
+              "match": "\\\\."
+            }
+          ]
         }
       ]
     },
@@ -64,11 +75,11 @@
       "patterns": [
         {
           "name": "keyword.control.quark",
-          "match": "\\b(if|else|elseif|for|while|when|in|use|module|return)\\b"
+          "match": "\\b(if|else|elseif|for|while|when|in|use|module|break|continue)\\b"
         },
         {
           "name": "keyword.operator.logical.quark",
-          "match": "\\b(and|or|not)\\b"
+          "match": "\\b(and|or)\\b"
         },
         {
           "name": "storage.type.function.quark",
@@ -84,7 +95,7 @@
       "patterns": [
         {
           "name": "keyword.declaration.quark",
-          "match": "\\b(dict|list|tensor)\\b"
+          "match": "\\b(dict|list|vector)\\b"
         },
         {
           "name": "keyword.other.result.quark",
@@ -128,7 +139,7 @@
         },
         {
           "name": "keyword.operator.unary.quark",
-          "match": "\\!|\\~"
+          "match": "\\!"
         }
       ]
     },
@@ -136,7 +147,7 @@
       "patterns": [
         {
           "name": "support.type.quark",
-          "match": "\\b(int|float|str|bool|list|dict|any)\\b"
+          "match": "\\b(int|float|str|bool|null|list|dict|vector|any)\\b"
         }
       ]
     },
@@ -156,7 +167,7 @@
       "patterns": [
         {
           "name": "variable.other.property.quark",
-          "match": "(?<=\\.)(length|size|empty|reverse|clear|pop|push|get|set|insert|remove|slice|concat|contains|startswith|endswith|replace|upper|lower|trim)\\b"
+          "match": "(?<=\\.)[a-zA-Z_][a-zA-Z0-9_]*\\b"
         }
       ]
     },

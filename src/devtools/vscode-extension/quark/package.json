@@ -1,15 +1,20 @@
 {
   "name": "quark-language",
   "displayName": "Quark Language Support",
-  "description": "Syntax highlighting for the Quark language",
-  "version": "0.0.2",
+  "description": "Syntax highlighting and run command support for the Quark language",
+  "version": "0.0.3",
   "publisher": "quark-lang",
   "license": "MIT",
+  "main": "./extension.js",
   "engines": {
     "vscode": "^1.74.0"
   },
   "categories": [
     "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:quark",
+    "onCommand:quark.runCurrentFile"
   ],
   "contributes": {
     "languages": [
@@ -26,6 +31,40 @@
         "scopeName": "source.quark",
         "path": "./syntaxes/quark.tmLanguage.json"
       }
-    ]
+    ],
+    "commands": [
+      {
+        "command": "quark.runCurrentFile",
+        "title": "Quark: Run Current File",
+        "category": "Quark",
+        "icon": "$(play)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "quark.runCurrentFile",
+        "key": "ctrl+f5",
+        "when": "editorTextFocus && editorLangId == quark"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "quark.runCurrentFile",
+          "when": "resourceLangId == quark",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Quark",
+      "properties": {
+        "quark.executablePath": {
+          "type": "string",
+          "default": "quark",
+          "description": "Path to the Quark compiler executable used for running .qrk files."
+        }
+      }
+    }
   }
 }

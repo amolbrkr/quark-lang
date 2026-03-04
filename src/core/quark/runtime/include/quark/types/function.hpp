@@ -6,6 +6,7 @@
 #include "../core/constructors.hpp"
 #include "closure.hpp"
 #include <cstdio>
+#include <cstdlib>
 #include <vector>
 
 inline bool q_require_callable(const QValue& f) {
@@ -13,6 +14,7 @@ inline bool q_require_callable(const QValue& f) {
         return true;
     }
     std::fprintf(stderr, "runtime error: attempted to call a non-function value\n");
+    std::exit(1);
     return false;
 }
 
@@ -116,6 +118,7 @@ inline QValue q_calln(QValue f, const std::vector<QValue>& args) {
         case 12: return q_call12(f, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10], args[11]);
         default:
             std::fprintf(stderr, "runtime error: function call supports up to 12 arguments, got %zu\n", args.size());
+            std::exit(1);
             return qv_null();
     }
 }

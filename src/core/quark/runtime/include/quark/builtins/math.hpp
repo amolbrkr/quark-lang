@@ -4,17 +4,23 @@
 
 #include "../core/value.hpp"
 #include "../core/constructors.hpp"
-#include <cmath>
 #include <cstdlib>
+#include <cstdio>
+#include <cmath>
 
-// Helper functions to_double() and either_float() are defined in arithmetic.hpp
-// (removed from here to avoid duplication in the concatenated runtime.hpp)
+// Helper: type name lookup for error messages
+inline const char* q_type_name_math(QValue::ValueType t) {
+    static const char* names[] = {"int", "float", "str", "bool", "null", "list", "vector", "dict", "func", "result"};
+    return (t >= 0 && t <= 9) ? names[t] : "unknown";
+}
+
+// Helper to_double() and either_float() are defined in arithmetic.hpp
 
 // Absolute value
 inline QValue q_abs(QValue v) {
-    // Type guard: only INT and FLOAT are valid
     if (v.type != QValue::VAL_INT && v.type != QValue::VAL_FLOAT) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: abs() expects numeric argument, got %s\n", q_type_name_math(v.type));
+        std::exit(1);
     }
     if (v.type == QValue::VAL_FLOAT) {
         return qv_float(fabs(v.data.float_val));
@@ -24,10 +30,10 @@ inline QValue q_abs(QValue v) {
 
 // Minimum of two values
 inline QValue q_min(QValue a, QValue b) {
-    // Type guard: only INT and FLOAT are valid
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: min() expects numeric arguments, got %s and %s\n", q_type_name_math(a.type), q_type_name_math(b.type));
+        std::exit(1);
     }
     if (quark::detail::either_float(a, b)) {
         double av = quark::detail::to_double(a);
@@ -42,15 +48,17 @@ inline QValue q_min(QValue v) {
     if (v.type == QValue::VAL_VECTOR) {
         return q_vec_min(v);
     }
+    std::fprintf(stderr, "runtime error: single-argument min() expects numeric vector, got %s\n", q_type_name_math(v.type));
+    std::exit(1);
     return qv_null();
 }
 
 // Maximum of two values
 inline QValue q_max(QValue a, QValue b) {
-    // Type guard: only INT and FLOAT are valid
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: max() expects numeric arguments, got %s and %s\n", q_type_name_math(a.type), q_type_name_math(b.type));
+        std::exit(1);
     }
     if (quark::detail::either_float(a, b)) {
         double av = quark::detail::to_double(a);
@@ -65,6 +73,8 @@ inline QValue q_max(QValue v) {
     if (v.type == QValue::VAL_VECTOR) {
         return q_vec_max(v);
     }
+    std::fprintf(stderr, "runtime error: single-argument max() expects numeric vector, got %s\n", q_type_name_math(v.type));
+    std::exit(1);
     return qv_null();
 }
 
@@ -73,28 +83,30 @@ inline QValue q_sum(QValue v) {
     if (v.type == QValue::VAL_VECTOR) {
         return q_vec_sum(v);
     }
+    std::fprintf(stderr, "runtime error: sum() expects numeric vector or list, got %s\n", q_type_name_math(v.type));
+    std::exit(1);
     return qv_null();
 }
 
 // Square root (always returns float)
 inline QValue q_sqrt(QValue v) {
-    // Type guard: only INT and FLOAT are valid
     if (v.type != QValue::VAL_INT && v.type != QValue::VAL_FLOAT) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: sqrt() expects numeric argument, got %s\n", q_type_name_math(v.type));
+        std::exit(1);
     }
     double val = quark::detail::to_double(v);
-    // Check for negative values
     if (val < 0.0) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: sqrt() domain error: argument is negative (%g)\n", val);
+        std::exit(1);
     }
     return qv_float(sqrt(val));
 }
 
 // Floor (returns int)
 inline QValue q_floor(QValue v) {
-    // Type guard: only INT and FLOAT are valid
     if (v.type != QValue::VAL_INT && v.type != QValue::VAL_FLOAT) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: floor() expects numeric argument, got %s\n", q_type_name_math(v.type));
+        std::exit(1);
     }
     if (v.type == QValue::VAL_INT) return v;
     return qv_int(static_cast<long long>(floor(v.data.float_val)));
@@ -102,9 +114,9 @@ inline QValue q_floor(QValue v) {
 
 // Ceiling (returns int)
 inline QValue q_ceil(QValue v) {
-    // Type guard: only INT and FLOAT are valid
     if (v.type != QValue::VAL_INT && v.type != QValue::VAL_FLOAT) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: ceil() expects numeric argument, got %s\n", q_type_name_math(v.type));
+        std::exit(1);
     }
     if (v.type == QValue::VAL_INT) return v;
     return qv_int(static_cast<long long>(ceil(v.data.float_val)));
@@ -112,9 +124,9 @@ inline QValue q_ceil(QValue v) {
 
 // Round to nearest integer (returns int)
 inline QValue q_round(QValue v) {
-    // Type guard: only INT and FLOAT are valid
     if (v.type != QValue::VAL_INT && v.type != QValue::VAL_FLOAT) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: round() expects numeric argument, got %s\n", q_type_name_math(v.type));
+        std::exit(1);
     }
     if (v.type == QValue::VAL_INT) return v;
     return qv_int(static_cast<long long>(round(v.data.float_val)));

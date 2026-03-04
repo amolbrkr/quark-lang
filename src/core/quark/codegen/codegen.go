@@ -677,7 +677,7 @@ func (g *Generator) generateTernary(node *ast.TreeNode) string {
 	trueVal := g.generateExpr(node.Children[1])
 	falseVal := g.generateExpr(node.Children[2])
 
-	return fmt.Sprintf("(q_truthy(%s) ? %s : %s)", cond, trueVal, falseVal)
+	return fmt.Sprintf("(q_condition_bool(%s, \"ternary\") ? %s : %s)", cond, trueVal, falseVal)
 }
 
 func (g *Generator) generateIf(node *ast.TreeNode) string {
@@ -689,7 +689,7 @@ func (g *Generator) generateIf(node *ast.TreeNode) string {
 	g.emitLine("QValue %s;", temp)
 
 	cond := g.generateExpr(node.Children[0])
-	g.emitLine("if (q_truthy(%s)) {", cond)
+	g.emitLine("if (q_condition_bool(%s, \"if\")) {", cond)
 	g.indentLevel++
 
 	ifResult := g.generateExpr(node.Children[1])
@@ -703,7 +703,7 @@ func (g *Generator) generateIf(node *ast.TreeNode) string {
 		child := node.Children[i]
 		if child.NodeType == ast.IfStatementNode && len(child.Children) >= 2 {
 			// elseif
-			g.emit(" else if (q_truthy(%s)) {\n", g.generateExpr(child.Children[0]))
+			g.emit(" else if (q_condition_bool(%s, \"elseif\")) {\n", g.generateExpr(child.Children[0]))
 			g.indentLevel++
 			elseifResult := g.generateExpr(child.Children[1])
 			g.emitLine("%s = %s;", temp, elseifResult)
@@ -874,7 +874,7 @@ func (g *Generator) generateWhile(node *ast.TreeNode) string {
 	condNode := node.Children[0]
 	bodyNode := node.Children[1]
 
-	g.emitLine("while (q_truthy(%s)) {", g.generateExpr(condNode))
+	g.emitLine("while (q_condition_bool(%s, \"while\")) {", g.generateExpr(condNode))
 	g.indentLevel++
 
 	// Generate body

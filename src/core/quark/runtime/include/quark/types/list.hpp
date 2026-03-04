@@ -9,7 +9,8 @@
 // Push item to end of list
 inline QValue q_push(QValue list, QValue item) {
     if (list.type != QValue::VAL_LIST || !list.data.list_val) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: push() expects list as first argument\n");
+        std::exit(1);
     }
     list.data.list_val->push_back(item);
     return list;
@@ -17,8 +18,13 @@ inline QValue q_push(QValue list, QValue item) {
 
 // Pop item from end of list
 inline QValue q_pop(QValue list) {
-    if (list.type != QValue::VAL_LIST || !list.data.list_val || list.data.list_val->empty()) {
-        return qv_null();
+    if (list.type != QValue::VAL_LIST || !list.data.list_val) {
+        std::fprintf(stderr, "runtime error: pop() expects list argument\n");
+        std::exit(1);
+    }
+    if (list.data.list_val->empty()) {
+        std::fprintf(stderr, "runtime error: pop() on empty list\n");
+        std::exit(1);
     }
     QValue item = list.data.list_val->back();
     list.data.list_val->pop_back();
@@ -39,12 +45,17 @@ inline QValue q_get(QValue list, QValue index) {
             return q_vec_mask_filter(list, index);
         }
         std::fprintf(stderr, "runtime error: vector index must be int or bool vector\n");
+        std::exit(1);
         return qv_null();
     }
     if (list.type != QValue::VAL_LIST || !list.data.list_val) {
+        std::fprintf(stderr, "runtime error: get() expects list/string/vector as first argument\n");
+        std::exit(1);
         return qv_null();
     }
     if (index.type != QValue::VAL_INT) {
+        std::fprintf(stderr, "runtime error: get() index must be int\n");
+        std::exit(1);
         return qv_null();
     }
     int idx = static_cast<int>(index.data.int_val);
@@ -59,16 +70,19 @@ inline QValue q_get(QValue list, QValue index) {
 // Set item at index (supports negative indexing)
 inline QValue q_set(QValue list, QValue index, QValue value) {
     if (list.type != QValue::VAL_LIST || !list.data.list_val) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: set() expects list as first argument\n");
+        std::exit(1);
     }
     if (index.type != QValue::VAL_INT) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: set() index must be int\n");
+        std::exit(1);
     }
     int idx = static_cast<int>(index.data.int_val);
     int len = static_cast<int>(list.data.list_val->size());
     if (idx < 0) idx = len + idx;
     if (idx < 0 || idx >= len) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: set() index %d out of range (list length %d)\n", idx, len);
+        std::exit(1);
     }
     (*list.data.list_val)[idx] = value;
     return value;
@@ -102,11 +116,12 @@ inline QValue q_list_clear(QValue list) {
 // Insert item at index
 inline QValue q_insert(QValue list, QValue index, QValue item) {
     if (list.type != QValue::VAL_LIST || !list.data.list_val) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: insert() expects list as first argument\n");
+        std::exit(1);
     }
-    // Type guard: index must be INT
     if (index.type != QValue::VAL_INT) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: insert() index must be int\n");
+        std::exit(1);
     }
     int idx = static_cast<int>(index.data.int_val);
     int len = static_cast<int>(list.data.list_val->size());
@@ -120,17 +135,19 @@ inline QValue q_insert(QValue list, QValue index, QValue item) {
 // Remove item at index
 inline QValue q_remove(QValue list, QValue index) {
     if (list.type != QValue::VAL_LIST || !list.data.list_val) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: remove() expects list as first argument\n");
+        std::exit(1);
     }
-    // Type guard: index must be INT
     if (index.type != QValue::VAL_INT) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: remove() index must be int\n");
+        std::exit(1);
     }
     int idx = static_cast<int>(index.data.int_val);
     int len = static_cast<int>(list.data.list_val->size());
     if (idx < 0) idx = len + idx;
     if (idx < 0 || idx >= len) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: remove() index %d out of range (list length %d)\n", idx, len);
+        std::exit(1);
     }
     QValue item = (*list.data.list_val)[idx];
     list.data.list_val->erase(list.data.list_val->begin() + idx);
@@ -169,17 +186,19 @@ inline QValue q_concat(QValue a, QValue b) {
     const char* a_type = (a.type >= 0 && a.type <= 8) ? type_names[a.type] : "unknown";
     const char* b_type = (b.type >= 0 && b.type <= 8) ? type_names[b.type] : "unknown";
     fprintf(stderr, "runtime error: concat expects both arguments to be the same type (string+string or list+list), got %s and %s\n", a_type, b_type);
+    std::exit(1);
     return qv_null();
 }
 
 // Slice list [start:end), returns new list
 inline QValue q_slice(QValue list, QValue start, QValue end) {
     if (list.type != QValue::VAL_LIST || !list.data.list_val) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: slice() expects list as first argument\n");
+        std::exit(1);
     }
-    // Type guard: start and end must be INT
     if (start.type != QValue::VAL_INT || end.type != QValue::VAL_INT) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: slice() start and end indices must be int\n");
+        std::exit(1);
     }
     int len = static_cast<int>(list.data.list_val->size());
     int s = static_cast<int>(start.data.int_val);
@@ -204,7 +223,8 @@ inline QValue q_slice(QValue list, QValue start, QValue end) {
 // Reverse list in place
 inline QValue q_reverse(QValue list) {
     if (list.type != QValue::VAL_LIST || !list.data.list_val) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: reverse() expects list argument\n");
+        std::exit(1);
     }
     std::reverse(list.data.list_val->begin(), list.data.list_val->end());
     return list;
@@ -226,7 +246,8 @@ inline QValue q_range(QValue end) {
     } else if (end.type == QValue::VAL_FLOAT) {
         e = static_cast<long long>(end.data.float_val);
     } else {
-        return qv_list();
+        std::fprintf(stderr, "runtime error: range(end) expects numeric end value\n");
+        std::exit(1);
     }
 
     QValue result = qv_list();
@@ -245,7 +266,8 @@ inline QValue q_range(QValue start, QValue end) {
     } else if (start.type == QValue::VAL_FLOAT) {
         s = static_cast<long long>(start.data.float_val);
     } else {
-        return qv_list();
+        std::fprintf(stderr, "runtime error: range(start, end) expects numeric start value\n");
+        std::exit(1);
     }
 
     if (end.type == QValue::VAL_INT) {
@@ -253,7 +275,8 @@ inline QValue q_range(QValue start, QValue end) {
     } else if (end.type == QValue::VAL_FLOAT) {
         e = static_cast<long long>(end.data.float_val);
     } else {
-        return qv_list();
+        std::fprintf(stderr, "runtime error: range(start, end) expects numeric end value\n");
+        std::exit(1);
     }
 
     QValue result = qv_list();
@@ -278,7 +301,8 @@ inline QValue q_range(QValue start, QValue end, QValue step) {
     } else if (start.type == QValue::VAL_FLOAT) {
         s = static_cast<long long>(start.data.float_val);
     } else {
-        return qv_list();
+        std::fprintf(stderr, "runtime error: range(start, end, step) expects numeric start value\n");
+        std::exit(1);
     }
 
     if (end.type == QValue::VAL_INT) {
@@ -286,7 +310,8 @@ inline QValue q_range(QValue start, QValue end, QValue step) {
     } else if (end.type == QValue::VAL_FLOAT) {
         e = static_cast<long long>(end.data.float_val);
     } else {
-        return qv_list();
+        std::fprintf(stderr, "runtime error: range(start, end, step) expects numeric end value\n");
+        std::exit(1);
     }
 
     if (step.type == QValue::VAL_INT) {
@@ -294,11 +319,13 @@ inline QValue q_range(QValue start, QValue end, QValue step) {
     } else if (step.type == QValue::VAL_FLOAT) {
         st = static_cast<long long>(step.data.float_val);
     } else {
-        return qv_list();
+        std::fprintf(stderr, "runtime error: range(start, end, step) expects numeric step value\n");
+        std::exit(1);
     }
 
     if (st == 0) {
-        return qv_list(); // Avoid infinite loop
+        std::fprintf(stderr, "runtime error: range() step must not be zero\n");
+        std::exit(1);
     }
 
     QValue result = qv_list();

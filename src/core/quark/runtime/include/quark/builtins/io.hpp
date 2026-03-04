@@ -59,6 +59,10 @@ inline QValue q_println(QValue v) {
 
 // Read line from stdin (with optional prompt)
 inline QValue q_input(QValue prompt) {
+    if (prompt.type != QValue::VAL_NULL && prompt.type != QValue::VAL_STRING) {
+        std::fprintf(stderr, "runtime error: input() optional prompt must be str\n");
+        std::exit(1);
+    }
     // Print prompt if it's a string
     if (prompt.type == QValue::VAL_STRING && prompt.data.string_val) {
         printf("%s", prompt.data.string_val);

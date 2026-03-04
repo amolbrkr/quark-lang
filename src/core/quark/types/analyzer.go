@@ -48,25 +48,31 @@ func NewAnalyzer() *Analyzer {
 	}{
 		{"print", 0, 1, []Type{TypeAny}, TypeVoid},
 		{"println", 0, 1, []Type{TypeAny}, TypeVoid},
-		{"input", 0, 1, []Type{TypeAny}, TypeString},
+		// input arg0: must be str when provided
+		{"input", 0, 1, []Type{TypeString}, TypeString},
+		// len: arg type checked via inferBuiltinReturnType (str|list|dict|vector)
 		{"len", 1, 1, []Type{TypeAny}, TypeInt},
 		{"to_str", 1, 1, []Type{TypeAny}, TypeString},
 		{"to_int", 1, 1, []Type{TypeAny}, TypeInt},
 		{"to_float", 1, 1, []Type{TypeAny}, TypeFloat},
 		{"to_bool", 1, 1, []Type{TypeAny}, TypeBool},
 		{"type", 1, 1, []Type{TypeAny}, TypeString},
+		// is_ok/is_err/unwrap: arg type checked via inferBuiltinReturnType (result)
 		{"is_ok", 1, 1, []Type{TypeAny}, TypeBool},
 		{"is_err", 1, 1, []Type{TypeAny}, TypeBool},
 		{"unwrap", 1, 1, []Type{TypeAny}, TypeAny},
-		{"range", 1, 3, []Type{TypeAny, TypeAny, TypeAny}, &ListType{ElementType: TypeInt}},
+		// range args: numeric (int promotes to float via CanAssign)
+		{"range", 1, 3, []Type{TypeFloat, TypeFloat, TypeFloat}, &ListType{ElementType: TypeInt}},
+		// abs/sum/min/max: checked via inferBuiltinReturnType (numeric or numeric-vector)
 		{"abs", 1, 1, []Type{TypeAny}, TypeAny},
 		{"min", 1, 2, []Type{TypeAny, TypeAny}, TypeAny},
 		{"max", 1, 2, []Type{TypeAny, TypeAny}, TypeAny},
 		{"sum", 1, 1, []Type{TypeAny}, TypeAny},
-		{"sqrt", 1, 1, []Type{TypeAny}, TypeFloat},
-		{"floor", 1, 1, []Type{TypeAny}, TypeInt},
-		{"ceil", 1, 1, []Type{TypeAny}, TypeInt},
-		{"round", 1, 1, []Type{TypeAny}, TypeInt},
+		// sqrt/floor/ceil/round: TypeFloat param → int promoted via CanAssign; rejects str/bool/etc
+		{"sqrt", 1, 1, []Type{TypeFloat}, TypeFloat},
+		{"floor", 1, 1, []Type{TypeFloat}, TypeInt},
+		{"ceil", 1, 1, []Type{TypeFloat}, TypeInt},
+		{"round", 1, 1, []Type{TypeFloat}, TypeInt},
 		{"upper", 1, 1, []Type{TypeString}, TypeString},
 		{"lower", 1, 1, []Type{TypeString}, TypeString},
 		{"trim", 1, 1, []Type{TypeString}, TypeString},
@@ -74,20 +80,24 @@ func NewAnalyzer() *Analyzer {
 		{"startswith", 2, 2, []Type{TypeString, TypeString}, TypeBool},
 		{"endswith", 2, 2, []Type{TypeString, TypeString}, TypeBool},
 		{"replace", 3, 3, []Type{TypeString, TypeString, TypeString}, TypeString},
+		// concat: both-same-type check handled in inferBuiltinReturnType
 		{"concat", 2, 2, []Type{TypeAny, TypeAny}, TypeAny},
 		{"split", 2, 2, []Type{TypeString, TypeString}, &ListType{ElementType: TypeString}},
-		{"push", 2, 2, []Type{TypeAny, TypeAny}, TypeAny},
-		{"pop", 1, 1, []Type{TypeAny}, TypeAny},
-		{"get", 2, 2, []Type{TypeAny, TypeInt}, TypeAny},
+		// list builtins: arg0 must be list
+		{"push", 2, 2, []Type{&ListType{ElementType: TypeAny}, TypeAny}, &ListType{ElementType: TypeAny}},
+		{"pop", 1, 1, []Type{&ListType{ElementType: TypeAny}}, TypeAny},
+		{"get", 2, 2, []Type{&ListType{ElementType: TypeAny}, TypeInt}, TypeAny},
 		{"set", 3, 3, []Type{TypeAny, TypeInt, TypeAny}, TypeAny},
-		{"insert", 3, 3, []Type{TypeAny, TypeInt, TypeAny}, TypeAny},
-		{"remove", 2, 2, []Type{TypeAny, TypeInt}, TypeAny},
-		{"slice", 3, 3, []Type{TypeAny, TypeInt, TypeInt}, TypeAny},
-		{"reverse", 1, 1, []Type{TypeAny}, TypeAny},
-		{"dget", 2, 2, []Type{TypeAny, TypeAny}, TypeAny},
-		{"dset", 3, 3, []Type{TypeAny, TypeAny, TypeAny}, TypeAny},
-		{"fillna", 2, 2, []Type{TypeAny, TypeAny}, TypeAny},
-		{"astype", 2, 2, []Type{TypeAny, TypeString}, TypeAny},
+		{"insert", 3, 3, []Type{&ListType{ElementType: TypeAny}, TypeInt, TypeAny}, &ListType{ElementType: TypeAny}},
+		{"remove", 2, 2, []Type{&ListType{ElementType: TypeAny}, TypeInt}, TypeAny},
+		{"slice", 3, 3, []Type{&ListType{ElementType: TypeAny}, TypeInt, TypeInt}, &ListType{ElementType: TypeAny}},
+		{"reverse", 1, 1, []Type{&ListType{ElementType: TypeAny}}, &ListType{ElementType: TypeAny}},
+		// dict builtins: arg0 must be dict
+		{"dget", 2, 2, []Type{&DictType{KeyType: TypeAny, ValueType: TypeAny}, TypeAny}, TypeAny},
+		{"dset", 3, 3, []Type{&DictType{KeyType: TypeAny, ValueType: TypeAny}, TypeAny, TypeAny}, &DictType{KeyType: TypeAny, ValueType: TypeAny}},
+		// vector builtins: arg0 must be vector
+		{"fillna", 2, 2, []Type{&VectorType{ElementType: TypeAny}, TypeAny}, &VectorType{ElementType: TypeAny}},
+		{"astype", 2, 2, []Type{&VectorType{ElementType: TypeAny}, TypeString}, &VectorType{ElementType: TypeAny}},
 		{"to_vector", 1, 1, []Type{TypeAny}, TypeAny},
 		{"to_list", 1, 1, []Type{TypeAny}, TypeAny},
 	}
@@ -308,6 +318,14 @@ func (a *Analyzer) Analyze(node *ast.TreeNode) Type {
 		return a.analyzeModule(node)
 	case ast.UseNode:
 		return a.analyzeUse(node)
+	case ast.BreakNode:
+		// C-FEATURE: break is reserved but not yet implemented (policy §7)
+		a.errorAt(node, "[C-FEATURE] 'break' is reserved but not yet implemented")
+		return TypeVoid
+	case ast.ContinueNode:
+		// C-FEATURE: continue is reserved but not yet implemented (policy §7)
+		a.errorAt(node, "[C-FEATURE] 'continue' is reserved but not yet implemented")
+		return TypeVoid
 	case ast.LambdaNode:
 		return a.analyzeLambda(node)
 	default:
@@ -390,6 +408,31 @@ func (a *Analyzer) analyzeFunction(node *ast.TreeNode) Type {
 	return funcType
 }
 
+// checkArgTypes validates argument types against parameter types using the knowability rule
+// from policy §3.3: skip if paramType is any/unknown; skip if argType is any/unknown
+// (deferred to runtime); otherwise CanAssign must hold, else C-TYPE.
+func (a *Analyzer) checkArgTypes(calleeName string, paramTypes []Type, argTypes []Type, argNodes []*ast.TreeNode) {
+	for i, argType := range argTypes {
+		if i >= len(paramTypes) {
+			break
+		}
+		paramType := paramTypes[i]
+		if paramType.Equals(TypeAny) || isUnknownType(paramType) {
+			continue
+		}
+		if isUnknownType(argType) {
+			continue
+		}
+		if !CanAssign(paramType, argType) {
+			var errorNode *ast.TreeNode
+			if i < len(argNodes) {
+				errorNode = argNodes[i]
+			}
+			a.errorAt(errorNode, "argument %d of '%s' expects %s, got %s", i+1, calleeName, paramType.String(), argType.String())
+		}
+	}
+}
+
 func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 	if len(node.Children) < 2 {
 		a.errorAt(node, "invalid function call expression")
@@ -425,6 +468,7 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 			if argCount < sig.MinArgs || argCount > sig.MaxArgs {
 				a.errorAt(node, "builtin '%s' expects %d-%d arguments but got %d", name, sig.MinArgs, sig.MaxArgs, argCount)
 			}
+			a.checkArgTypes(name, sig.Type.ParamTypes, argTypes, argsNode.Children)
 			return a.inferBuiltinReturnType(name, argTypes, node)
 		}
 	}
@@ -441,6 +485,12 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 		a.errorAt(node, "function expects %d arguments but got %d", len(funcType.ParamTypes), argCount)
 	}
 
+	calleeName := "function"
+	if funcNode.NodeType == ast.IdentifierNode {
+		calleeName = funcNode.TokenLiteral()
+	}
+	a.checkArgTypes(calleeName, funcType.ParamTypes, argTypes, argsNode.Children)
+
 	return funcType.ReturnType
 }
 
@@ -449,13 +499,12 @@ func (a *Analyzer) analyzeIfStatement(node *ast.TreeNode) Type {
 		return TypeVoid
 	}
 
-	// Analyze condition
+	// Analyze condition — must be bool (policy §3.1)
 	condType := a.Analyze(node.Children[0])
-	if !condType.Equals(TypeBool) && !condType.Equals(TypeAny) {
-		// Allow any type as condition (truthy/falsy)
+	if !isBoolLike(condType) && !isUnknownType(condType) {
+		a.errorAt(node.Children[0], "condition must be bool, got %s; use a comparison or explicit to_bool()", condType.String())
 	}
 
-	_ = condType
 	resultType := a.Analyze(node.Children[1])
 
 	for i := 2; i < len(node.Children); i++ {
@@ -575,7 +624,7 @@ func (a *Analyzer) analyzeForLoop(node *ast.TreeNode) Type {
 	a.pushScope()
 
 	varName := varNode.TokenLiteral()
-	var varType Type = TypeInt // Default for numeric ranges
+	var varType Type = TypeAny // Unknown iterable → unknown element type (policy §5.3)
 	switch t := iterType.(type) {
 	case *ListType:
 		varType = t.ElementType
@@ -601,8 +650,11 @@ func (a *Analyzer) analyzeWhileLoop(node *ast.TreeNode) Type {
 		return TypeVoid
 	}
 
-	// Analyze condition
-	a.Analyze(node.Children[0])
+	// Analyze condition — must be bool (policy §3.1)
+	condType := a.Analyze(node.Children[0])
+	if !isBoolLike(condType) && !isUnknownType(condType) {
+		a.errorAt(node.Children[0], "condition must be bool, got %s; use a comparison or explicit to_bool()", condType.String())
+	}
 
 	// Analyze body
 	a.pushScope()
@@ -708,7 +760,10 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 			a.errorAt(node, "unary '-' expects numeric operand, got %s", operandType.String())
 			return TypeAny
 		case token.BANG:
-			// All types support truthiness, so ! works on any value
+			// Policy §4.3: ! requires bool operand
+			if !isBoolLike(operandType) && !isUnknownType(operandType) {
+				a.errorAt(node, "unary '!' expects bool operand, got %s", operandType.String())
+			}
 			return TypeBool
 		}
 		return operandType
@@ -972,6 +1027,10 @@ func (a *Analyzer) analyzePipe(node *ast.TreeNode) Type {
 			pipeArgTypes := make([]Type, 0, pipeArgCount)
 			pipeArgTypes = append(pipeArgTypes, inputType)
 			pipeArgTypes = append(pipeArgTypes, argTypes...)
+			pipeArgNodes := make([]*ast.TreeNode, 0, pipeArgCount)
+			pipeArgNodes = append(pipeArgNodes, inputNode)
+			pipeArgNodes = append(pipeArgNodes, argsNode.Children...)
+			a.checkArgTypes(name, sig.Type.ParamTypes, pipeArgTypes, pipeArgNodes)
 			return a.inferBuiltinReturnType(name, pipeArgTypes, node)
 		}
 	}
@@ -980,6 +1039,15 @@ func (a *Analyzer) analyzePipe(node *ast.TreeNode) Type {
 		if pipeArgCount != len(funcType.ParamTypes) {
 			a.errorAt(node, "function expects %d arguments but got %d (including piped input)", len(funcType.ParamTypes), pipeArgCount)
 		}
+		pipeCallee := "function"
+		if funcNode.NodeType == ast.IdentifierNode {
+			pipeCallee = funcNode.TokenLiteral()
+		}
+		pipeArgTypes := []Type{inputType}
+		pipeArgTypes = append(pipeArgTypes, argTypes...)
+		pipeArgNodes := []*ast.TreeNode{inputNode}
+		pipeArgNodes = append(pipeArgNodes, argsNode.Children...)
+		a.checkArgTypes(pipeCallee, funcType.ParamTypes, pipeArgTypes, pipeArgNodes)
 		return funcType.ReturnType
 	}
 
@@ -987,10 +1055,99 @@ func (a *Analyzer) analyzePipe(node *ast.TreeNode) Type {
 }
 
 func (a *Analyzer) inferBuiltinReturnType(name string, argTypes []Type, callNode *ast.TreeNode) Type {
-	if name == "unwrap" {
-		if len(argTypes) == 1 {
+	// Special-case builtins that need custom type checks beyond what checkArgTypes handles.
+	switch name {
+	case "unwrap":
+		if len(argTypes) >= 1 {
 			if res, ok := argTypes[0].(*ResultType); ok {
 				return res.OkType
+			}
+			if !isUnknownType(argTypes[0]) {
+				a.errorAt(callNode, "argument 1 of 'unwrap' expects result, got %s", argTypes[0].String())
+			}
+		}
+		return TypeAny
+
+	case "is_ok", "is_err":
+		if len(argTypes) >= 1 {
+			if _, ok := argTypes[0].(*ResultType); !ok && !isUnknownType(argTypes[0]) {
+				a.errorAt(callNode, "argument 1 of '%s' expects result, got %s", name, argTypes[0].String())
+			}
+		}
+		return TypeBool
+
+	case "len":
+		if len(argTypes) >= 1 && !isUnknownType(argTypes[0]) {
+			t := argTypes[0]
+			_, isList := t.(*ListType)
+			_, isDict := t.(*DictType)
+			_, isVec := t.(*VectorType)
+			isStr := t.Equals(TypeString)
+			if !isList && !isDict && !isVec && !isStr {
+				a.errorAt(callNode, "argument 1 of 'len' expects str, list, dict, or vector, got %s", t.String())
+			}
+		}
+		return TypeInt
+
+	case "abs":
+		if len(argTypes) >= 1 && !isUnknownType(argTypes[0]) {
+			t := argTypes[0]
+			if IsNumeric(t) {
+				return t
+			}
+			a.errorAt(callNode, "argument 1 of 'abs' expects int or float, got %s", t.String())
+		}
+		return TypeAny
+
+	case "sum":
+		if len(argTypes) >= 1 && !isUnknownType(argTypes[0]) {
+			t := argTypes[0]
+			switch st := t.(type) {
+			case *VectorType:
+				if !IsNumeric(st.ElementType) && st.ElementType != TypeBool && !isUnknownType(st.ElementType) {
+					a.errorAt(callNode, "argument 1 of 'sum' expects numeric or bool vector, got %s", t.String())
+				}
+			default:
+				a.errorAt(callNode, "argument 1 of 'sum' expects numeric or bool vector, got %s", t.String())
+			}
+		}
+		return TypeAny
+
+	case "min", "max":
+		if len(argTypes) == 1 && !isUnknownType(argTypes[0]) {
+			t := argTypes[0]
+			if vec, isVec := t.(*VectorType); isVec {
+				if !IsNumeric(vec.ElementType) && !isUnknownType(vec.ElementType) {
+					a.errorAt(callNode, "argument 1 of '%s' with single argument expects numeric vector, got %s", name, t.String())
+				}
+				return TypeFloat
+			}
+			a.errorAt(callNode, "argument 1 of '%s' with single argument expects numeric vector, got %s", name, t.String())
+			return TypeAny
+		}
+		if len(argTypes) == 2 {
+			for i, t := range argTypes {
+				if !IsNumeric(t) && !isUnknownType(t) {
+					a.errorAt(callNode, "argument %d of '%s' expects numeric, got %s", i+1, name, t.String())
+				}
+			}
+		}
+		if sig, ok := a.builtins[name]; ok {
+			return sig.Type.ReturnType
+		}
+		return TypeAny
+
+	case "concat":
+		if len(argTypes) == 2 {
+			t0, t1 := argTypes[0], argTypes[1]
+			if !isUnknownType(t0) && !isUnknownType(t1) {
+				_, t0List := t0.(*ListType)
+				_, t1List := t1.(*ListType)
+				bothStr := isStringLike(t0) && isStringLike(t1)
+				bothList := t0List && t1List
+				if !bothStr && !bothList {
+					a.errorAt(callNode, "concat requires both arguments to be str+str or list+list, got %s and %s", t0.String(), t1.String())
+				}
 			}
 		}
 		if sig, ok := a.builtins[name]; ok {
@@ -999,6 +1156,7 @@ func (a *Analyzer) inferBuiltinReturnType(name string, argTypes []Type, callNode
 		return TypeAny
 	}
 
+	// All other non-to_vector builtins: use the signature's return type.
 	if name != "to_vector" {
 		if sig, ok := a.builtins[name]; ok {
 			return sig.Type.ReturnType
@@ -1099,7 +1257,10 @@ func (a *Analyzer) analyzeTernary(node *ast.TreeNode) Type {
 	}
 
 	// condition, trueVal, falseVal
-	a.Analyze(node.Children[0]) // condition
+	condType := a.Analyze(node.Children[0]) // condition
+	if !isBoolLike(condType) && !isUnknownType(condType) {
+		a.errorAt(node.Children[0], "ternary condition must be bool, got %s; use a comparison or explicit to_bool()", condType.String())
+	}
 	trueType := a.Analyze(node.Children[1])
 	falseType := a.Analyze(node.Children[2])
 

@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <string>
 #include <cstdio>
+#include <cstdlib>
 
 struct QDict {
     std::unordered_map<std::string, QValue> entries;
@@ -24,6 +25,7 @@ inline bool q_require_dict(const QValue& v, const char* action) {
         return true;
     }
     std::fprintf(stderr, "runtime error: %s expects dict\n", action);
+    std::exit(1);
     return false;
 }
 
@@ -32,6 +34,7 @@ inline bool q_require_string_key(const QValue& key) {
         return true;
     }
     std::fprintf(stderr, "runtime error: dict key must be string\n");
+    std::exit(1);
     return false;
 }
 

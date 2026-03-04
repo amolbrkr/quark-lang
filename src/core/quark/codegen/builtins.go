@@ -91,14 +91,14 @@ func GenerateBuiltinCall(name string, args []string) (string, bool) {
 
 	nargs := len(args)
 
-	// Too few arguments — return qv_null() fallback
+	// Too few arguments — explicit runtime error (defensive; analyzer should prevent this)
 	if nargs < b.MinArgs {
-		return "qv_null()", true
+		return fmt.Sprintf("(std::fprintf(stderr, \"runtime error: builtin '%s' expects at least %d args, got %d\\n\"), std::exit(1), qv_null())", name, b.MinArgs, nargs), true
 	}
 
-	// Too many arguments — emit explicit runtime error fallback (no silent truncation)
+	// Too many arguments — explicit runtime error (no silent truncation)
 	if nargs > b.MaxArgs {
-		return fmt.Sprintf("(std::fprintf(stderr, \"runtime error: builtin '%s' expects at most %d args, got %d\\n\"), qv_null())", name, b.MaxArgs, nargs), true
+		return fmt.Sprintf("(std::fprintf(stderr, \"runtime error: builtin '%s' expects at most %d args, got %d\\n\"), std::exit(1), qv_null())", name, b.MaxArgs, nargs), true
 	}
 
 	return fmt.Sprintf("%s(%s)", b.CFunc, strings.Join(args, ", ")), true

@@ -22,6 +22,8 @@ inline QValue q_len(QValue v) {
         case QValue::VAL_DICT:
             return qv_int(v.data.dict_val ? static_cast<long long>(v.data.dict_val->entries.size()) : 0);
         default:
+            std::fprintf(stderr, "runtime error: len() expects str, list, dict, or vector\n");
+            std::exit(1);
             return qv_int(0);
     }
 }
@@ -32,13 +34,16 @@ inline QValue q_iter_get(QValue iterable, QValue index) {
         return q_get(iterable, index);
     }
     if (iterable.type != QValue::VAL_VECTOR) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: for-loop iterable must be list, string, or vector\n");
+        std::exit(1);
     }
     if (!q_vec_has_valid_handle(iterable) || !q_vec_validate(*iterable.data.vector_val)) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: for-loop iterable vector is invalid\n");
+        std::exit(1);
     }
     if (index.type != QValue::VAL_INT) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: iterable index must be int\n");
+        std::exit(1);
     }
 
     long long idx = index.data.int_val;
@@ -75,6 +80,8 @@ inline QValue q_iter_get(QValue iterable, QValue index) {
             return qv_string(s.c_str());
         }
         default:
+            std::fprintf(stderr, "runtime error: unsupported vector dtype in iteration\n");
+            std::exit(1);
             return qv_null();
     }
 }

@@ -7,15 +7,21 @@
 #include "../core/gc.hpp"
 
 #include <string>
+#include <cstdio>
+#include <cstdlib>
 
 // split(string, sep) -> list[str]
 // - If sep is "", returns a single-element list containing the original string.
 // - Preserves empty fields (leading/trailing separators produce "").
 inline QValue q_split(QValue str, QValue sep) {
     if (str.type != QValue::VAL_STRING || sep.type != QValue::VAL_STRING) {
+        std::fprintf(stderr, "runtime error: split() expects (str, str)\n");
+        std::exit(1);
         return qv_null();
     }
     if (!str.data.string_val || !sep.data.string_val) {
+        std::fprintf(stderr, "runtime error: split() expects non-null string arguments\n");
+        std::exit(1);
         return qv_null();
     }
 

@@ -162,6 +162,10 @@ func (ml *ModuleLoader) resolveImportsInNode(node *ast.TreeNode, currentFilePath
 			continue
 		}
 
+		// Capture module names defined directly in this imported file before
+		// recursive splicing introduces transitive modules.
+		directModules := findModuleNodes(importedAST)
+
 		// Mark as resolving before descending (for cycle detection)
 		ml.beginResolve(absResolved)
 
@@ -169,20 +173,8 @@ func (ml *ModuleLoader) resolveImportsInNode(node *ast.TreeNode, currentFilePath
 		ml.resolveImportsInNode(importedAST, absResolved)
 		ml.endResolve(absResolved)
 
-		// Find the ModuleNode in the imported AST
-		moduleNode := findModuleNode(importedAST)
-		if moduleNode == nil {
+		if len(directModules) == 0 {
 			ml.addError("line %d: imported file '%s' does not define a module", useLine, importPath)
-			continue
-		}
-
-		// Extract the module name
-		moduleName := ""
-		if len(moduleNode.Children) > 0 {
-			moduleName = moduleNode.Children[0].TokenLiteral()
-		}
-		if moduleName == "" {
-			ml.addError("line %d: module in '%s' has no name", useLine, importPath)
 			continue
 		}
 
@@ -193,8 +185,17 @@ func (ml *ModuleLoader) resolveImportsInNode(node *ast.TreeNode, currentFilePath
 			newChildren = append(newChildren, importedChild)
 		}
 
-		// Create synthetic use node: use <moduleName> (identifier-style)
-		// This triggers the analyzer to import the module's symbols into scope.
+		// Use only the primary direct module from the imported file.
+		// Additional modules can still be imported explicitly via `use moduleName`.
+		moduleName := ""
+		if len(directModules[0].Children) > 0 {
+			moduleName = directModules[0].Children[0].TokenLiteral()
+		}
+		if moduleName == "" {
+			ml.addError("line %d: module in '%s' has no name", useLine, importPath)
+			continue
+		}
+
 		syntheticUseTok := token.Token{
 			Type:    token.USE,
 			Literal: "use",
@@ -216,15 +217,13 @@ func (ml *ModuleLoader) resolveImportsInNode(node *ast.TreeNode, currentFilePath
 	node.Children = newChildren
 }
 
-// findModuleNode searches the top-level children of an AST for the last ModuleNode.
-// We use the last one because transitive imports splice their ModuleNodes before
-// the file's own module definition.
-func findModuleNode(root *ast.TreeNode) *ast.TreeNode {
-	var last *ast.TreeNode
+// findModuleNodes returns all top-level ModuleNodes in source order.
+func findModuleNodes(root *ast.TreeNode) []*ast.TreeNode {
+	modules := make([]*ast.TreeNode, 0)
 	for _, child := range root.Children {
 		if child.NodeType == ast.ModuleNode {
-			last = child
+			modules = append(modules, child)
 		}
 	}
-	return last
+	return modules
 }

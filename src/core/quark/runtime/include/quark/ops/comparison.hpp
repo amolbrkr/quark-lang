@@ -5,6 +5,8 @@
 #include "../core/value.hpp"
 #include "../core/constructors.hpp"
 #include <cstring>
+#include <cstdio>
+#include <cstdlib>
 
 // Helper functions to_double() and either_float() are defined in arithmetic.hpp
 // (removed from here to avoid duplication in the concatenated runtime.hpp)
@@ -17,6 +19,8 @@ inline QValue q_lt(QValue a, QValue b) {
     // Type guard: only INT and FLOAT are valid
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
+        std::fprintf(stderr, "runtime error: operator '<' expects numeric operands\n");
+        std::exit(1);
         return qv_null();
     }
     if (quark::detail::either_float(a, b)) {
@@ -33,6 +37,8 @@ inline QValue q_lte(QValue a, QValue b) {
     // Type guard: only INT and FLOAT are valid
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
+        std::fprintf(stderr, "runtime error: operator '<=' expects numeric operands\n");
+        std::exit(1);
         return qv_null();
     }
     if (quark::detail::either_float(a, b)) {
@@ -49,6 +55,8 @@ inline QValue q_gt(QValue a, QValue b) {
     // Type guard: only INT and FLOAT are valid
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
+        std::fprintf(stderr, "runtime error: operator '>' expects numeric operands\n");
+        std::exit(1);
         return qv_null();
     }
     if (quark::detail::either_float(a, b)) {
@@ -65,6 +73,8 @@ inline QValue q_gte(QValue a, QValue b) {
     // Type guard: only INT and FLOAT are valid
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
+        std::fprintf(stderr, "runtime error: operator '>=' expects numeric operands\n");
+        std::exit(1);
         return qv_null();
     }
     if (quark::detail::either_float(a, b)) {

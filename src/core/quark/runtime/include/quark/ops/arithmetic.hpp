@@ -34,10 +34,12 @@ inline const char* q_type_name_arith(QValue::ValueType t) {
 
 inline void q_arith_type_error(const char* op, QValue a, QValue b) {
     std::fprintf(stderr, "runtime error: operator '%s' expects numeric operands (or str+str for '+'), got %s and %s\n", op, q_type_name_arith(a.type), q_type_name_arith(b.type));
+    std::exit(1);
 }
 
 inline void q_unary_type_error(const char* op, QValue a) {
     std::fprintf(stderr, "runtime error: unary operator '%s' expects numeric operand, got %s\n", op, q_type_name_arith(a.type));
+    std::exit(1);
 }
 
 // Addition: int + int = int, float promotion, string + string = concat
@@ -47,11 +49,17 @@ inline QValue q_add(QValue a, QValue b) {
     }
     // String concatenation: string + string
     if (a.type == QValue::VAL_STRING && b.type == QValue::VAL_STRING) {
-        if (!a.data.string_val || !b.data.string_val) return qv_null();
+        if (!a.data.string_val || !b.data.string_val) {
+            std::fprintf(stderr, "runtime error: operator '+' on strings requires non-null string values\n");
+            std::exit(1);
+        }
         size_t alen = strlen(a.data.string_val);
         size_t blen = strlen(b.data.string_val);
         char* result = static_cast<char*>(q_malloc_atomic(alen + blen + 1));
-        if (!result) return qv_null();
+        if (!result) {
+            std::fprintf(stderr, "runtime error: operator '+' failed to allocate string result\n");
+            std::exit(1);
+        }
         memcpy(result, a.data.string_val, alen);
         memcpy(result + alen, b.data.string_val, blen);
         result[alen + blen] = '\0';
@@ -121,22 +129,22 @@ inline QValue q_div(QValue a, QValue b) {
     // Check for division by zero
     if (bv == 0.0) {
         std::fprintf(stderr, "runtime error: division by zero\n");
-        return qv_null();
+        std::exit(1);
     }
     return qv_float(quark::detail::to_double(a) / bv);
 }
 
 // Modulo: integer only
 inline QValue q_mod(QValue a, QValue b) {
-    // Type guard: only INT is valid for modulo
+    // Type guard for modulo: only INT is valid
     if (a.type != QValue::VAL_INT || b.type != QValue::VAL_INT) {
         std::fprintf(stderr, "runtime error: operator '%%' expects int operands, got %s and %s\n", q_type_name_arith(a.type), q_type_name_arith(b.type));
-        return qv_null();
+        std::exit(1);
     }
     // Check for modulo by zero
     if (b.data.int_val == 0) {
         std::fprintf(stderr, "runtime error: modulo by zero\n");
-        return qv_null();
+        std::exit(1);
     }
     return qv_int(a.data.int_val % b.data.int_val);
 }

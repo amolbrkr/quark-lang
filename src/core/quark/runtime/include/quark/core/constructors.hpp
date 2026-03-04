@@ -6,6 +6,8 @@
 #include "gc.hpp"
 #include <cstring>
 #include <cstdarg>
+#include <cstdio>
+#include <cstdlib>
 
 // Integer value constructor
 inline QValue qv_int(long long v) {
@@ -62,7 +64,10 @@ inline QValue qv_func(void* f) {
 inline QValue qv_ok(QValue v) {
     QValue q;
     QResult* result = static_cast<QResult*>(q_malloc(sizeof(QResult)));
-    if (!result) { q.type = QValue::VAL_NULL; return q; }
+    if (!result) {
+        std::fprintf(stderr, "runtime error: failed to allocate ok-result payload\n");
+        std::exit(1);
+    }
     q.type = QValue::VAL_RESULT;
     result->is_ok = true;
     result->payload = v;
@@ -73,7 +78,10 @@ inline QValue qv_ok(QValue v) {
 inline QValue qv_err(QValue v) {
     QValue q;
     QResult* result = static_cast<QResult*>(q_malloc(sizeof(QResult)));
-    if (!result) { q.type = QValue::VAL_NULL; return q; }
+    if (!result) {
+        std::fprintf(stderr, "runtime error: failed to allocate err-result payload\n");
+        std::exit(1);
+    }
     q.type = QValue::VAL_RESULT;
     result->is_ok = false;
     result->payload = v;

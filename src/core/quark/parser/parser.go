@@ -98,6 +98,10 @@ func (p *Parser) parseStatement() *ast.TreeNode {
 		return p.parseForLoop()
 	case token.WHILE:
 		return p.parseWhileLoop()
+	case token.BREAK:
+		return p.parseBreak()
+	case token.CONTINUE:
+		return p.parseContinue()
 	case token.FN:
 		return p.parseFunction()
 	default:
@@ -157,6 +161,18 @@ func (p *Parser) parseBlock() *ast.TreeNode {
 	}
 
 	return node
+}
+
+func (p *Parser) parseBreak() *ast.TreeNode {
+	tok := p.curToken
+	p.nextToken()
+	return ast.NewNode(ast.BreakNode, &tok)
+}
+
+func (p *Parser) parseContinue() *ast.TreeNode {
+	tok := p.curToken
+	p.nextToken()
+	return ast.NewNode(ast.ContinueNode, &tok)
 }
 
 func (p *Parser) parseFunction() *ast.TreeNode {

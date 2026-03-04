@@ -39,6 +39,8 @@ const (
 	VarDeclNode
 	ModuleNode
 	UseNode
+	BreakNode
+	ContinueNode
 )
 
 var nodeTypeNames = map[NodeType]string{
@@ -72,6 +74,8 @@ var nodeTypeNames = map[NodeType]string{
 	VarDeclNode:         "VarDecl",
 	ModuleNode:          "Module",
 	UseNode:             "Use",
+	BreakNode:           "Break",
+	ContinueNode:        "Continue",
 }
 
 func (n NodeType) String() string {

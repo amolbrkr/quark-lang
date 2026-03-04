@@ -25,7 +25,7 @@ const (
 	MODULO     // %
 	DOUBLESTAR // **
 
-	BANG  // !
+	BANG // !
 
 	EQUALS // =
 	LT     // <
@@ -71,6 +71,8 @@ const (
 	LIST
 	DICT
 	VECTOR
+	BREAK
+	CONTINUE
 	keyword_end
 )
 
@@ -94,7 +96,7 @@ var tokenNames = map[TokenType]string{
 	MODULO:     "MODULO",
 	DOUBLESTAR: "DOUBLESTAR",
 
-	BANG:  "BANG",
+	BANG: "BANG",
 
 	EQUALS: "EQUALS",
 	LT:     "LT",
@@ -117,26 +119,28 @@ var tokenNames = map[TokenType]string{
 	COLON:      "COLON",
 	UNDERSCORE: "UNDERSCORE",
 
-	USE:    "USE",
-	MODULE: "MODULE",
-	IN:     "IN",
-	AND:    "AND",
-	OR:     "OR",
-	IF:     "IF",
-	ELSEIF: "ELSEIF",
-	ELSE:   "ELSE",
-	FOR:    "FOR",
-	WHILE:  "WHILE",
-	WHEN:   "WHEN",
-	FN:     "FN",
-	TRUE:   "TRUE",
-	FALSE:  "FALSE",
-	NULL:   "NULL",
-	OK:     "OK",
-	ERR:    "ERR",
-	LIST:   "LIST",
-	DICT:   "DICT",
-	VECTOR: "VECTOR",
+	USE:      "USE",
+	MODULE:   "MODULE",
+	IN:       "IN",
+	AND:      "AND",
+	OR:       "OR",
+	IF:       "IF",
+	ELSEIF:   "ELSEIF",
+	ELSE:     "ELSE",
+	FOR:      "FOR",
+	WHILE:    "WHILE",
+	WHEN:     "WHEN",
+	FN:       "FN",
+	TRUE:     "TRUE",
+	FALSE:    "FALSE",
+	NULL:     "NULL",
+	OK:       "OK",
+	ERR:      "ERR",
+	LIST:     "LIST",
+	DICT:     "DICT",
+	VECTOR:   "VECTOR",
+	BREAK:    "BREAK",
+	CONTINUE: "CONTINUE",
 }
 
 func (t TokenType) String() string {
@@ -147,26 +151,28 @@ func (t TokenType) String() string {
 }
 
 var keywords = map[string]TokenType{
-	"use":    USE,
-	"module": MODULE,
-	"in":     IN,
-	"and":    AND,
-	"or":     OR,
-	"if":     IF,
-	"elseif": ELSEIF,
-	"else":   ELSE,
-	"for":    FOR,
-	"while":  WHILE,
-	"when":   WHEN,
-	"fn":     FN,
-	"true":   TRUE,
-	"false":  FALSE,
-	"null":   NULL,
-	"ok":     OK,
-	"err":    ERR,
-	"list":   LIST,
-	"dict":   DICT,
-	"vector": VECTOR,
+	"use":      USE,
+	"module":   MODULE,
+	"in":       IN,
+	"and":      AND,
+	"or":       OR,
+	"if":       IF,
+	"elseif":   ELSEIF,
+	"else":     ELSE,
+	"for":      FOR,
+	"while":    WHILE,
+	"when":     WHEN,
+	"fn":       FN,
+	"true":     TRUE,
+	"false":    FALSE,
+	"null":     NULL,
+	"ok":       OK,
+	"err":      ERR,
+	"list":     LIST,
+	"dict":     DICT,
+	"vector":   VECTOR,
+	"break":    BREAK,
+	"continue": CONTINUE,
 }
 
 func LookupIdent(ident string) TokenType {

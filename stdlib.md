@@ -18,7 +18,7 @@ This document describes the built-in functions available in Quark. All standard 
 |----------|-----------|-------------|
 | `print` | `[value] -> void` | Print optional value without newline |
 | `println` | `[value] -> void` | Print optional value with newline |
-| `input` | `[prompt] -> str` | Read line from stdin; optional prompt string |
+| `input` | `[prompt: str] -> str` | Read line from stdin; optional prompt must be a string |
 
 ```quark
 println('Hello, World!')
@@ -38,14 +38,14 @@ println(name)
 | `to_float` | `any -> float` | Convert to float |
 | `to_bool` | `any -> bool` | Convert to boolean (truthiness) |
 | `type` | `any -> str` | Return runtime type name |
-| `len` | `str\|list\|dict -> int` | Get length of string, list, or dict |
+| `len` | `str\|list\|dict\|vector -> int` | Get length of string, list, dict, or vector |
 
 ```quark
-str(42) | println()           // '42'
-int('123') | println()        // 123
-float('3.14') | println()     // 3.14
-bool(0) | println()           // false
-bool(1) | println()           // true
+to_str(42) | println()        // '42'
+to_int('123') | println()     // 123
+to_float('3.14') | println()  // 3.14
+to_bool(0) | println()        // false
+to_bool(1) | println()        // true
 type(42) | println()          // int
 len('hello') | println()      // 5
 
@@ -115,7 +115,9 @@ sublist = slice(list, 0, 2)
 - Negative indices count from the end: `-1` is last item, `-2` is second-to-last
 - `slice` returns a new list; original is not modified
 - `reverse` modifies the list in place
-- Out-of-bounds access returns `null`
+- `get` out-of-bounds access returns `null`; `set`, `insert`, and `remove` with invalid arguments cause a runtime error
+- `pop` on an empty list causes a runtime error
+- All list builtins except `get` require a `list` first argument at compile time
 
 ## Dict Functions
 
@@ -157,7 +159,7 @@ Mathematical operations implemented using C++'s math library.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `abs` | `number -> number` | Absolute value |
+| `abs` | `int\|float -> int\|float` | Absolute value (preserves type) |
 | `min` | `number, number -> number` | Minimum of two values |
 | `max` | `number, number -> number` | Maximum of two values |
 | `sqrt` | `number -> float` | Square root |
@@ -197,9 +199,10 @@ sqrt(10) | floor() | println()  // 3
 ### Notes
 
 - `print()` and `println()` can be called with zero arguments
+- `abs` accepts only `int` or `float`; passing any other type is a compile-time error
 - `abs` preserves the input type (int returns int, float returns float)
-- `min` and `max` return float if either argument is float
-- `sqrt` always returns float
+- `min` and `max` return float if either argument is float; single-argument vector overloads are documented in the Vector section
+- `sqrt` always returns float; negative argument causes a runtime error
 - `floor`, `ceil`, `round` return int
 - `range` accepts int or float inputs; float values are converted to integers internally
 
@@ -219,7 +222,7 @@ Typed vector operations for data-oriented workloads.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `sum` | `vector -> float` | Sum of all vector elements |
+| `sum` | `vector -> float` | Sum of all vector elements; `vector[bool]` is supported (true=1, false=0) |
 | `min` | `vector -> float` | Minimum element in vector |
 | `max` | `vector -> float` | Maximum element in vector |
 | `fillna` | `vector, any -> vector` | Replace null entries in a vector |
@@ -267,6 +270,7 @@ println(type(back))              // list
 - `to_vector` enforces the same homogeneity rule as vector literals
 - Numeric vector arithmetic (`+`, `-`, `*`, `/`) supports numeric vectors only
 - `sum`, `min`, and `max` return float
+- `sum` supports `vector[bool]` (counts `true` as 1, `false` as 0) — useful for boolean mask operations like `sum(v > 25)`
 - `astype` currently supports casts among numeric/bool vector dtypes
 
 ## String Functions
@@ -322,7 +326,7 @@ split('a,b,c', ',') | println()                       // ["a", "b", "c"]
 
 - All string functions return new strings (original is not modified)
 - `replace` replaces all occurrences, not just the first
-- `concat` also supports list + list and returns a list; mixed types return `null`
+- `concat` also supports list + list and returns a list; mixed types (e.g. str + list) cause a runtime error
 - `split` preserves empty fields (`,a,` becomes `['', 'a', '']`)
 - Empty string handling:
   - `upper('')` returns `''`
@@ -363,14 +367,19 @@ Container implementation choices:
 
 - `list` uses `std::vector<QValue>`
 - `dict` uses `std::unordered_map<std::string, QValue>`
-- `vector` uses typed storage (`f64`, `i64`, `bool`, `str`, `cat`) with runtime invariants
+- `vector` uses typed storage (`f64`, `i64`, `bool`, `str`) with runtime invariants
 
 ### Typing and Validation Layers
 
 Builtins are validated in two phases:
 
 1. Compile-time analyzer checks argument counts and inferred types
-2. Runtime guards validate concrete value kinds and return `null` or runtime errors when invalid
+2. Runtime guards validate concrete value kinds; contract violations raise runtime errors (stderr + non-zero exit)
+
+Intentional `null` data-return APIs are explicitly documented and preserved:
+
+- `get(list, idx)` when index is out of bounds
+- `dget(dict, key)` when key is missing
 
 Vector-specific typing behavior:
 
@@ -518,7 +527,7 @@ Current functions remain (`abs`, `min`, `max`, `sqrt`, `floor`, `ceil`, `round`)
 
 Behavior notes:
 
-- Domain errors for safe APIs should return `err`; low-level numeric primitives may keep existing null-return semantics if required for compatibility.
+- Domain errors for safe APIs should return `err`; low-level numeric primitives now print a diagnostic to stderr and exit with code 1 (no silent null returns).
 
 #### 7) `vector`
 

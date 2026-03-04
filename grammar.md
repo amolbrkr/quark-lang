@@ -41,14 +41,15 @@ This document is the grammar and semantic reference for the Quark compiler in `s
 
 - `INT`
 - `FLOAT`
-- `STRING` (single-quoted or double-quoted in source)
+- `STRING` (single-quoted in current implementation)
 - `BOOL` (`true`, `false`)
 - `NULL` (`null`)
 
-Planned lexical additions for interpolation:
+Planned lexical additions (future):
+- Double-quoted string literals
 - Interpolation opener: `!{`
 - Interpolation closer: `}`
-- Interpolation is only recognized inside string literals
+- Interpolation recognized only inside string literals
 
 ### 3.4 Comments and layout
 
@@ -173,14 +174,16 @@ Current semantic restriction:
 WhileLoop       ::= "while" Expression ":" Block
 ```
 
-### 8.4 Loop control (planned)
+### 8.4 Loop control
 
 ```ebnf
 BreakStatement      ::= "break"
 ContinueStatement   ::= "continue"
 ```
 
-Planned semantics:
+Current status: `break` and `continue` are reserved keywords, fully lexed and parsed. The analyzer emits a `[C-FEATURE]` compile error for any use, because codegen support is not yet implemented.
+
+Intended semantics (when implemented):
 - `break` exits the nearest enclosing `for`/`while`
 - `continue` skips to the next iteration of the nearest enclosing `for`/`while`
 - Using either outside a loop is a compile-time error
@@ -329,6 +332,13 @@ Builtins currently available:
 - `is_err(result) -> bool`
 - `unwrap(result) -> any` (panics on `err` or non-result)
 
+### 11.5 Condition and logical operator type rules
+
+- `if`, `elseif`, `while`, and ternary conditions must resolve to `bool` at compile time; passing a non-bool expression is an analyzer error
+- The unary `!` operator requires a `bool` operand; applying it to other types is an analyzer error
+- `and` and `or` require `bool` operands; the analyzer checks at compile time and the runtime enforces at execution time
+- Use `to_bool(expr)` to explicitly convert a non-bool value before using it as a condition
+
 ## 12) Builtin Surface (Current)
 
 ### 12.1 I/O
@@ -367,7 +377,7 @@ Builtins currently available:
 | List literals (`list [...]`) | Implemented | Keyword required |
 | Vector literals (`vector [...]`) | Implemented | 1D only |
 | Dict literals (`dict {k: v}`) | Implemented | Keys are identifiers in source |
-| Loop control (`break`, `continue`) | Not implemented | Keywords reserved; parser/analyzer/codegen pending |
+| Loop control (`break`, `continue`) | Partial | Keywords lexed and parsed; analyzer rejects with `[C-FEATURE]` error; codegen not yet implemented |
 | Dot-call syntax | Not implemented | Use function-call/pipe model |
 | Dot data access on dict | Implemented | read/write |
 | Result values `ok` / `err` | Implemented | Analyzer has `ResultType` |
@@ -381,7 +391,7 @@ Builtins currently available:
 ## 14) Known Limits / Current Diagnostics
 
 - `for` iterables are currently restricted to list/vector
-- `break` and `continue` are reserved keywords but not implemented yet
+- `break` and `continue` are reserved keywords, parsed, but currently rejected at the analyzer with a `[C-FEATURE]` compile error (codegen pending)
 - `use 'name'` (non-relative string) is rejected pending stdlib import support
 - Dict bracket indexing is rejected by analyzer
 - Dot access is dict-only; non-dict dot access is diagnosed
@@ -390,8 +400,8 @@ Builtins currently available:
 ## 15) Source of Truth Policy
 
 To reduce drift:
-- Parser/lexer behavior in `src/core/quark/{lexer,parser}` is canonical for syntax
-- Analyzer behavior in `src/core/quark/types/analyzer.go` is canonical for semantic checks
-- Builtin registry in `src/core/quark/codegen/builtins.go` is canonical for available builtins
+- `grammar.md` is canonical for syntax and semantic surface definitions.
+- `stdlib.md` is canonical for builtin surface and documented behavior contracts.
+- During Phase 1 stabilization, changes to language behavior must update both files in the same change.
 
-If this document conflicts with code, update this document immediately after code changes.
+If either file conflicts with implementation, treat it as a release blocker and resolve before adding features.

@@ -847,6 +847,12 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 					return rightType
 				}
 			}
+			if _, srcIsResult := rightType.(*ResultType); srcIsResult {
+				if _, dstIsResult := sym.Type.(*ResultType); !dstIsResult && !isUnknownType(sym.Type) {
+					a.errorAt(target, "[C-TYPE] cannot assign result to '%s'; use 'unwrap()' or 'when' to extract the value", sym.Type.String())
+					return rightType
+				}
+			}
 			if !CanAssign(sym.Type, rightType) && !isUnknownType(rightType) {
 				a.errorAt(target, "cannot assign value of type '%s' to '%s'", rightType.String(), sym.Type.String())
 			}
@@ -1264,6 +1270,12 @@ func (a *Analyzer) analyzeTernary(node *ast.TreeNode) Type {
 	trueType := a.Analyze(node.Children[1])
 	falseType := a.Analyze(node.Children[2])
 
+	// §5.2: warn when both branches are concrete but incompatible
+	if !isUnknownType(trueType) && !isUnknownType(falseType) &&
+		!CanAssign(trueType, falseType) && !CanAssign(falseType, trueType) {
+		a.errorAt(node, "[warning] ternary branches have incompatible types: '%s' and '%s'", trueType.String(), falseType.String())
+	}
+
 	return MergeTypes(trueType, falseType)
 }
 
@@ -1611,6 +1623,13 @@ func (a *Analyzer) analyzeVarDecl(node *ast.TreeNode) Type {
 
 	declType := a.resolveTypeNode(typeNode)
 	valueType := a.Analyze(valueNode)
+	if _, srcIsResult := valueType.(*ResultType); srcIsResult {
+		if _, dstIsResult := declType.(*ResultType); !dstIsResult && !isUnknownType(declType) {
+			a.errorAt(nameNode, "[C-TYPE] cannot assign result to '%s'; use 'unwrap()' or 'when' to extract the value", declType.String())
+			a.currentScope.Define(varName, declType, true)
+			return declType
+		}
+	}
 	if !CanAssign(declType, valueType) && !isUnknownType(valueType) {
 		a.errorAt(nameNode, "cannot assign value of type '%s' to '%s'", valueType.String(), declType.String())
 	}

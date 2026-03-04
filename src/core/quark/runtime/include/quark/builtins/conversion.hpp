@@ -129,10 +129,25 @@ inline QValue q_int(QValue v) {
             return qv_int(static_cast<long long>(v.data.float_val));
         case QValue::VAL_BOOL:
             return qv_int(v.data.bool_val ? 1 : 0);
-        case QValue::VAL_STRING:
-            return qv_int(v.data.string_val ? atoll(v.data.string_val) : 0);
-        default:
-            return qv_int(0);
+        case QValue::VAL_STRING: {
+            if (!v.data.string_val || v.data.string_val[0] == '\0') {
+                std::fprintf(stderr, "runtime error: to_int() cannot convert empty string\n");
+                std::exit(1);
+            }
+            char* end = nullptr;
+            long long result = strtoll(v.data.string_val, &end, 10);
+            if (end == v.data.string_val || *end != '\0') {
+                std::fprintf(stderr, "runtime error: to_int() cannot parse '%s' as integer\n", v.data.string_val);
+                std::exit(1);
+            }
+            return qv_int(result);
+        }
+        default: {
+            static const char* names[] = {"int","float","str","bool","null","list","vector","dict","func","result"};
+            const char* tname = (v.type >= 0 && v.type <= 9) ? names[v.type] : "unknown";
+            std::fprintf(stderr, "runtime error: to_int() cannot convert %s to int\n", tname);
+            std::exit(1);
+        }
     }
 }
 
@@ -145,10 +160,25 @@ inline QValue q_float(QValue v) {
             return v;
         case QValue::VAL_BOOL:
             return qv_float(v.data.bool_val ? 1.0 : 0.0);
-        case QValue::VAL_STRING:
-            return qv_float(v.data.string_val ? atof(v.data.string_val) : 0.0);
-        default:
-            return qv_float(0.0);
+        case QValue::VAL_STRING: {
+            if (!v.data.string_val || v.data.string_val[0] == '\0') {
+                std::fprintf(stderr, "runtime error: to_float() cannot convert empty string\n");
+                std::exit(1);
+            }
+            char* end = nullptr;
+            double result = strtod(v.data.string_val, &end);
+            if (end == v.data.string_val || *end != '\0') {
+                std::fprintf(stderr, "runtime error: to_float() cannot parse '%s' as float\n", v.data.string_val);
+                std::exit(1);
+            }
+            return qv_float(result);
+        }
+        default: {
+            static const char* names[] = {"int","float","str","bool","null","list","vector","dict","func","result"};
+            const char* tname = (v.type >= 0 && v.type <= 9) ? names[v.type] : "unknown";
+            std::fprintf(stderr, "runtime error: to_float() cannot convert %s to float\n", tname);
+            std::exit(1);
+        }
     }
 }
 

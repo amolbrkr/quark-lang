@@ -985,10 +985,13 @@ cd runtime && pwsh build_runtime.ps1
 ### Known Limitations
 
 - **Unary operator whitespace**: Unary operators must have no whitespace. `f -5` (function call with negative argument) is valid, but `a -b` (space before, no space after) is a parse error. Use `a - b` for subtraction.
-- **Garbage collection**: Boehm GC is enabled by default. GC_init() is called at program start. Requires Boehm GC installed on the system.
+- **Garbage collection**: Boehm GC is enabled by default. `GC_init()` is called at program start. Auto-bootstrapped from `deps/bdwgc`.
 - **No dot-call syntax**: Dot is data-access only (dict keys). `entity.method()` is a compile error. Use `callable(entity, ...)` or pipes instead.
 - **Dict access**: Dicts only support dot access (`d.key`), not bracket indexing (`d['key']`). Dict keys are always identifiers (no string literal keys). For dynamic keys use `dget(d, key)` and `dset(d, key, value)`.
 - **Dict iteration**: No `for key in dict` support yet.
+- **Lambda bodies**: `var = fn() -> expr` is expression-only — cannot have multi-line indented blocks like named functions.
+- **Trailing newline**: Source files must end with a newline or the parser may produce a vague error.
+- **Bool-only conditions**: `if`, `while`, ternary, `and`, `or`, `!` all require `bool` — no truthy coercion. Use comparisons or `to_bool()`.
 
 ## Feature Matrix (Grammar vs Implementation)
 
@@ -1001,464 +1004,83 @@ Key: Yes = implemented, Partial = present but incomplete, No = missing.
 | Literals (int/float/bool/null) | Yes | Yes | Yes | Yes | Yes | Basic literals are fully supported. |
 | Strings (no interpolation) | Yes | Yes | Yes | Yes | Yes | Interpolation is not implemented. |
 | Function definitions | Yes | Yes | Yes | Yes | Yes | Named functions generate `quark_<name>`. |
-| Lambda expressions | Yes | Yes | Yes | Yes | Yes | No closures/captures. |
-| Function calls / application | Yes | Yes | Yes | Yes | Yes | Analyzer validates arg counts for builtins and user functions. |
-| If / elseif / else | Yes | Yes | Yes | Yes | Yes | Emits temp result in codegen. |
-| Ternary `a if cond else b` | Yes | Yes | Yes | Yes | Yes | Expression form only. |
-| When / pattern matching | Yes | Yes | Yes | Yes | Yes | Only equality and `_` wildcard. |
-| For `for x in expr` | Yes | Yes | Yes | Yes | Yes | Loop variable typed from iterable; codegen uses list iteration. |
-| While loops | Yes | Yes | Yes | Yes | Yes | Truthy check at runtime. |
-| Pipe operator `|` | Yes | Yes | Yes | Yes | Yes | Builtin expansion in codegen. |
-| Assignment `=` | Yes | Yes | Yes | Yes | N/A | Type tracking and assignment validation. |
-| Arithmetic ops `+ - * / % **` | Yes | Yes | Yes | Yes | Yes | Enforces numeric/string operand checks. |
-| Comparison ops `< <= > >= == !=` | Yes | Yes | Yes | Yes | Yes | Enforces comparable operand checks. |
-| Logical ops `and` / `or` | Yes | Yes | Yes | Yes | Yes | Keyword `not` not implemented. |
-| Unary ops `!` / `-` / `~` | Yes | Yes | Yes | Yes | Yes | `~` maps to logical not. |
+| Lambda expressions | Yes | Yes | Yes | Yes | Yes | Closures with shared mutable captures via `QClosure`/`QCell`. |
+| Function calls / application | Yes | Yes | Yes | Yes | Yes | Analyzer validates arg counts and types. Up to 12 dynamic call args. |
+| If / elseif / else | Yes | Yes | Yes | Yes | Yes | Bool-only conditions enforced at compile time and runtime. |
+| Ternary `a if cond else b` | Yes | Yes | Yes | Yes | Yes | Bool condition enforced. Incompatible branch types produce a warning. |
+| When / pattern matching | Yes | Yes | Yes | Yes | Yes | Equality, `_` wildcard, `or` patterns, `ok`/`err` result patterns. |
+| For `for x in expr` | Yes | Yes | Yes | Yes | Yes | Iterates lists, vectors, strings. Loop var typed from iterable. |
+| While loops | Yes | Yes | Yes | Yes | Yes | Bool-only condition enforced. |
+| Pipe operator `|` | Yes | Yes | Yes | Yes | Yes | Builtin expansion in codegen. Arity/type checked. |
+| Assignment `=` | Yes | Yes | Yes | Yes | N/A | Type tracking, result-to-scalar rejection, assignment validation. |
+| Arithmetic ops `+ - * / % **` | Yes | Yes | Yes | Yes | Yes | Enforces numeric/string operand checks. Vector arithmetic supported. |
+| Comparison ops `< <= > >= == !=` | Yes | Yes | Yes | Yes | Yes | Enforces comparable operand checks. Vector comparisons return bool vectors. |
+| Logical ops `and` / `or` | Yes | Yes | Yes | Yes | Yes | Bool-only operands enforced (no truthy coercion). |
+| Unary ops `!` / `-` | Yes | Yes | Yes | Yes | Yes | `!` requires bool. `-` requires numeric. |
 | Member access `.` | Yes | Yes | Yes | Yes | Yes | Dict key read/write only. Dot-call (`entity.method()`) is a compile error. |
 | List literals `list [a, b]` | Yes | Yes | Yes | Yes | Yes | Uses `std::vector<QValue>`. Requires `list` keyword prefix. |
-| Vector literals `vector [a, b]` | Yes | Yes | Yes | Yes | Yes | Homogeneous only: all `int` -> `vector[i64]`, all `float` -> `vector[f64]`, all `str` -> `vector[str]`. Mixed element types are rejected. |
+| Vector literals `vector [a, b]` | Yes | Yes | Yes | Yes | Yes | Homogeneous only: `int` -> `vector[i64]`, `float` -> `vector[f64]`, `str` -> `vector[str]`. Mixed rejected. |
 | Typed parameters `x: int` | Yes | Yes | Yes | Yes | N/A | Basic annotations on params and variable declarations. No generic types. |
-| Indexing `list[idx]` | Yes | Yes | Yes | Yes | Yes | `q_get` supports negative indices. |
+| Indexing `list[idx]` | Yes | Yes | Yes | Yes | Yes | Negative indices. Vector boolean mask filtering (`v[v > 5]`). |
 | Dict literals `dict {k: v}` | Yes | Yes | Yes | Yes | Yes | Requires `dict` keyword. Dot access only (`d.key`). |
 | Dict dot access/assignment | Yes | Yes | Yes | Yes | Yes | `d.key` reads, `d.key = val` writes. No bracket indexing. |
-| Modules `module` / `use` | Yes | Yes | Yes | Partial | N/A | Compile-time only, no namespacing. |
+| Modules `module` / `use` | Yes | Yes | Yes | Yes | N/A | Same-file and multi-file imports. Flat-pack AST splicing. Circular detection. |
+| break / continue | Yes | Yes | Blocked | No | N/A | Parser recognizes; analyzer rejects with `[C-FEATURE]`. |
 | Structs / impl blocks | No | No | No | No | No | Future. |
-| Result / ok / err | Yes | Yes | Yes | Yes | Yes | `ok`/`err` values and `when` pattern matching on results. `try`/`unwrap` not yet implemented. |
-| Tensor types | No | No | No | No | No | Grammar-only. |
-| Builtins (io/math/string/list) | Yes | Yes | Yes | Yes | Yes | Implemented in runtime and codegen. |
+| Result / ok / err | Yes | Yes | Yes | Yes | Yes | `ok`/`err` values, `when` pattern matching, `is_ok`/`is_err`/`unwrap` helpers. |
+| Tensor types | No | No | No | No | No | Future. |
+| Builtins (40+) | Yes | Yes | Yes | Yes | Yes | I/O, math, string, list, dict, vector, result helpers. |
 
 ## Stdlib Feature Matrix (Runtime + Compiler + Quark Modules)
 
 Key: Yes = implemented, Partial = present but incomplete, No = missing.
 
-| Area / API | C++ Runtime | Compiler Wired | Quark Module | Notes |
-| --- | --- | --- | --- | --- |
-| I/O: `print`, `println`, `input` | Yes | Yes | No | Builtins only. |
-| Conversions: `len`, `to_str`, `to_int`, `to_float`, `to_bool` | Yes | Yes | No | Builtins only. |
-| Math: `abs`, `min`, `max`, `sqrt`, `floor`, `ceil`, `round` | Yes | Yes | No | Builtins only. |
-| String: `upper`, `lower`, `trim`, `contains`, `startswith`, `endswith`, `replace`, `concat` | Yes | Yes | No | Builtins only. |
-| List: `push`, `pop`, `get`, `set`, `insert`, `remove`, `slice`, `reverse` | Yes | Yes | No | Builtins only. |
-| List extras: `size`, `empty`, `clear` | Yes | No | No | Implemented in runtime but not exposed as builtins. Not accessible via dot syntax. |
-| `concat` (overloaded) | Yes | Yes | No | Works for both strings and lists. |
-| Vector: `to_vector`, `to_list`, `astype`, `fillna` | Yes | Yes | No | `to_vector` requires homogeneous list elements (`int`, `float`, or `str`); mixed lists return error/null. `to_list` converts vector back to list. Vector arithmetic `+ - * /` is numeric-only. |
-| Dict: `dict {}`, dot access, `len`, `dget`, `dset` | Yes | Yes | No | Dot access for key read/write. Use `len(d)` for size. No bracket indexing. |
-| Time / clock | No | No | No | Not yet implemented. |
-| Random | No | No | No | Not yet implemented. |
-| OS / filesystem | No | No | No | Not yet implemented. |
-| Process / exec | No | No | No | Not yet implemented. |
-| Env vars | No | No | No | Not yet implemented. |
-| JSON / serialization | No | No | No | Not yet implemented. |
-| Quark stdlib modules | No | No | No | Module loader needed for external stdlib files. |
+| Area / API | C++ Runtime | Compiler Wired | Notes |
+| --- | --- | --- | --- |
+| I/O: `print`, `println`, `input` | Yes | Yes | `input` prompt must be str. |
+| Conversions: `len`, `to_str`, `to_int`, `to_float`, `to_bool`, `type` | Yes | Yes | `to_int`/`to_float` crash on unparseable strings (R-DOMAIN). `len` requires str/list/dict/vector. |
+| Result: `is_ok`, `is_err`, `unwrap` | Yes | Yes | `unwrap` panics on err values. Arg must be result type. |
+| Math: `abs`, `min`, `max`, `sum`, `sqrt`, `floor`, `ceil`, `round` | Yes | Yes | `min`/`max`/`sum` have vector overloads. `sqrt` crashes on negative (R-DOMAIN). |
+| String: `upper`, `lower`, `trim`, `contains`, `startswith`, `endswith`, `replace`, `concat`, `split` | Yes | Yes | All require str args. `concat` also works for list+list. |
+| List: `push`, `pop`, `get`, `set`, `insert`, `remove`, `slice`, `reverse`, `range` | Yes | Yes | `pop` crashes on empty list. `get` OOB returns null. All others crash on bad types/indices. |
+| Vector: `to_vector`, `to_list`, `astype`, `fillna` | Yes | Yes | `to_vector` requires homogeneous elements. Vector arithmetic `+ - * /` is numeric-only. |
+| Dict: `dict {}`, dot access, `len`, `dget`, `dset` | Yes | Yes | `dget` missing key returns null. No bracket indexing. |
+| Time / clock | No | No | Not yet implemented. |
+| Random | No | No | Not yet implemented. |
+| OS / filesystem | No | No | Not yet implemented. |
+| JSON / serialization | No | No | Not yet implemented. |
 
-## Recent Changes (2026-02-07)
+## Architecture Decisions & Design History
 
-### Refactored: Separate Runtime Headers Instead of Embedding
+This section summarizes major decisions that shaped the current compiler. For detailed changelogs, see git history.
 
-**Problem**: The entire 1033-line runtime.hpp was embedded into every generated C++ file, resulting in:
-- Generated files over 1000 lines for even simple programs
-- Bloated, unreadable output
-- Slower compilation (runtime re-parsed every time)
-- Difficult debugging
+### Naming Conventions
 
-**Solution**: Refactored code generator to use external header includes instead of embedding.
+| Prefix | Usage | Examples |
+|--------|-------|----------|
+| `q_` | Runtime builtins, operators, all runtime helpers | `q_add()`, `q_print()`, `q_malloc()` |
+| `quark_` | ALL user-defined names (functions AND variables) in generated C++ | `quark_main()`, `quark_x`, `quark__lambda1()` |
+| `qv_` | Value constructors | `qv_int()`, `qv_string()`, `qv_list()` |
+| `QValue`, `QList`, `QClosure` | Type names (Pascal case) | `QValue`, `QList`, `QClosure` |
 
-**Changes Made**:
+All user identifiers get the `quark_` prefix in codegen, eliminating C++ keyword collisions without maintaining a reserved word list.
 
-1. **codegen.go**: Added `embedRuntime` flag (default: false)
-   - When false: generates `#include "quark/quark.hpp"`
-   - When true: embeds full runtime (fallback for portability)
+### Runtime Headers (Not Embedded)
 
-2. **main.go**: Updated compiler commands to pass runtime include path
-   - Added `getRuntimeIncludePath()` function
-   - Passes `-I{runtime_path}` to clang++/g++
+Generated C++ uses `#include "quark/quark.hpp"` and the compiler passes `-I{runtime_path}` to clang++. A concatenated `codegen/runtime.hpp` exists as a fallback for embedded mode but must be kept in sync with the modular headers.
 
-3. **quark.hpp**: Fixed missing includes
-   - Added `<algorithm>` and `<vector>` for std::reverse and std::vector
+### Closures
 
-**Results**:
+All function values are `QClosure*` (even non-capturing ones). Generated functions take `QClosure* _cl` as a hidden first parameter. Captures use `QCell` for shared mutable state. Direct calls pass `nullptr` as closure; dynamic calls through `q_call*` dereference the closure.
 
-Before refactoring (embedded):
-```cpp
-// runtime.hpp - Quark Runtime Library
-// [1033 lines of runtime code...]
+### Unified Invocation (No Dot-Call)
 
-QValue q_double(QValue x) { return q_mul(x, qv_int(2)); }
-int main() { q_println(q_double(qv_int(5))); return 0; }
-```
-**Total**: 1050+ lines
+Quark uses a single call form: `callable(entity, ...)`. Dot syntax (`entity.method()`) is a compile error — dot is reserved for dict key access only. Pipes provide chaining: `entity | callable()`. When structs/impl are added, dot-call will be reintroduced only for declared methods.
 
-After refactoring (separate headers):
-```cpp
-#include "quark/quark.hpp"
+### Bool-Only Conditions
 
-QValue q_double(QValue x) { return q_mul(x, qv_int(2)); }
-int main() { q_println(q_double(qv_int(5))); return 0; }
-```
-**Total**: ~13 lines for simple programs, ~48 lines for complex programs
+`if`, `while`, ternary, `and`, `or`, and `!` all require `bool` operands — no JavaScript-style truthy coercion. The analyzer enforces this at compile time when types are known; the runtime enforces it via `q_condition_bool()` and `q_require_bool()` for dynamic values.
 
-**Benefits**:
-- ✅ 95%+ reduction in generated code size
-- ✅ Clean, readable generated code
-- ✅ Faster compilation (headers can be precompiled)
-- ✅ Easier debugging
-- ✅ Still supports embedded mode for single-file compilation
+### Error Policy
 
-### Fixed: User Function Name Collisions with Runtime Builtins
-
-**Problem**: User-defined functions used the same `q_` prefix as runtime builtins, causing name collisions. For example, a user function named `add` would generate `q_add()`, conflicting with the runtime's `q_add()` (the `+` operator).
-
-**Why `q_` prefix exists**:
-1. Avoid C++ keyword collisions (`class`, `new`, `delete`, etc.)
-2. Namespace all Quark runtime functions consistently
-3. Prevent conflicts with C++ standard library
-
-**Solution**: Changed user-defined functions to use `quark_` prefix instead of `q_`, creating clear separation between user code and runtime builtins.
-
-**Changes Made**:
-
-Updated `codegen.go` to use `quark_` prefix for all user-defined functions:
-- Function declarations: `QValue quark_add();`
-- Function definitions: `QValue quark_add(QValue a, QValue b) { ... }`
-- Function calls: `quark_add(x, y)`
-- Lambda functions: `quark__lambda1()`
-
-**Results**:
-
-Before (name collision):
-```cpp
-// User function 'add'
-QValue q_add(QValue a, QValue b) { return q_add(a, b); }  // ERROR: redefinition!
-
-// Runtime builtin for '+'
-inline QValue q_add(QValue a, QValue b) { ... }  // CONFLICT!
-```
-
-After (clear separation):
-```cpp
-// User function 'add' → quark_add
-QValue quark_add(QValue a, QValue b) {
-    return q_add(a, b);  // Calls runtime builtin for '+'
-}
-
-// Runtime builtin for '+' → q_add
-inline QValue q_add(QValue a, QValue b) { ... }  // No conflict!
-```
-
-**Example**:
-```quark
-add = fn a, b -> a + b
-result = add 3, 4      // Calls quark_add()
-x = 10 + 20            // Calls q_add() operator
-```
-
-Generated C++:
-```cpp
-QValue quark_add(QValue a, QValue b) { return q_add(a, b); }
-// quark_add = user function, q_add = runtime operator
-```
-
-**Benefits**:
-- ✅ Users can now use any function name, including `add`, `mul`, `sub`, etc.
-- ✅ Clear distinction between user code (`quark_*`) and runtime (`q_*`)
-- ✅ No more reserved function names
-- ✅ Generated code is more readable and self-documenting
-
-## Recent Bug Fixes (2026-02-07)
-
-### Fixed: OOM Errors Due to Infinite Parser Loops
-
-**Problem**: After grammar overhaul to use `->` arrow syntax, several test files caused infinite loops that consumed all system memory, leading to OOM crashes.
-
-**Root Cause**: Multiple parsing loops in `parser.go` failed to advance the token position when parsing returned `nil`, causing the parser to loop forever on the same token.
-
-**Fixes Applied**:
-
-1. **parser.go:70-81 (Parse function)**: Added token advancement when `parseStatement()` returns `nil`
-2. **parser.go:122-134 (parseBlock indented)**: Added token advancement when `parseStatement()` returns `nil`
-3. **parser.go:146-153 (parseBlock inline)**: Added token advancement when `parseStatement()` returns `nil`
-4. **parser.go:332-344 (parseWhenStatement)**: Added token advancement when `parsePattern()` returns `nil`
-
-```go
-// Example fix pattern:
-stmt := p.parseStatement()
-if stmt != nil {
-    node.AddChild(stmt)
-} else {
-    // Parsing failed - advance token to avoid infinite loop
-    p.nextToken()
-    continue
-}
-```
-
-**Result**: Parser now gracefully exits with error messages instead of hanging and consuming all memory.
-
-### Fixed: Lexer Not Recognizing Arrow for Indentation
-
-**Problem**: After grammar change from `:` to `->` for function bodies, lexer produced "unexpected indent" errors for indented blocks after arrow.
-
-**Root Cause**: Lexer only tracked `COLON` tokens as triggering indentation, not `ARROW` tokens.
-
-**Fix**: Updated `lexer.go:111` to include both:
-```go
-case token.COLON, token.ARROW:
-    indent = MAY_INDENT
-```
-
-**Result**: Indented blocks after `->` are now properly recognized.
-
-### Fixed: Lambda Parameters Parsed as Comma Operators
-
-**Problem**: Lambda definitions like `fn a, b -> a + b` generated C++ code with missing parameters: `QValue q_add(QValue ,)`.
-
-**Root Cause**: The `parseArguments()` function called `parseExpression(ast.PrecLowest)`, which has lower precedence than comma. This caused `a, b` to be parsed as a single comma operator expression instead of two separate parameters.
-
-**AST Before Fix**:
-```
-Arguments
-  Operator[,]        # Wrong: comma treated as operator
-    Identifier[a]
-    Identifier[b]
-```
-
-**AST After Fix**:
-```
-Arguments
-  Identifier[a]      # Correct: separate parameters
-  Identifier[b]
-```
-
-**Fix**: Changed `parser.go:250` to parse at higher precedence:
-```go
-// Parse at PrecTernary to stop before comma (which has lower precedence)
-// This ensures we get individual parameters, not comma expressions
-expr := p.parseExpression(ast.PrecTernary)
-```
-
-**Result**: Lambda parameters are now correctly extracted and generate proper C++ function signatures.
-
-### Testing
-
-All core test files now work correctly:
-- ✅ test_for.qrk
-- ✅ test_arrow.qrk
-- ✅ test_when_arrow.qrk
-- ✅ test_clean.qrk
-- ✅ test_lambda_working.qrk (lambdas with non-conflicting names)
-
-**Known Issue**: test_functions.qrk still has name collisions with builtin functions (`add`, `double`). Use different names to avoid conflicts.
-
-## Recent Changes (2026-02-09)
-
-### Compiler Robustness: Union Types and MergeTypes
-
-**Problem**: Type information was collapsing to `any` for branches, lists, and other multi-path constructs, preventing the analyzer from detecting real type errors.
-
-**Solution**: Added `UnionType` and `MergeTypes()` to `types/types.go` (lines 107-306) so branches, lists, and other constructs retain precise type info instead of collapsing to `any`.
-
-**New type utilities**:
-- `UnionType` struct — represents a value that can be one of several concrete types
-- `MergeTypes(...Type)` — combines multiple type possibilities into the most precise representation
-- `IsComparable()`, `CanAssign()` — union-aware type checking helpers
-- `isIntLike()`, `isStringLike()`, `isBoolLike()` — union-aware type predicates
-
-### Reworked Semantic Analyzer
-
-**Changes to `types/analyzer.go`**:
-
-1. **Builtin signatures with arity** (lines 9-96): New `builtinSignature` struct stores `MinArgs`/`MaxArgs` alongside the `FunctionType`. Builtin definitions are now a single table kept in sync with `codegen/builtins.go`.
-
-2. **Location-aware diagnostics** (line 106-112): New `errorAt(node, format, args...)` method attaches line/column info to error messages.
-
-3. **Predeclared functions** (lines 122-158): `predeclareFunctions()` scans blocks and modules for function definitions before analyzing bodies, enabling recursion and forward references.
-
-4. **Argument count validation** (lines 281-328): `analyzeFunctionCall()` checks arg counts for both builtins (min/max arity) and user functions. Non-callable expressions now produce clear error messages.
-
-5. **Expression analysis** (lines 467-605): Operators enforce operand compatibility:
-   - Arithmetic: requires numeric (or string for `+`)
-   - Modulo: requires integer operands
-   - Comparison: requires comparable operands
-   - Logical: requires boolean operands
-   - Warns on undefined identifiers
-
-6. **Branch merging** (lines 330-373, 620-631): If/elseif/else and ternary branches use `MergeTypes` for precise result types.
-
-7. **Scoped blocks and loops** (lines 375-426): For/while loops push fresh scopes; loop variables are typed from the iterable's element type.
-
-### Codegen Block-Level Scoping
-
-**Changes to `codegen/codegen.go`**:
-
-- `pushBlockScope()` (line 77-85): Creates a child scope that inherits parent declarations. Variables declared inside blocks don't leak to outer scopes, preventing C++ redeclaration errors.
-- `generateFor()` uses `pushBlockScope`/`popScope` to isolate loop variables.
-- `generateBlock()` (line 235-249) pushes its own block scope.
-
-### Runtime Callable Guard
-
-**Changes to `runtime/include/quark/types/function.hpp`**:
-
-- New `q_require_callable(QValue)` helper (line 9-15): All `q_call*` functions now gate on this check, producing a clear `"runtime error: attempted to call a non-function value"` instead of silently returning null or crashing.
-
-### Fixed: For Loop Body Last Statement Not Emitted
-
-**Problem**: `generateBlock()` returns the last expression without emitting it (designed for function return values). When called from `generateFor()`, the returned value was discarded, causing the last (or only) statement in a for loop body to be silently dropped.
-
-**Example**: `for i in range(10): print(i)` would generate an empty loop body.
-
-**Fix**: Changed `generateFor()` to iterate block children directly (like `generateWhile()`) instead of delegating to `generateBlock()`, ensuring all statements are emitted.
-
-### Known Issue: test_while.qrk (RESOLVED)
-
-`test_while.qrk` previously used `x` without initializing it. The test file has been fixed to initialize `x = 5` before the loop.
-
-## Recent Changes (2026-02-09, Batch 2)
-
-### GC Enabled by Default
-
-- Boehm GC initialization (`GC_init()`) is now always emitted in the generated C++ `main()` function
-- Removed `--gc` / `--no-gc` CLI flags; GC is always on
-- Updated usage text in `main.go`
-
-### Implemented ok / err Result Values
-
-Added full support for `ok` and `err` result values with pattern matching:
-
-- **Tokens**: Added `OK` and `ERR` keywords in `token/token.go`
-- **AST**: Added `OkNode` and `ErrNode` node types in `ast/ast.go`
-- **Parser**: `ok expr` and `err expr` parsed as prefix expressions; `when` patterns now match `ok ident ->` and `err ident ->` arms in `parser/parser.go`
-- **Analyzer**: Result scoping — `ok`/`err` arm identifiers are scoped correctly in `types/analyzer.go`
-- **Codegen**: `ok expr` generates `qv_ok(expr)`, `err expr` generates `qv_err(expr_as_string)`; `when` on results generates `if (cond.type == QValue::VAL_OK)` / `else` branches in `codegen/codegen.go`
-- **Runtime**: Added `VAL_OK` and `VAL_ERR` to `QValue::ValueType`, `qv_ok()` and `qv_err()` constructors in `value.hpp` and `constructors.hpp`
-
-Example:
-```quark
-fn load(flag) ->
-    if flag:
-        ok 'data loaded'
-    else:
-        err 'failed'
-
-when load(true):
-    ok value -> println(value)
-    err message -> println(message)
-```
-
-### Implemented Typed Parameters
-
-- **Function parameters**: `fn add(x: int, y: int) -> x + y`
-- **Variable declarations**: `name: str = 'hello'`, `nums: list = list [1, 2, 3]`
-- Basic type annotations only (`int`, `float`, `str`, `bool`, `list`, `dict`). Generic type expressions (`list[int]`) have been removed.
-- Files changed: `parser/parser.go`, `ast/ast.go`, `types/analyzer.go`, `codegen/codegen.go`
-
-### Standardized String Type to `str`
-
-- The type name is now `str` everywhere (removed `string` alias in the analyzer)
-- Updated grammar and examples in `grammar.md`
-
-### List Literal Disambiguation
-
-- **Old syntax**: `[1, 2, 3]` (ambiguous with indexing)
-- **New syntax**: `list [1, 2, 3]` (requires `list` keyword prefix)
-- Added `LIST` token to `token/token.go`
-- Updated parser in `expr.go` to require `list` keyword before bracket literals
-- Updated all test files: `test_lists.qrk`, `test_list_extras.qrk`, `test_member.qrk`, `test_method_call.qrk`, `test_typed_params.qrk`
-- Updated `grammar.md`
-
-### Test Results (All Passing)
-
-- test_hello.qrk
-- test_math.qrk
-- test_string.qrk
-- test_module.qrk
-- test_arrow.qrk
-- test_when_arrow.qrk
-- test_clean.qrk
-- test_features.qrk
-- test_for.qrk
-- test_lambda_debug.qrk
-- test_lambda_working.qrk
-- test_functions.qrk
-- test_add_collision.qrk
-- test_full.qrk
-- test_while.qrk
-- test_result_when.qrk
-- test_lists.qrk
-- test_list_extras.qrk
-- test_member.qrk
-- test_method_call.qrk
-- test_typed_params.qrk
-
-## Recent Changes (2026-02-09, Grammar Trimming)
-
-### Removed Generic Type Expressions
-
-Generic type annotations like `list[int]`, `dict[str, int]` have been removed. Only basic type annotations are supported: `x: int`, `name: str`, `nums: list`, `data: dict`.
-
-**Changes**:
-- `parser/parser.go` `parseTypeExpr()`: Removed bracket parsing for generic params
-- `types/analyzer.go` `resolveTypeNode()`: `list` always resolves to `ListType{ElementType: TypeAny}`, `dict` to `DictType{KeyType: TypeAny, ValueType: TypeAny}`
-- `types/types.go` `CanAssign()`: Added list/dict covariance so `list[any]` accepts `list[str]` etc.
-- Removed `checkListLiteralTypes()` from analyzer
-
-### Removed Form 2 Lambda (id = fn(...) special case)
-
-The parser previously special-cased `id = fn(params) -> body` as a `FunctionNode` (Form 2). This was redundant with assigning a lambda expression to a variable. Now `double = fn(x) -> x * 2` parses as a normal assignment of a lambda expression.
-
-**Changes**:
-- `parser/parser.go`: Removed Form 2 lookahead and special-case branch in `parseFunction()`
-
-### Unified `quark_` Prefix for All User Names
-
-After removing Form 2, variables like `double` generated invalid C++ (`QValue double = ...`). Fixed by prefixing ALL user variable names with `quark_` (same prefix already used for user-defined functions). This eliminates the need for a C++ reserved keyword map — all user identifiers are uniformly namespaced in generated code (e.g., `x` → `quark_x`, `double` → `quark_double`).
-
-### Fixed Lambda Forward Declarations
-
-Lambda forward declarations were emitted with no parameters (`QValue quark__lambda1();`), causing C++ overload ambiguity. Changed `funcDecl` to track parameter counts and emit correct forward declarations.
-
-### Grammar Cleanup
-
-Removed from `grammar.md`:
-- Python-like slicing syntax (never implemented)
-- String interpolation (never implemented)
-- `try`/`unwrap` statements (never implemented)
-- Generic type expressions
-- Form 2 lambda special case
-- Struct/impl marked as [FUTURE]
-
-## Recent Changes (2026-02-21)
-
-### Unified Invocation Semantics: Removed Dot-Call Syntax
-
-**Problem**: Quark supported both `callable(entity, ...)` and `entity.callable(...)` invocation styles. This overlap created user confusion and compiler/runtime complexity because Quark has no class/method model — dot-call on lists/strings was ad-hoc dispatch.
-
-**Decision**: Adopt a single canonical invocation model:
-- **Canonical**: `callable(entity, ...)`
-- **Pipe equivalent**: `entity | callable(...)` => `callable(entity, ...)`
-- **Dot is data-only**: `dict.member` for dict key read/write; `entity.method(...)` is a compile error
-
-**Changes Made**:
-
-1. **Analyzer** (`types/analyzer.go`):
-   - `entity.method(args)` now produces compile error: `"dot-call syntax is not supported; use method(entity, ...) instead"`
-   - `entity.member` on non-dict types (list, string, etc.) now produces: `"dot access is only supported on dict"`
-   - Dict dot access (`d.key`) and assignment (`d.key = val`) still work
-
-2. **Codegen** (`codegen/codegen.go`):
-   - Removed `q_member_call1`/`q_member_call2` emission paths
-   - Dict member access (`q_member_get`) and assignment (`q_member_set`) preserved
-
-3. **Runtime** (`runtime/include/quark/ops/member.hpp`):
-   - Removed `q_member_call1()` and `q_member_call2()` functions
-   - Simplified `q_member_get()` to dict-only (removed list/string property dispatch)
-   - `q_member_set()` unchanged (was already dict-only)
-
-4. **Test files**: Updated `test.qrk` — `a.push(6)` → `push(a, 6)`, `a.size` → `len(a)`
-
-**Migration guide** (old → new):
-- `mylist.push(x)` → `push(mylist, x)`
-- `mylist.size` → `len(mylist)`
-- `mystr.upper()` → `upper(mystr)`
-- `mystr.contains(sub)` → `contains(mystr, sub)`
-- `mylist.slice(0, 3)` → `slice(mylist, 0, 3)`
-- `d.key` → `d.key` (unchanged, dict access still works)
-
-**Future**: When structs/impl are implemented, dot-call will be reintroduced only for declared user methods in impl blocks.
+All runtime type/domain violations crash with a clear stderr message and `exit(1)`. Silent `return qv_null()` fallbacks have been eliminated from all operator and builtin code paths. Only `get()` (OOB) and `dget()` (missing key) return null by documented design. The analyzer catches as many errors as possible at compile time using the "knowability" rule: if the callee, arity, parameter type, and argument type are all concrete, the check is enforced statically.

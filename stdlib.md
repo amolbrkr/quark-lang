@@ -34,8 +34,8 @@ println(name)
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `to_str` | `any -> str` | Convert to string |
-| `to_int` | `any -> int` | Convert to integer |
-| `to_float` | `any -> float` | Convert to float |
+| `to_int` | `int\|float\|str\|bool -> int` | Convert to integer. **Runtime error on invalid input.** |
+| `to_float` | `int\|float\|str\|bool -> float` | Convert to float. **Runtime error on invalid input.** |
 | `to_bool` | `any -> bool` | Convert to boolean (truthiness) |
 | `type` | `any -> str` | Return runtime type name |
 | `len` | `str\|list\|dict\|vector -> int` | Get length of string, list, dict, or vector |
@@ -51,6 +51,13 @@ len('hello') | println()      // 5
 
 dict { a: 1, b: 2 } | len() | println()  // 2
 ```
+
+**Error behavior:**
+- `to_int('abc')` — runtime error: cannot parse as integer
+- `to_int('')` — runtime error: cannot convert empty string
+- `to_float('xyz')` — runtime error: cannot parse as float
+- `to_int(some_list)` — runtime error: cannot convert list to int
+- `to_int(3.7)` returns `3` (truncation), `to_float(42)` returns `42.0` (widening) — these are valid conversions
 
 ### Range
 
@@ -73,7 +80,7 @@ List operations backed by `std::vector<QValue>` for efficient data processing.
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `push` | `list, any -> list` | Add item to end of list |
-| `pop` | `list -> any` | Remove and return last item |
+| `pop` | `list -> any` | Remove and return last item. **Runtime error on empty list.** |
 | `get` | `list, int -> any` | Get item at index (supports negative) |
 | `set` | `list, int, any -> any` | Set item at index |
 | `insert` | `list, int, any -> list` | Insert item at index |
@@ -334,6 +341,46 @@ split('a,b,c', ',') | println()                       // ["a", "b", "c"]
   - `contains('', 'x')` returns `false`
   - `replace('hello', '', 'x')` returns `'hello'` (no-op for empty pattern)
 
+## Result Functions
+
+Result values (`ok`/`err`) are Quark's explicit error handling mechanism. These helpers inspect and extract values from results.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `is_ok` | `result -> bool` | Returns `true` if the result is `ok` |
+| `is_err` | `result -> bool` | Returns `true` if the result is `err` |
+| `unwrap` | `result -> any` | Extract the `ok` value. **Runtime error if the result is `err`.** |
+
+### Examples
+
+```quark
+fn safe_div(a, b) ->
+    if b == 0:
+        err 'division by zero'
+    else:
+        ok a / b
+
+r = safe_div(10, 2)
+is_ok(r) | println()       // true
+is_err(r) | println()      // false
+unwrap(r) | println()      // 5
+
+// Pattern matching (preferred for handling both cases)
+when safe_div(10, 0):
+    ok value -> println(value)
+    err msg -> println(msg)      // 'division by zero'
+
+// Pipe-friendly
+safe_div(10, 2) | unwrap() | println()
+safe_div(10, 2) | is_ok() | println()
+```
+
+### Notes
+
+- `unwrap` on an `err` result crashes with the error message — use `when` pattern matching for safe handling
+- `is_ok`/`is_err` on a non-result value is a runtime error
+- Assigning a result directly to a typed variable (e.g. `x: int = safe_div(10, 2)`) is a compile-time error — use `unwrap()` or `when` to extract the value first
+
 ## Pipes
 
 All functions work seamlessly with Quark's pipe operator:
@@ -373,10 +420,20 @@ Container implementation choices:
 
 Builtins are validated in two phases:
 
-1. Compile-time analyzer checks argument counts and inferred types
-2. Runtime guards validate concrete value kinds; contract violations raise runtime errors (stderr + non-zero exit)
+1. **Compile-time**: The analyzer checks argument counts, type compatibility (when inferable), bool-only conditions, and result-to-scalar assignment
+2. **Runtime**: All type/domain violations crash with a clear error message and non-zero exit — no silent null returns
 
-Intentional `null` data-return APIs are explicitly documented and preserved:
+**Error contract summary:**
+
+| Category | Behavior | Examples |
+|----------|----------|---------|
+| Type mismatch | Runtime error (crash) | `to_int('abc')`, `sqrt('hello')`, `upper(42)` |
+| Domain error | Runtime error (crash) | `pop()` on empty list, `sqrt(-1)` |
+| Arity mismatch | Compile-time error | `push(list)` (missing arg), `len(a, b)` (extra arg) |
+| Bool-only | Compile-time error | `if 1:`, `while 'yes':`, `x and 3` |
+| Result misuse | Compile-time error | `x: int = some_result_fn()` |
+
+**Intentional `null` data-return APIs** (documented exceptions to the crash policy):
 
 - `get(list, idx)` when index is out of bounds
 - `dget(dict, key)` when key is missing
@@ -572,10 +629,8 @@ Behavior notes:
 
 #### 9) `result` and QoL error helpers
 
-Language-level `ok`/`err` remains central, plus helper utilities:
+Language-level `ok`/`err` with `is_ok`, `is_err`, and `unwrap` are already implemented. Future additions:
 
-- `is_ok(res) -> bool`
-- `is_err(res) -> bool`
 - `unwrap_or(res, default) -> any`
 - `unwrap_or_else(res, fn) -> any`
 - `map_ok(res, fn) -> result`

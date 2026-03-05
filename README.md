@@ -5,17 +5,18 @@
 ## What Works Today
 
 - Indentation-based blocks and a Pratt parser for expressions
-- Functions, lambdas, and closures (capture-by-value)
-- If/elseif/else, `when` pattern matching, `for`/`while` loops, and ternary expressions
+- Functions, lambdas, and closures with shared mutable captures
+- If/elseif/else, `when` pattern matching (with `ok`/`err` result patterns), `for`/`while` loops, ternary
 - Pipe operator for data-flow style calls
 - Unified invocation model: `callable(entity, ...)` for all builtins and user functions
+- Result values (`ok`/`err`) with pattern matching and helpers (`is_ok`, `is_err`, `unwrap`)
 - Lists backed by `std::vector<QValue>` with indexing
-- Typed 1D vectors (`f64`, `i64`, `bool`, `str`, `cat`) with invariant checks and null-mask scaffolding
-- Vector arithmetic and reductions (`+`, `-`, `*`, `/`, `sum`, `min`, `max`) for numeric paths
-- Vector helpers `astype`, `fillna`, `to_vector`, `cat_from_str`, and `cat_to_str`
+- Typed 1D vectors (`f64`, `i64`, `bool`, `str`) with arithmetic, reductions, and boolean mask filtering
 - Dicts backed by `std::unordered_map<std::string, QValue>` with dot access (data only, no method dispatch)
-- Builtins for I/O, math, strings, lists, and dict helpers
-- Modules and `use` as compile-time organization (single file)
+- 40+ builtins for I/O, math, strings, lists, dicts, and vectors
+- Multi-file module imports (`use './path'`) with circular import detection
+- Strict error enforcement: bool-only conditions, type-checked arguments, runtime errors crash with clear messages (no silent null returns)
+- Boehm GC for automatic memory management
 
 ## Quick Example
 
@@ -114,6 +115,13 @@ pi = 3.14159
 
 fn greet(name) ->
     println(concat('Hello, ', name))
+
+// Closures capture enclosing variables
+fn counter(start) ->
+    n = start
+    fn() ->
+        n = n + 1
+        n
 ```
 
 ### Control Flow
@@ -132,6 +140,24 @@ when value:
     _ -> 'other'
 
 result = 'yes' if condition else 'no'
+```
+
+### Result Values
+
+```quark
+fn safe_div(a, b) ->
+    if b == 0:
+        err 'division by zero'
+    else:
+        ok a / b
+
+when safe_div(10, 3):
+    ok value -> println(value)
+    err msg -> println(msg)
+
+// Helpers
+is_ok(safe_div(10, 2)) | println()   // true
+unwrap(safe_div(10, 2)) | println()  // 5
 ```
 
 ### Loops and Pipes
@@ -155,41 +181,29 @@ push(nums, 4)
 len(nums) | println()
 ```
 
-### Vectors (MVP)
+### Vectors
 
 ```quark
 v = vector [1, 2, 3, 4]
 w = v + 1
 u = v * w
 
-// Literal inference
-vi = vector [1, 2, 3]          // vector[i64]
-vs = vector ['a', 'b', 'c']    // vector[str]
+// Boolean mask filtering
+big = v[v > 2]
 
-iv = astype(v, 'i64')
-iv = iv + 2
-filled = fillna(iv, 0)
-
-v2 = to_vector(list [10, 20, 30])
-println(type(v2))
-
-labels = list ['red', 'blue', 'red']
-cats = cat_from_str(labels)
-decoded = cat_to_str(cats)
-
+// Reductions
 println(sum(v))
 println(min(v))
 println(max(v))
 ```
 
-Vector literal and `to_vector(...)` rules are homogeneous:
+Vector literals must be homogeneous:
 
 - `vector [1, 2, 3]` -> `vector[i64]`
 - `vector [1.0, 2.0]` -> `vector[f64]`
 - `vector ['a', 'b']` -> `vector[str]`
 - Mixed literals (for example `vector [1, '2', 3]`) are a type error
-- `to_vector(list [...])` follows the same homogeneous rule and rejects mixed element types
-- Vector arithmetic `+ - * /` is numeric-only (`vector[str]` arithmetic is rejected)
+- Vector arithmetic `+ - * /` is numeric-only
 
 ### Dicts
 
@@ -204,17 +218,32 @@ d = dset(d, 'c', 3)
 println(d.c)
 ```
 
+### Modules
+
+```quark
+// Same-file modules
+module math:
+    fn square(n) -> n * n
+
+use math
+square(5) | println()
+
+// Multi-file imports
+use './utils'
+```
+
 ## Standard Library (Builtins)
 
 | Category | Functions |
 | --- | --- |
 | **I/O** | `print`, `println`, `input` |
-| **Types** | `str`, `int`, `float`, `bool`, `type`, `len` |
+| **Types** | `to_str`, `to_int`, `to_float`, `to_bool`, `type`, `len` |
 | **Math** | `abs`, `min`, `max`, `sum`, `sqrt`, `floor`, `ceil`, `round` |
 | **String** | `upper`, `lower`, `trim`, `contains`, `startswith`, `endswith`, `replace`, `concat`, `split` |
 | **List** | `push`, `pop`, `get`, `set`, `insert`, `remove`, `slice`, `reverse`, `range` |
 | **Dict** | `dget`, `dset` |
-| **Vector** | `fillna`, `astype`, `to_vector`, `cat_from_str`, `cat_to_str` |
+| **Vector** | `fillna`, `astype`, `to_vector`, `to_list` |
+| **Result** | `is_ok`, `is_err`, `unwrap` |
 
 See [stdlib.md](stdlib.md) for details.
 
@@ -224,79 +253,56 @@ See [stdlib.md](stdlib.md) for details.
 Source (.qrk) -> Lexer -> Parser -> Analyzer -> C++ Codegen -> clang++/g++ -> Binary
 ```
 
-- **Frontend**: Go
-- **Backend**: C++17 codegen
-- **Runtime**: Header-only C++ runtime included via `#include "quark/quark.hpp"` in generated output
+- **Frontend**: Go (lexer, Pratt parser, semantic analyzer, C++ codegen)
+- **Backend**: C++17 with `-O3 -march=native`
+- **Runtime**: Header-only C++ library (`runtime/include/quark/`)
+- **Memory**: Boehm GC (auto-bootstrapped from `deps/bdwgc`)
 
-## Status and Gaps
+## Error Handling
 
-Implemented:
+Quark enforces strict error contracts at both compile time and runtime:
 
-- Lexer with indentation and a Pratt parser
-- Analyzer with basic type inference
-- Codegen for functions, control flow, pipes, lists, dicts, and builtins
-- Unified invocation model: `callable(entity, ...)` — no dot-call/method dispatch
-- Closures with capture-by-value semantics
-- Modules (`module`/`use`) as a single-file organization tool
-- Boehm GC integration (via `deps/bdwgc`)
-- Typed vector runtime foundation (`f64`, `i64`, `bool`, `str`, `cat`) with validation helpers
-- Numeric vector arithmetic/reductions with i64 paths and scalar broadcasting
-- Vector builtins `fillna`, `astype`, `cat_from_str`, and `cat_to_str`
-- Homogeneous vector literal inference (`i64`, `f64`, `str`) and aligned `to_vector(...)` type checks
-- Portable amd64 compile baseline `-march=x86-64-v3` (replacing `-march=native`)
-- Clang loop-vectorization diagnostics enabled during Quark compilation
-- `xsimd` dependency removed from runtime and build flow
+- **Compile time**: The analyzer checks argument counts, type compatibility (when inferable), bool-only conditions, result-to-scalar assignment, and reserved feature usage
+- **Runtime**: All type/domain violations crash with a clear error message and non-zero exit — no silent null returns
+- **Documented null**: Only `get()` (out-of-bounds) and `dget()` (missing key) return null by design
 
-Not yet implemented or incomplete:
+## Status
 
-- Slicing (`[start:end[:step]]`)
-- String interpolation
+Implemented and stable:
+
+- Full compiler pipeline (lexer, parser, analyzer, codegen)
+- Functions, closures, lambdas as first-class values
+- All control flow (if/elseif/else, when, for, while, ternary, pipes)
+- Result types with `ok`/`err`/`when` pattern matching and `is_ok`/`is_err`/`unwrap`
+- Lists, dicts, typed vectors with 40+ builtins
+- Multi-file module imports with circular detection
+- Boehm GC integration
+- Strict error enforcement (compile-time and runtime)
+
+Not yet implemented:
+
 - Structs and impl blocks
-- Result/try/unwrap-style helpers (beyond `ok`/`err` + `when` patterns)
-- Multi-file modules
-- Vector utilities from spec: `where`, `unique`, `value_counts`
-- Full null-propagation semantics across all vector kernels
-- `mean` vector reduction
+- Tensor type (N-dimensional arrays)
+- String interpolation
+- `break`/`continue` in loops
+- Stdlib module imports (non-relative `use 'name'`)
 
 ## Tests
 
 Quark has two test layers:
 
-- **Go tests** for the compiler frontend (lexer/parser/analyzer/codegen) plus an **end-to-end smoke** test that compiles and runs Quark programs.
+- **Go tests** for the compiler frontend plus an **end-to-end smoke** test that compiles and runs Quark programs.
 - **C++ Catch2 tests** for the runtime library.
 
-### Boehm GC for tests
-
-The end-to-end tests use the same auto-bootstrap behavior as `quark run/build`: if `deps/bdwgc/build` is missing, Quark attempts to build it automatically (requires `cmake`).
-
-### End-to-end smoke (Go)
-
-Runs the full pipeline (Quark → generated C++ → native exe) against the 4 smoke programs in `src/testfiles/`:
-
 ```bash
+# End-to-end smoke tests
 cd src/core/quark
 go test -run TestSmokePrograms_Run -v
-```
 
-### Go unit tests (compiler)
-
-Runs lexer/parser/analyzer/codegen unit tests (and also the end-to-end smoke test):
-
-```bash
-cd src/core/quark
+# All Go tests
 go test ./...
-```
 
-If you want to run only the unit tests (no end-to-end compile/run), run packages directly:
-
-```bash
-cd src/core/quark
-go test ./lexer ./parser ./types ./codegen
-```
-
-### Runtime unit tests (Catch2)
-
-```bash
+# Runtime unit tests (Catch2)
 cd src/core/quark/runtime
 cmake -S . -B build-tests
 cmake --build build-tests

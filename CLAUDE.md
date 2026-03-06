@@ -1025,7 +1025,7 @@ Key: Yes = implemented, Partial = present but incomplete, No = missing.
 | Dict literals `dict {k: v}` | Yes | Yes | Yes | Yes | Yes | Requires `dict` keyword. Dot access only (`d.key`). |
 | Dict dot access/assignment | Yes | Yes | Yes | Yes | Yes | `d.key` reads, `d.key = val` writes. No bracket indexing. |
 | Modules `module` / `use` | Yes | Yes | Yes | Yes | N/A | Same-file and multi-file imports. Flat-pack AST splicing. Circular detection. |
-| break / continue | Yes | Yes | Blocked | No | N/A | Parser recognizes; analyzer rejects with `[C-FEATURE]`. |
+| break / continue | Yes | Yes | Yes | Yes | N/A | Exits/skips innermost loop. Compile error outside loops. |
 | Structs / impl blocks | No | No | No | No | No | Future. |
 | Result / ok / err | Yes | Yes | Yes | Yes | Yes | `ok`/`err` values, `when` pattern matching, `is_ok`/`is_err`/`unwrap` helpers. |
 | Tensor types | No | No | No | No | No | Future. |

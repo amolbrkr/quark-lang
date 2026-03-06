@@ -61,6 +61,8 @@ inline QValue q_get(QValue list, QValue index) {
     int idx = static_cast<int>(index.data.int_val);
     int len = static_cast<int>(list.data.list_val->size());
     if (idx < 0) idx = len + idx;
+    // Policy: get() returns null on OOB (documented safe-read API).
+    // Write operations (set/insert/remove) crash on invalid indices.
     if (idx < 0 || idx >= len) {
         return qv_null();
     }

@@ -6,6 +6,8 @@ import (
 	"quark/token"
 )
 
+const maxParserErrors = 10
+
 type Parser struct {
 	tokens   []token.Token
 	pos      int
@@ -63,6 +65,21 @@ func (p *Parser) isAtEnd() bool {
 	return p.curToken.Type == token.EOF
 }
 
+// synchronize skips tokens until a statement boundary (NEWLINE, DEDENT, or EOF).
+// Called after a parse error to recover and continue parsing subsequent statements.
+func (p *Parser) synchronize() {
+	for !p.isAtEnd() {
+		if p.curToken.Type == token.NEWLINE {
+			p.nextToken()
+			return
+		}
+		if p.curToken.Type == token.DEDENT {
+			return // don't consume — the block parser needs it
+		}
+		p.nextToken()
+	}
+}
+
 // Parse is the main entry point
 func (p *Parser) Parse() *ast.TreeNode {
 	root := ast.NewNode(ast.CompilationUnitNode, nil)
@@ -76,8 +93,11 @@ func (p *Parser) Parse() *ast.TreeNode {
 		if stmt != nil {
 			root.AddChild(stmt)
 		} else {
-			// Parsing failed - advance token to avoid infinite loop
-			p.nextToken()
+			p.synchronize()
+			if len(p.errors) >= maxParserErrors {
+				p.addError("too many errors, stopping")
+				break
+			}
 		}
 	}
 
@@ -131,8 +151,10 @@ func (p *Parser) parseBlock() *ast.TreeNode {
 				if stmt != nil {
 					node.AddChild(stmt)
 				} else {
-					// Parsing failed - advance token to avoid infinite loop
-					p.nextToken()
+					p.synchronize()
+					if len(p.errors) >= maxParserErrors {
+						break
+					}
 					continue
 				}
 				if p.curToken.Type == token.NEWLINE {
@@ -151,8 +173,10 @@ func (p *Parser) parseBlock() *ast.TreeNode {
 			if stmt != nil {
 				node.AddChild(stmt)
 			} else {
-				// Parsing failed - advance token to avoid infinite loop
-				p.nextToken()
+				p.synchronize()
+				if len(p.errors) >= maxParserErrors {
+					break
+				}
 			}
 		}
 		if p.curToken.Type == token.NEWLINE {

@@ -3,6 +3,7 @@ package codegen
 import (
 	_ "embed"
 	"fmt"
+	"os"
 	"quark/ast"
 	"quark/token"
 	"strings"
@@ -427,8 +428,17 @@ func (g *Generator) generateExpr(node *ast.TreeNode) string {
 	case ast.UseNode:
 		// Use statements are handled at compile time (imports are resolved by analyzer)
 		return "qv_null()"
-	default:
+	case ast.BreakNode:
+		g.emitLine("break;")
 		return "qv_null()"
+	case ast.ContinueNode:
+		g.emitLine("continue;")
+		return "qv_null()"
+	default:
+		fmt.Fprintf(os.Stderr, "internal compiler error: unhandled AST node type '%s' at line %d\n",
+			node.NodeType.String(), node.Token.Line)
+		os.Exit(2)
+		return ""
 	}
 }
 
@@ -450,6 +460,10 @@ func (g *Generator) generateLiteral(node *ast.TreeNode) string {
 		escaped = strings.ReplaceAll(escaped, "\t", "\\t")
 		escaped = strings.ReplaceAll(escaped, "\r", "\\r")
 		escaped = strings.ReplaceAll(escaped, "\x00", "\\0")
+		escaped = strings.ReplaceAll(escaped, "\a", "\\a")
+		escaped = strings.ReplaceAll(escaped, "\b", "\\b")
+		escaped = strings.ReplaceAll(escaped, "\f", "\\f")
+		escaped = strings.ReplaceAll(escaped, "\v", "\\v")
 		return fmt.Sprintf("qv_string(\"%s\")", escaped)
 	case token.TRUE:
 		return "qv_bool(true)"

@@ -958,12 +958,13 @@ inline QValue q_vec_binary_impl(QValue a, QValue b, BinaryOp op) {
         const std::vector<double>* avp = q_vec_f64_const(a);
         const std::vector<double>* bvp = q_vec_f64_const(b);
         if (!avp || !bvp) {
-            return qv_null();
+            return qv_null(); // not f64 → fallback signal
         }
         const std::vector<double>& av = *avp;
         const std::vector<double>& bv = *bvp;
         if (av.size() != bv.size()) {
-            return qv_null();
+            std::fprintf(stderr, "runtime error: vector size mismatch in arithmetic: %zu vs %zu\n", av.size(), bv.size());
+            std::exit(1);
         }
         QValue out = qv_vector(static_cast<int>(av.size()));
         std::vector<double>& outv = std::get<std::vector<double>>(out.data.vector_val->storage);
@@ -979,7 +980,7 @@ inline QValue q_vec_binary_impl(QValue a, QValue b, BinaryOp op) {
     if (aVec && q_is_numeric_scalar(b)) {
         const std::vector<double>* avp = q_vec_f64_const(a);
         if (!avp) {
-            return qv_null();
+            return qv_null(); // not f64 → fallback signal
         }
         const std::vector<double>& av = *avp;
         double bs = q_to_double_scalar(b);
@@ -996,7 +997,7 @@ inline QValue q_vec_binary_impl(QValue a, QValue b, BinaryOp op) {
     if (bVec && q_is_numeric_scalar(a)) {
         const std::vector<double>* bvp = q_vec_f64_const(b);
         if (!bvp) {
-            return qv_null();
+            return qv_null(); // not f64 → fallback signal
         }
         const std::vector<double>& bv = *bvp;
         double as = q_to_double_scalar(a);
@@ -1010,7 +1011,9 @@ inline QValue q_vec_binary_impl(QValue a, QValue b, BinaryOp op) {
         return out;
     }
 
-    return qv_null();
+    std::fprintf(stderr, "runtime error: vector arithmetic requires numeric vectors and scalars\n");
+    std::exit(1);
+    return qv_null(); // unreachable
 }
 
 template <typename BinaryOp>
@@ -1021,8 +1024,12 @@ inline QValue q_vec_binary_i64_impl(QValue a, QValue b, BinaryOp op) {
     if (aVec && bVec) {
         const std::vector<int64_t>* avp = q_vec_i64_const(a);
         const std::vector<int64_t>* bvp = q_vec_i64_const(b);
-        if (!avp || !bvp || avp->size() != bvp->size()) {
-            return qv_null();
+        if (!avp || !bvp) {
+            return qv_null(); // not i64 → let f64 path try
+        }
+        if (avp->size() != bvp->size()) {
+            std::fprintf(stderr, "runtime error: vector size mismatch in arithmetic: %zu vs %zu\n", avp->size(), bvp->size());
+            std::exit(1);
         }
         QValue out = qv_vector_i64(static_cast<int>(avp->size()));
         std::vector<int64_t>& outv = std::get<std::vector<int64_t>>(out.data.vector_val->storage);
@@ -1076,8 +1083,12 @@ inline QValue q_vec_div_i64(QValue a, QValue b) {
     if (aVec && bVec) {
         const std::vector<int64_t>* avp = q_vec_i64_const(a);
         const std::vector<int64_t>* bvp = q_vec_i64_const(b);
-        if (!avp || !bvp || avp->size() != bvp->size()) {
-            return qv_null();
+        if (!avp || !bvp) {
+            return qv_null(); // not i64 → let f64 path try
+        }
+        if (avp->size() != bvp->size()) {
+            std::fprintf(stderr, "runtime error: vector size mismatch in arithmetic: %zu vs %zu\n", avp->size(), bvp->size());
+            std::exit(1);
         }
         QValue out = qv_vector(static_cast<int>(avp->size()));
         std::vector<double>& outv = std::get<std::vector<double>>(out.data.vector_val->storage);
@@ -1185,7 +1196,9 @@ inline QValue q_vec_sum(QValue vec) {
 
     const std::vector<double>* vp = q_vec_f64_const(vec);
     if (!vp) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: sum() requires numeric or bool vector\n");
+        std::exit(1);
+        return qv_null(); // unreachable
     }
     const std::vector<double>& v = *vp;
     double acc = 0.0;
@@ -1197,7 +1210,11 @@ inline QValue q_vec_sum(QValue vec) {
 
 inline QValue q_vec_min(QValue vec) {
     const std::vector<int64_t>* vi = q_vec_i64_const(vec);
-    if (vi && !vi->empty()) {
+    if (vi) {
+        if (vi->empty()) {
+            std::fprintf(stderr, "runtime error: min() on empty vector\n");
+            std::exit(1);
+        }
         int64_t cur = (*vi)[0];
         for (size_t i = 1; i < vi->size(); i++) {
             cur = std::min(cur, (*vi)[i]);
@@ -1206,8 +1223,13 @@ inline QValue q_vec_min(QValue vec) {
     }
 
     const std::vector<double>* vp = q_vec_f64_const(vec);
-    if (!vp || vp->empty()) {
-        return qv_null();
+    if (!vp) {
+        std::fprintf(stderr, "runtime error: min() requires numeric vector\n");
+        std::exit(1);
+    }
+    if (vp->empty()) {
+        std::fprintf(stderr, "runtime error: min() on empty vector\n");
+        std::exit(1);
     }
     const std::vector<double>& v = *vp;
     double cur = v[0];
@@ -1219,7 +1241,11 @@ inline QValue q_vec_min(QValue vec) {
 
 inline QValue q_vec_max(QValue vec) {
     const std::vector<int64_t>* vi = q_vec_i64_const(vec);
-    if (vi && !vi->empty()) {
+    if (vi) {
+        if (vi->empty()) {
+            std::fprintf(stderr, "runtime error: max() on empty vector\n");
+            std::exit(1);
+        }
         int64_t cur = (*vi)[0];
         for (size_t i = 1; i < vi->size(); i++) {
             cur = std::max(cur, (*vi)[i]);
@@ -1228,8 +1254,13 @@ inline QValue q_vec_max(QValue vec) {
     }
 
     const std::vector<double>* vp = q_vec_f64_const(vec);
-    if (!vp || vp->empty()) {
-        return qv_null();
+    if (!vp) {
+        std::fprintf(stderr, "runtime error: max() requires numeric vector\n");
+        std::exit(1);
+    }
+    if (vp->empty()) {
+        std::fprintf(stderr, "runtime error: max() on empty vector\n");
+        std::exit(1);
     }
     const std::vector<double>& v = *vp;
     double cur = v[0];
@@ -2353,6 +2384,8 @@ inline QValue q_get(QValue list, QValue index) {
     int idx = static_cast<int>(index.data.int_val);
     int len = static_cast<int>(list.data.list_val->size());
     if (idx < 0) idx = len + idx;
+    // Policy: get() returns null on OOB (documented safe-read API).
+    // Write operations (set/insert/remove) crash on invalid indices.
     if (idx < 0 || idx >= len) {
         return qv_null();
     }

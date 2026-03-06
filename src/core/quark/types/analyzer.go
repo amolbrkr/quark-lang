@@ -33,6 +33,7 @@ type Analyzer struct {
 	currentModule string                   // Current module being defined (empty if global)
 	builtins      map[string]*builtinSignature
 	captures      map[*ast.TreeNode][]string // Lambda node → captured variable names
+	loopDepth     int                        // >0 when inside for/while loop (for break/continue validation)
 }
 
 func NewAnalyzer() *Analyzer {
@@ -319,12 +320,14 @@ func (a *Analyzer) Analyze(node *ast.TreeNode) Type {
 	case ast.UseNode:
 		return a.analyzeUse(node)
 	case ast.BreakNode:
-		// C-FEATURE: break is reserved but not yet implemented (policy §7)
-		a.errorAt(node, "[C-FEATURE] 'break' is reserved but not yet implemented")
+		if a.loopDepth == 0 {
+			a.errorAt(node, "[C-SCOPE] 'break' must be inside a for or while loop")
+		}
 		return TypeVoid
 	case ast.ContinueNode:
-		// C-FEATURE: continue is reserved but not yet implemented (policy §7)
-		a.errorAt(node, "[C-FEATURE] 'continue' is reserved but not yet implemented")
+		if a.loopDepth == 0 {
+			a.errorAt(node, "[C-SCOPE] 'continue' must be inside a for or while loop")
+		}
 		return TypeVoid
 	case ast.LambdaNode:
 		return a.analyzeLambda(node)
@@ -354,6 +357,11 @@ func (a *Analyzer) analyzeBlock(node *ast.TreeNode) Type {
 }
 
 func (a *Analyzer) analyzeFunction(node *ast.TreeNode) Type {
+	// Functions create a new scope where break/continue are invalid
+	savedLoopDepth := a.loopDepth
+	a.loopDepth = 0
+	defer func() { a.loopDepth = savedLoopDepth }()
+
 	if len(node.Children) < 3 {
 		a.addError("invalid function definition")
 		return TypeVoid
@@ -621,6 +629,7 @@ func (a *Analyzer) analyzeForLoop(node *ast.TreeNode) Type {
 	}
 
 	// Create loop scope and define loop variable
+	a.loopDepth++
 	a.pushScope()
 
 	varName := varNode.TokenLiteral()
@@ -641,6 +650,7 @@ func (a *Analyzer) analyzeForLoop(node *ast.TreeNode) Type {
 	a.Analyze(bodyNode)
 
 	a.popScope()
+	a.loopDepth--
 
 	return TypeVoid
 }
@@ -657,9 +667,11 @@ func (a *Analyzer) analyzeWhileLoop(node *ast.TreeNode) Type {
 	}
 
 	// Analyze body
+	a.loopDepth++
 	a.pushScope()
 	a.Analyze(node.Children[1])
 	a.popScope()
+	a.loopDepth--
 
 	return TypeVoid
 }
@@ -1563,6 +1575,11 @@ func (a *Analyzer) collectFreeVars(node *ast.TreeNode, lambdaScope *Scope, param
 }
 
 func (a *Analyzer) analyzeLambda(node *ast.TreeNode) Type {
+	// Lambdas create a new scope where break/continue are invalid
+	savedLoopDepth := a.loopDepth
+	a.loopDepth = 0
+	defer func() { a.loopDepth = savedLoopDepth }()
+
 	if len(node.Children) < 2 {
 		a.addError("invalid lambda expression")
 		return TypeAny

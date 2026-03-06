@@ -1,9 +1,17 @@
-fn make_counter() ->
-    count = 0
-    fn x() ->
-        count = count + 1
-        count
+nums = vector [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
-next_id = make_counter()
-println(next_id()) // 1
-println(next_id()) // 2
+fn categorize (x) -> 'small' if x <= 5 else 'large'
+
+fn print_vec (vec) ->
+  for x in vec:
+    print(to_str(x) + ', ')
+
+fn map (vec, f) ->
+  res = list []
+  for x in vec:
+    res = push(res, f(x))
+  to_vector(res)
+
+nums
+| map(categorize)
+| print_vec()

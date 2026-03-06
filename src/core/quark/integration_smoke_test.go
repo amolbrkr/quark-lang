@@ -188,6 +188,33 @@ func TestSmokePrograms_Run(t *testing.T) {
 				"[list len=4]",
 			),
 		},
+		{
+			name: "break_continue",
+			file: filepath.Join(testfilesDir, "smoke_break_continue.qrk"),
+			expected: join(
+				"== smoke: break/continue ==",
+				"0",
+				"1",
+				"2",
+				"3",
+				"4",
+				"1",
+				"3",
+				"5",
+				"0",
+				"1",
+				"2",
+				"1",
+				"3",
+				"5",
+				"0",
+				"1",
+				"0",
+				"1",
+				"0",
+				"1",
+			),
+		},
 	}
 
 	for _, tc := range cases {

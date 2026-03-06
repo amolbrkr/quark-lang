@@ -1,0 +1,36 @@
+println('== smoke: break/continue ==')
+
+// break in for loop
+for i in range(10):
+    if i == 5:
+        break
+    println(i)
+
+// continue in for loop
+for i in range(6):
+    if i % 2 == 0:
+        continue
+    println(i)
+
+// break in while loop
+x = 0
+while true:
+    if x == 3:
+        break
+    println(x)
+    x = x + 1
+
+// continue in while loop
+y = 0
+while y < 6:
+    y = y + 1
+    if y % 2 == 0:
+        continue
+    println(y)
+
+// nested: break only exits inner loop
+for i in range(3):
+    for j in range(5):
+        if j == 2:
+            break
+        println(j)

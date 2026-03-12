@@ -362,3 +362,51 @@ func TestResultHelpers_BuiltinsRegistered(t *testing.T) {
 		t.Fatalf("unexpected type errors: %v", typeErrs)
 	}
 }
+
+func TestResultTypeAnnotation_AllowsResultValues(t *testing.T) {
+	_, _, parseErrs, typeErrs := testutil.Analyze("r: result = ok 1\n")
+	if len(parseErrs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", parseErrs)
+	}
+	if len(typeErrs) > 0 {
+		t.Fatalf("unexpected type errors: %v", typeErrs)
+	}
+}
+
+func TestResultTypeAnnotation_RejectsNonResultValue(t *testing.T) {
+	_, _, parseErrs, typeErrs := testutil.Analyze("r: result = 1\n")
+	if len(parseErrs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", parseErrs)
+	}
+	if len(typeErrs) == 0 {
+		t.Fatalf("expected type error for assigning non-result to result")
+	}
+	joined := strings.Join(typeErrs, "\n")
+	if !strings.Contains(joined, "cannot assign value of type 'int' to 'result") {
+		t.Fatalf("expected result annotation diagnostic, got: %v", typeErrs)
+	}
+}
+
+func TestFunctionParam_ResultTypeAnnotationAccepted(t *testing.T) {
+	_, _, parseErrs, typeErrs := testutil.Analyze("fn handle(r: result) -> is_ok(r)\n")
+	if len(parseErrs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", parseErrs)
+	}
+	if len(typeErrs) > 0 {
+		t.Fatalf("unexpected type errors: %v", typeErrs)
+	}
+}
+
+func TestUnwrapRejectsNonResultAtAnalysisTime(t *testing.T) {
+	_, _, parseErrs, typeErrs := testutil.Analyze("println(unwrap(1))\n")
+	if len(parseErrs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", parseErrs)
+	}
+	if len(typeErrs) == 0 {
+		t.Fatalf("expected type error for unwrap(non-result)")
+	}
+	joined := strings.Join(typeErrs, "\n")
+	if !strings.Contains(joined, "argument 1 of 'unwrap' expects result") {
+		t.Fatalf("expected unwrap result diagnostic, got: %v", typeErrs)
+	}
+}

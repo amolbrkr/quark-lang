@@ -1720,6 +1720,8 @@ func (a *Analyzer) resolveTypeNode(node *ast.TreeNode) Type {
 		return &DictType{KeyType: TypeAny, ValueType: TypeAny}
 	case "vector":
 		return &VectorType{ElementType: TypeFloat}
+	case "result":
+		return &ResultType{OkType: TypeAny, ErrType: TypeAny}
 	default:
 		a.errorAt(node, "unknown type '%s'", name)
 		return TypeAny

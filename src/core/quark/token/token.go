@@ -71,6 +71,7 @@ const (
 	LIST
 	DICT
 	VECTOR
+	RESULT
 	BREAK
 	CONTINUE
 	keyword_end
@@ -139,6 +140,7 @@ var tokenNames = map[TokenType]string{
 	LIST:     "LIST",
 	DICT:     "DICT",
 	VECTOR:   "VECTOR",
+	RESULT:   "RESULT",
 	BREAK:    "BREAK",
 	CONTINUE: "CONTINUE",
 }
@@ -171,6 +173,7 @@ var keywords = map[string]TokenType{
 	"list":     LIST,
 	"dict":     DICT,
 	"vector":   VECTOR,
+	"result":   RESULT,
 	"break":    BREAK,
 	"continue": CONTINUE,
 }

@@ -48,6 +48,7 @@ to_bool(0) | println()        // false
 to_bool(1) | println()        // true
 type(42) | println()          // int
 len('hello') | println()      // 5
+type(fn(x) -> x) | println()  // fn
 
 dict { a: 1, b: 2 } | len() | println()  // 2
 ```
@@ -345,6 +346,8 @@ split('a,b,c', ',') | println()                       // ["a", "b", "c"]
 
 Result values (`ok`/`err`) are Quark's explicit error handling mechanism. These helpers inspect and extract values from results.
 
+At the Quark language level, `result` is a first-class type keyword. In v0.1 it is intentionally non-generic: use `result` in type annotations, and use `ok` / `err` to construct values.
+
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `is_ok` | `result -> bool` | Returns `true` if the result is `ok` |
@@ -365,6 +368,9 @@ is_ok(r) | println()       // true
 is_err(r) | println()      // false
 unwrap(r) | println()      // 5
 
+r2: result = ok 42
+println(type(r2))          // result
+
 // Pattern matching (preferred for handling both cases)
 when safe_div(10, 0):
     ok value -> println(value)
@@ -378,8 +384,29 @@ safe_div(10, 2) | is_ok() | println()
 ### Notes
 
 - `unwrap` on an `err` result crashes with the error message — use `when` pattern matching for safe handling
+- `unwrap` on a non-result value crashes — result values are explicit, not magical
 - `is_ok`/`is_err` on a non-result value is a runtime error
 - Assigning a result directly to a typed variable (e.g. `x: int = safe_div(10, 2)`) is a compile-time error — use `unwrap()` or `when` to extract the value first
+
+## String Literals
+
+Quark supports both single-quoted and double-quoted string literals in v0.1.
+
+```quark
+s1 = 'hello'
+s2 = "world"
+println(concat(s1, ' '))
+println(s2)
+```
+
+Supported escape sequences:
+
+- `\\`
+- `\'` inside single-quoted strings
+- `\"` inside double-quoted strings
+- `\n`, `\t`, `\r`, `\0`
+
+String interpolation is not implemented in v0.1.
 
 ## Pipes
 
@@ -408,7 +435,7 @@ Quark values are boxed at runtime using a tagged value model:
 
 - Primitive: `int`, `float`, `str`, `bool`, `null`
 - Collections: `list`, `dict`, `vector`
-- Callable/result: `func`, `result`
+- Callable/result: `fn`, `result`
 
 Container implementation choices:
 

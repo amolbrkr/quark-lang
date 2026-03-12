@@ -162,10 +162,7 @@ data | transform() | filter() | save()
 - Function calls always use parentheses: `print(x)`
 - Nested calls: `outer(inner(x))`
 - Arithmetic binds tighter: `fact(n - 1)` parses as `fact(n-1)`
-- **Unary operators have no whitespace**: `-5` is negative five; `a - b` is subtraction; `a -b` is invalid
-    - `f(-5)` → function call with negative argument
-  - `a - b` → binary subtraction
-  - Unary `-` and `!` must not have whitespace between operator and operand
+- Unary `-` and `!` follow normal expression parsing; function calls always use parentheses, so special whitespace rules are not part of the language contract
 
 ### Symbol Meanings
 
@@ -846,15 +843,14 @@ results = data | map(transform) | filter(valid)
   - `x: int` (x has type int)
   - `if condition:` (if contains block)
   - `struct Point:` (struct contains fields)
-- **Unary operators have no whitespace** - `-5` (negative), `!flag` (not), `a - b` (subtraction)
+- **Strings** - Single-quoted and double-quoted strings are both supported
 - **Use `elseif` not `elif`** - More English-like
-- **Single-quoted strings** - `'hello'` not `"hello"`
 - **Parentheses for function calls** - `print(x)`, `push(list, item)`, `upper(str)`
 - **Dot for dict data access only** - `d.key` reads, `d.key = val` writes; never `entity.method()`
 - **Pipe for chaining** - `x | f()` or `x | f(y)` not nested calls
 - **Underscore for wildcard** - `_` in pattern matching
 - **Ranges use `range()` function** - `range(10)`, `range(1, 100)`, not `0..10`
-- **Unwrap requires default** - `unwrap(result, default)` forces explicit error handling
+- **Unwrap is explicit** - `unwrap(result)` extracts the ok payload and panics on err; use pattern matching for safe handling
 - **Python-style indentation** - Blocks defined by indentation
 - **No bitwise operations** - High-level language focused on readability
 

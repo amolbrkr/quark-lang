@@ -15,6 +15,7 @@
 - Dicts backed by `std::unordered_map<std::string, QValue>` with dot access (data only, no method dispatch)
 - 40+ builtins for I/O, math, strings, lists, dicts, and vectors
 - Multi-file module imports (`use './path'`) with circular import detection
+- Absolute file imports (`use 'C:/path/to/file'`, `use '/path/to/file'`)
 - Strict error enforcement: bool-only conditions, type-checked arguments, runtime errors crash with clear messages (no silent null returns)
 - Boehm GC for automatic memory management
 
@@ -230,6 +231,7 @@ square(5) | println()
 
 // Multi-file imports
 use './utils'
+use 'C:/projects/quark-lib/math'
 ```
 
 ## Standard Library (Builtins)
@@ -272,7 +274,7 @@ Implemented and stable:
 
 - Full compiler pipeline (lexer, parser, analyzer, codegen)
 - Functions, closures, lambdas as first-class values
-- All control flow (if/elseif/else, when, for, while, ternary, pipes)
+- All control flow (if/elseif/else, when, for, while, break, continue, ternary, pipes)
 - Result types with `ok`/`err`/`when` pattern matching and `is_ok`/`is_err`/`unwrap`
 - Lists, dicts, typed vectors with 40+ builtins
 - Multi-file module imports with circular detection
@@ -284,7 +286,6 @@ Not yet implemented:
 - Structs and impl blocks
 - Tensor type (N-dimensional arrays)
 - String interpolation
-- `break`/`continue` in loops
 - Stdlib module imports (non-relative `use 'name'`)
 
 ## Tests

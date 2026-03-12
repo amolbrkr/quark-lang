@@ -25,7 +25,7 @@ This document is the grammar and semantic reference for the Quark compiler in `s
 
 ### 3.1 Keywords (reserved)
 
-`use, module, fn, if, elseif, else, for, while, break, continue, when, in, and, or, true, false, null, ok, err, list, dict, vector`
+`use, module, fn, if, elseif, else, for, while, break, continue, when, in, and, or, true, false, null, ok, err, list, dict, vector, result`
 
 ### 3.2 Operators and delimiters
 
@@ -41,12 +41,17 @@ This document is the grammar and semantic reference for the Quark compiler in `s
 
 - `INT`
 - `FLOAT`
-- `STRING` (single-quoted in current implementation)
+- `STRING` (single-quoted or double-quoted)
 - `BOOL` (`true`, `false`)
 - `NULL` (`null`)
 
+Supported string escape sequences:
+- `\\`
+- `\'` in single-quoted strings
+- `\"` in double-quoted strings
+- `\n`, `\t`, `\r`, `\0`
+
 Planned lexical additions (future):
-- Double-quoted string literals
 - Interpolation opener: `!{`
 - Interpolation closer: `}`
 - Interpolation recognized only inside string literals
@@ -94,7 +99,8 @@ UseStatement    ::= "use" ID
 Semantics:
 - `use ID`: same-file module import
 - `use './path'` or `use '../path'`: file import resolved by loader
-- `use 'name'` (non-relative string): currently rejected by loader as stdlib-import-not-yet-supported
+- `use 'C:/path/to/file'` or `use '/path/to/file'`: absolute file import resolved by loader
+- `use 'name'` (quoted non-path string): currently rejected by loader as stdlib-import-not-yet-supported
 
 ## 6) Functions and Lambdas
 
@@ -181,9 +187,7 @@ BreakStatement      ::= "break"
 ContinueStatement   ::= "continue"
 ```
 
-Current status: `break` and `continue` are reserved keywords, fully lexed and parsed. The analyzer emits a `[C-FEATURE]` compile error for any use, because codegen support is not yet implemented.
-
-Intended semantics (when implemented):
+Current semantics:
 - `break` exits the nearest enclosing `for`/`while`
 - `continue` skips to the next iteration of the nearest enclosing `for`/`while`
 - Using either outside a loop is a compile-time error
@@ -192,14 +196,15 @@ Intended semantics (when implemented):
 
 ```ebnf
 TypedDecl       ::= ID ":" Type "=" Expression
-Type            ::= "int" | "float" | "str" | "bool" | "null" | "any"
+Type            ::= "int" | "float" | "str" | "bool" | "null" | "any" | "result"
                 |   "list" | "dict" | "vector"
                 |   ID
 ```
 
 Notes:
 - Generic type syntax like `list[int]` is not implemented
-- `result` is modeled in analyzer/runtime semantics but not yet exposed as a user type annotation keyword
+- `result` is a first-class Quark type annotation keyword
+- `result` annotations are non-generic in v0.1 and represent a general result value
 
 ## 10) Expressions and Precedence
 
@@ -252,19 +257,9 @@ Literal         ::= INT
                 |   BOOL
                 |   NULL
 
-StringLiteral   ::= PlainString
-                |   InterpolatedString
-
-PlainString     ::= SQString | DQString
+StringLiteral   ::= SQString | DQString
 SQString        ::= "'" { SQChar } "'"
 DQString        ::= '"' { DQChar } '"'
-
-InterpolatedString ::= "'" { SQSegment } "'"
-                    | '"' { DQSegment } '"'
-
-SQSegment       ::= SQText | Interpolation
-DQSegment       ::= DQText | Interpolation
-Interpolation   ::= "!{" Expression "}"
 
 ListLiteral     ::= "list" "[" [ Expression { "," Expression } [ "," ] ] "]"
 VectorLiteral   ::= "vector" "[" [ Expression { "," Expression } [ "," ] ] "]"
@@ -273,12 +268,8 @@ DictEntries     ::= DictEntry { "," DictEntry } [ "," ]
 DictEntry       ::= ID ":" Expression
 ```
 
-Interpolation parsing rules (planned):
-- Anything between `!{` and the matching `}` is parsed as a normal `Expression`
-- Interpolations may appear multiple times in one string
-- `!{` without a matching `}` is a compile-time error
-- Unescaped delimiter quotes must match the opening quote style
-- Nested interpolation is not allowed inside interpolation expressions
+Interpolation parsing rules (future):
+- String interpolation is not implemented in v0.1
 
 ### 10.3 Precedence (low to high)
 
@@ -332,6 +323,12 @@ Builtins currently available:
 - `is_err(result) -> bool`
 - `unwrap(result) -> any` (panics on `err` or non-result)
 
+Result construction and use:
+- `ok expr` constructs a result value
+- `err expr` constructs a result value
+- `x: result = ok 1` is valid
+- `fn handle(r: result) -> ...` is valid
+
 ### 11.5 Condition and logical operator type rules
 
 - `if`, `elseif`, `while`, and ternary conditions must resolve to `bool` at compile time; passing a non-bool expression is an analyzer error
@@ -369,7 +366,7 @@ Builtins currently available:
 |---|---|---|
 | Indentation blocks | Implemented | Triggered after `:` and `->` |
 | `module` / `use` same-file | Implemented | `use ID` |
-| `use STRING` file imports | Implemented | Relative paths only (`./`, `../`) |
+| `use STRING` file imports | Implemented | Relative and absolute file paths |
 | Stdlib string imports (`use 'csv'`) | Not implemented | Loader emits error |
 | Named functions and lambdas | Implemented | Parenthesized params required |
 | Typed params / typed var declarations | Implemented | Basic types + list/dict/vector |
@@ -377,13 +374,13 @@ Builtins currently available:
 | List literals (`list [...]`) | Implemented | Keyword required |
 | Vector literals (`vector [...]`) | Implemented | 1D only |
 | Dict literals (`dict {k: v}`) | Implemented | Keys are identifiers in source |
-| Loop control (`break`, `continue`) | Partial | Keywords lexed and parsed; analyzer rejects with `[C-FEATURE]` error; codegen not yet implemented |
+| Loop control (`break`, `continue`) | Implemented | Exits/skips nearest enclosing loop; compile error outside loops |
 | Dot-call syntax | Not implemented | Use function-call/pipe model |
 | Dot data access on dict | Implemented | read/write |
 | Result values `ok` / `err` | Implemented | Analyzer has `ResultType` |
 | `when` result patterns | Implemented | `ok x`, `err e` |
-| Double-quoted strings | Not implemented | Grammar reserved; current source convention is single quotes |
-| String interpolation (`!{expr}`) | Not implemented | Grammar reserved; lexer/parser/analyzer/codegen/runtime pending |
+| Double-quoted strings | Implemented | Single and double-quoted strings are both valid |
+| String interpolation (`!{expr}`) | Not implemented | Deferred from v0.1 |
 | `unwrap_or`, `map_ok`, etc. | Future | Not implemented yet |
 | Structs / impl blocks | Future | Not implemented |
 | Tensor type | Future | Not implemented |
@@ -391,11 +388,10 @@ Builtins currently available:
 ## 14) Known Limits / Current Diagnostics
 
 - `for` iterables are currently restricted to list/vector
-- `break` and `continue` are reserved keywords, parsed, but currently rejected at the analyzer with a `[C-FEATURE]` compile error (codegen pending)
-- `use 'name'` (non-relative string) is rejected pending stdlib import support
+- `use 'name'` (quoted non-path string) is rejected pending stdlib import support
 - Dict bracket indexing is rejected by analyzer
 - Dot access is dict-only; non-dict dot access is diagnosed
-- Double-quoted strings and interpolation (`!{...}`) are grammar-defined but not implemented yet
+- String interpolation (`!{...}`) is deferred from v0.1
 
 ## 15) Source of Truth Policy
 

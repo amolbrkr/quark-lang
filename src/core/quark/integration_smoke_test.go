@@ -244,3 +244,26 @@ func TestSmokePrograms_Run(t *testing.T) {
 		})
 	}
 }
+
+func TestRuntimeContracts_FunctionTypeNameAndDoubleQuotedStrings(t *testing.T) {
+	tmp := t.TempDir()
+	program := filepath.Join(tmp, "runtime_contracts.qrk")
+	source := strings.Join([]string{
+		"fn add(x, y) -> x + y",
+		"println(type(add))",
+		"println(\"hello\\nworld\")",
+		"r: result = ok 1",
+		"println(type(r))",
+		"",
+	}, "\n")
+	if err := os.WriteFile(program, []byte(source), 0o644); err != nil {
+		t.Fatalf("write %s: %v", program, err)
+	}
+
+	got := runQuark(t, "run", program)
+	gotNorm := strings.TrimSpace(normalizeNewlines(got))
+	expected := strings.Join([]string{"fn", "hello", "world", "result"}, "\n")
+	if gotNorm != expected {
+		t.Fatalf("unexpected output\n--- got ---\n%s\n--- expected ---\n%s", gotNorm, expected)
+	}
+}

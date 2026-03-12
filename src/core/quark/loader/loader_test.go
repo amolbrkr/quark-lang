@@ -95,3 +95,25 @@ func TestResolveImports_RejectsStdlibImportForNow(t *testing.T) {
 		t.Fatalf("expected stdlib import error, got: %v", ml.Errors())
 	}
 }
+
+func TestResolveImports_AllowsAbsoluteImportPath(t *testing.T) {
+	tmp := t.TempDir()
+	entry := filepath.Join(tmp, "main.qrk")
+	lib := filepath.Join(tmp, "lib", "math.qrk")
+	writeFile(t, lib, "module math:\n    fn square(n) -> n * n\n")
+	writeFile(t, entry, "use '"+filepath.ToSlash(strings.TrimSuffix(lib, ".qrk"))+"'\n")
+
+	root := parseRoot(t, entry)
+	if len(root.Children) != 1 {
+		t.Fatalf("expected one top-level child before import resolution, got %d", len(root.Children))
+	}
+
+	ml := NewModuleLoader()
+	ml.ResolveImports(root, entry)
+	if len(ml.Errors()) > 0 {
+		t.Fatalf("unexpected loader errors: %v", ml.Errors())
+	}
+	if len(root.Children) != 2 {
+		t.Fatalf("expected imported module and synthetic use node, got %d children", len(root.Children))
+	}
+}

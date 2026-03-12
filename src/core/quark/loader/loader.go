@@ -61,6 +61,33 @@ func formatImportChain(paths []string) string {
 	return strings.Join(parts, " -> ")
 }
 
+func isFileImportPath(importPath string) bool {
+	if strings.HasPrefix(importPath, "./") || strings.HasPrefix(importPath, "../") {
+		return true
+	}
+	if strings.HasPrefix(importPath, "/") {
+		return true
+	}
+	if filepath.IsAbs(importPath) {
+		return true
+	}
+	if len(importPath) >= 3 && ((importPath[0] >= 'A' && importPath[0] <= 'Z') || (importPath[0] >= 'a' && importPath[0] <= 'z')) && importPath[1] == ':' && (importPath[2] == '/' || importPath[2] == '\\') {
+		return true
+	}
+	return false
+}
+
+func normalizeImportPath(currentDir, importPath string) string {
+	resolved := importPath
+	if !filepath.IsAbs(resolved) && !strings.HasPrefix(resolved, "/") {
+		resolved = filepath.Join(currentDir, resolved)
+	}
+	if filepath.Ext(resolved) == "" {
+		resolved += ".qrk"
+	}
+	return resolved
+}
+
 // ResolveImports walks the AST rooted at `root`, finds UseNode children that
 // reference file paths (string literals), loads and parses those files, and
 // splices their ModuleNode + a synthetic UseNode back into the tree.
@@ -109,14 +136,14 @@ func (ml *ModuleLoader) resolveImportsInNode(node *ast.TreeNode, currentFilePath
 		}
 
 		// Determine resolution strategy
-		if !strings.HasPrefix(importPath, "./") && !strings.HasPrefix(importPath, "../") {
+		if !isFileImportPath(importPath) {
 			// Tier 2: stdlib import (future)
-			ml.addError("line %d: stdlib imports are not yet supported; use relative paths (e.g. use './mymodule')", useLine)
+			ml.addError("line %d: stdlib imports are not yet supported; use a relative or absolute file path", useLine)
 			continue
 		}
 
-		// Tier 1: local import — resolve relative to current file
-		resolvedPath := filepath.Join(currentDir, importPath+".qrk")
+		// Tier 1: file import — resolve relative to current file or use absolute path directly
+		resolvedPath := normalizeImportPath(currentDir, importPath)
 		absResolved, err := filepath.Abs(resolvedPath)
 		if err != nil {
 			ml.addError("line %d: cannot resolve import path '%s': %s", useLine, importPath, err)

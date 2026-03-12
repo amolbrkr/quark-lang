@@ -352,7 +352,11 @@ func (l *Lexer) nextRawToken() token.Token {
 		tok = newToken(token.UNDERSCORE, l.ch, tok.Line, tok.Column)
 	case '\'':
 		tok.Type = token.STRING
-		tok.Literal = l.readString()
+		tok.Literal = l.readString('\'')
+		return tok
+	case '"':
+		tok.Type = token.STRING
+		tok.Literal = l.readString('"')
 		return tok
 	case '\n':
 		l.readChar()
@@ -479,21 +483,26 @@ func (l *Lexer) readNumber() (token.TokenType, string) {
 	return token.INT, l.input[position:l.position]
 }
 
-func (l *Lexer) readString() string {
+func (l *Lexer) readString(quote byte) string {
 	l.readChar() // skip opening quote
 	var buf []byte
 
 	for {
-		if l.ch == '\'' || l.ch == 0 || l.ch == '\n' {
+		if l.ch == quote || l.ch == 0 || l.ch == '\n' {
 			break
 		}
 		if l.ch == '\\' {
 			next := l.peekChar()
 			switch next {
-			case '\'':
-				buf = append(buf, '\'')
+			case '\'', '"':
+				if next == quote {
+					buf = append(buf, quote)
+					l.readChar() // skip backslash
+					l.readChar() // skip escaped quote
+					continue
+				}
+				buf = append(buf, l.ch)
 				l.readChar() // skip backslash
-				l.readChar() // skip quote
 				continue
 			case 'n':
 				buf = append(buf, '\n')
@@ -530,7 +539,7 @@ func (l *Lexer) readString() string {
 		l.readChar()
 	}
 
-	if l.ch == '\'' {
+	if l.ch == quote {
 		l.readChar() // skip closing quote
 	}
 	return string(buf)

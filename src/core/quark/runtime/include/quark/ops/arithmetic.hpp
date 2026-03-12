@@ -28,7 +28,7 @@ inline bool either_float(const QValue& a, const QValue& b) {
 } // namespace quark
 
 inline const char* q_type_name_arith(QValue::ValueType t) {
-    static const char* type_names[] = {"int", "float", "str", "bool", "null", "list", "vector", "dict", "func", "result"};
+    static const char* type_names[] = {"int", "float", "str", "bool", "null", "list", "vector", "dict", "fn", "result"};
     return (t >= 0 && t <= 9) ? type_names[t] : "unknown";
 }
 
@@ -72,7 +72,6 @@ inline QValue q_add(QValue a, QValue b) {
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
         q_arith_type_error("+", a, b);
-        return qv_null();
     }
     if (quark::detail::either_float(a, b)) {
         return qv_float(quark::detail::to_double(a) + quark::detail::to_double(b));
@@ -89,7 +88,6 @@ inline QValue q_sub(QValue a, QValue b) {
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
         q_arith_type_error("-", a, b);
-        return qv_null();
     }
     if (quark::detail::either_float(a, b)) {
         return qv_float(quark::detail::to_double(a) - quark::detail::to_double(b));
@@ -106,7 +104,6 @@ inline QValue q_mul(QValue a, QValue b) {
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
         q_arith_type_error("*", a, b);
-        return qv_null();
     }
     if (quark::detail::either_float(a, b)) {
         return qv_float(quark::detail::to_double(a) * quark::detail::to_double(b));
@@ -123,7 +120,6 @@ inline QValue q_div(QValue a, QValue b) {
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
         q_arith_type_error("/", a, b);
-        return qv_null();
     }
     double bv = quark::detail::to_double(b);
     // Check for division by zero
@@ -155,7 +151,6 @@ inline QValue q_pow(QValue a, QValue b) {
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
         q_arith_type_error("**", a, b);
-        return qv_null();
     }
     double av = quark::detail::to_double(a);
     double bv = quark::detail::to_double(b);
@@ -177,7 +172,6 @@ inline QValue q_neg(QValue a) {
     // Type guard: only INT and FLOAT are valid
     if (a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) {
         q_unary_type_error("-", a);
-        return qv_null();
     }
     if (a.type == QValue::VAL_FLOAT) {
         return qv_float(-a.data.float_val);

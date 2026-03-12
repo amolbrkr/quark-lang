@@ -20,7 +20,7 @@ inline QValue q_member_get(QValue obj, const char* member) {
         return q_dict_get(obj, qv_string(member));
     }
 
-    const char* type_names[] = {"int", "float", "string", "bool", "null", "list", "vector", "dict", "func", "result"};
+    const char* type_names[] = {"int", "float", "string", "bool", "null", "list", "vector", "dict", "fn", "result"};
     const char* type_name = (obj.type >= 0 && obj.type <= 9) ? type_names[obj.type] : "unknown";
     fprintf(stderr, "runtime error: dot access is only supported on dict; got type '%s'\n", type_name);
     std::exit(1);

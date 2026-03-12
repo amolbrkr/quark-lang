@@ -847,13 +847,16 @@ inline QValue qv_vector_str(int initial_string_cap = 0, int initial_byte_cap = 0
 
 inline QValue q_vec_push(QValue vec, QValue value) {
     if (!q_vec_has_valid_handle(vec)) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: vector push expects valid vector[f64]\n");
+        std::exit(1);
     }
     if (vec.data.vector_val->type != QVector::Type::F64) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: vector push expects vector[f64]\n");
+        std::exit(1);
     }
     if (!q_is_numeric_scalar(value)) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: vector push expects numeric scalar value\n");
+        std::exit(1);
     }
     std::vector<double>& values = std::get<std::vector<double>>(vec.data.vector_val->storage);
     values.push_back(q_to_double_scalar(value));
@@ -866,10 +869,12 @@ inline QValue q_vec_push(QValue vec, QValue value) {
 
 inline QValue q_vec_push_i64(QValue vec, QValue value) {
     if (!q_vec_has_valid_handle(vec) || vec.data.vector_val->type != QVector::Type::I64) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: vector push expects vector[i64]\n");
+        std::exit(1);
     }
     if (!(value.type == QValue::VAL_INT || value.type == QValue::VAL_FLOAT || value.type == QValue::VAL_BOOL)) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: vector[i64] push expects int, float, or bool scalar value\n");
+        std::exit(1);
     }
     std::vector<int64_t>& values = std::get<std::vector<int64_t>>(vec.data.vector_val->storage);
     values.push_back(q_to_i64_scalar(value));
@@ -882,10 +887,12 @@ inline QValue q_vec_push_i64(QValue vec, QValue value) {
 
 inline QValue q_vec_push_bool(QValue vec, QValue value) {
     if (!q_vec_has_valid_handle(vec) || vec.data.vector_val->type != QVector::Type::BOOL) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: vector push expects vector[bool]\n");
+        std::exit(1);
     }
     if (!q_is_boolish_scalar(value)) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: vector[bool] push expects bool or int scalar value\n");
+        std::exit(1);
     }
     std::vector<uint8_t>& values = std::get<std::vector<uint8_t>>(vec.data.vector_val->storage);
     const bool b = (value.type == QValue::VAL_BOOL) ? value.data.bool_val : (value.data.int_val != 0);
@@ -923,7 +930,8 @@ inline std::vector<std::string> q_vec_decode_strings(const QStringStorage& stora
 
 inline QValue q_vec_clone(QValue vec) {
     if (!q_vec_has_valid_handle(vec) || !q_vec_validate(*vec.data.vector_val)) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: cannot clone invalid vector\n");
+        std::exit(1);
     }
     QValue out;
     out.type = QValue::VAL_VECTOR;
@@ -940,7 +948,8 @@ inline int q_vec_size(QValue vec) {
 
 inline QValue q_vec_dtype(QValue vec) {
     if (!q_vec_has_valid_handle(vec) || !q_vec_validate(*vec.data.vector_val)) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: dtype query expects valid vector\n");
+        std::exit(1);
     }
     return qv_string(q_vec_dtype_name(*vec.data.vector_val));
 }
@@ -1485,7 +1494,7 @@ inline QValue q_to_vector(QValue input) {
             case QValue::VAL_LIST: return "list";
             case QValue::VAL_VECTOR: return "vector";
             case QValue::VAL_DICT: return "dict";
-            case QValue::VAL_FUNC: return "func";
+            case QValue::VAL_FUNC: return "fn";
             case QValue::VAL_RESULT: return "result";
             default: return "unknown";
         }
@@ -2148,12 +2157,10 @@ inline QValue q_vec_get_scalar(QValue vec, QValue index) {
     if (!q_vec_has_valid_handle(vec)) {
         std::fprintf(stderr, "runtime error: vector index expects valid vector\n");
         std::exit(1);
-        return qv_null();
     }
     if (index.type != QValue::VAL_INT) {
         std::fprintf(stderr, "runtime error: vector index must be int\n");
         std::exit(1);
-        return qv_null();
     }
 
     const QVector& v = *vec.data.vector_val;
@@ -2163,7 +2170,6 @@ inline QValue q_vec_get_scalar(QValue vec, QValue index) {
     if (idx < 0 || idx >= len) {
         std::fprintf(stderr, "runtime error: vector index %d out of range (len=%d)\n", idx, len);
         std::exit(1);
-        return qv_null();
     }
     const size_t i = static_cast<size_t>(idx);
 
@@ -2184,7 +2190,8 @@ inline QValue q_vec_get_scalar(QValue vec, QValue index) {
             return qv_string(elem.c_str());
         }
         default:
-            return qv_null();
+            std::fprintf(stderr, "runtime error: vector index does not support dtype '%s'\n", q_vec_dtype_name(v));
+            std::exit(1);
     }
 }
 
@@ -2193,7 +2200,6 @@ inline QValue q_vec_mask_filter(QValue data, QValue mask) {
     if (!q_vec_has_valid_handle(data) || !q_vec_has_valid_handle(mask)) {
         std::fprintf(stderr, "runtime error: mask filter expects vector operands\n");
         std::exit(1);
-        return qv_null();
     }
     const QVector& dv = *data.data.vector_val;
     const QVector& mv = *mask.data.vector_val;
@@ -2202,13 +2208,11 @@ inline QValue q_vec_mask_filter(QValue data, QValue mask) {
         std::fprintf(stderr, "runtime error: mask index must be a bool vector, got vector[%s]\n",
                      q_vec_dtype_name(mv));
         std::exit(1);
-        return qv_null();
     }
     if (dv.count != mv.count) {
         std::fprintf(stderr, "runtime error: mask length (%zu) does not match vector length (%zu)\n",
                      mv.count, dv.count);
         std::exit(1);
-        return qv_null();
     }
 
     const auto& maskBits = std::get<std::vector<uint8_t>>(mv.storage);
@@ -2320,7 +2324,8 @@ inline QValue q_vec_mask_filter(QValue data, QValue mask) {
             return out;
         }
         default:
-            return qv_null();
+            std::fprintf(stderr, "runtime error: mask filter does not support dtype '%s'\n", q_vec_dtype_name(dv));
+            std::exit(1);
     }
 }
 
@@ -2507,7 +2512,7 @@ inline QValue q_concat(QValue a, QValue b) {
         return q_list_concat(a, b);
     }
     // Type mismatch - both arguments must be the same type
-    const char* type_names[] = {"int", "float", "string", "bool", "null", "list", "vector", "dict", "func", "result"};
+    const char* type_names[] = {"int", "float", "string", "bool", "null", "list", "vector", "dict", "fn", "result"};
     const char* a_type = (a.type >= 0 && a.type <= 8) ? type_names[a.type] : "unknown";
     const char* b_type = (b.type >= 0 && b.type <= 8) ? type_names[b.type] : "unknown";
     fprintf(stderr, "runtime error: concat expects both arguments to be the same type (string+string or list+list), got %s and %s\n", a_type, b_type);
@@ -2686,83 +2691,83 @@ inline bool q_require_callable(const QValue& f) {
 
 // Call function value with 0 arguments
 inline QValue q_call0(QValue f) {
-    if (!q_require_callable(f)) return qv_null();
+    q_require_callable(f);
     QClosure* cl = static_cast<QClosure*>(f.data.func_val);
     return reinterpret_cast<QClFunc0>(cl->func)(cl);
 }
 
 // Call function value with 1 argument
 inline QValue q_call1(QValue f, QValue a) {
-    if (!q_require_callable(f)) return qv_null();
+    q_require_callable(f);
     QClosure* cl = static_cast<QClosure*>(f.data.func_val);
     return reinterpret_cast<QClFunc1>(cl->func)(cl, a);
 }
 
 // Call function value with 2 arguments
 inline QValue q_call2(QValue f, QValue a, QValue b) {
-    if (!q_require_callable(f)) return qv_null();
+    q_require_callable(f);
     QClosure* cl = static_cast<QClosure*>(f.data.func_val);
     return reinterpret_cast<QClFunc2>(cl->func)(cl, a, b);
 }
 
 // Call function value with 3 arguments
 inline QValue q_call3(QValue f, QValue a, QValue b, QValue c) {
-    if (!q_require_callable(f)) return qv_null();
+    q_require_callable(f);
     QClosure* cl = static_cast<QClosure*>(f.data.func_val);
     return reinterpret_cast<QClFunc3>(cl->func)(cl, a, b, c);
 }
 
 // Call function value with 4 arguments
 inline QValue q_call4(QValue f, QValue a, QValue b, QValue c, QValue d) {
-    if (!q_require_callable(f)) return qv_null();
+    q_require_callable(f);
     QClosure* cl = static_cast<QClosure*>(f.data.func_val);
     return reinterpret_cast<QClFunc4>(cl->func)(cl, a, b, c, d);
 }
 
 inline QValue q_call5(QValue f, QValue a, QValue b, QValue c, QValue d, QValue e) {
-    if (!q_require_callable(f)) return qv_null();
+    q_require_callable(f);
     QClosure* cl = static_cast<QClosure*>(f.data.func_val);
     return reinterpret_cast<QClFunc5>(cl->func)(cl, a, b, c, d, e);
 }
 
 inline QValue q_call6(QValue f, QValue a, QValue b, QValue c, QValue d, QValue e, QValue g) {
-    if (!q_require_callable(f)) return qv_null();
+    q_require_callable(f);
     QClosure* cl = static_cast<QClosure*>(f.data.func_val);
     return reinterpret_cast<QClFunc6>(cl->func)(cl, a, b, c, d, e, g);
 }
 
 inline QValue q_call7(QValue f, QValue a, QValue b, QValue c, QValue d, QValue e, QValue g, QValue h) {
-    if (!q_require_callable(f)) return qv_null();
+    q_require_callable(f);
     QClosure* cl = static_cast<QClosure*>(f.data.func_val);
     return reinterpret_cast<QClFunc7>(cl->func)(cl, a, b, c, d, e, g, h);
 }
 
 inline QValue q_call8(QValue f, QValue a, QValue b, QValue c, QValue d, QValue e, QValue g, QValue h, QValue i) {
-    if (!q_require_callable(f)) return qv_null();
+    q_require_callable(f);
     QClosure* cl = static_cast<QClosure*>(f.data.func_val);
     return reinterpret_cast<QClFunc8>(cl->func)(cl, a, b, c, d, e, g, h, i);
 }
 
 inline QValue q_call9(QValue f, QValue a, QValue b, QValue c, QValue d, QValue e, QValue g, QValue h, QValue i, QValue j) {
-    if (!q_require_callable(f)) return qv_null();
+    q_require_callable(f);
     QClosure* cl = static_cast<QClosure*>(f.data.func_val);
     return reinterpret_cast<QClFunc9>(cl->func)(cl, a, b, c, d, e, g, h, i, j);
 }
 
 inline QValue q_call10(QValue f, QValue a, QValue b, QValue c, QValue d, QValue e, QValue g, QValue h, QValue i, QValue j, QValue k) {
-    if (!q_require_callable(f)) return qv_null();
+    q_require_callable(f);
     QClosure* cl = static_cast<QClosure*>(f.data.func_val);
     return reinterpret_cast<QClFunc10>(cl->func)(cl, a, b, c, d, e, g, h, i, j, k);
 }
 
 inline QValue q_call11(QValue f, QValue a, QValue b, QValue c, QValue d, QValue e, QValue g, QValue h, QValue i, QValue j, QValue k, QValue l) {
-    if (!q_require_callable(f)) return qv_null();
+    q_require_callable(f);
     QClosure* cl = static_cast<QClosure*>(f.data.func_val);
     return reinterpret_cast<QClFunc11>(cl->func)(cl, a, b, c, d, e, g, h, i, j, k, l);
 }
 
 inline QValue q_call12(QValue f, QValue a, QValue b, QValue c, QValue d, QValue e, QValue g, QValue h, QValue i, QValue j, QValue k, QValue l, QValue m) {
-    if (!q_require_callable(f)) return qv_null();
+    q_require_callable(f);
     QClosure* cl = static_cast<QClosure*>(f.data.func_val);
     return reinterpret_cast<QClFunc12>(cl->func)(cl, a, b, c, d, e, g, h, i, j, k, l, m);
 }
@@ -2785,7 +2790,6 @@ inline QValue q_calln(QValue f, const std::vector<QValue>& args) {
         default:
             std::fprintf(stderr, "runtime error: function call supports up to 12 arguments, got %zu\n", args.size());
             std::exit(1);
-            return qv_null();
     }
 }
 
@@ -2853,7 +2857,7 @@ inline bool either_float(const QValue& a, const QValue& b) {
 } // namespace quark
 
 inline const char* q_type_name_arith(QValue::ValueType t) {
-    static const char* type_names[] = {"int", "float", "str", "bool", "null", "list", "vector", "dict", "func", "result"};
+    static const char* type_names[] = {"int", "float", "str", "bool", "null", "list", "vector", "dict", "fn", "result"};
     return (t >= 0 && t <= 9) ? type_names[t] : "unknown";
 }
 
@@ -2897,7 +2901,6 @@ inline QValue q_add(QValue a, QValue b) {
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
         q_arith_type_error("+", a, b);
-        return qv_null();
     }
     if (quark::detail::either_float(a, b)) {
         return qv_float(quark::detail::to_double(a) + quark::detail::to_double(b));
@@ -2914,7 +2917,6 @@ inline QValue q_sub(QValue a, QValue b) {
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
         q_arith_type_error("-", a, b);
-        return qv_null();
     }
     if (quark::detail::either_float(a, b)) {
         return qv_float(quark::detail::to_double(a) - quark::detail::to_double(b));
@@ -2931,7 +2933,6 @@ inline QValue q_mul(QValue a, QValue b) {
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
         q_arith_type_error("*", a, b);
-        return qv_null();
     }
     if (quark::detail::either_float(a, b)) {
         return qv_float(quark::detail::to_double(a) * quark::detail::to_double(b));
@@ -2948,7 +2949,6 @@ inline QValue q_div(QValue a, QValue b) {
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
         q_arith_type_error("/", a, b);
-        return qv_null();
     }
     double bv = quark::detail::to_double(b);
     // Check for division by zero
@@ -2980,7 +2980,6 @@ inline QValue q_pow(QValue a, QValue b) {
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
         q_arith_type_error("**", a, b);
-        return qv_null();
     }
     double av = quark::detail::to_double(a);
     double bv = quark::detail::to_double(b);
@@ -3002,7 +3001,6 @@ inline QValue q_neg(QValue a) {
     // Type guard: only INT and FLOAT are valid
     if (a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) {
         q_unary_type_error("-", a);
-        return qv_null();
     }
     if (a.type == QValue::VAL_FLOAT) {
         return qv_float(-a.data.float_val);
@@ -3032,7 +3030,6 @@ inline QValue q_lt(QValue a, QValue b) {
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
         std::fprintf(stderr, "runtime error: operator '<' expects numeric operands\n");
         std::exit(1);
-        return qv_null();
     }
     if (quark::detail::either_float(a, b)) {
         return qv_bool(quark::detail::to_double(a) < quark::detail::to_double(b));
@@ -3050,7 +3047,6 @@ inline QValue q_lte(QValue a, QValue b) {
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
         std::fprintf(stderr, "runtime error: operator '<=' expects numeric operands\n");
         std::exit(1);
-        return qv_null();
     }
     if (quark::detail::either_float(a, b)) {
         return qv_bool(quark::detail::to_double(a) <= quark::detail::to_double(b));
@@ -3068,7 +3064,6 @@ inline QValue q_gt(QValue a, QValue b) {
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
         std::fprintf(stderr, "runtime error: operator '>' expects numeric operands\n");
         std::exit(1);
-        return qv_null();
     }
     if (quark::detail::either_float(a, b)) {
         return qv_bool(quark::detail::to_double(a) > quark::detail::to_double(b));
@@ -3086,7 +3081,6 @@ inline QValue q_gte(QValue a, QValue b) {
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
         std::fprintf(stderr, "runtime error: operator '>=' expects numeric operands\n");
         std::exit(1);
-        return qv_null();
     }
     if (quark::detail::either_float(a, b)) {
         return qv_bool(quark::detail::to_double(a) >= quark::detail::to_double(b));
@@ -3143,7 +3137,7 @@ inline QValue q_neq(QValue a, QValue b) {
 // Runtime bool enforcement helper (policy §4.3 — EXTRA-4)
 inline void q_require_bool(QValue v, const char* op) {
     if (v.type != QValue::VAL_BOOL) {
-        static const char* names[] = {"int", "float", "str", "bool", "null", "list", "vector", "dict", "func", "result"};
+        static const char* names[] = {"int", "float", "str", "bool", "null", "list", "vector", "dict", "fn", "result"};
         const char* tname = (v.type >= 0 && v.type <= 9) ? names[v.type] : "unknown";
         std::fprintf(stderr, "runtime error: '%s' expects bool operand, got %s\n", op, tname);
         std::exit(1);
@@ -3152,7 +3146,7 @@ inline void q_require_bool(QValue v, const char* op) {
 
 inline bool q_condition_bool(QValue v, const char* context) {
     if (v.type != QValue::VAL_BOOL) {
-        static const char* names[] = {"int", "float", "str", "bool", "null", "list", "vector", "dict", "func", "result"};
+        static const char* names[] = {"int", "float", "str", "bool", "null", "list", "vector", "dict", "fn", "result"};
         const char* tname = (v.type >= 0 && v.type <= 9) ? names[v.type] : "unknown";
         std::fprintf(stderr, "runtime error: %s condition must be bool, got %s\n", context, tname);
         std::exit(1);
@@ -3288,7 +3282,6 @@ inline QValue q_len(QValue v) {
         default:
             std::fprintf(stderr, "runtime error: len() expects str, list, dict, or vector\n");
             std::exit(1);
-            return qv_int(0);
     }
 }
 
@@ -3346,7 +3339,6 @@ inline QValue q_iter_get(QValue iterable, QValue index) {
         default:
             std::fprintf(stderr, "runtime error: unsupported vector dtype in iteration\n");
             std::exit(1);
-            return qv_null();
     }
 }
 
@@ -3407,7 +3399,7 @@ inline QValue q_int(QValue v) {
             return qv_int(result);
         }
         default: {
-            static const char* names[] = {"int","float","str","bool","null","list","vector","dict","func","result"};
+            static const char* names[] = {"int","float","str","bool","null","list","vector","dict","fn","result"};
             const char* tname = (v.type >= 0 && v.type <= 9) ? names[v.type] : "unknown";
             std::fprintf(stderr, "runtime error: to_int() cannot convert %s to int\n", tname);
             std::exit(1);
@@ -3438,7 +3430,7 @@ inline QValue q_float(QValue v) {
             return qv_float(result);
         }
         default: {
-            static const char* names[] = {"int","float","str","bool","null","list","vector","dict","func","result"};
+            static const char* names[] = {"int","float","str","bool","null","list","vector","dict","fn","result"};
             const char* tname = (v.type >= 0 && v.type <= 9) ? names[v.type] : "unknown";
             std::fprintf(stderr, "runtime error: to_float() cannot convert %s to float\n", tname);
             std::exit(1);
@@ -3469,7 +3461,7 @@ inline QValue q_type(QValue v) {
         case QValue::VAL_DICT:
             return qv_string("dict");
         case QValue::VAL_FUNC:
-            return qv_string("func");
+            return qv_string("fn");
         case QValue::VAL_RESULT:
             return qv_string("result");
         case QValue::VAL_VECTOR: {
@@ -3522,7 +3514,7 @@ inline QValue q_unwrap(QValue v) {
 
 // Helper: type name lookup for error messages
 inline const char* q_type_name_math(QValue::ValueType t) {
-    static const char* names[] = {"int", "float", "str", "bool", "null", "list", "vector", "dict", "func", "result"};
+    static const char* names[] = {"int", "float", "str", "bool", "null", "list", "vector", "dict", "fn", "result"};
     return (t >= 0 && t <= 9) ? names[t] : "unknown";
 }
 
@@ -3665,7 +3657,7 @@ inline QValue q_member_get(QValue obj, const char* member) {
         return q_dict_get(obj, qv_string(member));
     }
 
-    const char* type_names[] = {"int", "float", "string", "bool", "null", "list", "vector", "dict", "func", "result"};
+    const char* type_names[] = {"int", "float", "string", "bool", "null", "list", "vector", "dict", "fn", "result"};
     const char* type_name = (obj.type >= 0 && obj.type <= 9) ? type_names[obj.type] : "unknown";
     fprintf(stderr, "runtime error: dot access is only supported on dict; got type '%s'\n", type_name);
     std::exit(1);

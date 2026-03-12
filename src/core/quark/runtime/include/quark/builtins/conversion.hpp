@@ -24,7 +24,6 @@ inline QValue q_len(QValue v) {
         default:
             std::fprintf(stderr, "runtime error: len() expects str, list, dict, or vector\n");
             std::exit(1);
-            return qv_int(0);
     }
 }
 
@@ -82,7 +81,6 @@ inline QValue q_iter_get(QValue iterable, QValue index) {
         default:
             std::fprintf(stderr, "runtime error: unsupported vector dtype in iteration\n");
             std::exit(1);
-            return qv_null();
     }
 }
 
@@ -143,7 +141,7 @@ inline QValue q_int(QValue v) {
             return qv_int(result);
         }
         default: {
-            static const char* names[] = {"int","float","str","bool","null","list","vector","dict","func","result"};
+            static const char* names[] = {"int","float","str","bool","null","list","vector","dict","fn","result"};
             const char* tname = (v.type >= 0 && v.type <= 9) ? names[v.type] : "unknown";
             std::fprintf(stderr, "runtime error: to_int() cannot convert %s to int\n", tname);
             std::exit(1);
@@ -174,7 +172,7 @@ inline QValue q_float(QValue v) {
             return qv_float(result);
         }
         default: {
-            static const char* names[] = {"int","float","str","bool","null","list","vector","dict","func","result"};
+            static const char* names[] = {"int","float","str","bool","null","list","vector","dict","fn","result"};
             const char* tname = (v.type >= 0 && v.type <= 9) ? names[v.type] : "unknown";
             std::fprintf(stderr, "runtime error: to_float() cannot convert %s to float\n", tname);
             std::exit(1);
@@ -205,7 +203,7 @@ inline QValue q_type(QValue v) {
         case QValue::VAL_DICT:
             return qv_string("dict");
         case QValue::VAL_FUNC:
-            return qv_string("func");
+            return qv_string("fn");
         case QValue::VAL_RESULT:
             return qv_string("result");
         case QValue::VAL_VECTOR: {

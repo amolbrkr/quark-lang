@@ -263,13 +263,16 @@ inline QValue qv_vector_str(int initial_string_cap = 0, int initial_byte_cap = 0
 
 inline QValue q_vec_push(QValue vec, QValue value) {
     if (!q_vec_has_valid_handle(vec)) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: vector push expects valid vector[f64]\n");
+        std::exit(1);
     }
     if (vec.data.vector_val->type != QVector::Type::F64) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: vector push expects vector[f64]\n");
+        std::exit(1);
     }
     if (!q_is_numeric_scalar(value)) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: vector push expects numeric scalar value\n");
+        std::exit(1);
     }
     std::vector<double>& values = std::get<std::vector<double>>(vec.data.vector_val->storage);
     values.push_back(q_to_double_scalar(value));
@@ -282,10 +285,12 @@ inline QValue q_vec_push(QValue vec, QValue value) {
 
 inline QValue q_vec_push_i64(QValue vec, QValue value) {
     if (!q_vec_has_valid_handle(vec) || vec.data.vector_val->type != QVector::Type::I64) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: vector push expects vector[i64]\n");
+        std::exit(1);
     }
     if (!(value.type == QValue::VAL_INT || value.type == QValue::VAL_FLOAT || value.type == QValue::VAL_BOOL)) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: vector[i64] push expects int, float, or bool scalar value\n");
+        std::exit(1);
     }
     std::vector<int64_t>& values = std::get<std::vector<int64_t>>(vec.data.vector_val->storage);
     values.push_back(q_to_i64_scalar(value));
@@ -298,10 +303,12 @@ inline QValue q_vec_push_i64(QValue vec, QValue value) {
 
 inline QValue q_vec_push_bool(QValue vec, QValue value) {
     if (!q_vec_has_valid_handle(vec) || vec.data.vector_val->type != QVector::Type::BOOL) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: vector push expects vector[bool]\n");
+        std::exit(1);
     }
     if (!q_is_boolish_scalar(value)) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: vector[bool] push expects bool or int scalar value\n");
+        std::exit(1);
     }
     std::vector<uint8_t>& values = std::get<std::vector<uint8_t>>(vec.data.vector_val->storage);
     const bool b = (value.type == QValue::VAL_BOOL) ? value.data.bool_val : (value.data.int_val != 0);
@@ -339,7 +346,8 @@ inline std::vector<std::string> q_vec_decode_strings(const QStringStorage& stora
 
 inline QValue q_vec_clone(QValue vec) {
     if (!q_vec_has_valid_handle(vec) || !q_vec_validate(*vec.data.vector_val)) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: cannot clone invalid vector\n");
+        std::exit(1);
     }
     QValue out;
     out.type = QValue::VAL_VECTOR;
@@ -356,7 +364,8 @@ inline int q_vec_size(QValue vec) {
 
 inline QValue q_vec_dtype(QValue vec) {
     if (!q_vec_has_valid_handle(vec) || !q_vec_validate(*vec.data.vector_val)) {
-        return qv_null();
+        std::fprintf(stderr, "runtime error: dtype query expects valid vector\n");
+        std::exit(1);
     }
     return qv_string(q_vec_dtype_name(*vec.data.vector_val));
 }
@@ -901,7 +910,7 @@ inline QValue q_to_vector(QValue input) {
             case QValue::VAL_LIST: return "list";
             case QValue::VAL_VECTOR: return "vector";
             case QValue::VAL_DICT: return "dict";
-            case QValue::VAL_FUNC: return "func";
+            case QValue::VAL_FUNC: return "fn";
             case QValue::VAL_RESULT: return "result";
             default: return "unknown";
         }
@@ -1564,12 +1573,10 @@ inline QValue q_vec_get_scalar(QValue vec, QValue index) {
     if (!q_vec_has_valid_handle(vec)) {
         std::fprintf(stderr, "runtime error: vector index expects valid vector\n");
         std::exit(1);
-        return qv_null();
     }
     if (index.type != QValue::VAL_INT) {
         std::fprintf(stderr, "runtime error: vector index must be int\n");
         std::exit(1);
-        return qv_null();
     }
 
     const QVector& v = *vec.data.vector_val;
@@ -1579,7 +1586,6 @@ inline QValue q_vec_get_scalar(QValue vec, QValue index) {
     if (idx < 0 || idx >= len) {
         std::fprintf(stderr, "runtime error: vector index %d out of range (len=%d)\n", idx, len);
         std::exit(1);
-        return qv_null();
     }
     const size_t i = static_cast<size_t>(idx);
 
@@ -1600,7 +1606,8 @@ inline QValue q_vec_get_scalar(QValue vec, QValue index) {
             return qv_string(elem.c_str());
         }
         default:
-            return qv_null();
+            std::fprintf(stderr, "runtime error: vector index does not support dtype '%s'\n", q_vec_dtype_name(v));
+            std::exit(1);
     }
 }
 
@@ -1609,7 +1616,6 @@ inline QValue q_vec_mask_filter(QValue data, QValue mask) {
     if (!q_vec_has_valid_handle(data) || !q_vec_has_valid_handle(mask)) {
         std::fprintf(stderr, "runtime error: mask filter expects vector operands\n");
         std::exit(1);
-        return qv_null();
     }
     const QVector& dv = *data.data.vector_val;
     const QVector& mv = *mask.data.vector_val;
@@ -1618,13 +1624,11 @@ inline QValue q_vec_mask_filter(QValue data, QValue mask) {
         std::fprintf(stderr, "runtime error: mask index must be a bool vector, got vector[%s]\n",
                      q_vec_dtype_name(mv));
         std::exit(1);
-        return qv_null();
     }
     if (dv.count != mv.count) {
         std::fprintf(stderr, "runtime error: mask length (%zu) does not match vector length (%zu)\n",
                      mv.count, dv.count);
         std::exit(1);
-        return qv_null();
     }
 
     const auto& maskBits = std::get<std::vector<uint8_t>>(mv.storage);
@@ -1736,7 +1740,8 @@ inline QValue q_vec_mask_filter(QValue data, QValue mask) {
             return out;
         }
         default:
-            return qv_null();
+            std::fprintf(stderr, "runtime error: mask filter does not support dtype '%s'\n", q_vec_dtype_name(dv));
+            std::exit(1);
     }
 }
 

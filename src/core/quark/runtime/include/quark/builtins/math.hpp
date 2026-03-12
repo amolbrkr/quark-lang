@@ -10,7 +10,7 @@
 
 // Helper: type name lookup for error messages
 inline const char* q_type_name_math(QValue::ValueType t) {
-    static const char* names[] = {"int", "float", "str", "bool", "null", "list", "vector", "dict", "func", "result"};
+    static const char* names[] = {"int", "float", "str", "bool", "null", "list", "vector", "dict", "fn", "result"};
     return (t >= 0 && t <= 9) ? names[t] : "unknown";
 }
 

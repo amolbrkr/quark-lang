@@ -487,7 +487,7 @@ All three layers must stay in sync for arity, naming, and return-type behavior.
 To add a new builtin function:
 
 1. **Add C++ implementation** in appropriate header under `runtime/include/quark/`
-2. **Regenerate `runtime.hpp`** by running `build_runtime.ps1` (only needed for embedded-runtime fallback mode)
+2. The runtime is provided via modular headers under `src/core/quark/runtime/include/quark/` and included as `#include \"quark/quark.hpp\"`
 3. **Register the builtin mapping** in `src/core/quark/codegen/builtins.go`
 4. **Register type signature** in `src/core/quark/types/analyzer.go`
 

@@ -951,7 +951,7 @@ go build -o quark .
    - Example: `StructNode`, `ImplNode`, `TryNode`, `OkNode`, `ErrNode`
 5. **New built-in function**:
    - Add C++ implementation in `runtime/include/quark/` (appropriate header)
-   - Regenerate `codegen/runtime.hpp` (run `build_runtime.ps1`)
+    - Runtime headers are modular under `runtime/include/quark/` and consumed via `#include \"quark/quark.hpp\"`
    - Add case in `generateFunctionCall()` and `generatePipe()`
    - Register type signature in `types/analyzer.go` builtins map
 6. **Code generation**: Add case in `codegen/codegen.go`
@@ -973,9 +973,9 @@ runtime/
 └── CMakeLists.txt          # Build tests with: cmake -B build && cmake --build build
 ```
 
-After modifying headers, regenerate the embedded runtime:
-```bash
-cd runtime && pwsh build_runtime.ps1
+After modifying runtime headers under `runtime/include/quark/`, generated programs consume them via:
+```cpp
+#include "quark/quark.hpp"
 ```
 
 ### Known Limitations
@@ -1063,7 +1063,7 @@ All user identifiers get the `quark_` prefix in codegen, eliminating C++ keyword
 
 ### Runtime Headers (Not Embedded)
 
-Generated C++ uses `#include "quark/quark.hpp"` and the compiler passes `-I{runtime_path}` to clang++. A concatenated `codegen/runtime.hpp` exists as a fallback for embedded mode but must be kept in sync with the modular headers.
+Generated C++ uses `#include "quark/quark.hpp"` and the compiler passes `-I{runtime_path}` to clang++.
 
 ### Closures
 

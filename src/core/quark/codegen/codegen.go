@@ -1,16 +1,12 @@
 package codegen
 
 import (
-	_ "embed"
 	"fmt"
 	"os"
 	"quark/ast"
 	"quark/token"
 	"strings"
 )
-
-//go:embed runtime.hpp
-var runtimeHeader string
 
 // funcDecl stores a function name and its parameter count for forward declarations
 type funcDecl struct {
@@ -31,7 +27,6 @@ type Generator struct {
 	currentFunc   string
 	declaredVars  map[string]bool            // Tracks declared variables to avoid redeclaration
 	scopeStack    []map[string]bool          // Stack of variable scopes for nested blocks
-	embedRuntime  bool                       // If true, embed full runtime; if false, use #include
 	captures      map[*ast.TreeNode][]string // Lambda node → captured variable names (from analyzer)
 	funcNames     map[string]bool            // Set of declared function names (for first-class funcs)
 }
@@ -44,7 +39,6 @@ func New() *Generator {
 		tempCounter:  0,
 		declaredVars: make(map[string]bool),
 		scopeStack:   make([]map[string]bool, 0),
-		embedRuntime: false, // Default: use #include instead of embedding
 		captures:     make(map[*ast.TreeNode][]string),
 		funcNames:    make(map[string]bool),
 	}
@@ -55,11 +49,6 @@ func (g *Generator) SetCaptures(captures map[*ast.TreeNode][]string) {
 	if captures != nil {
 		g.captures = captures
 	}
-}
-
-// SetEmbedRuntime configures whether to embed the full runtime or use #include
-func (g *Generator) SetEmbedRuntime(embed bool) {
-	g.embedRuntime = embed
 }
 
 // sanitizeVarName prefixes all user variable names with quark_ to avoid
@@ -143,15 +132,8 @@ func (g *Generator) popScope() {
 
 // Generate produces C++ code from the AST
 func (g *Generator) Generate(node *ast.TreeNode) string {
-	// Emit C++ runtime header
-	if g.embedRuntime {
-		// Embed full runtime (use WriteString directly to avoid % interpretation)
-		g.output.WriteString(runtimeHeader)
-		g.output.WriteString("\n")
-	} else {
-		// Use external header (clean, readable output)
-		g.output.WriteString("#include \"quark/quark.hpp\"\n\n")
-	}
+	// Use external modular runtime header.
+	g.output.WriteString("#include \"quark/quark.hpp\"\n\n")
 
 	g.output.WriteString("// Forward declarations\n")
 

@@ -8,8 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 
-// Helper functions to_double() and either_float() are defined in arithmetic.hpp
-// (removed from here to avoid duplication in the concatenated runtime.hpp)
+// Helper functions to_double() and either_float() are defined in arithmetic.hpp.
 
 // Less than
 inline QValue q_lt(QValue a, QValue b) {

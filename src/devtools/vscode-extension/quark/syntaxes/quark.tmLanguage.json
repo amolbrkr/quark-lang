@@ -147,7 +147,7 @@
       "patterns": [
         {
           "name": "support.type.quark",
-          "match": "\\b(int|float|str|bool|null|list|dict|vector|any)\\b"
+          "match": "\\b(int|float|str|bool|null|list|dict|vector|result|any)\\b"
         }
       ]
     },

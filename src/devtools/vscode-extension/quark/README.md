@@ -5,7 +5,7 @@ Syntax highlighting and language support for the Quark programming language.
 ## Features
 
 - **Syntax Highlighting** - Full syntax highlighting for `.qrk` files
-- **Keywords** - `fn`, `if`, `elseif`, `else`, `when`, `for`, `while`, `in`, `break`, `continue`, `and`, `or`, `true`, `false`, `null`, `module`, `use`, `ok`, `err`, `list`, `dict`, `vector`
+- **Keywords** - `fn`, `if`, `elseif`, `else`, `when`, `for`, `while`, `in`, `break`, `continue`, `and`, `or`, `true`, `false`, `null`, `module`, `use`, `ok`, `err`, `list`, `dict`, `vector`, `result`
 - **Operators** - Arithmetic, comparison, logical, pipe (`|`), arrow (`->`)
 - **Comments** - Single-line comments with `//`
 - **Strings** - Single and double-quoted strings with escape sequences
@@ -65,4 +65,4 @@ Initial release with basic syntax highlighting.
 ## More Information
 
 - [Quark Repository](https://github.com/user/quark-lang)
-- [Language Documentation](https://github.com/user/quark-lang/blob/main/CLAUDE.md)
+- [Language Documentation](https://github.com/user/quark-lang/blob/main/grammar.md)

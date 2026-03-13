@@ -19,7 +19,6 @@
       "Bash(./quark.exe parse:*)",
       "Bash(timeout:*)",
       "Bash(ls:*)",
-      "Bash(bash build_runtime.sh:*)",
       "Bash(./quark.exe lex:*)",
       "Bash(git push:*)",
       "Bash(./quark.exe emit:*)",

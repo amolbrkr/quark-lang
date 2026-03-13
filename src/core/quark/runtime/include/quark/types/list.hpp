@@ -46,17 +46,14 @@ inline QValue q_get(QValue list, QValue index) {
         }
         std::fprintf(stderr, "runtime error: vector index must be int or bool vector\n");
         std::exit(1);
-        return qv_null();
     }
     if (list.type != QValue::VAL_LIST || !list.data.list_val) {
         std::fprintf(stderr, "runtime error: get() expects list/string/vector as first argument\n");
         std::exit(1);
-        return qv_null();
     }
     if (index.type != QValue::VAL_INT) {
         std::fprintf(stderr, "runtime error: get() index must be int\n");
         std::exit(1);
-        return qv_null();
     }
     int idx = static_cast<int>(index.data.int_val);
     int len = static_cast<int>(list.data.list_val->size());
@@ -189,7 +186,6 @@ inline QValue q_concat(QValue a, QValue b) {
     const char* b_type = (b.type >= 0 && b.type <= 8) ? type_names[b.type] : "unknown";
     fprintf(stderr, "runtime error: concat expects both arguments to be the same type (string+string or list+list), got %s and %s\n", a_type, b_type);
     std::exit(1);
-    return qv_null();
 }
 
 // Slice list [start:end), returns new list

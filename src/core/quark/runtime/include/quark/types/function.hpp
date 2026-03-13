@@ -15,7 +15,6 @@ inline bool q_require_callable(const QValue& f) {
     }
     std::fprintf(stderr, "runtime error: attempted to call a non-function value\n");
     std::exit(1);
-    return false;
 }
 
 // Call function value with 0 arguments

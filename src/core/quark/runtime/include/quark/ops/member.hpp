@@ -13,7 +13,6 @@ inline QValue q_member_get(QValue obj, const char* member) {
     if (obj.type == QValue::VAL_NULL) {
         fprintf(stderr, "runtime error: cannot access member '%s' on null\n", member);
         std::exit(1);
-        return qv_null();
     }
 
     if (obj.type == QValue::VAL_DICT) {
@@ -24,7 +23,6 @@ inline QValue q_member_get(QValue obj, const char* member) {
     const char* type_name = (obj.type >= 0 && obj.type <= 9) ? type_names[obj.type] : "unknown";
     fprintf(stderr, "runtime error: dot access is only supported on dict; got type '%s'\n", type_name);
     std::exit(1);
-    return qv_null();
 }
 
 // Dict member write: d.key = value → q_member_set(d, "key", value)
@@ -34,7 +32,6 @@ inline QValue q_member_set(QValue obj, const char* member, QValue value) {
     }
     fprintf(stderr, "runtime error: cannot set member '%s' on non-dict type\n", member);
     std::exit(1);
-    return qv_null();
 }
 
 #endif // QUARK_OPS_MEMBER_HPP

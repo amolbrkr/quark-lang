@@ -17,12 +17,10 @@ inline QValue q_split(QValue str, QValue sep) {
     if (str.type != QValue::VAL_STRING || sep.type != QValue::VAL_STRING) {
         std::fprintf(stderr, "runtime error: split() expects (str, str)\n");
         std::exit(1);
-        return qv_null();
     }
     if (!str.data.string_val || !sep.data.string_val) {
         std::fprintf(stderr, "runtime error: split() expects non-null string arguments\n");
         std::exit(1);
-        return qv_null();
     }
 
     const char* s = str.data.string_val;

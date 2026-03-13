@@ -50,7 +50,6 @@ inline QValue q_min(QValue v) {
     }
     std::fprintf(stderr, "runtime error: single-argument min() expects numeric vector, got %s\n", q_type_name_math(v.type));
     std::exit(1);
-    return qv_null();
 }
 
 // Maximum of two values
@@ -75,7 +74,6 @@ inline QValue q_max(QValue v) {
     }
     std::fprintf(stderr, "runtime error: single-argument max() expects numeric vector, got %s\n", q_type_name_math(v.type));
     std::exit(1);
-    return qv_null();
 }
 
 // Sum of vector values
@@ -85,7 +83,6 @@ inline QValue q_sum(QValue v) {
     }
     std::fprintf(stderr, "runtime error: sum() expects numeric vector or list, got %s\n", q_type_name_math(v.type));
     std::exit(1);
-    return qv_null();
 }
 
 // Square root (always returns float)

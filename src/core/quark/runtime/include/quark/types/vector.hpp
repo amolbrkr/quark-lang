@@ -438,7 +438,6 @@ inline QValue q_vec_binary_impl(QValue a, QValue b, BinaryOp op) {
 
     std::fprintf(stderr, "runtime error: vector arithmetic requires numeric vectors and scalars\n");
     std::exit(1);
-    return qv_null(); // unreachable
 }
 
 template <typename BinaryOp>
@@ -623,7 +622,6 @@ inline QValue q_vec_sum(QValue vec) {
     if (!vp) {
         std::fprintf(stderr, "runtime error: sum() requires numeric or bool vector\n");
         std::exit(1);
-        return qv_null(); // unreachable
     }
     const std::vector<double>& v = *vp;
     double acc = 0.0;
@@ -699,7 +697,6 @@ inline QValue q_fillna(QValue vec, QValue value) {
     if (!q_vec_has_valid_handle(vec) || !q_vec_validate(*vec.data.vector_val)) {
         std::fprintf(stderr, "runtime error: fillna() expects valid vector as first argument\n");
         std::exit(1);
-        return qv_null();
     }
 
     QVector& out = *vec.data.vector_val;
@@ -712,7 +709,6 @@ inline QValue q_fillna(QValue vec, QValue value) {
             if (!q_is_numeric_scalar(value)) {
                 std::fprintf(stderr, "runtime error: fillna() value is incompatible with vector[f64]\n");
                 std::exit(1);
-                return qv_null();
             }
             auto& values = std::get<std::vector<double>>(out.storage);
             const double fill = q_to_double_scalar(value);
@@ -729,7 +725,6 @@ inline QValue q_fillna(QValue vec, QValue value) {
             if (!(value.type == QValue::VAL_INT || value.type == QValue::VAL_FLOAT || value.type == QValue::VAL_BOOL)) {
                 std::fprintf(stderr, "runtime error: fillna() value is incompatible with vector[i64]\n");
                 std::exit(1);
-                return qv_null();
             }
             auto& values = std::get<std::vector<int64_t>>(out.storage);
             const int64_t fill = q_to_i64_scalar(value);
@@ -746,7 +741,6 @@ inline QValue q_fillna(QValue vec, QValue value) {
             if (!q_is_boolish_scalar(value)) {
                 std::fprintf(stderr, "runtime error: fillna() value is incompatible with vector[bool]\n");
                 std::exit(1);
-                return qv_null();
             }
             auto& values = std::get<std::vector<uint8_t>>(out.storage);
             const uint8_t fill = static_cast<uint8_t>((value.type == QValue::VAL_BOOL ? value.data.bool_val : (value.data.int_val != 0)) ? 1 : 0);
@@ -763,7 +757,6 @@ inline QValue q_fillna(QValue vec, QValue value) {
             if (value.type != QValue::VAL_STRING || value.data.string_val == nullptr) {
                 std::fprintf(stderr, "runtime error: fillna() value is incompatible with vector[str]\n");
                 std::exit(1);
-                return qv_null();
             }
             const auto& storage = std::get<QStringStorage>(out.storage);
             std::vector<std::string> values = q_vec_decode_strings(storage, out.count);
@@ -781,7 +774,6 @@ inline QValue q_fillna(QValue vec, QValue value) {
         default:
             std::fprintf(stderr, "runtime error: fillna() unsupported vector dtype\n");
             std::exit(1);
-            return qv_null();
     }
 }
 
@@ -789,12 +781,10 @@ inline QValue q_astype(QValue vec, QValue dtype) {
     if (!q_vec_has_valid_handle(vec) || !q_vec_validate(*vec.data.vector_val)) {
         std::fprintf(stderr, "runtime error: astype() expects valid vector as first argument\n");
         std::exit(1);
-        return qv_null();
     }
     if (dtype.type != QValue::VAL_STRING || dtype.data.string_val == nullptr) {
         std::fprintf(stderr, "runtime error: astype() expects dtype string as second argument\n");
         std::exit(1);
-        return qv_null();
     }
 
     const QVector& src = *vec.data.vector_val;
@@ -823,7 +813,6 @@ inline QValue q_astype(QValue vec, QValue dtype) {
         }
         std::fprintf(stderr, "runtime error: astype() cannot cast source vector to f64\n");
         std::exit(1);
-        return qv_null();
     }
 
     if (std::strcmp(target, "i64") == 0) {
@@ -849,7 +838,6 @@ inline QValue q_astype(QValue vec, QValue dtype) {
         }
         std::fprintf(stderr, "runtime error: astype() cannot cast source vector to i64\n");
         std::exit(1);
-        return qv_null();
     }
 
     if (std::strcmp(target, "bool") == 0) {
@@ -875,12 +863,10 @@ inline QValue q_astype(QValue vec, QValue dtype) {
         }
         std::fprintf(stderr, "runtime error: astype() cannot cast source vector to bool\n");
         std::exit(1);
-        return qv_null();
     }
 
     std::fprintf(stderr, "runtime error: astype() unsupported target dtype '%s'\n", target);
     std::exit(1);
-    return qv_null();
 }
 
 inline QValue q_to_vector(QValue input) {
@@ -891,7 +877,6 @@ inline QValue q_to_vector(QValue input) {
     if (input.type != QValue::VAL_LIST || !input.data.list_val) {
         std::fprintf(stderr, "runtime error: to_vector expects list or vector input\n");
         std::exit(1);
-        return qv_null();
     }
 
     const QList& items = *input.data.list_val;
@@ -946,7 +931,6 @@ inline QValue q_to_vector(QValue input) {
                     std::fprintf(stderr, "runtime error: to_vector requires homogeneous element types (all int, all float, or all str)\n");
             }
                     std::exit(1);
-            return qv_null();
         }
     }
 
@@ -1020,7 +1004,6 @@ inline QValue q_to_vector(QValue input) {
             if (item.type != QValue::VAL_STRING || item.data.string_val == nullptr) {
                 std::fprintf(stderr, "runtime error: to_vector requires homogeneous element types (all int, all float, or all str)\n");
                 std::exit(1);
-                return qv_null();
             }
             values[i] = item.data.string_val;
         }
@@ -1042,7 +1025,6 @@ inline QValue q_to_vector(QValue input) {
 
     std::fprintf(stderr, "runtime error: to_vector could not determine output vector type\n");
     std::exit(1);
-    return qv_null();
 }
 
 // ============================================================
@@ -1058,7 +1040,6 @@ inline QValue q_to_list(QValue input) {
     if (!q_vec_has_valid_handle(input)) {
         std::fprintf(stderr, "runtime error: to_list expects a vector or list input\n");
         std::exit(1);
-        return qv_null();
     }
 
     const QVector& v = *input.data.vector_val;
@@ -1475,7 +1456,6 @@ inline QValue q_vec_lt(QValue a, QValue b) {
     if (out.type != QValue::VAL_NULL) return out;
     std::fprintf(stderr, "runtime error: operator '<' not supported for these vector types\n");
     std::exit(1);
-    return qv_null();
 }
 
 inline QValue q_vec_lte(QValue a, QValue b) {
@@ -1487,7 +1467,6 @@ inline QValue q_vec_lte(QValue a, QValue b) {
     if (out.type != QValue::VAL_NULL) return out;
     std::fprintf(stderr, "runtime error: operator '<=' not supported for these vector types\n");
     std::exit(1);
-    return qv_null();
 }
 
 inline QValue q_vec_gt(QValue a, QValue b) {
@@ -1499,7 +1478,6 @@ inline QValue q_vec_gt(QValue a, QValue b) {
     if (out.type != QValue::VAL_NULL) return out;
     std::fprintf(stderr, "runtime error: operator '>' not supported for these vector types\n");
     std::exit(1);
-    return qv_null();
 }
 
 inline QValue q_vec_gte(QValue a, QValue b) {
@@ -1511,7 +1489,6 @@ inline QValue q_vec_gte(QValue a, QValue b) {
     if (out.type != QValue::VAL_NULL) return out;
     std::fprintf(stderr, "runtime error: operator '>=' not supported for these vector types\n");
     std::exit(1);
-    return qv_null();
 }
 
 inline QValue q_vec_eq(QValue a, QValue b) {
@@ -1536,7 +1513,6 @@ inline QValue q_vec_eq(QValue a, QValue b) {
     }
     std::fprintf(stderr, "runtime error: operator '==' not supported for these vector types\n");
     std::exit(1);
-    return qv_null();
 }
 
 inline QValue q_vec_neq(QValue a, QValue b) {
@@ -1561,7 +1537,6 @@ inline QValue q_vec_neq(QValue a, QValue b) {
     }
     std::fprintf(stderr, "runtime error: operator '!=' not supported for these vector types\n");
     std::exit(1);
-    return qv_null();
 }
 
 // ============================================================

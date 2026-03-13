@@ -16,7 +16,6 @@ inline QValue q_upper(QValue v) {
     if (v.type != QValue::VAL_STRING || !v.data.string_val) {
         std::fprintf(stderr, "runtime error: upper() expects str\n");
         std::exit(1);
-        return qv_null();
     }
     char* result = q_strdup(v.data.string_val);
     for (int i = 0; result[i]; i++) {
@@ -33,7 +32,6 @@ inline QValue q_lower(QValue v) {
     if (v.type != QValue::VAL_STRING || !v.data.string_val) {
         std::fprintf(stderr, "runtime error: lower() expects str\n");
         std::exit(1);
-        return qv_null();
     }
     char* result = q_strdup(v.data.string_val);
     for (int i = 0; result[i]; i++) {
@@ -50,7 +48,6 @@ inline QValue q_trim(QValue v) {
     if (v.type != QValue::VAL_STRING || !v.data.string_val) {
         std::fprintf(stderr, "runtime error: trim() expects str\n");
         std::exit(1);
-        return qv_null();
     }
     const char* start = v.data.string_val;
     while (*start && isspace(static_cast<unsigned char>(*start))) start++;
@@ -76,7 +73,6 @@ inline QValue q_contains(QValue str, QValue sub) {
         !str.data.string_val || !sub.data.string_val) {
         std::fprintf(stderr, "runtime error: contains() expects (str, str)\n");
         std::exit(1);
-        return qv_null();
     }
     return qv_bool(strstr(str.data.string_val, sub.data.string_val) != nullptr);
 }
@@ -88,7 +84,6 @@ inline QValue q_startswith(QValue str, QValue prefix) {
         !str.data.string_val || !prefix.data.string_val) {
         std::fprintf(stderr, "runtime error: startswith() expects (str, str)\n");
         std::exit(1);
-        return qv_null();
     }
     size_t plen = strlen(prefix.data.string_val);
     return qv_bool(strncmp(str.data.string_val, prefix.data.string_val, plen) == 0);
@@ -101,7 +96,6 @@ inline QValue q_endswith(QValue str, QValue suffix) {
         !str.data.string_val || !suffix.data.string_val) {
         std::fprintf(stderr, "runtime error: endswith() expects (str, str)\n");
         std::exit(1);
-        return qv_null();
     }
     size_t slen = strlen(str.data.string_val);
     size_t suflen = strlen(suffix.data.string_val);
@@ -117,7 +111,6 @@ inline QValue q_replace(QValue str, QValue old_str, QValue new_str) {
         !str.data.string_val || !old_str.data.string_val || !new_str.data.string_val) {
         std::fprintf(stderr, "runtime error: replace() expects (str, str, str)\n");
         std::exit(1);
-        return qv_null();
     }
 
     const char* s = str.data.string_val;
@@ -144,7 +137,6 @@ inline QValue q_replace(QValue str, QValue old_str, QValue new_str) {
         if (extra > 0 && static_cast<size_t>(count) > (SIZE_MAX - slen) / extra) {
             std::fprintf(stderr, "runtime error: replace() overflow while building result\n");
             std::exit(1);
-            return qv_null(); // overflow
         }
         rlen = slen + static_cast<size_t>(count) * extra;
     } else {
@@ -154,7 +146,6 @@ inline QValue q_replace(QValue str, QValue old_str, QValue new_str) {
     if (!result) {
         std::fprintf(stderr, "runtime error: replace() failed to allocate result\n");
         std::exit(1);
-        return qv_null();
     }
     char* dest = result;
 
@@ -180,7 +171,6 @@ inline QValue q_str_concat(QValue a, QValue b) {
         !a.data.string_val || !b.data.string_val) {
         std::fprintf(stderr, "runtime error: concat() expects (str, str)\n");
         std::exit(1);
-        return qv_null();
     }
     size_t alen = strlen(a.data.string_val);
     size_t blen = strlen(b.data.string_val);
@@ -188,7 +178,6 @@ inline QValue q_str_concat(QValue a, QValue b) {
     if (!result) {
         std::fprintf(stderr, "runtime error: concat() failed to allocate result\n");
         std::exit(1);
-        return qv_null();
     }
     memcpy(result, a.data.string_val, alen);
     memcpy(result + alen, b.data.string_val, blen);

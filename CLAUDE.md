@@ -421,21 +421,17 @@ fn full_pipeline(path) -> Result
 
 ### Unwrap Keyword
 
-The `unwrap` keyword extracts values from Results with a required default for the error case:
+The `unwrap` function extracts the ok payload from a Result. If the Result is an err, it panics with the error message:
 
 ```quark
-// unwrap result, default_value
-value = unwrap(divide(10, 2), 0)          // Returns 5
-value = unwrap(divide(10, 0), -1)         // Returns -1 (division failed)
+value = unwrap(divide(10, 2))     // Returns 5
+value = unwrap(divide(10, 0))     // PANICS: division by zero
 
-user = unwrap(find_user(id), default_user)
-port = unwrap(parse_int(port_str), 8080)
-
-// Chained unwraps
-name = unwrap(unwrap(user.profile, default_profile).name, 'Anonymous')
+// Use pattern matching for safe error handling instead
+when divide(10, 0):
+    ok value -> println(value)
+    err msg -> println(msg)
 ```
-
-The default argument is **always required** - this forces explicit handling of error cases. If you want to crash on error, use pattern matching and call a panic function explicitly.
 
 ## Standard Library
 
@@ -544,13 +540,13 @@ Module {
 | `x > y` | `q_gt(x, y)` |
 | `print(x)` | `q_print(x)` |
 | `x = 5` | `QValue x = qv_int(5);` |
-| `fn foo(n) ->` | `QValue q_foo(QValue n) {` |
+| `fn foo(n) ->` | `QValue quark_foo(QClosure* _cl, QValue _arg_quark_n) {` |
 | `x \| f()` | `q_f(x)` |
 | `sqrt(16)` | `q_sqrt(qv_int(16))` |
 | `upper('hi')` | `q_upper(qv_string("hi"))` |
 | `ok value` | `qv_ok(value)` |
 | `err msg` | `qv_err(msg)` |
-| `unwrap(result, default)` | `q_unwrap(result, default)` (planned) |
+| `unwrap(result)` | `q_unwrap(result)` |
 | `list [1, 2, 3]` | `qv_list_init({qv_int(1), qv_int(2), qv_int(3)})` |
 
 ### Runtime Functions
@@ -626,10 +622,10 @@ QValue q_range(QValue start, QValue end, QValue step); // range(0, 100, 5)
 
 // Result types
 QValue qv_ok(QValue value);
-QValue qv_err(const char* message);
+QValue qv_err(QValue value);
 
-// Error handling (unwrap planned)
-QValue q_unwrap(QValue result, QValue default_val);
+// Error handling
+QValue q_unwrap(QValue result);  // Panics on err
 ```
 
 ## Language Features
@@ -797,8 +793,8 @@ when rect.scale(2.0):
     ok scaled -> println('New area: {scaled.area}')
     err msg -> println('Error: {msg}')
 
-// Using unwrap with default
-scaled = unwrap(rect.scale(2.0), rect)   // Returns scaled or original on error
+// Using unwrap (panics on error)
+scaled = unwrap(rect.scale(2.0))   // Returns scaled or panics on error
 ```
 
 ### Error Handling (Planned)
@@ -829,8 +825,8 @@ try:
 err e:
     println('Pipeline failed: {e}')
 
-// Using unwrap with defaults
-data = unwrap(load_csv('data.csv'), [])
+// Using unwrap (panics on error)
+data = unwrap(load_csv('data.csv'))
 results = data | map(transform) | filter(valid)
 ```
 
@@ -877,10 +873,10 @@ results = data | map(transform) | filter(valid)
    - Simpler than class-based OOP, easier to implement
 
 4. **Error Handling with ok/err/unwrap**
-   - New keywords: `ok`, `err`, `try`, `unwrap`
+   - New keywords: `ok`, `err`
    - Result types for explicit error handling
    - Pattern matching on results
-   - `unwrap` requires a default value (no implicit panicking)
+   - `unwrap(result)` extracts ok payload, panics on err
 
 5. **Range Function (Not Operator)**
    - Removed `..` operator

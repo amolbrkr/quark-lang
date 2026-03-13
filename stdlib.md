@@ -16,8 +16,8 @@ This document describes the built-in functions available in Quark. All standard 
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `print` | `[value] -> void` | Print optional value without newline |
-| `println` | `[value] -> void` | Print optional value with newline |
+| `print` | `value -> void` | Print value without newline |
+| `println` | `value -> void` | Print value with newline |
 | `input` | `[prompt: str] -> str` | Read line from stdin; optional prompt must be a string |
 
 ```quark
@@ -206,7 +206,7 @@ sqrt(10) | floor() | println()  // 3
 
 ### Notes
 
-- `print()` and `println()` can be called with zero arguments
+- `print()` and `println()` require exactly one argument
 - `abs` accepts only `int` or `float`; passing any other type is a compile-time error
 - `abs` preserves the input type (int returns int, float returns float)
 - `min` and `max` return float if either argument is float; single-argument vector overloads are documented in the Vector section

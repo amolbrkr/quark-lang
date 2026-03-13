@@ -16,8 +16,8 @@ type BuiltinFunc struct {
 // Adding a new builtin only requires adding one entry here.
 var builtinRegistry = map[string]*BuiltinFunc{
 	// I/O
-	"print":   {CFunc: "q_print", MinArgs: 0, MaxArgs: 1},
-	"println": {CFunc: "q_println", MinArgs: 0, MaxArgs: 1},
+	"print":   {CFunc: "q_print", MinArgs: 1, MaxArgs: 1},
+	"println": {CFunc: "q_println", MinArgs: 1, MaxArgs: 1},
 	"input":   {CFunc: "q_input", MinArgs: 0, MaxArgs: 1},
 
 	// Conversions

@@ -47,8 +47,8 @@ func NewAnalyzer() *Analyzer {
 		paramTypes []Type
 		returnType Type
 	}{
-		{"print", 0, 1, []Type{TypeAny}, TypeVoid},
-		{"println", 0, 1, []Type{TypeAny}, TypeVoid},
+		{"print", 1, 1, []Type{TypeAny}, TypeVoid},
+		{"println", 1, 1, []Type{TypeAny}, TypeVoid},
 		// input arg0: must be str when provided
 		{"input", 0, 1, []Type{TypeString}, TypeString},
 		// len: arg type checked via inferBuiltinReturnType (str|list|dict|vector)

@@ -1,0 +1,82 @@
+// == smoke: return type annotations ==
+println('== smoke: return type annotations ==')
+
+// Basic return type on named function
+fn add(x: int, y: int) int ->
+    x + y
+
+println(add(3, 4))
+
+// Return type on single-line function
+fn double(n: int) int -> n * 2
+
+println(double(5))
+
+// Float return type
+fn pi() float -> 3.14
+
+println(pi())
+
+// String return type
+fn greet(name: str) str -> concat('Hello, ', name)
+
+println(greet('World'))
+
+// Bool return type
+fn is_positive(n: int) bool -> n > 0
+
+println(is_positive(5))
+println(is_positive(0 - 1))
+
+// Result return type
+fn safe_div(a: int, b: int) result ->
+    if b == 0:
+        err 'division by zero'
+    else:
+        ok a / b
+
+when safe_div(10, 2):
+    ok v -> println(v)
+    err e -> println(e)
+
+when safe_div(10, 0):
+    ok v -> println(v)
+    err e -> println(e)
+
+// Return type on lambda
+square = fn(x: int) int -> x * x
+
+println(square(6))
+
+// Return type with pattern matching
+fn describe(n: int) str ->
+    when n:
+        0 -> 'zero'
+        1 -> 'one'
+        _ -> 'other'
+
+println(describe(0))
+println(describe(1))
+println(describe(42))
+
+// Return type with ternary
+fn abs_val(n: int) int -> n if n > 0 else 0 - n
+
+println(abs_val(5))
+println(abs_val(0 - 3))
+
+// List return type
+fn make_list() list -> list [1, 2, 3]
+
+println(len(make_list()))
+
+// Return type used in pipe
+5 | double() | println()
+
+// Recursive function with return type
+fn fact(n: int) int ->
+    when n:
+        0 or 1 -> 1
+        _ -> n * fact(n - 1)
+
+println(fact(5))

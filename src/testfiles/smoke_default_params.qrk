@@ -1,0 +1,75 @@
+// == smoke: default parameters ==
+println('== smoke: default parameters ==')
+
+// Basic default parameter
+fn greet(name: str, greeting: str = 'Hello') str ->
+    concat(greeting, concat(' ', name))
+
+println(greet('World'))
+println(greet('World', 'Hi'))
+
+// Multiple defaults
+fn connect(host: str, port: int = 8080, timeout: int = 30) str ->
+    concat(host, concat(':', to_str(port)))
+
+println(connect('localhost'))
+println(connect('localhost', 3000))
+println(connect('localhost', 3000, 60))
+
+// Type inferred from default value
+fn repeat_n(text: str, times = 3) int -> times
+
+println(repeat_n('hello'))
+println(repeat_n('hello', 5))
+
+// Default with bool
+fn log_msg(msg: str, verbose: bool = false) str ->
+    if verbose:
+        concat('[VERBOSE] ', msg)
+    else:
+        msg
+
+println(log_msg('test'))
+println(log_msg('test', true))
+
+// Lambda with defaults
+multiply = fn(x: int, factor: int = 2) int -> x * factor
+
+println(multiply(5))
+println(multiply(5, 3))
+
+// Default with pipe - pipe fills first arg, default fills second
+fn add_n(x: int, n: int = 10) int -> x + n
+
+5 | add_n() | println()
+5 | add_n(20) | println()
+
+// Default with float
+fn scale(value: float, factor: float = 1.0) float -> value * factor
+
+// Note: Quark prints floats, so we use to_int for cleaner output
+println(to_int(scale(5.0)))
+println(to_int(scale(5.0, 2.0)))
+
+// Default with null
+fn maybe(x: int, fallback = null) ->
+    if x > 0:
+        x
+    else:
+        fallback
+
+println(maybe(5))
+println(maybe(0 - 1))
+
+// Default value - negative literal
+fn offset(x: int, dx: int = -1) int -> x + dx
+
+println(offset(10))
+println(offset(10, 5))
+
+// Mixed required and default params
+fn format(prefix: str, value: int, suffix: str = '!') str ->
+    concat(prefix, concat(to_str(value), suffix))
+
+println(format('Result: ', 42))
+println(format('Result: ', 42, '.'))

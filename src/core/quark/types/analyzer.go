@@ -585,6 +585,15 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 		if !isUnknownType(funcExprType) {
 			a.errorAt(funcNode, "expression is not callable")
 		}
+		// Dynamic/unknown callee — still emit a closure dispatch plan so codegen can lower it.
+		a.callPlans[node] = &ir.CallPlan{
+			Kind:            ir.CallFunctionValue,
+			CalleeName:      calleeNameFromNode(funcNode),
+			MinArity:        argCount,
+			MaxArity:        argCount,
+			Dispatch:        ir.DispatchClosure,
+			ArgTypesChecked: true, // Nothing concrete to check
+		}
 		return TypeAny
 	}
 
@@ -1247,6 +1256,15 @@ func (a *Analyzer) analyzePipe(node *ast.TreeNode) Type {
 		return funcType.ReturnType
 	}
 
+	// Dynamic/unknown callee in pipe — still emit a closure dispatch plan.
+	a.callPlans[rightNode] = &ir.CallPlan{
+		Kind:            ir.CallFunctionValue,
+		CalleeName:      calleeNameFromNode(funcNode),
+		MinArity:        pipeArgCount,
+		MaxArity:        pipeArgCount,
+		Dispatch:        ir.DispatchClosure,
+		ArgTypesChecked: true, // Nothing concrete to check
+	}
 	return TypeAny
 }
 

@@ -4,7 +4,10 @@ import (
 	"strings"
 	"testing"
 
+	"quark/ast"
+	"quark/codegen"
 	"quark/internal/testutil"
+	"quark/ir"
 )
 
 func TestCodegen_EmitsListConstruction(t *testing.T) {
@@ -137,5 +140,53 @@ func TestCodegen_WhenResultPatternBindingScopeRegression(t *testing.T) {
 	}
 	if bindDecl > bindUse {
 		t.Fatalf("expected err-binding declaration before usage in when arm, cpp=\n%s", res.CPP)
+	}
+}
+
+func TestCodegen_PanicsOnMissingCallPlan(t *testing.T) {
+	analyzer, node, parseErrs, typeErrs := testutil.Analyze("println(len('x'))\n")
+	if len(parseErrs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", parseErrs)
+	}
+	if len(typeErrs) > 0 {
+		t.Fatalf("unexpected type errors: %v", typeErrs)
+	}
+
+	gen := codegen.New()
+	gen.SetCaptures(analyzer.GetCaptures())
+	gen.SetCallPlans(map[*ast.TreeNode]*ir.CallPlan{})
+
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatalf("expected panic for missing call plan")
+		}
+		msg := ""
+		switch v := r.(type) {
+		case string:
+			msg = v
+		case error:
+			msg = v.Error()
+		default:
+			msg = "unknown panic"
+		}
+		if !strings.Contains(msg, "INV-CALLPLAN-MISSING") {
+			t.Fatalf("expected INV-CALLPLAN-MISSING panic, got: %s", msg)
+		}
+	}()
+
+	_ = gen.Generate(node)
+}
+
+func TestCodegen_NoBuiltinArityFallbackBranch(t *testing.T) {
+	res := testutil.GenerateCPP("println(len('abc'))\n")
+	if len(res.ParserErrors) > 0 {
+		t.Fatalf("unexpected parse errors: %v", res.ParserErrors)
+	}
+	if len(res.TypeErrors) > 0 {
+		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
+	}
+	if strings.Contains(res.CPP, "expects at least") || strings.Contains(res.CPP, "expects at most") {
+		t.Fatalf("generated code should not contain codegen-side builtin arity fallback branches, cpp=\n%s", res.CPP)
 	}
 }

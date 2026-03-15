@@ -9,6 +9,21 @@ import (
 	qtypes "quark/types"
 )
 
+func findFirstCall(node *ast.TreeNode) *ast.TreeNode {
+	if node == nil {
+		return nil
+	}
+	if node.NodeType == ast.FunctionCallNode {
+		return node
+	}
+	for _, child := range node.Children {
+		if found := findFirstCall(child); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
 func TestBuiltins_ArityError(t *testing.T) {
 	_, _, parseErrs, typeErrs := testutil.Analyze("len()\n")
 	if len(parseErrs) > 0 {
@@ -30,6 +45,28 @@ func TestAnyTypeAnnotations_Accepted(t *testing.T) {
 	}
 	if len(typeErrs) > 0 {
 		t.Fatalf("unexpected type errors: %v", typeErrs)
+	}
+}
+
+func TestCallPlans_DefaultsForAliasCall(t *testing.T) {
+	analyzer, node, parseErrs, typeErrs := testutil.Analyze("fn add_n(x: int, n: int = 10) int -> x + n\nalias = add_n\nalias(5)\n")
+	if len(parseErrs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", parseErrs)
+	}
+	if len(typeErrs) > 0 {
+		t.Fatalf("unexpected type errors: %v", typeErrs)
+	}
+
+	call := findFirstCall(node)
+	if call == nil {
+		t.Fatalf("expected to find function call node")
+	}
+	plan := analyzer.GetCallPlans()[call]
+	if plan == nil {
+		t.Fatalf("expected call plan for alias call")
+	}
+	if len(plan.DefaultNodes) != 1 {
+		t.Fatalf("expected 1 planned default argument, got %d", len(plan.DefaultNodes))
 	}
 }
 

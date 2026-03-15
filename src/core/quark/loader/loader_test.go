@@ -80,19 +80,30 @@ func TestResolveImports_DedupsAlreadyLoadedModule(t *testing.T) {
 	}
 }
 
-func TestResolveImports_RejectsStdlibImportForNow(t *testing.T) {
+func TestResolveImports_SupportsStdlibImport(t *testing.T) {
 	tmp := t.TempDir()
 	entry := filepath.Join(tmp, "main.qrk")
-	writeFile(t, entry, "use 'csv'\n")
+	stdlibRoot := filepath.Join(tmp, "stdlib")
+	writeFile(t, filepath.Join(stdlibRoot, "math.qrk"), "module math:\n    fn floor(x) -> x\n")
+	writeFile(t, entry, "use 'std/math'\n")
+
+	if err := os.Setenv("QUARK_STDLIB_ROOT", stdlibRoot); err != nil {
+		t.Fatalf("set env: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Unsetenv("QUARK_STDLIB_ROOT")
+	})
 
 	root := parseRoot(t, entry)
 
 	ml := NewModuleLoader()
 	ml.ResolveImports(root, entry)
 
-	errs := strings.Join(ml.Errors(), "\n")
-	if !strings.Contains(errs, "stdlib imports are not yet supported") {
-		t.Fatalf("expected stdlib import error, got: %v", ml.Errors())
+	if len(ml.Errors()) > 0 {
+		t.Fatalf("unexpected loader errors: %v", ml.Errors())
+	}
+	if len(root.Children) != 2 {
+		t.Fatalf("expected imported module and synthetic use node, got %d children", len(root.Children))
 	}
 }
 
@@ -115,5 +126,30 @@ func TestResolveImports_AllowsAbsoluteImportPath(t *testing.T) {
 	}
 	if len(root.Children) != 2 {
 		t.Fatalf("expected imported module and synthetic use node, got %d children", len(root.Children))
+	}
+}
+
+func TestResolveImports_PreservesUseAliasInSyntheticUse(t *testing.T) {
+	tmp := t.TempDir()
+	entry := filepath.Join(tmp, "main.qrk")
+	lib := filepath.Join(tmp, "lib", "math.qrk")
+	writeFile(t, lib, "module math:\n    fn square(n) -> n * n\n")
+	writeFile(t, entry, "use './lib/math' as m\n")
+
+	root := parseRoot(t, entry)
+	ml := NewModuleLoader()
+	ml.ResolveImports(root, entry)
+	if len(ml.Errors()) > 0 {
+		t.Fatalf("unexpected loader errors: %v", ml.Errors())
+	}
+	if len(root.Children) != 2 {
+		t.Fatalf("expected imported module and synthetic use node, got %d children", len(root.Children))
+	}
+	useNode := root.Children[1]
+	if useNode.NodeType != ast.UseNode {
+		t.Fatalf("expected synthetic UseNode, got %v", useNode)
+	}
+	if len(useNode.Children) < 2 || useNode.Children[1].TokenLiteral() != "m" {
+		t.Fatalf("expected synthetic alias 'm', got %#v", useNode.Children)
 	}
 }

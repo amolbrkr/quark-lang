@@ -190,3 +190,19 @@ func TestCodegen_NoBuiltinArityFallbackBranch(t *testing.T) {
 		t.Fatalf("generated code should not contain codegen-side builtin arity fallback branches, cpp=\n%s", res.CPP)
 	}
 }
+
+func TestCodegen_ModuleQualifiedCallLowersDirectly(t *testing.T) {
+	res := testutil.GenerateCPP("module math:\n    fn myfloor(x) -> x\nuse math as m\nprintln(m.myfloor(3))\n")
+	if len(res.ParserErrors) > 0 {
+		t.Fatalf("unexpected parse errors: %v", res.ParserErrors)
+	}
+	if len(res.TypeErrors) > 0 {
+		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
+	}
+	if !strings.Contains(res.CPP, "quark_myfloor->value") {
+		t.Fatalf("expected module-qualified call to lower to resolved module symbol value, cpp=\n%s", res.CPP)
+	}
+	if strings.Contains(res.CPP, "dot-call syntax is not supported") {
+		t.Fatalf("module-qualified call should not hit dot-call fallback branch, cpp=\n%s", res.CPP)
+	}
+}

@@ -52,6 +52,7 @@ const (
 	// Keywords
 	keyword_beg
 	USE
+	AS
 	MODULE
 	IN
 	AND
@@ -121,6 +122,7 @@ var tokenNames = map[TokenType]string{
 	UNDERSCORE: "UNDERSCORE",
 
 	USE:      "USE",
+	AS:       "AS",
 	MODULE:   "MODULE",
 	IN:       "IN",
 	AND:      "AND",
@@ -154,6 +156,7 @@ func (t TokenType) String() string {
 
 var keywords = map[string]TokenType{
 	"use":      USE,
+	"as":       AS,
 	"module":   MODULE,
 	"in":       IN,
 	"and":      AND,

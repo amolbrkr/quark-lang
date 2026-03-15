@@ -697,7 +697,12 @@ func (p *Parser) parseModule() *ast.TreeNode {
 	return node
 }
 
-// parseUse parses: use module_name  OR  use './path/to/module'
+// parseUse parses:
+//
+//	use module_name
+//	use './path/to/module'
+//	use module_name as alias
+//	use './path/to/module' as alias
 func (p *Parser) parseUse() *ast.TreeNode {
 	tok := p.curToken
 	node := ast.NewNode(ast.UseNode, &tok)
@@ -719,6 +724,18 @@ func (p *Parser) parseUse() *ast.TreeNode {
 	default:
 		p.addError("expected module path string or module name after 'use'")
 		return nil
+	}
+
+	if p.curToken.Type == token.AS {
+		p.nextToken() // skip 'as'
+		if p.curToken.Type != token.ID {
+			p.addError("expected alias identifier after 'as'")
+			return nil
+		}
+		aliasTok := p.curToken
+		aliasNode := ast.NewNode(ast.IdentifierNode, &aliasTok)
+		node.AddChild(aliasNode)
+		p.nextToken()
 	}
 
 	return node

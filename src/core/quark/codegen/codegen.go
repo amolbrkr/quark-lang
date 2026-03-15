@@ -631,14 +631,14 @@ func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
 
 	funcNode := node.Children[0]
 	argsNode := node.Children[1]
+	plan := g.getCallPlanOrPanic(node)
 
-	// Dot-call syntax is rejected by the analyzer; if it somehow reaches codegen, fail
-	if funcNode.NodeType == ast.OperatorNode && funcNode.Token != nil && funcNode.Token.Type == token.DOT {
+	// Dot-call syntax on values is rejected by analyzer; only module-qualified dot calls are allowed here.
+	if funcNode.NodeType == ast.OperatorNode && funcNode.Token != nil && funcNode.Token.Type == token.DOT && plan.Dispatch == ir.DispatchClosure && !strings.Contains(plan.CalleeName, ".") {
 		return "(fprintf(stderr, \"compile error: dot-call syntax is not supported\\n\"), qv_null())"
 	}
 
 	funcName := funcNode.TokenLiteral()
-	plan := g.getCallPlanOrPanic(node)
 
 	// Generate arguments
 	args := make([]string, 0)
@@ -664,6 +664,10 @@ func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
 	case ir.DispatchClosure:
 		// It is a closure/function value call by analyzer contract.
 		funcExpr := g.generateExpr(funcNode)
+		if funcNode.NodeType == ast.OperatorNode && funcNode.Token != nil && funcNode.Token.Type == token.DOT && strings.Contains(plan.CalleeName, ".") && len(funcNode.Children) >= 2 {
+			member := funcNode.Children[1].TokenLiteral()
+			funcExpr = fmt.Sprintf("%s->value", sanitizeVarName(member))
+		}
 		return fmt.Sprintf("q_calln(%s, std::vector<QValue>{%s})", funcExpr, strings.Join(args, ", "))
 	default:
 		panic(fmt.Sprintf("internal compiler error [INV-CALLPLAN-DISPATCH]: unknown dispatch for '%s'", funcName))
@@ -710,6 +714,10 @@ func (g *Generator) generatePipe(node *ast.TreeNode) string {
 		return fmt.Sprintf("%s(nullptr, %s)", plan.RuntimeSymbol, strings.Join(args, ", "))
 	case ir.DispatchClosure:
 		funcExpr := g.generateExpr(funcNode)
+		if funcNode.NodeType == ast.OperatorNode && funcNode.Token != nil && funcNode.Token.Type == token.DOT && strings.Contains(plan.CalleeName, ".") && len(funcNode.Children) >= 2 {
+			member := funcNode.Children[1].TokenLiteral()
+			funcExpr = fmt.Sprintf("%s->value", sanitizeVarName(member))
+		}
 		return fmt.Sprintf("q_calln(%s, std::vector<QValue>{%s})", funcExpr, strings.Join(args, ", "))
 	default:
 		panic(fmt.Sprintf("internal compiler error [INV-CALLPLAN-DISPATCH]: unknown dispatch for '%s'", funcName))

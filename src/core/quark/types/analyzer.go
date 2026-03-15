@@ -33,6 +33,7 @@ type Analyzer struct {
 	errors          []string
 	functions       map[string]*FunctionType // Track function signatures
 	modules         map[string]*Module       // Track defined modules
+	moduleAliases   map[string]string        // Alias -> module name mapping from use statements
 	currentModule   string                   // Current module being defined (empty if global)
 	builtins        map[string]*builtinSignature
 	captures        map[*ast.TreeNode][]string // Lambda node → captured variable names
@@ -63,6 +64,7 @@ func NewAnalyzer() *Analyzer {
 		errors:          make([]string, 0),
 		functions:       funcs,
 		modules:         make(map[string]*Module),
+		moduleAliases:   make(map[string]string),
 		currentModule:   "",
 		builtins:        builtinSigs,
 		captures:        make(map[*ast.TreeNode][]string),
@@ -546,26 +548,90 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 
 	funcNode := node.Children[0]
 	argsNode := node.Children[1]
-
-	// Dot-call syntax is not supported — reject with diagnostic
-	if funcNode.NodeType == ast.OperatorNode && funcNode.Token != nil && funcNode.Token.Type == token.DOT {
-		if len(funcNode.Children) >= 2 {
-			method := funcNode.Children[1].TokenLiteral()
-			a.Analyze(funcNode.Children[0])
-			a.errorAt(funcNode, "dot-call syntax is not supported; use %s(entity, ...) instead", method)
-		}
-		for _, arg := range argsNode.Children {
-			a.Analyze(arg)
-		}
-		return TypeAny
-	}
-
-	funcExprType := a.Analyze(funcNode)
 	argCount := len(argsNode.Children)
 	argTypes := make([]Type, 0, argCount)
 	for _, arg := range argsNode.Children {
 		argTypes = append(argTypes, a.Analyze(arg))
 	}
+
+	if moduleName, member, sym, ok := a.lookupModuleCall(funcNode); ok {
+		if sym == nil {
+			a.callPlans[node] = &ir.CallPlan{
+				Kind:            ir.CallFunctionValue,
+				CalleeName:      moduleName + "." + member,
+				MinArity:        argCount,
+				MaxArity:        argCount,
+				Dispatch:        ir.DispatchClosure,
+				ArgTypesChecked: true,
+			}
+			return TypeAny
+		}
+		funcType, isFunc := sym.Type.(*FunctionType)
+		if !isFunc {
+			a.errorAt(funcNode, "module symbol '%s.%s' is not callable", moduleName, member)
+			a.callPlans[node] = &ir.CallPlan{
+				Kind:            ir.CallFunctionValue,
+				CalleeName:      moduleName + "." + member,
+				MinArity:        argCount,
+				MaxArity:        argCount,
+				Dispatch:        ir.DispatchClosure,
+				ArgTypesChecked: true,
+			}
+			return TypeAny
+		}
+
+		minArity := funcType.MinArity()
+		maxArity := len(funcType.ParamTypes)
+		defaultNodes := defaultNodesFromFunctionType(funcType, argCount)
+		dispatch := ir.DispatchClosure
+		runtimeSymbol := ""
+		if _, exists := a.functions[member]; exists && !sym.Mutable {
+			dispatch = ir.DispatchDirect
+			runtimeSymbol = "quark_" + member
+		}
+
+		a.callPlans[node] = &ir.CallPlan{
+			Kind:          ir.CallFunctionValue,
+			CalleeName:    moduleName + "." + member,
+			MinArity:      minArity,
+			MaxArity:      maxArity,
+			Dispatch:      dispatch,
+			RuntimeSymbol: runtimeSymbol,
+			DefaultNodes:  defaultNodes,
+		}
+
+		if argCount < minArity || argCount > maxArity {
+			if minArity == maxArity {
+				a.errorAt(node, "function expects %d arguments but got %d", maxArity, argCount)
+			} else {
+				a.errorAt(node, "function expects %d-%d arguments but got %d", minArity, maxArity, argCount)
+			}
+		}
+
+		a.checkArgTypes(moduleName+"."+member, funcType.ParamTypes, argTypes, argsNode.Children)
+		a.callPlans[node].ArgTypesChecked = true
+		return funcType.ReturnType
+	}
+
+	// Dot-call syntax is not supported unless the left side is a known module alias.
+	if funcNode.NodeType == ast.OperatorNode && funcNode.Token != nil && funcNode.Token.Type == token.DOT {
+		if len(funcNode.Children) >= 2 {
+			method := funcNode.Children[1].TokenLiteral()
+			a.Analyze(funcNode.Children[0])
+			a.errorAt(funcNode, "dot-call syntax is not supported on values; use %s(entity, ...) or module-qualified calls", method)
+		}
+		a.callPlans[node] = &ir.CallPlan{
+			Kind:            ir.CallFunctionValue,
+			CalleeName:      calleeNameFromNode(funcNode),
+			MinArity:        argCount,
+			MaxArity:        argCount,
+			Dispatch:        ir.DispatchClosure,
+			ArgTypesChecked: true,
+		}
+		return TypeAny
+	}
+
+	funcExprType := a.Analyze(funcNode)
 
 	if funcNode.NodeType == ast.IdentifierNode {
 		name := funcNode.TokenLiteral()
@@ -636,6 +702,37 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 	a.callPlans[node].ArgTypesChecked = true
 
 	return funcType.ReturnType
+}
+
+func (a *Analyzer) lookupModuleCall(funcNode *ast.TreeNode) (string, string, *Symbol, bool) {
+	if funcNode == nil || funcNode.NodeType != ast.OperatorNode || funcNode.Token == nil || funcNode.Token.Type != token.DOT {
+		return "", "", nil, false
+	}
+	if len(funcNode.Children) < 2 || funcNode.Children[0] == nil || funcNode.Children[1] == nil {
+		return "", "", nil, false
+	}
+	left := funcNode.Children[0]
+	right := funcNode.Children[1]
+	if left.NodeType != ast.IdentifierNode || right.NodeType != ast.IdentifierNode {
+		return "", "", nil, false
+	}
+	alias := left.TokenLiteral()
+	moduleName, ok := a.moduleAliases[alias]
+	if !ok {
+		return "", "", nil, false
+	}
+	module, exists := a.modules[moduleName]
+	if !exists {
+		a.errorAt(left, "undefined module '%s' for alias '%s'", moduleName, alias)
+		return moduleName, right.TokenLiteral(), nil, true
+	}
+	member := right.TokenLiteral()
+	sym, exists := module.Symbols[member]
+	if !exists {
+		a.errorAt(right, "module '%s' has no symbol '%s'", moduleName, member)
+		return moduleName, member, nil, true
+	}
+	return moduleName, member, sym, true
 }
 
 func builtinsRuntimeName(name string) string {
@@ -1185,13 +1282,74 @@ func (a *Analyzer) analyzePipe(node *ast.TreeNode) Type {
 
 	funcNode := rightNode.Children[0]
 	argsNode := rightNode.Children[1]
-	funcExprType := a.Analyze(funcNode)
 	argTypes := make([]Type, 0, len(argsNode.Children))
 	for _, arg := range argsNode.Children {
 		argTypes = append(argTypes, a.Analyze(arg))
 	}
 
 	pipeArgCount := len(argsNode.Children) + 1 // +1 for the piped input
+
+	if moduleName, member, sym, ok := a.lookupModuleCall(funcNode); ok {
+		if sym == nil {
+			a.callPlans[rightNode] = &ir.CallPlan{
+				Kind:            ir.CallFunctionValue,
+				CalleeName:      moduleName + "." + member,
+				MinArity:        pipeArgCount,
+				MaxArity:        pipeArgCount,
+				Dispatch:        ir.DispatchClosure,
+				ArgTypesChecked: true,
+			}
+			return TypeAny
+		}
+		funcType, isFunc := sym.Type.(*FunctionType)
+		if !isFunc {
+			a.errorAt(funcNode, "module symbol '%s.%s' is not callable", moduleName, member)
+			a.callPlans[rightNode] = &ir.CallPlan{
+				Kind:            ir.CallFunctionValue,
+				CalleeName:      moduleName + "." + member,
+				MinArity:        pipeArgCount,
+				MaxArity:        pipeArgCount,
+				Dispatch:        ir.DispatchClosure,
+				ArgTypesChecked: true,
+			}
+			return TypeAny
+		}
+
+		minArity := funcType.MinArity()
+		maxArity := len(funcType.ParamTypes)
+		defaultNodes := defaultNodesFromFunctionType(funcType, pipeArgCount)
+		dispatch := ir.DispatchClosure
+		runtimeSymbol := ""
+		if _, exists := a.functions[member]; exists && !sym.Mutable {
+			dispatch = ir.DispatchDirect
+			runtimeSymbol = "quark_" + member
+		}
+		a.callPlans[rightNode] = &ir.CallPlan{
+			Kind:          ir.CallFunctionValue,
+			CalleeName:    moduleName + "." + member,
+			MinArity:      minArity,
+			MaxArity:      maxArity,
+			Dispatch:      dispatch,
+			RuntimeSymbol: runtimeSymbol,
+			DefaultNodes:  defaultNodes,
+		}
+		if pipeArgCount < minArity || pipeArgCount > maxArity {
+			if minArity == maxArity {
+				a.errorAt(node, "function expects %d arguments but got %d (including piped input)", maxArity, pipeArgCount)
+			} else {
+				a.errorAt(node, "function expects %d-%d arguments but got %d (including piped input)", minArity, maxArity, pipeArgCount)
+			}
+		}
+		pipeArgTypes := []Type{inputType}
+		pipeArgTypes = append(pipeArgTypes, argTypes...)
+		pipeArgNodes := []*ast.TreeNode{inputNode}
+		pipeArgNodes = append(pipeArgNodes, argsNode.Children...)
+		a.checkArgTypes(moduleName+"."+member, funcType.ParamTypes, pipeArgTypes, pipeArgNodes)
+		a.callPlans[rightNode].ArgTypesChecked = true
+		return funcType.ReturnType
+	}
+
+	funcExprType := a.Analyze(funcNode)
 
 	if funcNode.NodeType == ast.IdentifierNode {
 		name := funcNode.TokenLiteral()
@@ -1686,11 +1844,29 @@ func (a *Analyzer) analyzeUse(node *ast.TreeNode) Type {
 
 	nameNode := node.Children[0]
 	moduleName := nameNode.TokenLiteral()
+	alias := moduleName
+	hasExplicitAlias := false
+	if len(node.Children) >= 2 && node.Children[1] != nil && node.Children[1].NodeType == ast.IdentifierNode {
+		alias = node.Children[1].TokenLiteral()
+		hasExplicitAlias = true
+	}
 
 	// Look up module
 	module, exists := a.modules[moduleName]
 	if !exists {
 		a.errorAt(nameNode, "undefined module '%s'", moduleName)
+		return TypeVoid
+	}
+
+	if alias != "" {
+		if existing, exists := a.moduleAliases[alias]; exists && existing != moduleName {
+			a.errorAt(node, "module alias '%s' already refers to module '%s'", alias, existing)
+		} else {
+			a.moduleAliases[alias] = moduleName
+		}
+	}
+
+	if hasExplicitAlias {
 		return TypeVoid
 	}
 

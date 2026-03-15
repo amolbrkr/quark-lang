@@ -102,3 +102,20 @@ func TestVectorLiteral_RejectsSemicolonRows(t *testing.T) {
 		t.Fatalf("expected parse error for semicolon row separators in vector literal")
 	}
 }
+
+func TestFunctionReturnType_AnyParse(t *testing.T) {
+	node, errs := testutil.Parse("fn id(x: any) any -> x\n")
+	if len(errs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", errs)
+	}
+	if len(node.Children) != 1 {
+		t.Fatalf("expected 1 top-level node, got %d", len(node.Children))
+	}
+}
+
+func TestDefaultParam_RejectsNegatedStringLiteral(t *testing.T) {
+	_, errs := testutil.Parse("fn bad(x = -'oops') -> x\n")
+	if len(errs) == 0 {
+		t.Fatalf("expected parse error for invalid negated string default")
+	}
+}

@@ -362,11 +362,33 @@ func (p *Parser) isLiteralDefault(node *ast.TreeNode) bool {
 	}
 	// Allow unary minus on numeric literals: -5, -3.14
 	if node.NodeType == ast.OperatorNode && node.Token != nil && node.Token.Type == token.MINUS && len(node.Children) == 1 {
-		return p.isLiteralDefault(node.Children[0])
+		return p.isNegatedNumericLiteral(node)
 	}
 	// Allow empty list: list []
 	if node.NodeType == ast.ListNode && len(node.Children) == 0 {
 		return true
+	}
+	return false
+}
+
+func (p *Parser) isNumericLiteral(node *ast.TreeNode) bool {
+	if node == nil || node.NodeType != ast.LiteralNode || node.Token == nil {
+		return false
+	}
+	return node.Token.Type == token.INT || node.Token.Type == token.FLOAT
+}
+
+func (p *Parser) isNegatedNumericLiteral(node *ast.TreeNode) bool {
+	if node == nil || node.NodeType != ast.OperatorNode || node.Token == nil || node.Token.Type != token.MINUS || len(node.Children) != 1 {
+		return false
+	}
+	child := node.Children[0]
+	if p.isNumericLiteral(child) {
+		return true
+	}
+	// Allow nested unary minus forms like --5.
+	if child != nil && child.NodeType == ast.OperatorNode && child.Token != nil && child.Token.Type == token.MINUS {
+		return p.isNegatedNumericLiteral(child)
 	}
 	return false
 }

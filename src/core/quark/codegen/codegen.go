@@ -610,6 +610,7 @@ func (g *Generator) generateOperator(node *ast.TreeNode) string {
 			g.emitLine("%s->value = %s;", cName, right)
 			g.declaredVars[varName] = true
 		}
+		g.updateVarFuncDefaults(varName, node.Children[1])
 		return fmt.Sprintf("%s->value", cName)
 	}
 
@@ -624,6 +625,43 @@ func (g *Generator) lookupFuncDecl(name string) *funcDecl {
 		}
 	}
 	return nil
+}
+
+// resolveFuncDeclMetadata tries to resolve callable metadata for a function expression.
+// This is used to fill missing default arguments for both direct and dynamic calls.
+func (g *Generator) resolveFuncDeclMetadata(node *ast.TreeNode) *funcDecl {
+	if node == nil {
+		return nil
+	}
+
+	switch node.NodeType {
+	case ast.LambdaNode:
+		if lambdaName, ok := g.lambdaNames[node]; ok {
+			return g.lookupFuncDecl(lambdaName)
+		}
+		return nil
+	case ast.IdentifierNode:
+		name := node.TokenLiteral()
+		if fd, ok := g.varFuncDefaults[name]; ok {
+			return fd
+		}
+		if !g.declaredVars[name] {
+			return g.lookupFuncDecl(name)
+		}
+	}
+
+	return nil
+}
+
+func (g *Generator) updateVarFuncDefaults(varName string, rhs *ast.TreeNode) {
+	if varName == "" {
+		return
+	}
+	if fd := g.resolveFuncDeclMetadata(rhs); fd != nil && fd.defaults != nil {
+		g.varFuncDefaults[varName] = fd
+		return
+	}
+	delete(g.varFuncDefaults, varName)
 }
 
 // fillDefaults appends default values for missing arguments
@@ -680,11 +718,9 @@ func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
 		return fmt.Sprintf("quark_%s(nullptr, %s)", funcName, strings.Join(args, ", "))
 	}
 
-	// Check if this is a variable-bound function with defaults
-	if funcNode.NodeType == ast.IdentifierNode {
-		if vfd, ok := g.varFuncDefaults[funcName]; ok {
-			args = g.fillDefaults(args, vfd)
-		}
+	// Check if this function expression has known defaults metadata
+	if mfd := g.resolveFuncDeclMetadata(funcNode); mfd != nil {
+		args = g.fillDefaults(args, mfd)
 	}
 
 	// Otherwise, it might be a function value - use dynamic call
@@ -730,11 +766,9 @@ func (g *Generator) generatePipe(node *ast.TreeNode) string {
 		return fmt.Sprintf("quark_%s(nullptr, %s)", funcName, strings.Join(args, ", "))
 	}
 
-	// Check if this is a variable-bound function with defaults
-	if funcNode.NodeType == ast.IdentifierNode {
-		if vfd, ok := g.varFuncDefaults[funcName]; ok {
-			args = g.fillDefaults(args, vfd)
-		}
+	// Check if this function expression has known defaults metadata
+	if mfd := g.resolveFuncDeclMetadata(funcNode); mfd != nil {
+		args = g.fillDefaults(args, mfd)
 	}
 
 	// Dynamic call for function values

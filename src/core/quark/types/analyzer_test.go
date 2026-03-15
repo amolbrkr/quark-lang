@@ -23,6 +23,16 @@ func TestBuiltins_ArityError(t *testing.T) {
 	}
 }
 
+func TestAnyTypeAnnotations_Accepted(t *testing.T) {
+	_, _, parseErrs, typeErrs := testutil.Analyze("fn id(x: any) any -> x\nprintln(id(1))\nprintln(id('x'))\n")
+	if len(parseErrs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", parseErrs)
+	}
+	if len(typeErrs) > 0 {
+		t.Fatalf("unexpected type errors: %v", typeErrs)
+	}
+}
+
 func TestDictLiteral_DuplicateKeyError(t *testing.T) {
 	_, _, parseErrs, typeErrs := testutil.Analyze("d = dict { a: 1, a: 2 }\n")
 	if len(parseErrs) > 0 {

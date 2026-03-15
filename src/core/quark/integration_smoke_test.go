@@ -267,3 +267,52 @@ func TestRuntimeContracts_FunctionTypeNameAndDoubleQuotedStrings(t *testing.T) {
 		t.Fatalf("unexpected output\n--- got ---\n%s\n--- expected ---\n%s", gotNorm, expected)
 	}
 }
+
+func TestDefaults_DynamicCallViaAlias(t *testing.T) {
+	tmp := t.TempDir()
+	program := filepath.Join(tmp, "defaults_dynamic_alias.qrk")
+	source := strings.Join([]string{
+		"fn add_n(x: int, n: int = 10) int -> x + n",
+		"alias = add_n",
+		"println(alias(5))",
+		"println(alias(5, 20))",
+		"alias2 = alias",
+		"println(alias2(7))",
+		"5 | alias() | println()",
+		"",
+	}, "\n")
+	if err := os.WriteFile(program, []byte(source), 0o644); err != nil {
+		t.Fatalf("write %s: %v", program, err)
+	}
+
+	got := runQuark(t, "run", program)
+	gotNorm := strings.TrimSpace(normalizeNewlines(got))
+	expected := strings.Join([]string{"15", "25", "17", "15"}, "\n")
+	if gotNorm != expected {
+		t.Fatalf("unexpected output\n--- got ---\n%s\n--- expected ---\n%s", gotNorm, expected)
+	}
+}
+
+func TestAnyTypeAnnotations_Runtime(t *testing.T) {
+	tmp := t.TempDir()
+	program := filepath.Join(tmp, "any_type_annotations.qrk")
+	source := strings.Join([]string{
+		"fn id(x: any) any -> x",
+		"println(id(42))",
+		"println(id('ok'))",
+		"v: any = 1",
+		"v = 'changed'",
+		"println(v)",
+		"",
+	}, "\n")
+	if err := os.WriteFile(program, []byte(source), 0o644); err != nil {
+		t.Fatalf("write %s: %v", program, err)
+	}
+
+	got := runQuark(t, "run", program)
+	gotNorm := strings.TrimSpace(normalizeNewlines(got))
+	expected := strings.Join([]string{"42", "ok", "changed"}, "\n")
+	if gotNorm != expected {
+		t.Fatalf("unexpected output\n--- got ---\n%s\n--- expected ---\n%s", gotNorm, expected)
+	}
+}

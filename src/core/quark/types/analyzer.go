@@ -3,6 +3,8 @@ package types
 import (
 	"fmt"
 	"quark/ast"
+	"quark/builtins"
+	"quark/ir"
 	"quark/token"
 )
 
@@ -34,96 +36,65 @@ type Analyzer struct {
 	currentModule   string                   // Current module being defined (empty if global)
 	builtins        map[string]*builtinSignature
 	captures        map[*ast.TreeNode][]string // Lambda node → captured variable names
-	loopDepth       int                        // >0 when inside for/while loop (for break/continue validation)
-	pendingFuncName string                     // Set when analyzing a lambda assigned to a named variable
+	callPlans       map[*ast.TreeNode]*ir.CallPlan
+	returnValidated map[*ast.TreeNode]bool
+	loopDepth       int    // >0 when inside for/while loop (for break/continue validation)
+	pendingFuncName string // Set when analyzing a lambda assigned to a named variable
 }
 
 func NewAnalyzer() *Analyzer {
 	globalScope := NewScope(nil)
 
-	// NOTE: keep this list in sync with codegen/builtins.go
-	builtinDefs := []struct {
-		name       string
-		minArgs    int
-		maxArgs    int
-		paramTypes []Type
-		returnType Type
-	}{
-		{"print", 1, 1, []Type{TypeAny}, TypeVoid},
-		{"println", 1, 1, []Type{TypeAny}, TypeVoid},
-		// input arg0: must be str when provided
-		{"input", 0, 1, []Type{TypeString}, TypeString},
-		// len: arg type checked via inferBuiltinReturnType (str|list|dict|vector)
-		{"len", 1, 1, []Type{TypeAny}, TypeInt},
-		{"to_str", 1, 1, []Type{TypeAny}, TypeString},
-		{"to_int", 1, 1, []Type{TypeAny}, TypeInt},
-		{"to_float", 1, 1, []Type{TypeAny}, TypeFloat},
-		{"to_bool", 1, 1, []Type{TypeAny}, TypeBool},
-		{"type", 1, 1, []Type{TypeAny}, TypeString},
-		// is_ok/is_err/unwrap: arg type checked via inferBuiltinReturnType (result)
-		{"is_ok", 1, 1, []Type{TypeAny}, TypeBool},
-		{"is_err", 1, 1, []Type{TypeAny}, TypeBool},
-		{"unwrap", 1, 1, []Type{TypeAny}, TypeAny},
-		// range args: numeric (int promotes to float via CanAssign)
-		{"range", 1, 3, []Type{TypeFloat, TypeFloat, TypeFloat}, &ListType{ElementType: TypeInt}},
-		// abs/sum/min/max: checked via inferBuiltinReturnType (numeric or numeric-vector)
-		{"abs", 1, 1, []Type{TypeAny}, TypeAny},
-		{"min", 1, 2, []Type{TypeAny, TypeAny}, TypeAny},
-		{"max", 1, 2, []Type{TypeAny, TypeAny}, TypeAny},
-		{"sum", 1, 1, []Type{TypeAny}, TypeAny},
-		// sqrt/floor/ceil/round: TypeFloat param → int promoted via CanAssign; rejects str/bool/etc
-		{"sqrt", 1, 1, []Type{TypeFloat}, TypeFloat},
-		{"floor", 1, 1, []Type{TypeFloat}, TypeInt},
-		{"ceil", 1, 1, []Type{TypeFloat}, TypeInt},
-		{"round", 1, 1, []Type{TypeFloat}, TypeInt},
-		{"upper", 1, 1, []Type{TypeString}, TypeString},
-		{"lower", 1, 1, []Type{TypeString}, TypeString},
-		{"trim", 1, 1, []Type{TypeString}, TypeString},
-		{"contains", 2, 2, []Type{TypeString, TypeString}, TypeBool},
-		{"startswith", 2, 2, []Type{TypeString, TypeString}, TypeBool},
-		{"endswith", 2, 2, []Type{TypeString, TypeString}, TypeBool},
-		{"replace", 3, 3, []Type{TypeString, TypeString, TypeString}, TypeString},
-		// concat: both-same-type check handled in inferBuiltinReturnType
-		{"concat", 2, 2, []Type{TypeAny, TypeAny}, TypeAny},
-		{"split", 2, 2, []Type{TypeString, TypeString}, &ListType{ElementType: TypeString}},
-		// list builtins: arg0 must be list
-		{"push", 2, 2, []Type{&ListType{ElementType: TypeAny}, TypeAny}, &ListType{ElementType: TypeAny}},
-		{"pop", 1, 1, []Type{&ListType{ElementType: TypeAny}}, TypeAny},
-		{"get", 2, 2, []Type{&ListType{ElementType: TypeAny}, TypeInt}, TypeAny},
-		{"set", 3, 3, []Type{TypeAny, TypeInt, TypeAny}, TypeAny},
-		{"insert", 3, 3, []Type{&ListType{ElementType: TypeAny}, TypeInt, TypeAny}, &ListType{ElementType: TypeAny}},
-		{"remove", 2, 2, []Type{&ListType{ElementType: TypeAny}, TypeInt}, TypeAny},
-		{"slice", 3, 3, []Type{&ListType{ElementType: TypeAny}, TypeInt, TypeInt}, &ListType{ElementType: TypeAny}},
-		{"reverse", 1, 1, []Type{&ListType{ElementType: TypeAny}}, &ListType{ElementType: TypeAny}},
-		// dict builtins: arg0 must be dict
-		{"dget", 2, 2, []Type{&DictType{KeyType: TypeAny, ValueType: TypeAny}, TypeAny}, TypeAny},
-		{"dset", 3, 3, []Type{&DictType{KeyType: TypeAny, ValueType: TypeAny}, TypeAny, TypeAny}, &DictType{KeyType: TypeAny, ValueType: TypeAny}},
-		// vector builtins: arg0 must be vector
-		{"fillna", 2, 2, []Type{&VectorType{ElementType: TypeAny}, TypeAny}, &VectorType{ElementType: TypeAny}},
-		{"astype", 2, 2, []Type{&VectorType{ElementType: TypeAny}, TypeString}, &VectorType{ElementType: TypeAny}},
-		{"to_vector", 1, 1, []Type{TypeAny}, TypeAny},
-		{"to_list", 1, 1, []Type{TypeAny}, TypeAny},
-	}
-
-	builtins := make(map[string]*builtinSignature)
+	builtinSigs := make(map[string]*builtinSignature)
 	funcs := make(map[string]*FunctionType)
-	for _, def := range builtinDefs {
-		params := make([]Type, len(def.paramTypes))
-		copy(params, def.paramTypes)
-		funcType := &FunctionType{ParamTypes: params, ReturnType: def.returnType}
-		globalScope.Define(def.name, funcType, false)
-		funcs[def.name] = funcType
-		builtins[def.name] = &builtinSignature{Type: funcType, MinArgs: def.minArgs, MaxArgs: def.maxArgs}
+	for _, spec := range builtins.Catalog() {
+		paramTypes := make([]Type, 0, len(spec.ParamTypes))
+		for _, key := range spec.ParamTypes {
+			paramTypes = append(paramTypes, mapBuiltinTypeKey(key))
+		}
+		funcType := &FunctionType{ParamTypes: paramTypes, ReturnType: mapBuiltinTypeKey(spec.ReturnType)}
+		globalScope.Define(spec.Name, funcType, false)
+		funcs[spec.Name] = funcType
+		builtinSigs[spec.Name] = &builtinSignature{Type: funcType, MinArgs: spec.MinArgs, MaxArgs: spec.MaxArgs}
 	}
 
 	return &Analyzer{
-		currentScope:  globalScope,
-		errors:        make([]string, 0),
-		functions:     funcs,
-		modules:       make(map[string]*Module),
-		currentModule: "",
-		builtins:      builtins,
-		captures:      make(map[*ast.TreeNode][]string),
+		currentScope:    globalScope,
+		errors:          make([]string, 0),
+		functions:       funcs,
+		modules:         make(map[string]*Module),
+		currentModule:   "",
+		builtins:        builtinSigs,
+		captures:        make(map[*ast.TreeNode][]string),
+		callPlans:       make(map[*ast.TreeNode]*ir.CallPlan),
+		returnValidated: make(map[*ast.TreeNode]bool),
+	}
+}
+
+func mapBuiltinTypeKey(key builtins.TypeKey) Type {
+	switch key {
+	case builtins.TypeInt:
+		return TypeInt
+	case builtins.TypeFloat:
+		return TypeFloat
+	case builtins.TypeString:
+		return TypeString
+	case builtins.TypeBool:
+		return TypeBool
+	case builtins.TypeVoid:
+		return TypeVoid
+	case builtins.TypeListAny:
+		return &ListType{ElementType: TypeAny}
+	case builtins.TypeListInt:
+		return &ListType{ElementType: TypeInt}
+	case builtins.TypeListString:
+		return &ListType{ElementType: TypeString}
+	case builtins.TypeDictAny:
+		return &DictType{KeyType: TypeAny, ValueType: TypeAny}
+	case builtins.TypeVectorAny:
+		return &VectorType{ElementType: TypeAny}
+	default:
+		return TypeAny
 	}
 }
 
@@ -599,10 +570,12 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 	if funcNode.NodeType == ast.IdentifierNode {
 		name := funcNode.TokenLiteral()
 		if sig, ok := a.builtins[name]; ok {
+			a.callPlans[node] = &ir.CallPlan{Kind: ir.CallBuiltin, CalleeName: name, MinArity: sig.MinArgs, MaxArity: sig.MaxArgs, Dispatch: ir.DispatchBuiltin, RuntimeSymbol: builtinsRuntimeName(name)}
 			if argCount < sig.MinArgs || argCount > sig.MaxArgs {
 				a.errorAt(node, "builtin '%s' expects %d-%d arguments but got %d", name, sig.MinArgs, sig.MaxArgs, argCount)
 			}
 			a.checkArgTypes(name, sig.Type.ParamTypes, argTypes, argsNode.Children)
+			a.callPlans[node].ArgTypesChecked = true
 			return a.inferBuiltinReturnType(name, argTypes, node)
 		}
 	}
@@ -617,6 +590,27 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 
 	minArity := funcType.MinArity()
 	maxArity := len(funcType.ParamTypes)
+	defaultNodes := defaultNodesFromFunctionType(funcType, argCount)
+	dispatch := ir.DispatchClosure
+	runtimeSymbol := ""
+	if funcNode.NodeType == ast.IdentifierNode {
+		name := funcNode.TokenLiteral()
+		if sym := a.currentScope.Lookup(name); sym != nil && !sym.Mutable {
+			if _, exists := a.functions[name]; exists {
+				dispatch = ir.DispatchDirect
+				runtimeSymbol = "quark_" + name
+			}
+		}
+	}
+	a.callPlans[node] = &ir.CallPlan{
+		Kind:          ir.CallFunctionValue,
+		CalleeName:    calleeNameFromNode(funcNode),
+		MinArity:      minArity,
+		MaxArity:      maxArity,
+		Dispatch:      dispatch,
+		RuntimeSymbol: runtimeSymbol,
+		DefaultNodes:  defaultNodes,
+	}
 	if argCount < minArity || argCount > maxArity {
 		if minArity == maxArity {
 			a.errorAt(node, "function expects %d arguments but got %d", maxArity, argCount)
@@ -630,8 +624,29 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 		calleeName = funcNode.TokenLiteral()
 	}
 	a.checkArgTypes(calleeName, funcType.ParamTypes, argTypes, argsNode.Children)
+	a.callPlans[node].ArgTypesChecked = true
 
 	return funcType.ReturnType
+}
+
+func builtinsRuntimeName(name string) string {
+	if spec, ok := builtins.Lookup(name); ok {
+		return spec.Runtime
+	}
+	return ""
+}
+
+func calleeNameFromNode(node *ast.TreeNode) string {
+	if node == nil {
+		return "function"
+	}
+	if node.NodeType == ast.IdentifierNode {
+		name := node.TokenLiteral()
+		if name != "" {
+			return name
+		}
+	}
+	return "function"
 }
 
 func (a *Analyzer) analyzeIfStatement(node *ast.TreeNode) Type {
@@ -1172,6 +1187,7 @@ func (a *Analyzer) analyzePipe(node *ast.TreeNode) Type {
 	if funcNode.NodeType == ast.IdentifierNode {
 		name := funcNode.TokenLiteral()
 		if sig, ok := a.builtins[name]; ok {
+			a.callPlans[rightNode] = &ir.CallPlan{Kind: ir.CallBuiltin, CalleeName: name, MinArity: sig.MinArgs, MaxArity: sig.MaxArgs, Dispatch: ir.DispatchBuiltin, RuntimeSymbol: builtinsRuntimeName(name)}
 			if pipeArgCount < sig.MinArgs || pipeArgCount > sig.MaxArgs {
 				a.errorAt(node, "builtin '%s' expects %d-%d arguments but got %d (including piped input)", name, sig.MinArgs, sig.MaxArgs, pipeArgCount)
 			}
@@ -1182,6 +1198,7 @@ func (a *Analyzer) analyzePipe(node *ast.TreeNode) Type {
 			pipeArgNodes = append(pipeArgNodes, inputNode)
 			pipeArgNodes = append(pipeArgNodes, argsNode.Children...)
 			a.checkArgTypes(name, sig.Type.ParamTypes, pipeArgTypes, pipeArgNodes)
+			a.callPlans[rightNode].ArgTypesChecked = true
 			return a.inferBuiltinReturnType(name, pipeArgTypes, node)
 		}
 	}
@@ -1189,6 +1206,27 @@ func (a *Analyzer) analyzePipe(node *ast.TreeNode) Type {
 	if funcType, ok := funcExprType.(*FunctionType); ok {
 		minArity := funcType.MinArity()
 		maxArity := len(funcType.ParamTypes)
+		defaultNodes := defaultNodesFromFunctionType(funcType, pipeArgCount)
+		dispatch := ir.DispatchClosure
+		runtimeSymbol := ""
+		if funcNode.NodeType == ast.IdentifierNode {
+			name := funcNode.TokenLiteral()
+			if sym := a.currentScope.Lookup(name); sym != nil && !sym.Mutable {
+				if _, exists := a.functions[name]; exists {
+					dispatch = ir.DispatchDirect
+					runtimeSymbol = "quark_" + name
+				}
+			}
+		}
+		a.callPlans[rightNode] = &ir.CallPlan{
+			Kind:          ir.CallFunctionValue,
+			CalleeName:    calleeNameFromNode(funcNode),
+			MinArity:      minArity,
+			MaxArity:      maxArity,
+			Dispatch:      dispatch,
+			RuntimeSymbol: runtimeSymbol,
+			DefaultNodes:  defaultNodes,
+		}
 		if pipeArgCount < minArity || pipeArgCount > maxArity {
 			if minArity == maxArity {
 				a.errorAt(node, "function expects %d arguments but got %d (including piped input)", maxArity, pipeArgCount)
@@ -1205,6 +1243,7 @@ func (a *Analyzer) analyzePipe(node *ast.TreeNode) Type {
 		pipeArgNodes := []*ast.TreeNode{inputNode}
 		pipeArgNodes = append(pipeArgNodes, argsNode.Children...)
 		a.checkArgTypes(pipeCallee, funcType.ParamTypes, pipeArgTypes, pipeArgNodes)
+		a.callPlans[rightNode].ArgTypesChecked = true
 		return funcType.ReturnType
 	}
 
@@ -1661,6 +1700,35 @@ func (a *Analyzer) GetCaptures() map[*ast.TreeNode][]string {
 	return a.captures
 }
 
+// GetCallPlans returns call-focused IR metadata keyed by FunctionCall AST node.
+func (a *Analyzer) GetCallPlans() map[*ast.TreeNode]*ir.CallPlan {
+	return a.callPlans
+}
+
+// GetReturnValidation returns function/lambda nodes that were checked against return annotations.
+func (a *Analyzer) GetReturnValidation() map[*ast.TreeNode]bool {
+	return a.returnValidated
+}
+
+func defaultNodesFromFunctionType(ft *FunctionType, provided int) []*ast.TreeNode {
+	if ft == nil || ft.DefaultValues == nil || provided >= len(ft.ParamTypes) {
+		return nil
+	}
+	nodes := make([]*ast.TreeNode, 0)
+	for i := provided; i < len(ft.ParamTypes); i++ {
+		if i >= len(ft.DefaultValues) || ft.DefaultValues[i] == nil || ft.DefaultValues[i].Node == nil {
+			continue
+		}
+		if node, ok := ft.DefaultValues[i].Node.(*ast.TreeNode); ok {
+			nodes = append(nodes, node)
+		}
+	}
+	if len(nodes) == 0 {
+		return nil
+	}
+	return nodes
+}
+
 // collectFreeVars walks the AST body to find identifiers that are free variables
 // (not parameters, not builtins, not locally defined, but defined in an enclosing scope)
 func (a *Analyzer) collectFreeVars(node *ast.TreeNode, lambdaScope *Scope, params map[string]bool, seen map[string]bool, result *[]string) {
@@ -1838,6 +1906,9 @@ func (a *Analyzer) analyzeVarDecl(node *ast.TreeNode) Type {
 func (a *Analyzer) validateReturnType(funcType *FunctionType, inferredType Type, funcName string, errorNode *ast.TreeNode) {
 	if funcType.AnnotatedReturnType == nil {
 		return
+	}
+	if errorNode != nil {
+		a.returnValidated[errorNode] = true
 	}
 	annotated := funcType.AnnotatedReturnType
 	// If inferred type is unknown/any, trust the annotation

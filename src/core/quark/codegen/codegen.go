@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"quark/ast"
+	"quark/ir"
 	"quark/token"
 	"strings"
 )
@@ -12,38 +13,37 @@ import (
 type funcDecl struct {
 	name       string
 	paramCount int
-	defaults   map[int]*ast.TreeNode // param index → default value AST node
 }
 
 // Generator generates C code from an AST
 type Generator struct {
-	output          strings.Builder
-	indentLevel     int
-	funcDecls       []funcDecl               // Function declarations with param counts
-	lambdas         []*ast.TreeNode          // Lambda expressions to generate
-	lambdaNames     map[*ast.TreeNode]string // Maps lambda nodes to their generated names
-	tempCounter     int
-	lambdaCounter   int
-	inFunction      bool
-	currentFunc     string
-	declaredVars    map[string]bool            // Tracks declared variables to avoid redeclaration
-	scopeStack      []map[string]bool          // Stack of variable scopes for nested blocks
-	captures        map[*ast.TreeNode][]string // Lambda node → captured variable names (from analyzer)
-	funcNames       map[string]bool            // Set of declared function names (for first-class funcs)
-	varFuncDefaults map[string]*funcDecl       // Variable name → funcDecl for lambda bindings with defaults
+	output        strings.Builder
+	indentLevel   int
+	funcDecls     []funcDecl               // Function declarations with param counts
+	lambdas       []*ast.TreeNode          // Lambda expressions to generate
+	lambdaNames   map[*ast.TreeNode]string // Maps lambda nodes to their generated names
+	tempCounter   int
+	lambdaCounter int
+	inFunction    bool
+	currentFunc   string
+	declaredVars  map[string]bool            // Tracks declared variables to avoid redeclaration
+	scopeStack    []map[string]bool          // Stack of variable scopes for nested blocks
+	captures      map[*ast.TreeNode][]string // Lambda node → captured variable names (from analyzer)
+	funcNames     map[string]bool            // Set of declared function names (for first-class funcs)
+	callPlans     map[*ast.TreeNode]*ir.CallPlan
 }
 
 func New() *Generator {
 	return &Generator{
-		funcDecls:       make([]funcDecl, 0),
-		lambdas:         make([]*ast.TreeNode, 0),
-		lambdaNames:     make(map[*ast.TreeNode]string),
-		tempCounter:     0,
-		declaredVars:    make(map[string]bool),
-		scopeStack:      make([]map[string]bool, 0),
-		captures:        make(map[*ast.TreeNode][]string),
-		funcNames:       make(map[string]bool),
-		varFuncDefaults: make(map[string]*funcDecl),
+		funcDecls:    make([]funcDecl, 0),
+		lambdas:      make([]*ast.TreeNode, 0),
+		lambdaNames:  make(map[*ast.TreeNode]string),
+		tempCounter:  0,
+		declaredVars: make(map[string]bool),
+		scopeStack:   make([]map[string]bool, 0),
+		captures:     make(map[*ast.TreeNode][]string),
+		funcNames:    make(map[string]bool),
+		callPlans:    make(map[*ast.TreeNode]*ir.CallPlan),
 	}
 }
 
@@ -51,6 +51,13 @@ func New() *Generator {
 func (g *Generator) SetCaptures(captures map[*ast.TreeNode][]string) {
 	if captures != nil {
 		g.captures = captures
+	}
+}
+
+// SetCallPlans passes call-focused IR metadata from the analyzer to the generator.
+func (g *Generator) SetCallPlans(plans map[*ast.TreeNode]*ir.CallPlan) {
+	if plans != nil {
+		g.callPlans = plans
 	}
 }
 
@@ -217,40 +224,7 @@ func (g *Generator) predeclareMainFunctionBindings(root *ast.TreeNode) {
 	}
 }
 
-// extractParamDefaults extracts default value nodes from an ArgumentsNode
-func extractParamDefaults(argsNode *ast.TreeNode) map[int]*ast.TreeNode {
-	if argsNode == nil {
-		return nil
-	}
-	var defaults map[int]*ast.TreeNode
-	for i, child := range argsNode.Children {
-		if child != nil && child.DefaultValue != nil {
-			if defaults == nil {
-				defaults = make(map[int]*ast.TreeNode)
-			}
-			defaults[i] = child.DefaultValue
-		}
-	}
-	return defaults
-}
-
 func (g *Generator) collectFunctions(node *ast.TreeNode) {
-	// Track function binding assignments (name = fn(...) -> ...) for default parameter lookup
-	if isFunctionBindingAssignmentNode(node) {
-		varName := node.Children[0].TokenLiteral()
-		lambdaNode := node.Children[1]
-		// The lambda will be collected below when we recurse into children
-		// We'll link the variable name to the lambda's funcDecl after collection
-		// For now, defer — we'll do it after the lambda is collected
-		defer func() {
-			if lambdaName, ok := g.lambdaNames[lambdaNode]; ok {
-				if fd := g.lookupFuncDecl(lambdaName); fd != nil && fd.defaults != nil {
-					g.varFuncDefaults[varName] = fd
-				}
-			}
-		}()
-	}
-
 	switch node.NodeType {
 	case ast.FunctionNode:
 		if len(node.Children) >= 2 {
@@ -260,7 +234,6 @@ func (g *Generator) collectFunctions(node *ast.TreeNode) {
 			g.funcDecls = append(g.funcDecls, funcDecl{
 				name:       name,
 				paramCount: paramCount,
-				defaults:   extractParamDefaults(argsNode),
 			})
 			g.funcNames[name] = true
 		}
@@ -270,15 +243,12 @@ func (g *Generator) collectFunctions(node *ast.TreeNode) {
 		g.lambdaNames[node] = lambdaName
 		g.lambdas = append(g.lambdas, node)
 		paramCount := 0
-		var defaults map[int]*ast.TreeNode
 		if len(node.Children) >= 1 {
 			paramCount = len(node.Children[0].Children)
-			defaults = extractParamDefaults(node.Children[0])
 		}
 		fd := funcDecl{
 			name:       lambdaName,
 			paramCount: paramCount,
-			defaults:   defaults,
 		}
 		g.funcDecls = append(g.funcDecls, fd)
 	case ast.ModuleNode:
@@ -610,73 +580,48 @@ func (g *Generator) generateOperator(node *ast.TreeNode) string {
 			g.emitLine("%s->value = %s;", cName, right)
 			g.declaredVars[varName] = true
 		}
-		g.updateVarFuncDefaults(varName, node.Children[1])
 		return fmt.Sprintf("%s->value", cName)
 	}
 
 	return "qv_null()"
 }
 
-// lookupFuncDecl finds the funcDecl for a given function name
-func (g *Generator) lookupFuncDecl(name string) *funcDecl {
-	for i := range g.funcDecls {
-		if g.funcDecls[i].name == name {
-			return &g.funcDecls[i]
-		}
+func panicMissingCallPlan(callNode *ast.TreeNode) {
+	line := 0
+	col := 0
+	if callNode != nil && callNode.Token != nil {
+		line = callNode.Token.Line
+		col = callNode.Token.Column
 	}
-	return nil
+	panic(fmt.Sprintf("internal compiler error [INV-CALLPLAN-MISSING]: missing CallPlan for call at line %d, col %d", line, col))
 }
 
-// resolveFuncDeclMetadata tries to resolve callable metadata for a function expression.
-// This is used to fill missing default arguments for both direct and dynamic calls.
-func (g *Generator) resolveFuncDeclMetadata(node *ast.TreeNode) *funcDecl {
-	if node == nil {
-		return nil
+func (g *Generator) getCallPlanOrPanic(callNode *ast.TreeNode) *ir.CallPlan {
+	if callNode == nil {
+		panicMissingCallPlan(callNode)
 	}
-
-	switch node.NodeType {
-	case ast.LambdaNode:
-		if lambdaName, ok := g.lambdaNames[node]; ok {
-			return g.lookupFuncDecl(lambdaName)
-		}
-		return nil
-	case ast.IdentifierNode:
-		name := node.TokenLiteral()
-		if fd, ok := g.varFuncDefaults[name]; ok {
-			return fd
-		}
-		if !g.declaredVars[name] {
-			return g.lookupFuncDecl(name)
-		}
+	plan, ok := g.callPlans[callNode]
+	if !ok || plan == nil {
+		panicMissingCallPlan(callNode)
 	}
-
-	return nil
+	return plan
 }
 
-func (g *Generator) updateVarFuncDefaults(varName string, rhs *ast.TreeNode) {
-	if varName == "" {
-		return
-	}
-	if fd := g.resolveFuncDeclMetadata(rhs); fd != nil && fd.defaults != nil {
-		g.varFuncDefaults[varName] = fd
-		return
-	}
-	delete(g.varFuncDefaults, varName)
-}
-
-// fillDefaults appends default values for missing arguments
-func (g *Generator) fillDefaults(args []string, fd *funcDecl) []string {
-	if fd == nil || fd.defaults == nil || len(args) >= fd.paramCount {
+func (g *Generator) appendPlannedDefaults(args []string, plan *ir.CallPlan) []string {
+	if plan == nil || len(plan.DefaultNodes) == 0 {
 		return args
 	}
-	for i := len(args); i < fd.paramCount; i++ {
-		if defaultNode, ok := fd.defaults[i]; ok {
-			args = append(args, g.generateExpr(defaultNode))
-		} else {
-			args = append(args, "qv_null()")
+	for _, defaultNode := range plan.DefaultNodes {
+		if defaultNode == nil {
+			continue
 		}
+		args = append(args, g.generateExpr(defaultNode))
 	}
 	return args
+}
+
+func generateBuiltinCall(runtimeSymbol string, args []string) string {
+	return fmt.Sprintf("%s(%s)", runtimeSymbol, strings.Join(args, ", "))
 }
 
 func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
@@ -693,39 +638,36 @@ func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
 	}
 
 	funcName := funcNode.TokenLiteral()
+	plan := g.getCallPlanOrPanic(node)
 
 	// Generate arguments
 	args := make([]string, 0)
 	for _, arg := range argsNode.Children {
 		args = append(args, g.generateExpr(arg))
 	}
+	args = g.appendPlannedDefaults(args, plan)
 
-	// Built-in functions — lookup from centralized registry
-	if result, ok := GenerateBuiltinCall(funcName, args); ok {
-		return result
-	}
-
-	// Check if this is a known user-defined function
-	fd := g.lookupFuncDecl(funcName)
-
-	if fd != nil && !g.declaredVars[funcName] {
-		// Fill in default values for missing arguments
-		args = g.fillDefaults(args, fd)
-		// User-defined function - call directly with nullptr closure
-		if len(args) == 0 {
-			return fmt.Sprintf("quark_%s(nullptr)", funcName)
+	switch plan.Dispatch {
+	case ir.DispatchBuiltin:
+		if plan.RuntimeSymbol == "" {
+			panic(fmt.Sprintf("internal compiler error [INV-CALLPLAN-RUNTIME]: builtin call '%s' missing runtime symbol", plan.CalleeName))
 		}
-		return fmt.Sprintf("quark_%s(nullptr, %s)", funcName, strings.Join(args, ", "))
+		return generateBuiltinCall(plan.RuntimeSymbol, args)
+	case ir.DispatchDirect:
+		if plan.RuntimeSymbol == "" {
+			panic(fmt.Sprintf("internal compiler error [INV-CALLPLAN-RUNTIME]: direct call '%s' missing runtime symbol", plan.CalleeName))
+		}
+		if len(args) == 0 {
+			return fmt.Sprintf("%s(nullptr)", plan.RuntimeSymbol)
+		}
+		return fmt.Sprintf("%s(nullptr, %s)", plan.RuntimeSymbol, strings.Join(args, ", "))
+	case ir.DispatchClosure:
+		// It is a closure/function value call by analyzer contract.
+		funcExpr := g.generateExpr(funcNode)
+		return fmt.Sprintf("q_calln(%s, std::vector<QValue>{%s})", funcExpr, strings.Join(args, ", "))
+	default:
+		panic(fmt.Sprintf("internal compiler error [INV-CALLPLAN-DISPATCH]: unknown dispatch for '%s'", funcName))
 	}
-
-	// Check if this function expression has known defaults metadata
-	if mfd := g.resolveFuncDeclMetadata(funcNode); mfd != nil {
-		args = g.fillDefaults(args, mfd)
-	}
-
-	// Otherwise, it might be a function value - use dynamic call
-	funcExpr := g.generateExpr(funcNode)
-	return fmt.Sprintf("q_calln(%s, std::vector<QValue>{%s})", funcExpr, strings.Join(args, ", "))
 }
 
 func (g *Generator) generatePipe(node *ast.TreeNode) string {
@@ -746,34 +688,32 @@ func (g *Generator) generatePipe(node *ast.TreeNode) string {
 	// Function call - prepend input to arguments
 	funcNode := rightNode.Children[0]
 	argsNode := rightNode.Children[1]
+	plan := g.getCallPlanOrPanic(rightNode)
 
 	funcName := funcNode.TokenLiteral()
 	args := []string{input}
 	for _, arg := range argsNode.Children {
 		args = append(args, g.generateExpr(arg))
 	}
+	args = g.appendPlannedDefaults(args, plan)
 
-	// Built-in functions — lookup from centralized registry
-	if result, ok := GenerateBuiltinCall(funcName, args); ok {
-		return result
+	switch plan.Dispatch {
+	case ir.DispatchBuiltin:
+		if plan.RuntimeSymbol == "" {
+			panic(fmt.Sprintf("internal compiler error [INV-CALLPLAN-RUNTIME]: builtin call '%s' missing runtime symbol", plan.CalleeName))
+		}
+		return generateBuiltinCall(plan.RuntimeSymbol, args)
+	case ir.DispatchDirect:
+		if plan.RuntimeSymbol == "" {
+			panic(fmt.Sprintf("internal compiler error [INV-CALLPLAN-RUNTIME]: direct call '%s' missing runtime symbol", plan.CalleeName))
+		}
+		return fmt.Sprintf("%s(nullptr, %s)", plan.RuntimeSymbol, strings.Join(args, ", "))
+	case ir.DispatchClosure:
+		funcExpr := g.generateExpr(funcNode)
+		return fmt.Sprintf("q_calln(%s, std::vector<QValue>{%s})", funcExpr, strings.Join(args, ", "))
+	default:
+		panic(fmt.Sprintf("internal compiler error [INV-CALLPLAN-DISPATCH]: unknown dispatch for '%s'", funcName))
 	}
-
-	// Check if known user function
-	fd := g.lookupFuncDecl(funcName)
-	if fd != nil && !g.declaredVars[funcName] {
-		// Fill in default values for missing arguments
-		args = g.fillDefaults(args, fd)
-		return fmt.Sprintf("quark_%s(nullptr, %s)", funcName, strings.Join(args, ", "))
-	}
-
-	// Check if this function expression has known defaults metadata
-	if mfd := g.resolveFuncDeclMetadata(funcNode); mfd != nil {
-		args = g.fillDefaults(args, mfd)
-	}
-
-	// Dynamic call for function values
-	funcExpr := g.generateExpr(funcNode)
-	return fmt.Sprintf("q_calln(%s, std::vector<QValue>{%s})", funcExpr, strings.Join(args, ", "))
 }
 
 func (g *Generator) generateTernary(node *ast.TreeNode) string {

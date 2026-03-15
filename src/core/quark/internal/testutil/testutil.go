@@ -3,6 +3,7 @@ package testutil
 import (
 	"quark/ast"
 	"quark/codegen"
+	"quark/invariants"
 	"quark/lexer"
 	"quark/parser"
 	"quark/token"
@@ -39,9 +40,21 @@ func Analyze(source string) (*types.Analyzer, *ast.TreeNode, []string, []string)
 
 func GenerateCPP(source string) PipelineResult {
 	analyzer, node, parseErrs, typeErrs := Analyze(source)
-	gen := codegen.New()
-	gen.SetCaptures(analyzer.GetCaptures())
-	cpp := gen.Generate(node)
+	if len(parseErrs) == 0 && len(typeErrs) == 0 {
+		if err := invariants.ValidateCallPlans(node, analyzer.GetCallPlans()); err != nil {
+			typeErrs = append(typeErrs, err.Error())
+		}
+		if err := invariants.ValidateReturnAnnotations(node, analyzer.GetReturnValidation()); err != nil {
+			typeErrs = append(typeErrs, err.Error())
+		}
+	}
+	cpp := ""
+	if len(parseErrs) == 0 && len(typeErrs) == 0 {
+		gen := codegen.New()
+		gen.SetCaptures(analyzer.GetCaptures())
+		gen.SetCallPlans(analyzer.GetCallPlans())
+		cpp = gen.Generate(node)
+	}
 	return PipelineResult{
 		Tokens:       nil,
 		AST:          node,

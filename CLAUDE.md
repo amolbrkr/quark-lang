@@ -1017,7 +1017,7 @@ After modifying runtime headers under `runtime/include/quark/`, generated progra
 - **Trailing newline**: Source files must end with a newline or the parser may produce a vague error.
 - **Bool-only conditions**: `if`, `while`, ternary, `and`, `or`, `!` all require `bool` — no truthy coercion. Use comparisons or `to_bool()`.
 - **Default params are literals only**: Default parameter values must be compile-time literals (`42`, `'hello'`, `true`, `null`, `-1`, `list []`). Expressions like `len(x)` are not allowed as defaults.
-- **Default params in dynamic calls**: When calling a function value through a variable that was not assigned with `var = fn(...) -> ...` syntax, defaults cannot be applied. The analyzer allows it but codegen may not fill defaults for truly dynamic calls.
+- **Type annotation surface**: `any` is supported as the current dynamic escape hatch. `null` remains a runtime literal/value and is not yet exposed as a type annotation.
 
 ## Feature Matrix (Grammar vs Implementation)
 

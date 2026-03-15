@@ -232,13 +232,15 @@ Current semantics:
 
 ```ebnf
 TypedDecl       ::= ID ":" Type "=" Expression
-Type            ::= "int" | "float" | "str" | "bool" | "null" | "any" | "result"
+Type            ::= "int" | "float" | "str" | "bool" | "any" | "result"
                 |   "list" | "dict" | "vector"
                 |   ID
 ```
 
 Notes:
 - Generic type syntax like `list[int]` is not implemented
+- `any` is the current top-level escape-hatch annotation for gradual typing
+- `null` is a runtime literal/value; `null` as a type annotation is reserved but not surfaced yet
 - `result` is a first-class Quark type annotation keyword
 - `result` annotations are non-generic in v0.1 and represent a general result value
 

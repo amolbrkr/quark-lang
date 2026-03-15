@@ -70,6 +70,30 @@ func TestCallPlans_DefaultsForAliasCall(t *testing.T) {
 	}
 }
 
+func TestModuleQualifiedCall_WithAlias(t *testing.T) {
+	_, _, parseErrs, typeErrs := testutil.Analyze("module math:\n    fn myfloor(x) -> x\nuse math as m\nprintln(m.myfloor(3))\n")
+	if len(parseErrs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", parseErrs)
+	}
+	if len(typeErrs) > 0 {
+		t.Fatalf("unexpected type errors: %v", typeErrs)
+	}
+}
+
+func TestModuleQualifiedCall_UnknownSymbol(t *testing.T) {
+	_, _, parseErrs, typeErrs := testutil.Analyze("module math:\n    fn myfloor(x) -> x\nuse math as m\nprintln(m.ceil(3))\n")
+	if len(parseErrs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", parseErrs)
+	}
+	if len(typeErrs) == 0 {
+		t.Fatalf("expected type errors")
+	}
+	joined := strings.Join(typeErrs, "\n")
+	if !strings.Contains(joined, "has no symbol 'ceil'") {
+		t.Fatalf("expected module symbol error, got: %v", typeErrs)
+	}
+}
+
 func TestDictLiteral_DuplicateKeyError(t *testing.T) {
 	_, _, parseErrs, typeErrs := testutil.Analyze("d = dict { a: 1, a: 2 }\n")
 	if len(parseErrs) > 0 {

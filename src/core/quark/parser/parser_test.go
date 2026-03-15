@@ -119,3 +119,26 @@ func TestDefaultParam_RejectsNegatedStringLiteral(t *testing.T) {
 		t.Fatalf("expected parse error for invalid negated string default")
 	}
 }
+
+func TestUseAlias_Parse(t *testing.T) {
+	node, errs := testutil.Parse("use './lib/math' as math\n")
+	if len(errs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", errs)
+	}
+	if len(node.Children) != 1 {
+		t.Fatalf("expected one top-level node, got %d", len(node.Children))
+	}
+	useNode := node.Children[0]
+	if useNode.NodeType != ast.UseNode {
+		t.Fatalf("expected UseNode, got %v", useNode)
+	}
+	if len(useNode.Children) != 2 {
+		t.Fatalf("expected use node with import target and alias, got %d children", len(useNode.Children))
+	}
+	if useNode.Children[0].NodeType != ast.LiteralNode || useNode.Children[0].Token == nil || useNode.Children[0].Token.Type != token.STRING {
+		t.Fatalf("expected string import path, got %v", useNode.Children[0])
+	}
+	if useNode.Children[1].NodeType != ast.IdentifierNode || useNode.Children[1].TokenLiteral() != "math" {
+		t.Fatalf("expected alias 'math', got %v", useNode.Children[1])
+	}
+}

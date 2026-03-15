@@ -11,6 +11,7 @@ import (
 
 	"quark/ast"
 	"quark/codegen"
+	"quark/invariants"
 	"quark/lexer"
 	"quark/loader"
 	"quark/parser"
@@ -418,7 +419,16 @@ func runEmit(filename string) {
 	}
 
 	gen := codegen.New()
+	if err := invariants.ValidateCallPlans(tree, analyzer.GetCallPlans()); err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		os.Exit(1)
+	}
+	if err := invariants.ValidateReturnAnnotations(tree, analyzer.GetReturnValidation()); err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		os.Exit(1)
+	}
 	gen.SetCaptures(analyzer.GetCaptures())
+	gen.SetCallPlans(analyzer.GetCallPlans())
 	cCode := gen.Generate(tree)
 	fmt.Println(cCode)
 }
@@ -468,7 +478,16 @@ func runBuild(filename string, output string, useGC bool) {
 	}
 
 	gen := codegen.New()
+	if err := invariants.ValidateCallPlans(tree, analyzer.GetCallPlans()); err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		os.Exit(1)
+	}
+	if err := invariants.ValidateReturnAnnotations(tree, analyzer.GetReturnValidation()); err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		os.Exit(1)
+	}
 	gen.SetCaptures(analyzer.GetCaptures())
+	gen.SetCallPlans(analyzer.GetCallPlans())
 	cCode := gen.Generate(tree)
 
 	// Write C++ code to temp file
@@ -581,7 +600,16 @@ func runRun(filename string, debug bool, useGC bool) {
 	}
 
 	gen := codegen.New()
+	if err := invariants.ValidateCallPlans(tree, analyzer.GetCallPlans()); err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		os.Exit(1)
+	}
+	if err := invariants.ValidateReturnAnnotations(tree, analyzer.GetReturnValidation()); err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		os.Exit(1)
+	}
 	gen.SetCaptures(analyzer.GetCaptures())
+	gen.SetCallPlans(analyzer.GetCallPlans())
 	cCode := gen.Generate(tree)
 
 	// Determine file paths

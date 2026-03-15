@@ -19,13 +19,13 @@ This document is the grammar and semantic reference for the Quark compiler in `s
 | `->` | produces/maps to | function bodies, `when` pattern results |
 | `:` | contains/has type | block headers, type annotations, dict entries |
 | `\|` | pipe to | dataflow chaining |
-| `.` | member of | dict key access only |
+| `.` | member of | dict key access and module-qualified calls |
 
 ## 3) Lexical Elements
 
 ### 3.1 Keywords (reserved)
 
-`use, module, fn, if, elseif, else, for, while, break, continue, when, in, and, or, true, false, null, ok, err, list, dict, vector, result`
+`use, as, module, fn, if, elseif, else, for, while, break, continue, when, in, and, or, true, false, null, ok, err, list, dict, vector, result`
 
 ### 3.2 Operators and delimiters
 
@@ -92,15 +92,15 @@ ModuleDef       ::= "module" ID ":" Block
 ### 5.2 Use forms
 
 ```ebnf
-UseStatement    ::= "use" ID
-                |   "use" STRING
+UseStatement    ::= "use" ( ID | STRING ) [ "as" ID ]
 ```
 
 Semantics:
 - `use ID`: same-file module import
 - `use './path'` or `use '../path'`: file import resolved by loader
 - `use 'C:/path/to/file'` or `use '/path/to/file'`: absolute file import resolved by loader
-- `use 'name'` (quoted non-path string): currently rejected by loader as stdlib-import-not-yet-supported
+- `use 'std/name'`: stdlib import resolved from stdlib root (`QUARK_STDLIB_ROOT` or discovered `stdlib/` directory)
+- `use ... as alias`: binds `alias` as a module qualifier for `alias.symbol(...)` calls
 
 ## 6) Functions and Lambdas
 
@@ -333,7 +333,8 @@ Interpolation parsing rules (future):
 - `d.key` reads dict key
 - `d.key = value` writes dict key
 - Dot access on non-dict is an analyzer/runtime error
-- Dot-call (`x.f()`) is unsupported
+- Dot-call on values (`x.f()`) is unsupported
+- Module-qualified calls are supported after `use ... as alias`: `alias.fn(...)`
 
 ### 11.2 Indexing
 
@@ -405,7 +406,7 @@ Result construction and use:
 | Indentation blocks | Implemented | Triggered after `:` and `->` |
 | `module` / `use` same-file | Implemented | `use ID` |
 | `use STRING` file imports | Implemented | Relative and absolute file paths |
-| Stdlib string imports (`use 'csv'`) | Not implemented | Loader emits error |
+| Stdlib string imports (`use 'std/name'`) | Implemented | Resolved via stdlib root |
 | Named functions and lambdas | Implemented | Parenthesized params required |
 | Return type annotations | Implemented | `fn f(x) int -> x + 1`; compile-time check only |
 | Default parameters | Implemented | `fn f(x, y = 0) -> x + y`; literals only, required-before-defaults |
@@ -415,7 +416,8 @@ Result construction and use:
 | Vector literals (`vector [...]`) | Implemented | 1D only |
 | Dict literals (`dict {k: v}`) | Implemented | Keys are identifiers in source |
 | Loop control (`break`, `continue`) | Implemented | Exits/skips nearest enclosing loop; compile error outside loops |
-| Dot-call syntax | Not implemented | Use function-call/pipe model |
+| Dot-call syntax on values | Not implemented | Use function-call/pipe model |
+| Module-qualified call syntax (`alias.fn(...)`) | Implemented | Requires `use ... as alias` |
 | Dot data access on dict | Implemented | read/write |
 | Result values `ok` / `err` | Implemented | Analyzer has `ResultType` |
 | `when` result patterns | Implemented | `ok x`, `err e` |
@@ -428,9 +430,9 @@ Result construction and use:
 ## 14) Known Limits / Current Diagnostics
 
 - `for` iterables are currently restricted to list/vector
-- `use 'name'` (quoted non-path string) is rejected pending stdlib import support
+- Quoted non-path imports must use `std/...`; bare quoted names are rejected
 - Dict bracket indexing is rejected by analyzer
-- Dot access is dict-only; non-dict dot access is diagnosed
+- Dot access is dict-only for data; module-qualified calls are the only supported dot-call form
 - String interpolation (`!{...}`) is deferred from v0.1
 
 ## 15) Source of Truth Policy
@@ -438,6 +440,7 @@ Result construction and use:
 To reduce drift:
 - `grammar.md` is canonical for syntax and semantic surface definitions.
 - `stdlib.md` is canonical for builtin surface and documented behavior contracts.
+- `src/core/quark/builtins/catalog.go` is the code-level source of truth for builtin names, arity, and runtime symbol mapping.
 - During Phase 1 stabilization, changes to language behavior must update both files in the same change.
 
 If either file conflicts with implementation, treat it as a release blocker and resolve before adding features.

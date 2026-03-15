@@ -155,7 +155,7 @@ data | transform() | filter() | save()
 **Invocation Model:**
 - **Canonical**: `callable(entity, ...)` — all builtins and user functions use function-call syntax
 - **Pipe equivalent**: `entity | callable(...)` => `callable(entity, ...)`
-- **Dot is data-only**: `dict.member` reads/writes dict keys; `entity.method(...)` is a compile error
+- **Dot data access + module qualification**: `dict.member` reads/writes dict keys; value method-calls (`entity.method(...)`) are compile errors, but module-qualified calls are allowed via aliases (`use 'std/math' as math`, `math.floor(...)`)
 - No method dispatch on any type (list, string, etc.) — use `len(mylist)`, `upper(mystr)`, `push(mylist, item)`
 
 **Syntax Conventions:**

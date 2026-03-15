@@ -2,11 +2,11 @@
 
 This document describes the built-in functions available in Quark. All standard library functions are implemented in C++ for performance and are automatically available without any imports.
 
-**Invocation model**: All builtins use function-call syntax: `callable(entity, ...)`. Dot syntax (`entity.method()`) is not supported — dot is reserved for dict key access only. Use pipes for chaining: `entity | callable() | next()`.
+**Invocation model**: All builtins use function-call syntax: `callable(entity, ...)`. Dot-call syntax on values (`entity.method()`) is not supported. Dot is used for dict key access and module-qualified calls via aliases (for example `use 'std/math' as math`, `math.floor(...)`). Use pipes for chaining: `entity | callable() | next()`.
 
 ### Design principles
 
-- Prefer explicit failure for I/O and parsing: return `result` (`ok`/`err`) instead of silent fallbacks.
+- Prefer explicit runtime failures over silent fallbacks for invalid type/domain usage.
 - Keep hot numeric/vector kernels fast; compose higher-level behavior in stdlib modules.
 - Keep APIs predictable: pure functions by default; in-place behavior must be clearly named/documented.
 
@@ -125,7 +125,7 @@ sublist = slice(list, 0, 2)
 - `reverse` modifies the list in place
 - `get` out-of-bounds access returns `null`; `set`, `insert`, and `remove` with invalid arguments cause a runtime error
 - `pop` on an empty list causes a runtime error
-- All list builtins except `get` require a `list` first argument at compile time
+- Most list builtins require a `list` first argument at compile time; `set` is currently more permissive in the analyzer and is runtime-validated
 
 ## Dict Functions
 
@@ -474,28 +474,28 @@ Vector-specific typing behavior:
 
 ### Builtin Wiring
 
-Builtin functions are connected across three layers:
+Builtin definitions are wired through a shared catalog plus runtime implementation:
 
 1. Runtime implementation in the C++ headers
-2. Codegen builtin mapping (`src/core/quark/codegen/builtins.go`)
-3. Analyzer builtin signatures (`src/core/quark/types/analyzer.go`)
+2. Shared builtin catalog (`src/core/quark/builtins/catalog.go`) for names, arity, type keys, and runtime symbol mapping
+3. Analyzer and codegen consume catalog data instead of maintaining separate hardcoded builtin lists
 
-All three layers must stay in sync for arity, naming, and return-type behavior.
+The catalog and runtime behavior must stay in sync for arity, naming, and return-type behavior.
 
 ### Adding New Builtins
 
 To add a new builtin function:
 
-1. **Add C++ implementation** in appropriate header under `runtime/include/quark/`
-2. The runtime is provided via modular headers under `src/core/quark/runtime/include/quark/` and included as `#include \"quark/quark.hpp\"`
-3. **Register the builtin mapping** in `src/core/quark/codegen/builtins.go`
-4. **Register type signature** in `src/core/quark/types/analyzer.go`
+1. **Add C++ implementation** in the appropriate runtime header under `runtime/include/quark/`
+2. Runtime headers are modular under `src/core/quark/runtime/include/quark/` and consumed via `#include "quark/quark.hpp"`
+3. **Register the builtin in the shared catalog** at `src/core/quark/builtins/catalog.go`
+4. **Add analyzer special-casing only when needed** (for polymorphic/shape rules not expressible in catalog type keys)
 
 For changes that impact syntax and semantics (for example new literal rules), update smoke files and both Go and runtime unit tests to preserve analyzer/runtime consistency.
 
-## Stdlib Roadmap (v0.1)
+## Future Stdlib Roadmap (Not Implemented Yet)
 
-This section defines the v1 standard library, the goal is a practical baseline for data-heavy programs with explicit behavior and error contracts.
+This section is a forward-looking roadmap and is not part of the currently implemented stdlib surface.
 
 ### Proposed v1 modules and APIs
 

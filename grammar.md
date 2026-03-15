@@ -107,17 +107,53 @@ Semantics:
 ### 6.1 Named function
 
 ```ebnf
-FunctionDef     ::= "fn" ID Parameters "->" BlockOrExpr
+FunctionDef     ::= "fn" ID Parameters [ Type ] "->" BlockOrExpr
 Parameters      ::= "(" [ ParamList ] ")"
 ParamList       ::= Param { "," Param } [ "," ]
-Param           ::= ID [ ":" Type ]
+Param           ::= ID [ ":" Type ] [ "=" DefaultLiteral ]
+DefaultLiteral  ::= INT | FLOAT | STRING | BOOL | NULL | "-" INT | "-" FLOAT | "list" "[" "]"
 ```
 
 ### 6.2 Lambda expression
 
 ```ebnf
-LambdaExpr      ::= "fn" Parameters "->" Expression
+LambdaExpr      ::= "fn" Parameters [ Type ] "->" Expression
 ```
+
+### 6.3 Return type annotations
+
+Return type annotations appear between the closing `)` and the `->` arrow:
+
+```quark
+fn add(x: int, y: int) int -> x + y
+fn greet(name: str) str -> concat('Hello, ', name)
+double = fn(x: int) int -> x * 2
+```
+
+Semantics:
+- The annotation is compile-time only — all runtime values are `QValue`
+- The analyzer infers the actual return type from the body and checks it against the annotation
+- A mismatch is a compile-time error (e.g., annotated `int` but body returns `str`)
+- Union types with `void` from incomplete branches (e.g., `when` without wildcard) are accepted if the non-void component matches the annotation
+
+### 6.4 Default parameters
+
+Parameters may have default values specified with `= literal`:
+
+```quark
+fn greet(name, greeting = 'Hello') -> concat(greeting, ', ', name)
+fn add_n(x, n = 1) -> x + n
+fn point(x = 0, y = 0) -> list [x, y]
+```
+
+Semantics:
+- Only literal values are allowed as defaults (int, float, string, bool, null, negated numerics, empty list)
+- Required parameters must come before parameters with defaults — mixing is a compile-time error
+- When a type annotation is present, the default value type must be compatible with the annotation
+- When no type annotation is present, the type is inferred from the default value (null infers `any`)
+- At the call site, omitted trailing arguments are filled with their defaults
+- Arity checking uses a range: `MinArity` (required params) to `MaxArity` (total params)
+- Pipes interact with defaults: `5 | add_n()` fills the default for `n`
 
 Notes:
 - Parentheses are required for both named and lambda parameters
@@ -369,6 +405,8 @@ Result construction and use:
 | `use STRING` file imports | Implemented | Relative and absolute file paths |
 | Stdlib string imports (`use 'csv'`) | Not implemented | Loader emits error |
 | Named functions and lambdas | Implemented | Parenthesized params required |
+| Return type annotations | Implemented | `fn f(x) int -> x + 1`; compile-time check only |
+| Default parameters | Implemented | `fn f(x, y = 0) -> x + y`; literals only, required-before-defaults |
 | Typed params / typed var declarations | Implemented | Basic types + list/dict/vector |
 | Generic type expressions | Not implemented | e.g. `list[int]` unsupported |
 | List literals (`list [...]`) | Implemented | Keyword required |

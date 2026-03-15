@@ -701,6 +701,24 @@ when safe_div(10, 2):
 // Typed parameters
 fn add(x: int, y: int) -> x + y
 
+// Return type annotations
+fn add_2(x: int, y: int) int -> x + y
+fn greet(name: str) str -> concat('Hello, ', name)
+
+// Default parameters
+fn connect(host: str, port: int = 8080) str ->
+    concat(host, concat(':', to_str(port)))
+
+connect('localhost')         // uses default port 8080
+connect('localhost', 3000)   // overrides port
+
+// Default params with pipe
+5 | add_n(10)      // add_n(5, 10)
+5 | add_n()        // add_n(5, default)
+
+// Lambda with return type and defaults
+multiply = fn(x: int, factor: int = 2) int -> x * factor
+
 // Typed variables
 name: str = 'hello'
 nums: list = list [1, 2, 3]
@@ -890,16 +908,30 @@ results = data | map(transform) | filter(valid)
 7. **Typed Parameters in One-Line Functions**
     - Single-line functions support type annotations: `fn add(x: int, y: int) -> x + y`
 
-8. **Unary Operator Whitespace Rule**
+8. **Return Type Annotations**
+   - Functions can declare a return type: `fn add(x: int, y: int) int -> x + y`
+   - Return type appears between `)` and `->`
+   - Analyzer validates inferred return type matches annotation at compile time
+   - Works with named functions, lambdas, and all body forms (when, if/else, ternary)
+
+9. **Default Parameters**
+   - Parameters can have default values: `fn foo(x: int, y: int = 0) -> x + y`
+   - Default values must be literals (int, float, string, bool, null, empty list, negative numerics)
+   - Required parameters must come before defaulted parameters
+   - Type can be inferred from default value: `fn foo(x, n = 3)` infers `n: int`
+   - Default type is validated against explicit type annotation if both present
+   - Works with pipes: `5 | foo()` fills first arg, defaults fill remaining
+
+10. **Unary Operator Whitespace Rule**
    - Unary `-` and `!` must NOT have whitespace before operand
    - `-5` is negative five, `a - b` is subtraction, `a -b` is invalid
    - This resolves ambiguity between function calls and arithmetic
 
-9. **No Null Safety Operators**
-   - Removed `?`, `??`, `?.`, `?[]` operators
-   - Error handling via explicit Result types instead
+11. **No Null Safety Operators**
+    - Removed `?`, `??`, `?.`, `?[]` operators
+    - Error handling via explicit Result types instead
 
-10. **No Bitwise Operations**
+12. **No Bitwise Operations**
     - Removed: `&`, `|`, `^`, `~`, `<<`, `>>`
     - Quark is high-level, not focused on bit manipulation
 
@@ -984,6 +1016,8 @@ After modifying runtime headers under `runtime/include/quark/`, generated progra
 - **Lambda bodies**: `var = fn() -> expr` is expression-only — cannot have multi-line indented blocks like named functions.
 - **Trailing newline**: Source files must end with a newline or the parser may produce a vague error.
 - **Bool-only conditions**: `if`, `while`, ternary, `and`, `or`, `!` all require `bool` — no truthy coercion. Use comparisons or `to_bool()`.
+- **Default params are literals only**: Default parameter values must be compile-time literals (`42`, `'hello'`, `true`, `null`, `-1`, `list []`). Expressions like `len(x)` are not allowed as defaults.
+- **Default params in dynamic calls**: When calling a function value through a variable that was not assigned with `var = fn(...) -> ...` syntax, defaults cannot be applied. The analyzer allows it but codegen may not fill defaults for truly dynamic calls.
 
 ## Feature Matrix (Grammar vs Implementation)
 
@@ -1013,6 +1047,8 @@ Key: Yes = implemented, Partial = present but incomplete, No = missing.
 | List literals `list [a, b]` | Yes | Yes | Yes | Yes | Yes | Uses `std::vector<QValue>`. Requires `list` keyword prefix. |
 | Vector literals `vector [a, b]` | Yes | Yes | Yes | Yes | Yes | Homogeneous only: `int` -> `vector[i64]`, `float` -> `vector[f64]`, `str` -> `vector[str]`. Mixed rejected. |
 | Typed parameters `x: int` | Yes | Yes | Yes | Yes | N/A | Basic annotations on params and variable declarations. No generic types. |
+| Return type annotations | Yes | Yes | Yes | N/A | N/A | `fn foo(x: int) int -> x + 1`. Compile-time check only. |
+| Default parameters | Yes | Yes | Yes | Yes | N/A | `fn foo(x: int = 0) -> x`. Literals only. Required-before-defaults enforced. |
 | Indexing `list[idx]` | Yes | Yes | Yes | Yes | Yes | Negative indices. Vector boolean mask filtering (`v[v > 5]`). |
 | Dict literals `dict {k: v}` | Yes | Yes | Yes | Yes | Yes | Requires `dict` keyword. Dot access only (`d.key`). |
 | Dict dot access/assignment | Yes | Yes | Yes | Yes | Yes | `d.key` reads, `d.key = val` writes. No bracket indexing. |

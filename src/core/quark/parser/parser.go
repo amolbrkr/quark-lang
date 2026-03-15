@@ -199,13 +199,27 @@ func (p *Parser) parseContinue() *ast.TreeNode {
 	return ast.NewNode(ast.ContinueNode, &tok)
 }
 
+// isTypeToken checks if the current token can be a type name for annotations
+func (p *Parser) isTypeToken() bool {
+	switch p.curToken.Type {
+	case token.LIST, token.DICT, token.VECTOR, token.RESULT:
+		return true
+	case token.ID:
+		switch p.curToken.Literal {
+		case "int", "float", "str", "bool", "any":
+			return true
+		}
+	}
+	return false
+}
+
 func (p *Parser) parseFunction() *ast.TreeNode {
 	if p.curToken.Type != token.FN {
 		return nil
 	}
 
 	// Normalize named function form into assignment-to-lambda:
-	// fn name(params) -> body  ==>  name = fn(params) -> body
+	// fn name(params) [ReturnType] -> body  ==>  name = fn(params) [ReturnType] -> body
 	fnTok := p.curToken
 	p.nextToken() // skip 'fn'
 
@@ -220,6 +234,12 @@ func (p *Parser) parseFunction() *ast.TreeNode {
 
 	args := p.parseParameters()
 
+	// Optional return type annotation before ->
+	var returnTypeNode *ast.TreeNode
+	if p.isTypeToken() && p.peek(1).Type == token.ARROW {
+		returnTypeNode = p.parseTypeExpr()
+	}
+
 	if !p.expect(token.ARROW) {
 		return nil
 	}
@@ -228,6 +248,7 @@ func (p *Parser) parseFunction() *ast.TreeNode {
 
 	lambdaNode := ast.NewNode(ast.LambdaNode, &fnTok)
 	lambdaNode.AddChildren(args, body)
+	lambdaNode.ReturnType = returnTypeNode
 
 	eqTok := token.Token{Type: token.EQUALS, Literal: "=", Line: fnTok.Line, Column: fnTok.Column}
 	assignNode := ast.NewNode(ast.OperatorNode, &eqTok)
@@ -273,6 +294,8 @@ func (p *Parser) parseParameters() *ast.TreeNode {
 		return node
 	}
 
+	seenDefault := false
+
 	for {
 		if p.curToken.Type != token.ID {
 			p.addError("expected parameter name")
@@ -293,6 +316,22 @@ func (p *Parser) parseParameters() *ast.TreeNode {
 			}
 		}
 
+		// Optional default value: = <literal>
+		if p.curToken.Type == token.EQUALS {
+			p.nextToken()
+			defaultExpr := p.parseExpression(ast.PrecTernary)
+			if defaultExpr != nil {
+				// Enforce literals only for default values
+				if !p.isLiteralDefault(defaultExpr) {
+					p.addError("default parameter values must be literals (int, float, string, bool, null, or empty list)")
+				}
+				paramNode.DefaultValue = defaultExpr
+			}
+			seenDefault = true
+		} else if seenDefault {
+			p.addError("required parameter '%s' cannot follow a parameter with a default value", paramTok.Literal)
+		}
+
 		node.AddChild(paramNode)
 
 		if p.curToken.Type == token.COMMA {
@@ -311,6 +350,25 @@ func (p *Parser) parseParameters() *ast.TreeNode {
 	}
 
 	return node
+}
+
+// isLiteralDefault checks if an expression is a valid default parameter value (literal only)
+func (p *Parser) isLiteralDefault(node *ast.TreeNode) bool {
+	if node == nil {
+		return false
+	}
+	if node.NodeType == ast.LiteralNode {
+		return true
+	}
+	// Allow unary minus on numeric literals: -5, -3.14
+	if node.NodeType == ast.OperatorNode && node.Token != nil && node.Token.Type == token.MINUS && len(node.Children) == 1 {
+		return p.isLiteralDefault(node.Children[0])
+	}
+	// Allow empty list: list []
+	if node.NodeType == ast.ListNode && len(node.Children) == 0 {
+		return true
+	}
+	return false
 }
 
 func (p *Parser) parseTypeExpr() *ast.TreeNode {

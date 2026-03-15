@@ -13,8 +13,9 @@ type builtinSignature struct {
 }
 
 type paramSpec struct {
-	name     string
-	typeNode *ast.TreeNode
+	name         string
+	typeNode     *ast.TreeNode
+	defaultValue *ast.TreeNode
 }
 
 // Module represents a defined module with its symbols
@@ -26,14 +27,15 @@ type Module struct {
 
 // Analyzer performs semantic analysis on the AST
 type Analyzer struct {
-	currentScope  *Scope
-	errors        []string
-	functions     map[string]*FunctionType // Track function signatures
-	modules       map[string]*Module       // Track defined modules
-	currentModule string                   // Current module being defined (empty if global)
-	builtins      map[string]*builtinSignature
-	captures      map[*ast.TreeNode][]string // Lambda node → captured variable names
-	loopDepth     int                        // >0 when inside for/while loop (for break/continue validation)
+	currentScope    *Scope
+	errors          []string
+	functions       map[string]*FunctionType // Track function signatures
+	modules         map[string]*Module       // Track defined modules
+	currentModule   string                   // Current module being defined (empty if global)
+	builtins        map[string]*builtinSignature
+	captures        map[*ast.TreeNode][]string // Lambda node → captured variable names
+	loopDepth       int                        // >0 when inside for/while loop (for break/continue validation)
+	pendingFuncName string                     // Set when analyzing a lambda assigned to a named variable
 }
 
 func NewAnalyzer() *Analyzer {
@@ -186,34 +188,125 @@ func functionTypeFromLambdaNode(lambdaNode *ast.TreeNode) *FunctionType {
 	argsNode := lambdaNode.Children[0]
 	paramSpecs := collectParamSpecs(argsNode)
 	paramTypes := make([]Type, len(paramSpecs))
+	defaultCount := 0
+	defaultValues := make([]*DefaultValueInfo, len(paramSpecs))
 	for i, spec := range paramSpecs {
 		if spec.typeNode == nil {
-			paramTypes[i] = TypeAny
-			continue
+			// If no type annotation but there's a default, infer from default literal
+			if spec.defaultValue != nil {
+				paramTypes[i] = inferLiteralType(spec.defaultValue)
+			} else {
+				paramTypes[i] = TypeAny
+			}
+		} else {
+			typeName := spec.typeNode.TokenLiteral()
+			switch typeName {
+			case "int":
+				paramTypes[i] = TypeInt
+			case "float":
+				paramTypes[i] = TypeFloat
+			case "str":
+				paramTypes[i] = TypeString
+			case "bool":
+				paramTypes[i] = TypeBool
+			case "null":
+				paramTypes[i] = TypeNull
+			case "list":
+				paramTypes[i] = &ListType{ElementType: TypeAny}
+			case "dict":
+				paramTypes[i] = &DictType{KeyType: TypeAny, ValueType: TypeAny}
+			case "vector":
+				paramTypes[i] = &VectorType{ElementType: TypeAny}
+			default:
+				paramTypes[i] = TypeAny
+			}
 		}
-		typeName := spec.typeNode.TokenLiteral()
-		switch typeName {
-		case "int":
-			paramTypes[i] = TypeInt
-		case "float":
-			paramTypes[i] = TypeFloat
-		case "str":
-			paramTypes[i] = TypeString
-		case "bool":
-			paramTypes[i] = TypeBool
-		case "null":
-			paramTypes[i] = TypeNull
-		case "list":
-			paramTypes[i] = &ListType{ElementType: TypeAny}
-		case "dict":
-			paramTypes[i] = &DictType{KeyType: TypeAny, ValueType: TypeAny}
-		case "vector":
-			paramTypes[i] = &VectorType{ElementType: TypeAny}
-		default:
-			paramTypes[i] = TypeAny
+		if spec.defaultValue != nil {
+			defaultCount++
+			defaultValues[i] = &DefaultValueInfo{Node: spec.defaultValue}
 		}
 	}
-	return &FunctionType{ParamTypes: paramTypes, ReturnType: TypeAny}
+
+	// Resolve annotated return type
+	var annotatedReturnType Type
+	if lambdaNode.ReturnType != nil {
+		annotatedReturnType = resolveTypeNodeStatic(lambdaNode.ReturnType)
+	}
+
+	var returnType Type = TypeAny
+	if annotatedReturnType != nil {
+		returnType = annotatedReturnType
+	}
+
+	return &FunctionType{
+		ParamTypes:          paramTypes,
+		ReturnType:          returnType,
+		AnnotatedReturnType: annotatedReturnType,
+		DefaultCount:        defaultCount,
+		DefaultValues:       defaultValues,
+	}
+}
+
+// resolveTypeNodeStatic resolves a type node without an analyzer instance (for pre-declaration)
+func resolveTypeNodeStatic(node *ast.TreeNode) Type {
+	if node == nil || node.NodeType != ast.TypeNode {
+		return nil
+	}
+	name := node.TokenLiteral()
+	switch name {
+	case "int":
+		return TypeInt
+	case "float":
+		return TypeFloat
+	case "str":
+		return TypeString
+	case "bool":
+		return TypeBool
+	case "null":
+		return TypeNull
+	case "any":
+		return TypeAny
+	case "list":
+		return &ListType{ElementType: TypeAny}
+	case "dict":
+		return &DictType{KeyType: TypeAny, ValueType: TypeAny}
+	case "vector":
+		return &VectorType{ElementType: TypeFloat}
+	case "result":
+		return &ResultType{OkType: TypeAny, ErrType: TypeAny}
+	default:
+		return TypeAny
+	}
+}
+
+// inferLiteralType infers the type from a literal AST node (for default param type inference)
+func inferLiteralType(node *ast.TreeNode) Type {
+	if node == nil {
+		return TypeAny
+	}
+	if node.NodeType == ast.LiteralNode && node.Token != nil {
+		switch node.Token.Type {
+		case token.INT:
+			return TypeInt
+		case token.FLOAT:
+			return TypeFloat
+		case token.STRING:
+			return TypeString
+		case token.TRUE, token.FALSE:
+			return TypeBool
+		case token.NULL:
+			return TypeAny // null default doesn't constrain the parameter type
+		}
+	}
+	// Unary minus on numeric literal
+	if node.NodeType == ast.OperatorNode && node.Token != nil && node.Token.Type == token.MINUS && len(node.Children) == 1 {
+		return inferLiteralType(node.Children[0])
+	}
+	// Empty list literal
+	if node.NodeType == ast.ListNode {
+		return &ListType{ElementType: TypeAny}
+	}
+	return TypeAny
 }
 
 func (a *Analyzer) declareFunctionAssignmentSignature(node *ast.TreeNode) *FunctionType {
@@ -261,10 +354,31 @@ func (a *Analyzer) declareFunctionSignature(node *ast.TreeNode) *FunctionType {
 	}
 	paramSpecs := collectParamSpecs(argsNode)
 	paramTypes := make([]Type, len(paramSpecs))
+	defaultCount := 0
+	defaultValues := make([]*DefaultValueInfo, len(paramSpecs))
 	for i, spec := range paramSpecs {
-		paramTypes[i] = a.resolveTypeNode(spec.typeNode)
+		if spec.typeNode != nil {
+			paramTypes[i] = a.resolveTypeNode(spec.typeNode)
+		} else if spec.defaultValue != nil {
+			paramTypes[i] = inferLiteralType(spec.defaultValue)
+		} else {
+			paramTypes[i] = TypeAny
+		}
+		if spec.defaultValue != nil {
+			defaultCount++
+			defaultValues[i] = &DefaultValueInfo{Node: spec.defaultValue}
+		}
 	}
-	funcType := &FunctionType{ParamTypes: paramTypes, ReturnType: TypeAny}
+
+	var returnType Type = TypeAny
+	// This is called for FunctionNode (not desugared). For desugared (assignment),
+	// declareFunctionAssignmentSignature handles it via functionTypeFromLambdaNode.
+	funcType := &FunctionType{
+		ParamTypes:    paramTypes,
+		ReturnType:    returnType,
+		DefaultCount:  defaultCount,
+		DefaultValues: defaultValues,
+	}
 	a.currentScope.Define(funcName, funcType, false)
 	a.functions[funcName] = funcType
 	return funcType
@@ -394,8 +508,17 @@ func (a *Analyzer) analyzeFunction(node *ast.TreeNode) Type {
 		funcType.ParamTypes = make([]Type, len(paramSpecs))
 	}
 	for i, spec := range paramSpecs {
-		funcType.ParamTypes[i] = a.resolveTypeNode(spec.typeNode)
+		if spec.typeNode != nil {
+			funcType.ParamTypes[i] = a.resolveTypeNode(spec.typeNode)
+		} else if spec.defaultValue != nil {
+			funcType.ParamTypes[i] = inferLiteralType(spec.defaultValue)
+		} else {
+			funcType.ParamTypes[i] = TypeAny
+		}
 	}
+
+	// Validate default value types against parameter types
+	a.validateDefaultValues(paramSpecs, funcType, nameNode)
 
 	// Create function scope for parameters and body
 	a.pushScope()
@@ -411,6 +534,9 @@ func (a *Analyzer) analyzeFunction(node *ast.TreeNode) Type {
 	}
 	returnType := a.Analyze(bodyNode)
 	a.popScope()
+
+	// Validate return type annotation if present
+	a.validateReturnType(funcType, returnType, funcName, nameNode)
 
 	funcType.ReturnType = returnType
 	return funcType
@@ -489,8 +615,14 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 		return TypeAny
 	}
 
-	if argCount != len(funcType.ParamTypes) {
-		a.errorAt(node, "function expects %d arguments but got %d", len(funcType.ParamTypes), argCount)
+	minArity := funcType.MinArity()
+	maxArity := len(funcType.ParamTypes)
+	if argCount < minArity || argCount > maxArity {
+		if minArity == maxArity {
+			a.errorAt(node, "function expects %d arguments but got %d", maxArity, argCount)
+		} else {
+			a.errorAt(node, "function expects %d-%d arguments but got %d", minArity, maxArity, argCount)
+		}
 	}
 
 	calleeName := "function"
@@ -796,6 +928,7 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 				a.currentScope.Define(varName, funcType, true)
 				a.functions[varName] = funcType
 			}
+			a.pendingFuncName = varName
 		}
 		rightType := a.Analyze(node.Children[1])
 		// Allow member assignment: obj.member = value
@@ -1054,8 +1187,14 @@ func (a *Analyzer) analyzePipe(node *ast.TreeNode) Type {
 	}
 
 	if funcType, ok := funcExprType.(*FunctionType); ok {
-		if pipeArgCount != len(funcType.ParamTypes) {
-			a.errorAt(node, "function expects %d arguments but got %d (including piped input)", len(funcType.ParamTypes), pipeArgCount)
+		minArity := funcType.MinArity()
+		maxArity := len(funcType.ParamTypes)
+		if pipeArgCount < minArity || pipeArgCount > maxArity {
+			if minArity == maxArity {
+				a.errorAt(node, "function expects %d arguments but got %d (including piped input)", maxArity, pipeArgCount)
+			} else {
+				a.errorAt(node, "function expects %d-%d arguments but got %d (including piped input)", minArity, maxArity, pipeArgCount)
+			}
 		}
 		pipeCallee := "function"
 		if funcNode.NodeType == ast.IdentifierNode {
@@ -1595,14 +1734,33 @@ func (a *Analyzer) analyzeLambda(node *ast.TreeNode) Type {
 	paramSpecs := collectParamSpecs(argsNode)
 	paramTypes := make([]Type, 0, len(paramSpecs))
 	paramNames := make(map[string]bool)
-	for _, spec := range paramSpecs {
+	defaultCount := 0
+	defaultValues := make([]*DefaultValueInfo, len(paramSpecs))
+	for i, spec := range paramSpecs {
 		if spec.name == "" {
 			continue
 		}
-		paramType := a.resolveTypeNode(spec.typeNode)
+		var paramType Type
+		if spec.typeNode != nil {
+			paramType = a.resolveTypeNode(spec.typeNode)
+		} else if spec.defaultValue != nil {
+			paramType = inferLiteralType(spec.defaultValue)
+		} else {
+			paramType = TypeAny
+		}
 		a.currentScope.Define(spec.name, paramType, true)
 		paramTypes = append(paramTypes, paramType)
 		paramNames[spec.name] = true
+		if spec.defaultValue != nil {
+			defaultCount++
+			defaultValues[i] = &DefaultValueInfo{Node: spec.defaultValue}
+		}
+	}
+
+	// Resolve annotated return type
+	var annotatedReturnType Type
+	if node.ReturnType != nil {
+		annotatedReturnType = a.resolveTypeNode(node.ReturnType)
 	}
 
 	lambdaScope := a.currentScope
@@ -1620,11 +1778,27 @@ func (a *Analyzer) analyzeLambda(node *ast.TreeNode) Type {
 
 	a.popScope()
 
-	// Create and return function type
-	return &FunctionType{
-		ParamTypes: paramTypes,
-		ReturnType: returnType,
+	// Build function type
+	funcType := &FunctionType{
+		ParamTypes:          paramTypes,
+		ReturnType:          returnType,
+		AnnotatedReturnType: annotatedReturnType,
+		DefaultCount:        defaultCount,
+		DefaultValues:       defaultValues,
 	}
+
+	// Validate default value types
+	a.validateDefaultValues(paramSpecs, funcType, node)
+
+	// Validate return type annotation
+	funcName := "lambda"
+	if a.pendingFuncName != "" {
+		funcName = a.pendingFuncName
+		a.pendingFuncName = ""
+	}
+	a.validateReturnType(funcType, returnType, funcName, node)
+
+	return funcType
 }
 
 func (a *Analyzer) analyzeVarDecl(node *ast.TreeNode) Type {
@@ -1660,6 +1834,69 @@ func (a *Analyzer) analyzeVarDecl(node *ast.TreeNode) Type {
 	return declType
 }
 
+// validateReturnType checks that the inferred return type matches the annotated return type
+func (a *Analyzer) validateReturnType(funcType *FunctionType, inferredType Type, funcName string, errorNode *ast.TreeNode) {
+	if funcType.AnnotatedReturnType == nil {
+		return
+	}
+	annotated := funcType.AnnotatedReturnType
+	// If inferred type is unknown/any, trust the annotation
+	if isUnknownType(inferredType) {
+		funcType.ReturnType = annotated
+		return
+	}
+	// Check compatibility — also accept union types where all non-void options match
+	if !canReturnAs(annotated, inferredType) {
+		a.errorAt(errorNode, "function '%s' declares return type '%s' but body returns '%s'", funcName, annotated.String(), inferredType.String())
+	}
+	// Keep the annotated type as the authoritative return type
+	funcType.ReturnType = annotated
+}
+
+// canReturnAs checks if inferredType is compatible with the annotated return type.
+// It handles union types by checking if all non-void options are assignable.
+func canReturnAs(annotated Type, inferred Type) bool {
+	if CanAssign(annotated, inferred) {
+		return true
+	}
+	// If inferred is a union, check if all non-void options are compatible
+	if union, ok := inferred.(*UnionType); ok {
+		for _, opt := range union.Options {
+			if opt.Equals(TypeVoid) {
+				continue // Ignore void from incomplete branches
+			}
+			if !CanAssign(annotated, opt) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// validateDefaultValues checks that default value types match parameter type annotations
+func (a *Analyzer) validateDefaultValues(specs []paramSpec, funcType *FunctionType, errorNode *ast.TreeNode) {
+	for i, spec := range specs {
+		if spec.defaultValue == nil {
+			continue
+		}
+		defaultType := inferLiteralType(spec.defaultValue)
+		if i >= len(funcType.ParamTypes) {
+			continue
+		}
+		paramType := funcType.ParamTypes[i]
+		if paramType.Equals(TypeAny) || isUnknownType(paramType) {
+			continue
+		}
+		if isUnknownType(defaultType) {
+			continue
+		}
+		if !CanAssign(paramType, defaultType) {
+			a.errorAt(errorNode, "default value type '%s' doesn't match parameter type '%s' for parameter '%s'", defaultType.String(), paramType.String(), spec.name)
+		}
+	}
+}
+
 func collectParamSpecs(argsNode *ast.TreeNode) []paramSpec {
 	if argsNode == nil {
 		return nil
@@ -1683,7 +1920,7 @@ func collectParamSpecs(argsNode *ast.TreeNode) []paramSpec {
 			if nameNode != nil {
 				name = nameNode.TokenLiteral()
 			}
-			specs = append(specs, paramSpec{name: name, typeNode: typeNode})
+			specs = append(specs, paramSpec{name: name, typeNode: typeNode, defaultValue: child.DefaultValue})
 		case ast.IdentifierNode:
 			name := child.TokenLiteral()
 			specs = append(specs, paramSpec{name: name})

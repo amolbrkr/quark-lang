@@ -90,8 +90,16 @@ func (t *DictType) Equals(other Type) bool {
 
 // FunctionType represents a function signature
 type FunctionType struct {
-	ParamTypes []Type
-	ReturnType Type
+	ParamTypes          []Type
+	ReturnType          Type
+	AnnotatedReturnType Type   // Declared return type (nil = not annotated)
+	DefaultCount        int    // Number of parameters with default values (always trailing)
+	DefaultValues       []*DefaultValueInfo // Default value info per parameter (nil = no default)
+}
+
+// DefaultValueInfo stores info about a default parameter value for codegen
+type DefaultValueInfo struct {
+	Node interface{} // The AST node for the default expression (used by codegen)
 }
 
 // ResultType represents an explicit ok/err result value
@@ -108,7 +116,16 @@ func (t *FunctionType) String() string {
 		}
 		params += p.String()
 	}
-	return fmt.Sprintf("fn(%s) -> %s", params, t.ReturnType.String())
+	retType := t.ReturnType
+	if t.AnnotatedReturnType != nil {
+		retType = t.AnnotatedReturnType
+	}
+	return fmt.Sprintf("fn(%s) -> %s", params, retType.String())
+}
+
+// MinArity returns the minimum number of arguments required (total params - defaults)
+func (t *FunctionType) MinArity() int {
+	return len(t.ParamTypes) - t.DefaultCount
 }
 
 func (t *FunctionType) Equals(other Type) bool {

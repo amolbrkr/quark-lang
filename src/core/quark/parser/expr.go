@@ -501,7 +501,7 @@ func (p *Parser) parseTernaryInfix(valueIfTrue *ast.TreeNode) *ast.TreeNode {
 	return node
 }
 
-// parseLambda parses inline lambda expressions: fn x: expr or fn x, y: expr
+// parseLambda parses inline lambda expressions: fn(x) -> expr or fn(x: int) int -> expr
 func (p *Parser) parseLambda() *ast.TreeNode {
 	tok := p.curToken
 	node := ast.NewNode(ast.LambdaNode, &tok)
@@ -511,6 +511,11 @@ func (p *Parser) parseLambda() *ast.TreeNode {
 	args := p.parseParameters()
 
 	node.AddChild(args)
+
+	// Optional return type annotation before ->
+	if p.isTypeToken() && p.peek(1).Type == token.ARROW {
+		node.ReturnType = p.parseTypeExpr()
+	}
 
 	// Expect arrow
 	if !p.expect(token.ARROW) {

@@ -94,9 +94,11 @@ type Node interface {
 
 // TreeNode is the main AST node structure (mirrors Python implementation)
 type TreeNode struct {
-	NodeType NodeType
-	Token    *token.Token
-	Children []*TreeNode
+	NodeType     NodeType
+	Token        *token.Token
+	Children     []*TreeNode
+	ReturnType   *TreeNode // For LambdaNode: optional return type annotation (TypeNode)
+	DefaultValue *TreeNode // For ParameterNode: optional default value expression
 }
 
 func NewNode(nodeType NodeType, tok *token.Token) *TreeNode {

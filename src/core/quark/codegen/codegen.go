@@ -12,35 +12,38 @@ import (
 type funcDecl struct {
 	name       string
 	paramCount int
+	defaults   map[int]*ast.TreeNode // param index → default value AST node
 }
 
 // Generator generates C code from an AST
 type Generator struct {
-	output        strings.Builder
-	indentLevel   int
-	funcDecls     []funcDecl               // Function declarations with param counts
-	lambdas       []*ast.TreeNode          // Lambda expressions to generate
-	lambdaNames   map[*ast.TreeNode]string // Maps lambda nodes to their generated names
-	tempCounter   int
-	lambdaCounter int
-	inFunction    bool
-	currentFunc   string
-	declaredVars  map[string]bool            // Tracks declared variables to avoid redeclaration
-	scopeStack    []map[string]bool          // Stack of variable scopes for nested blocks
-	captures      map[*ast.TreeNode][]string // Lambda node → captured variable names (from analyzer)
-	funcNames     map[string]bool            // Set of declared function names (for first-class funcs)
+	output          strings.Builder
+	indentLevel     int
+	funcDecls       []funcDecl               // Function declarations with param counts
+	lambdas         []*ast.TreeNode          // Lambda expressions to generate
+	lambdaNames     map[*ast.TreeNode]string // Maps lambda nodes to their generated names
+	tempCounter     int
+	lambdaCounter   int
+	inFunction      bool
+	currentFunc     string
+	declaredVars    map[string]bool            // Tracks declared variables to avoid redeclaration
+	scopeStack      []map[string]bool          // Stack of variable scopes for nested blocks
+	captures        map[*ast.TreeNode][]string // Lambda node → captured variable names (from analyzer)
+	funcNames       map[string]bool            // Set of declared function names (for first-class funcs)
+	varFuncDefaults map[string]*funcDecl       // Variable name → funcDecl for lambda bindings with defaults
 }
 
 func New() *Generator {
 	return &Generator{
-		funcDecls:    make([]funcDecl, 0),
-		lambdas:      make([]*ast.TreeNode, 0),
-		lambdaNames:  make(map[*ast.TreeNode]string),
-		tempCounter:  0,
-		declaredVars: make(map[string]bool),
-		scopeStack:   make([]map[string]bool, 0),
-		captures:     make(map[*ast.TreeNode][]string),
-		funcNames:    make(map[string]bool),
+		funcDecls:       make([]funcDecl, 0),
+		lambdas:         make([]*ast.TreeNode, 0),
+		lambdaNames:     make(map[*ast.TreeNode]string),
+		tempCounter:     0,
+		declaredVars:    make(map[string]bool),
+		scopeStack:      make([]map[string]bool, 0),
+		captures:        make(map[*ast.TreeNode][]string),
+		funcNames:       make(map[string]bool),
+		varFuncDefaults: make(map[string]*funcDecl),
 	}
 }
 
@@ -214,14 +217,51 @@ func (g *Generator) predeclareMainFunctionBindings(root *ast.TreeNode) {
 	}
 }
 
+// extractParamDefaults extracts default value nodes from an ArgumentsNode
+func extractParamDefaults(argsNode *ast.TreeNode) map[int]*ast.TreeNode {
+	if argsNode == nil {
+		return nil
+	}
+	var defaults map[int]*ast.TreeNode
+	for i, child := range argsNode.Children {
+		if child != nil && child.DefaultValue != nil {
+			if defaults == nil {
+				defaults = make(map[int]*ast.TreeNode)
+			}
+			defaults[i] = child.DefaultValue
+		}
+	}
+	return defaults
+}
+
 func (g *Generator) collectFunctions(node *ast.TreeNode) {
+	// Track function binding assignments (name = fn(...) -> ...) for default parameter lookup
+	if isFunctionBindingAssignmentNode(node) {
+		varName := node.Children[0].TokenLiteral()
+		lambdaNode := node.Children[1]
+		// The lambda will be collected below when we recurse into children
+		// We'll link the variable name to the lambda's funcDecl after collection
+		// For now, defer — we'll do it after the lambda is collected
+		defer func() {
+			if lambdaName, ok := g.lambdaNames[lambdaNode]; ok {
+				if fd := g.lookupFuncDecl(lambdaName); fd != nil && fd.defaults != nil {
+					g.varFuncDefaults[varName] = fd
+				}
+			}
+		}()
+	}
+
 	switch node.NodeType {
 	case ast.FunctionNode:
 		if len(node.Children) >= 2 {
 			name := node.Children[0].TokenLiteral()
 			argsNode := node.Children[1]
 			paramCount := len(argsNode.Children)
-			g.funcDecls = append(g.funcDecls, funcDecl{name: name, paramCount: paramCount})
+			g.funcDecls = append(g.funcDecls, funcDecl{
+				name:       name,
+				paramCount: paramCount,
+				defaults:   extractParamDefaults(argsNode),
+			})
 			g.funcNames[name] = true
 		}
 	case ast.LambdaNode:
@@ -230,10 +270,17 @@ func (g *Generator) collectFunctions(node *ast.TreeNode) {
 		g.lambdaNames[node] = lambdaName
 		g.lambdas = append(g.lambdas, node)
 		paramCount := 0
+		var defaults map[int]*ast.TreeNode
 		if len(node.Children) >= 1 {
 			paramCount = len(node.Children[0].Children)
+			defaults = extractParamDefaults(node.Children[0])
 		}
-		g.funcDecls = append(g.funcDecls, funcDecl{name: lambdaName, paramCount: paramCount})
+		fd := funcDecl{
+			name:       lambdaName,
+			paramCount: paramCount,
+			defaults:   defaults,
+		}
+		g.funcDecls = append(g.funcDecls, fd)
 	case ast.ModuleNode:
 		if len(node.Children) >= 2 {
 			bodyNode := node.Children[1]
@@ -569,6 +616,31 @@ func (g *Generator) generateOperator(node *ast.TreeNode) string {
 	return "qv_null()"
 }
 
+// lookupFuncDecl finds the funcDecl for a given function name
+func (g *Generator) lookupFuncDecl(name string) *funcDecl {
+	for i := range g.funcDecls {
+		if g.funcDecls[i].name == name {
+			return &g.funcDecls[i]
+		}
+	}
+	return nil
+}
+
+// fillDefaults appends default values for missing arguments
+func (g *Generator) fillDefaults(args []string, fd *funcDecl) []string {
+	if fd == nil || fd.defaults == nil || len(args) >= fd.paramCount {
+		return args
+	}
+	for i := len(args); i < fd.paramCount; i++ {
+		if defaultNode, ok := fd.defaults[i]; ok {
+			args = append(args, g.generateExpr(defaultNode))
+		} else {
+			args = append(args, "qv_null()")
+		}
+	}
+	return args
+}
+
 func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
 	if len(node.Children) < 2 {
 		return "qv_null()"
@@ -596,20 +668,23 @@ func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
 	}
 
 	// Check if this is a known user-defined function
-	isKnownFunc := false
-	for _, fd := range g.funcDecls {
-		if fd.name == funcName {
-			isKnownFunc = true
-			break
-		}
-	}
+	fd := g.lookupFuncDecl(funcName)
 
-	if isKnownFunc && !g.declaredVars[funcName] {
+	if fd != nil && !g.declaredVars[funcName] {
+		// Fill in default values for missing arguments
+		args = g.fillDefaults(args, fd)
 		// User-defined function - call directly with nullptr closure
 		if len(args) == 0 {
 			return fmt.Sprintf("quark_%s(nullptr)", funcName)
 		}
 		return fmt.Sprintf("quark_%s(nullptr, %s)", funcName, strings.Join(args, ", "))
+	}
+
+	// Check if this is a variable-bound function with defaults
+	if funcNode.NodeType == ast.IdentifierNode {
+		if vfd, ok := g.varFuncDefaults[funcName]; ok {
+			args = g.fillDefaults(args, vfd)
+		}
 	}
 
 	// Otherwise, it might be a function value - use dynamic call
@@ -648,15 +723,18 @@ func (g *Generator) generatePipe(node *ast.TreeNode) string {
 	}
 
 	// Check if known user function
-	isKnownFunc := false
-	for _, fd := range g.funcDecls {
-		if fd.name == funcName {
-			isKnownFunc = true
-			break
-		}
-	}
-	if isKnownFunc && !g.declaredVars[funcName] {
+	fd := g.lookupFuncDecl(funcName)
+	if fd != nil && !g.declaredVars[funcName] {
+		// Fill in default values for missing arguments
+		args = g.fillDefaults(args, fd)
 		return fmt.Sprintf("quark_%s(nullptr, %s)", funcName, strings.Join(args, ", "))
+	}
+
+	// Check if this is a variable-bound function with defaults
+	if funcNode.NodeType == ast.IdentifierNode {
+		if vfd, ok := g.varFuncDefaults[funcName]; ok {
+			args = g.fillDefaults(args, vfd)
+		}
 	}
 
 	// Dynamic call for function values

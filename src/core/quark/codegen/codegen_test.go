@@ -191,6 +191,78 @@ func TestCodegen_NoBuiltinArityFallbackBranch(t *testing.T) {
 	}
 }
 
+func TestCodegen_ClosureCallEmitsDirectCallN(t *testing.T) {
+	// A closure call with 1 arg should emit q_call1, not q_calln
+	res := testutil.GenerateCPP("f = fn(x) -> x * 2\nf(5)\n")
+	if len(res.ParserErrors) > 0 {
+		t.Fatalf("unexpected parse errors: %v", res.ParserErrors)
+	}
+	if len(res.TypeErrors) > 0 {
+		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
+	}
+	if !strings.Contains(res.CPP, "q_call1(") {
+		t.Fatalf("expected closure call to emit q_call1, cpp=\n%s", res.CPP)
+	}
+	if strings.Contains(res.CPP, "q_calln(") {
+		t.Fatalf("expected no q_calln for known-arity closure call, cpp=\n%s", res.CPP)
+	}
+}
+
+func TestCodegen_ClosureCallZeroArgs(t *testing.T) {
+	// A closure call with 0 args should emit q_call0
+	res := testutil.GenerateCPP("f = fn() -> 42\nf()\n")
+	if len(res.ParserErrors) > 0 {
+		t.Fatalf("unexpected parse errors: %v", res.ParserErrors)
+	}
+	if len(res.TypeErrors) > 0 {
+		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
+	}
+	if !strings.Contains(res.CPP, "q_call0(") {
+		t.Fatalf("expected closure call to emit q_call0, cpp=\n%s", res.CPP)
+	}
+	if strings.Contains(res.CPP, "q_calln(") {
+		t.Fatalf("expected no q_calln for known-arity closure call, cpp=\n%s", res.CPP)
+	}
+}
+
+func TestCodegen_ClosurePipeEmitsDirectCallN(t *testing.T) {
+	// A piped closure call with 1 explicit arg + 1 pipe input should emit q_call1
+	res := testutil.GenerateCPP("f = fn(x) -> x * 2\n5 | f()\n")
+	if len(res.ParserErrors) > 0 {
+		t.Fatalf("unexpected parse errors: %v", res.ParserErrors)
+	}
+	if len(res.TypeErrors) > 0 {
+		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
+	}
+	if !strings.Contains(res.CPP, "q_call1(") {
+		t.Fatalf("expected piped closure call to emit q_call1, cpp=\n%s", res.CPP)
+	}
+	if strings.Contains(res.CPP, "q_calln(") {
+		t.Fatalf("expected no q_calln for known-arity piped closure call, cpp=\n%s", res.CPP)
+	}
+}
+
+func TestCodegen_EmitClosureCallHelper(t *testing.T) {
+	// Unit test the emitClosureCall helper directly
+	tests := []struct {
+		funcExpr string
+		args     []string
+		expected string
+	}{
+		{"f", nil, "q_call0(f)"},
+		{"f", []string{}, "q_call0(f)"},
+		{"f", []string{"a"}, "q_call1(f, a)"},
+		{"f", []string{"a", "b"}, "q_call2(f, a, b)"},
+		{"f", []string{"a", "b", "c"}, "q_call3(f, a, b, c)"},
+	}
+	for _, tt := range tests {
+		result := codegen.EmitClosureCall(tt.funcExpr, tt.args)
+		if result != tt.expected {
+			t.Errorf("emitClosureCall(%q, %v) = %q, want %q", tt.funcExpr, tt.args, result, tt.expected)
+		}
+	}
+}
+
 func TestCodegen_ModuleQualifiedCallLowersDirectly(t *testing.T) {
 	res := testutil.GenerateCPP("module math:\n    fn myfloor(x) -> x\nuse math as m\nprintln(m.myfloor(3))\n")
 	if len(res.ParserErrors) > 0 {

@@ -12,10 +12,19 @@ This repository contains the active Go compiler implementation, C++ runtime head
 
 Quark is built around five practical goals:
 
-1. Readable syntax with low ceremony.
-2. Native performance via ahead-of-time C++ codegen.
-3. Predictable semantics and explicit errors.
-4. Practical data operations with list, dict, and typed vector support.
+1. Minimal readable syntax with low ceremony.
+2. Out of the box performance for data heavy operations.
+3. Good compile time guarantees and interop with C++.
+
+### Core philosophy
+
+1. Language ergonomics and performance are equal, primary goals.
+2. Developer productivity and quality-of-life are first-class concerns.
+3. Performance should not come at the cost of user-facing complexity.
+4. Fail early and fail loudly with clear diagnostics.
+5. Less is more for language surface area and syntax.
+6. Explicit is better than implicit, especially at boundaries.
+7. Prefer boring, reliable defaults over cleverness.
 
 ### Current language shape
 
@@ -24,11 +33,10 @@ Quark currently supports:
 - Indentation-based blocks.
 - Functions, lambdas, and closures.
 - Conditionals, loops, ternary expressions, and pattern matching.
-- Explicit result values using ok/err and related helpers.
+- Explicit result values using ok/err pattern and related helpers.
 - Pipelined call style via the pipe operator.
 - Multi-file imports and stdlib path imports.
 
-Quark deliberately does not support value method dispatch. The canonical model is function-call style:
 
 ```quark
 push(nums, 4)

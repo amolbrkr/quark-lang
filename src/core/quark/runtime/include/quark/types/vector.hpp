@@ -14,13 +14,20 @@
 #include <variant>
 #include <vector>
 
+// GC-aware vector type aliases — internal buffers are allocated via
+// gc_allocator so the collector can scan them for pointers (QVecF64 etc.
+// are pointer-free and use GC_MALLOC_ATOMIC automatically).
+using QVecF64  = std::vector<double,  q_allocator<double>>;
+using QVecI64  = std::vector<int64_t, q_allocator<int64_t>>;
+using QVecU8   = std::vector<uint8_t, q_allocator<uint8_t>>;
+
 struct QStringStorage {
-    std::vector<uint32_t> offsets;
-    std::vector<char> bytes;
+    std::vector<uint32_t, q_allocator<uint32_t>> offsets;
+    std::vector<char, q_allocator<char>> bytes;
 };
 
 struct QNullMask {
-    std::vector<uint8_t> is_null; // 0 = valid, 1 = null
+    QVecU8 is_null; // 0 = valid, 1 = null
 };
 
 struct QVector {
@@ -30,9 +37,9 @@ struct QVector {
     size_t count;
     bool has_nulls;
     std::variant<
-        std::vector<double>,
-        std::vector<int64_t>,
-        std::vector<uint8_t>,
+        QVecF64,
+        QVecI64,
+        QVecU8,
         QStringStorage
     > storage;
     QNullMask nulls;
@@ -41,7 +48,7 @@ struct QVector {
         : type(Type::F64),
           count(0),
           has_nulls(false),
-          storage(std::vector<double>{}),
+          storage(QVecF64{}),
           nulls() {}
 };
 
@@ -51,9 +58,9 @@ inline bool q_vec_has_valid_handle(QValue vec) {
 
 inline bool q_vec_storage_matches_type(const QVector& vec) {
     switch (vec.type) {
-        case QVector::Type::F64: return std::holds_alternative<std::vector<double>>(vec.storage);
-        case QVector::Type::I64: return std::holds_alternative<std::vector<int64_t>>(vec.storage);
-        case QVector::Type::BOOL: return std::holds_alternative<std::vector<uint8_t>>(vec.storage);
+        case QVector::Type::F64: return std::holds_alternative<QVecF64>(vec.storage);
+        case QVector::Type::I64: return std::holds_alternative<QVecI64>(vec.storage);
+        case QVector::Type::BOOL: return std::holds_alternative<QVecU8>(vec.storage);
         case QVector::Type::STR: return std::holds_alternative<QStringStorage>(vec.storage);
         default: return false;
     }
@@ -66,17 +73,17 @@ inline bool q_vec_validate(const QVector& vec) {
 
     switch (vec.type) {
         case QVector::Type::F64:
-            if (std::get<std::vector<double>>(vec.storage).size() != vec.count) {
+            if (std::get<QVecF64>(vec.storage).size() != vec.count) {
                 return false;
             }
             break;
         case QVector::Type::I64:
-            if (std::get<std::vector<int64_t>>(vec.storage).size() != vec.count) {
+            if (std::get<QVecI64>(vec.storage).size() != vec.count) {
                 return false;
             }
             break;
         case QVector::Type::BOOL:
-            if (std::get<std::vector<uint8_t>>(vec.storage).size() != vec.count) {
+            if (std::get<QVecU8>(vec.storage).size() != vec.count) {
                 return false;
             }
             break;
@@ -118,46 +125,46 @@ inline bool q_vec_is_type(QValue vec, QVector::Type type) {
     return q_vec_has_valid_handle(vec) && vec.data.vector_val->type == type && q_vec_validate(*vec.data.vector_val);
 }
 
-inline std::vector<double>* q_vec_f64_mut(QValue vec) {
+inline QVecF64* q_vec_f64_mut(QValue vec) {
     if (!q_vec_is_type(vec, QVector::Type::F64)) {
         return nullptr;
     }
-    return &std::get<std::vector<double>>(vec.data.vector_val->storage);
+    return &std::get<QVecF64>(vec.data.vector_val->storage);
 }
 
-inline const std::vector<double>* q_vec_f64_const(QValue vec) {
+inline const QVecF64* q_vec_f64_const(QValue vec) {
     if (!q_vec_is_type(vec, QVector::Type::F64)) {
         return nullptr;
     }
-    return &std::get<std::vector<double>>(vec.data.vector_val->storage);
+    return &std::get<QVecF64>(vec.data.vector_val->storage);
 }
 
-inline std::vector<int64_t>* q_vec_i64_mut(QValue vec) {
+inline QVecI64* q_vec_i64_mut(QValue vec) {
     if (!q_vec_is_type(vec, QVector::Type::I64)) {
         return nullptr;
     }
-    return &std::get<std::vector<int64_t>>(vec.data.vector_val->storage);
+    return &std::get<QVecI64>(vec.data.vector_val->storage);
 }
 
-inline const std::vector<int64_t>* q_vec_i64_const(QValue vec) {
+inline const QVecI64* q_vec_i64_const(QValue vec) {
     if (!q_vec_is_type(vec, QVector::Type::I64)) {
         return nullptr;
     }
-    return &std::get<std::vector<int64_t>>(vec.data.vector_val->storage);
+    return &std::get<QVecI64>(vec.data.vector_val->storage);
 }
 
-inline std::vector<uint8_t>* q_vec_bool_mut(QValue vec) {
+inline QVecU8* q_vec_bool_mut(QValue vec) {
     if (!q_vec_is_type(vec, QVector::Type::BOOL)) {
         return nullptr;
     }
-    return &std::get<std::vector<uint8_t>>(vec.data.vector_val->storage);
+    return &std::get<QVecU8>(vec.data.vector_val->storage);
 }
 
-inline const std::vector<uint8_t>* q_vec_bool_const(QValue vec) {
+inline const QVecU8* q_vec_bool_const(QValue vec) {
     if (!q_vec_is_type(vec, QVector::Type::BOOL)) {
         return nullptr;
     }
-    return &std::get<std::vector<uint8_t>>(vec.data.vector_val->storage);
+    return &std::get<QVecU8>(vec.data.vector_val->storage);
 }
 
 inline void q_vec_ensure_null_mask(QVector& vec) {
@@ -213,9 +220,9 @@ inline int64_t q_to_i64_scalar(QValue v) {
 inline QValue qv_vector(int initial_cap = 0) {
     QValue q;
     q.type = QValue::VAL_VECTOR;
-    q.data.vector_val = new QVector();
+    q.data.vector_val = q_new<QVector>();
     if (initial_cap > 0) {
-        std::get<std::vector<double>>(q.data.vector_val->storage).reserve(static_cast<size_t>(initial_cap));
+        std::get<QVecF64>(q.data.vector_val->storage).reserve(static_cast<size_t>(initial_cap));
     }
     return q;
 }
@@ -223,11 +230,11 @@ inline QValue qv_vector(int initial_cap = 0) {
 inline QValue qv_vector_i64(int initial_cap = 0) {
     QValue q;
     q.type = QValue::VAL_VECTOR;
-    q.data.vector_val = new QVector();
+    q.data.vector_val = q_new<QVector>();
     q.data.vector_val->type = QVector::Type::I64;
-    q.data.vector_val->storage = std::vector<int64_t>{};
+    q.data.vector_val->storage = QVecI64{};
     if (initial_cap > 0) {
-        std::get<std::vector<int64_t>>(q.data.vector_val->storage).reserve(static_cast<size_t>(initial_cap));
+        std::get<QVecI64>(q.data.vector_val->storage).reserve(static_cast<size_t>(initial_cap));
     }
     return q;
 }
@@ -235,11 +242,11 @@ inline QValue qv_vector_i64(int initial_cap = 0) {
 inline QValue qv_vector_bool(int initial_cap = 0) {
     QValue q;
     q.type = QValue::VAL_VECTOR;
-    q.data.vector_val = new QVector();
+    q.data.vector_val = q_new<QVector>();
     q.data.vector_val->type = QVector::Type::BOOL;
-    q.data.vector_val->storage = std::vector<uint8_t>{};
+    q.data.vector_val->storage = QVecU8{};
     if (initial_cap > 0) {
-        std::get<std::vector<uint8_t>>(q.data.vector_val->storage).reserve(static_cast<size_t>(initial_cap));
+        std::get<QVecU8>(q.data.vector_val->storage).reserve(static_cast<size_t>(initial_cap));
     }
     return q;
 }
@@ -247,7 +254,7 @@ inline QValue qv_vector_bool(int initial_cap = 0) {
 inline QValue qv_vector_str(int initial_string_cap = 0, int initial_byte_cap = 0) {
     QValue q;
     q.type = QValue::VAL_VECTOR;
-    q.data.vector_val = new QVector();
+    q.data.vector_val = q_new<QVector>();
     q.data.vector_val->type = QVector::Type::STR;
     QStringStorage storage;
     storage.offsets.push_back(0);
@@ -274,7 +281,7 @@ inline QValue q_vec_push(QValue vec, QValue value) {
         std::fprintf(stderr, "runtime error: vector push expects numeric scalar value\n");
         std::exit(1);
     }
-    std::vector<double>& values = std::get<std::vector<double>>(vec.data.vector_val->storage);
+    QVecF64& values = std::get<QVecF64>(vec.data.vector_val->storage);
     values.push_back(q_to_double_scalar(value));
     vec.data.vector_val->count = values.size();
     if (vec.data.vector_val->has_nulls) {
@@ -292,7 +299,7 @@ inline QValue q_vec_push_i64(QValue vec, QValue value) {
         std::fprintf(stderr, "runtime error: vector[i64] push expects int, float, or bool scalar value\n");
         std::exit(1);
     }
-    std::vector<int64_t>& values = std::get<std::vector<int64_t>>(vec.data.vector_val->storage);
+    QVecI64& values = std::get<QVecI64>(vec.data.vector_val->storage);
     values.push_back(q_to_i64_scalar(value));
     vec.data.vector_val->count = values.size();
     if (vec.data.vector_val->has_nulls) {
@@ -310,7 +317,7 @@ inline QValue q_vec_push_bool(QValue vec, QValue value) {
         std::fprintf(stderr, "runtime error: vector[bool] push expects bool or int scalar value\n");
         std::exit(1);
     }
-    std::vector<uint8_t>& values = std::get<std::vector<uint8_t>>(vec.data.vector_val->storage);
+    QVecU8& values = std::get<QVecU8>(vec.data.vector_val->storage);
     const bool b = (value.type == QValue::VAL_BOOL) ? value.data.bool_val : (value.data.int_val != 0);
     values.push_back(static_cast<uint8_t>(b ? 1 : 0));
     vec.data.vector_val->count = values.size();
@@ -351,7 +358,7 @@ inline QValue q_vec_clone(QValue vec) {
     }
     QValue out;
     out.type = QValue::VAL_VECTOR;
-    out.data.vector_val = new QVector(*vec.data.vector_val);
+    out.data.vector_val = q_new<QVector>(*vec.data.vector_val);
     return out;
 }
 
@@ -380,19 +387,19 @@ inline QValue q_vec_binary_impl(QValue a, QValue b, BinaryOp op) {
     }
 
     if (aVec && bVec) {
-        const std::vector<double>* avp = q_vec_f64_const(a);
-        const std::vector<double>* bvp = q_vec_f64_const(b);
+        const QVecF64* avp = q_vec_f64_const(a);
+        const QVecF64* bvp = q_vec_f64_const(b);
         if (!avp || !bvp) {
             return qv_null(); // not f64 → fallback signal
         }
-        const std::vector<double>& av = *avp;
-        const std::vector<double>& bv = *bvp;
+        const QVecF64& av = *avp;
+        const QVecF64& bv = *bvp;
         if (av.size() != bv.size()) {
             std::fprintf(stderr, "runtime error: vector size mismatch in arithmetic: %zu vs %zu\n", av.size(), bv.size());
             std::exit(1);
         }
         QValue out = qv_vector(static_cast<int>(av.size()));
-        std::vector<double>& outv = std::get<std::vector<double>>(out.data.vector_val->storage);
+        QVecF64& outv = std::get<QVecF64>(out.data.vector_val->storage);
         outv.resize(av.size());
         out.data.vector_val->count = av.size();
 
@@ -403,14 +410,14 @@ inline QValue q_vec_binary_impl(QValue a, QValue b, BinaryOp op) {
     }
 
     if (aVec && q_is_numeric_scalar(b)) {
-        const std::vector<double>* avp = q_vec_f64_const(a);
+        const QVecF64* avp = q_vec_f64_const(a);
         if (!avp) {
             return qv_null(); // not f64 → fallback signal
         }
-        const std::vector<double>& av = *avp;
+        const QVecF64& av = *avp;
         double bs = q_to_double_scalar(b);
         QValue out = qv_vector(static_cast<int>(av.size()));
-        std::vector<double>& outv = std::get<std::vector<double>>(out.data.vector_val->storage);
+        QVecF64& outv = std::get<QVecF64>(out.data.vector_val->storage);
         outv.resize(av.size());
         out.data.vector_val->count = av.size();
         for (size_t i = 0; i < av.size(); i++) {
@@ -420,14 +427,14 @@ inline QValue q_vec_binary_impl(QValue a, QValue b, BinaryOp op) {
     }
 
     if (bVec && q_is_numeric_scalar(a)) {
-        const std::vector<double>* bvp = q_vec_f64_const(b);
+        const QVecF64* bvp = q_vec_f64_const(b);
         if (!bvp) {
             return qv_null(); // not f64 → fallback signal
         }
-        const std::vector<double>& bv = *bvp;
+        const QVecF64& bv = *bvp;
         double as = q_to_double_scalar(a);
         QValue out = qv_vector(static_cast<int>(bv.size()));
-        std::vector<double>& outv = std::get<std::vector<double>>(out.data.vector_val->storage);
+        QVecF64& outv = std::get<QVecF64>(out.data.vector_val->storage);
         outv.resize(bv.size());
         out.data.vector_val->count = bv.size();
         for (size_t i = 0; i < bv.size(); i++) {
@@ -446,8 +453,8 @@ inline QValue q_vec_binary_i64_impl(QValue a, QValue b, BinaryOp op) {
     const bool bVec = q_vec_has_valid_handle(b);
 
     if (aVec && bVec) {
-        const std::vector<int64_t>* avp = q_vec_i64_const(a);
-        const std::vector<int64_t>* bvp = q_vec_i64_const(b);
+        const QVecI64* avp = q_vec_i64_const(a);
+        const QVecI64* bvp = q_vec_i64_const(b);
         if (!avp || !bvp) {
             return qv_null(); // not i64 → let f64 path try
         }
@@ -456,7 +463,7 @@ inline QValue q_vec_binary_i64_impl(QValue a, QValue b, BinaryOp op) {
             std::exit(1);
         }
         QValue out = qv_vector_i64(static_cast<int>(avp->size()));
-        std::vector<int64_t>& outv = std::get<std::vector<int64_t>>(out.data.vector_val->storage);
+        QVecI64& outv = std::get<QVecI64>(out.data.vector_val->storage);
         outv.resize(avp->size());
         out.data.vector_val->count = avp->size();
         for (size_t i = 0; i < avp->size(); i++) {
@@ -466,13 +473,13 @@ inline QValue q_vec_binary_i64_impl(QValue a, QValue b, BinaryOp op) {
     }
 
     if (aVec && q_is_integral_scalar(b)) {
-        const std::vector<int64_t>* avp = q_vec_i64_const(a);
+        const QVecI64* avp = q_vec_i64_const(a);
         if (!avp) {
             return qv_null();
         }
         const int64_t bs = q_to_i64_scalar(b);
         QValue out = qv_vector_i64(static_cast<int>(avp->size()));
-        std::vector<int64_t>& outv = std::get<std::vector<int64_t>>(out.data.vector_val->storage);
+        QVecI64& outv = std::get<QVecI64>(out.data.vector_val->storage);
         outv.resize(avp->size());
         out.data.vector_val->count = avp->size();
         for (size_t i = 0; i < avp->size(); i++) {
@@ -482,13 +489,13 @@ inline QValue q_vec_binary_i64_impl(QValue a, QValue b, BinaryOp op) {
     }
 
     if (bVec && q_is_integral_scalar(a)) {
-        const std::vector<int64_t>* bvp = q_vec_i64_const(b);
+        const QVecI64* bvp = q_vec_i64_const(b);
         if (!bvp) {
             return qv_null();
         }
         const int64_t as = q_to_i64_scalar(a);
         QValue out = qv_vector_i64(static_cast<int>(bvp->size()));
-        std::vector<int64_t>& outv = std::get<std::vector<int64_t>>(out.data.vector_val->storage);
+        QVecI64& outv = std::get<QVecI64>(out.data.vector_val->storage);
         outv.resize(bvp->size());
         out.data.vector_val->count = bvp->size();
         for (size_t i = 0; i < bvp->size(); i++) {
@@ -505,8 +512,8 @@ inline QValue q_vec_div_i64(QValue a, QValue b) {
     const bool bVec = q_vec_has_valid_handle(b);
 
     if (aVec && bVec) {
-        const std::vector<int64_t>* avp = q_vec_i64_const(a);
-        const std::vector<int64_t>* bvp = q_vec_i64_const(b);
+        const QVecI64* avp = q_vec_i64_const(a);
+        const QVecI64* bvp = q_vec_i64_const(b);
         if (!avp || !bvp) {
             return qv_null(); // not i64 → let f64 path try
         }
@@ -515,7 +522,7 @@ inline QValue q_vec_div_i64(QValue a, QValue b) {
             std::exit(1);
         }
         QValue out = qv_vector(static_cast<int>(avp->size()));
-        std::vector<double>& outv = std::get<std::vector<double>>(out.data.vector_val->storage);
+        QVecF64& outv = std::get<QVecF64>(out.data.vector_val->storage);
         outv.resize(avp->size());
         out.data.vector_val->count = avp->size();
         for (size_t i = 0; i < avp->size(); i++) {
@@ -525,13 +532,13 @@ inline QValue q_vec_div_i64(QValue a, QValue b) {
     }
 
     if (aVec && q_is_integral_scalar(b)) {
-        const std::vector<int64_t>* avp = q_vec_i64_const(a);
+        const QVecI64* avp = q_vec_i64_const(a);
         if (!avp) {
             return qv_null();
         }
         const double bs = static_cast<double>(q_to_i64_scalar(b));
         QValue out = qv_vector(static_cast<int>(avp->size()));
-        std::vector<double>& outv = std::get<std::vector<double>>(out.data.vector_val->storage);
+        QVecF64& outv = std::get<QVecF64>(out.data.vector_val->storage);
         outv.resize(avp->size());
         out.data.vector_val->count = avp->size();
         for (size_t i = 0; i < avp->size(); i++) {
@@ -541,13 +548,13 @@ inline QValue q_vec_div_i64(QValue a, QValue b) {
     }
 
     if (bVec && q_is_integral_scalar(a)) {
-        const std::vector<int64_t>* bvp = q_vec_i64_const(b);
+        const QVecI64* bvp = q_vec_i64_const(b);
         if (!bvp) {
             return qv_null();
         }
         const double as = static_cast<double>(q_to_i64_scalar(a));
         QValue out = qv_vector(static_cast<int>(bvp->size()));
-        std::vector<double>& outv = std::get<std::vector<double>>(out.data.vector_val->storage);
+        QVecF64& outv = std::get<QVecF64>(out.data.vector_val->storage);
         outv.resize(bvp->size());
         out.data.vector_val->count = bvp->size();
         for (size_t i = 0; i < bvp->size(); i++) {
@@ -600,7 +607,7 @@ inline QValue q_vec_div(QValue a, QValue b) {
 }
 
 inline QValue q_vec_sum(QValue vec) {
-    const std::vector<int64_t>* vi = q_vec_i64_const(vec);
+    const QVecI64* vi = q_vec_i64_const(vec);
     if (vi) {
         double acc = 0.0;
         for (size_t i = 0; i < vi->size(); i++) {
@@ -609,7 +616,7 @@ inline QValue q_vec_sum(QValue vec) {
         return qv_float(acc);
     }
 
-    const std::vector<uint8_t>* vb = q_vec_bool_const(vec);
+    const QVecU8* vb = q_vec_bool_const(vec);
     if (vb) {
         double acc = 0.0;
         for (size_t i = 0; i < vb->size(); i++) {
@@ -618,12 +625,12 @@ inline QValue q_vec_sum(QValue vec) {
         return qv_float(acc);
     }
 
-    const std::vector<double>* vp = q_vec_f64_const(vec);
+    const QVecF64* vp = q_vec_f64_const(vec);
     if (!vp) {
         std::fprintf(stderr, "runtime error: sum() requires numeric or bool vector\n");
         std::exit(1);
     }
-    const std::vector<double>& v = *vp;
+    const QVecF64& v = *vp;
     double acc = 0.0;
     for (size_t i = 0; i < v.size(); i++) {
         acc += v[i];
@@ -632,7 +639,7 @@ inline QValue q_vec_sum(QValue vec) {
 }
 
 inline QValue q_vec_min(QValue vec) {
-    const std::vector<int64_t>* vi = q_vec_i64_const(vec);
+    const QVecI64* vi = q_vec_i64_const(vec);
     if (vi) {
         if (vi->empty()) {
             std::fprintf(stderr, "runtime error: min() on empty vector\n");
@@ -645,7 +652,7 @@ inline QValue q_vec_min(QValue vec) {
         return qv_float(static_cast<double>(cur));
     }
 
-    const std::vector<double>* vp = q_vec_f64_const(vec);
+    const QVecF64* vp = q_vec_f64_const(vec);
     if (!vp) {
         std::fprintf(stderr, "runtime error: min() requires numeric vector\n");
         std::exit(1);
@@ -654,7 +661,7 @@ inline QValue q_vec_min(QValue vec) {
         std::fprintf(stderr, "runtime error: min() on empty vector\n");
         std::exit(1);
     }
-    const std::vector<double>& v = *vp;
+    const QVecF64& v = *vp;
     double cur = v[0];
     for (size_t i = 1; i < v.size(); i++) {
         cur = std::min(cur, v[i]);
@@ -663,7 +670,7 @@ inline QValue q_vec_min(QValue vec) {
 }
 
 inline QValue q_vec_max(QValue vec) {
-    const std::vector<int64_t>* vi = q_vec_i64_const(vec);
+    const QVecI64* vi = q_vec_i64_const(vec);
     if (vi) {
         if (vi->empty()) {
             std::fprintf(stderr, "runtime error: max() on empty vector\n");
@@ -676,7 +683,7 @@ inline QValue q_vec_max(QValue vec) {
         return qv_float(static_cast<double>(cur));
     }
 
-    const std::vector<double>* vp = q_vec_f64_const(vec);
+    const QVecF64* vp = q_vec_f64_const(vec);
     if (!vp) {
         std::fprintf(stderr, "runtime error: max() requires numeric vector\n");
         std::exit(1);
@@ -685,7 +692,7 @@ inline QValue q_vec_max(QValue vec) {
         std::fprintf(stderr, "runtime error: max() on empty vector\n");
         std::exit(1);
     }
-    const std::vector<double>& v = *vp;
+    const QVecF64& v = *vp;
     double cur = v[0];
     for (size_t i = 1; i < v.size(); i++) {
         cur = std::max(cur, v[i]);
@@ -710,7 +717,7 @@ inline QValue q_fillna(QValue vec, QValue value) {
                 std::fprintf(stderr, "runtime error: fillna() value is incompatible with vector[f64]\n");
                 std::exit(1);
             }
-            auto& values = std::get<std::vector<double>>(out.storage);
+            auto& values = std::get<QVecF64>(out.storage);
             const double fill = q_to_double_scalar(value);
             for (size_t i = 0; i < out.count; i++) {
                 if (out.nulls.is_null[i] != 0) {
@@ -726,7 +733,7 @@ inline QValue q_fillna(QValue vec, QValue value) {
                 std::fprintf(stderr, "runtime error: fillna() value is incompatible with vector[i64]\n");
                 std::exit(1);
             }
-            auto& values = std::get<std::vector<int64_t>>(out.storage);
+            auto& values = std::get<QVecI64>(out.storage);
             const int64_t fill = q_to_i64_scalar(value);
             for (size_t i = 0; i < out.count; i++) {
                 if (out.nulls.is_null[i] != 0) {
@@ -742,7 +749,7 @@ inline QValue q_fillna(QValue vec, QValue value) {
                 std::fprintf(stderr, "runtime error: fillna() value is incompatible with vector[bool]\n");
                 std::exit(1);
             }
-            auto& values = std::get<std::vector<uint8_t>>(out.storage);
+            auto& values = std::get<QVecU8>(out.storage);
             const uint8_t fill = static_cast<uint8_t>((value.type == QValue::VAL_BOOL ? value.data.bool_val : (value.data.int_val != 0)) ? 1 : 0);
             for (size_t i = 0; i < out.count; i++) {
                 if (out.nulls.is_null[i] != 0) {
@@ -795,19 +802,19 @@ inline QValue q_astype(QValue vec, QValue dtype) {
             return q_vec_clone(vec);
         }
         QValue out = qv_vector(static_cast<int>(src.count));
-        auto& outv = std::get<std::vector<double>>(out.data.vector_val->storage);
+        auto& outv = std::get<QVecF64>(out.data.vector_val->storage);
         outv.resize(src.count);
         out.data.vector_val->count = src.count;
         out.data.vector_val->has_nulls = src.has_nulls;
         out.data.vector_val->nulls = src.nulls;
 
         if (src.type == QVector::Type::I64) {
-            const auto& in = std::get<std::vector<int64_t>>(src.storage);
+            const auto& in = std::get<QVecI64>(src.storage);
             for (size_t i = 0; i < src.count; i++) outv[i] = static_cast<double>(in[i]);
             return out;
         }
         if (src.type == QVector::Type::BOOL) {
-            const auto& in = std::get<std::vector<uint8_t>>(src.storage);
+            const auto& in = std::get<QVecU8>(src.storage);
             for (size_t i = 0; i < src.count; i++) outv[i] = (in[i] != 0) ? 1.0 : 0.0;
             return out;
         }
@@ -820,19 +827,19 @@ inline QValue q_astype(QValue vec, QValue dtype) {
             return q_vec_clone(vec);
         }
         QValue out = qv_vector_i64(static_cast<int>(src.count));
-        auto& outv = std::get<std::vector<int64_t>>(out.data.vector_val->storage);
+        auto& outv = std::get<QVecI64>(out.data.vector_val->storage);
         outv.resize(src.count);
         out.data.vector_val->count = src.count;
         out.data.vector_val->has_nulls = src.has_nulls;
         out.data.vector_val->nulls = src.nulls;
 
         if (src.type == QVector::Type::F64) {
-            const auto& in = std::get<std::vector<double>>(src.storage);
+            const auto& in = std::get<QVecF64>(src.storage);
             for (size_t i = 0; i < src.count; i++) outv[i] = static_cast<int64_t>(in[i]);
             return out;
         }
         if (src.type == QVector::Type::BOOL) {
-            const auto& in = std::get<std::vector<uint8_t>>(src.storage);
+            const auto& in = std::get<QVecU8>(src.storage);
             for (size_t i = 0; i < src.count; i++) outv[i] = (in[i] != 0) ? 1 : 0;
             return out;
         }
@@ -845,19 +852,19 @@ inline QValue q_astype(QValue vec, QValue dtype) {
             return q_vec_clone(vec);
         }
         QValue out = qv_vector_bool(static_cast<int>(src.count));
-        auto& outv = std::get<std::vector<uint8_t>>(out.data.vector_val->storage);
+        auto& outv = std::get<QVecU8>(out.data.vector_val->storage);
         outv.resize(src.count);
         out.data.vector_val->count = src.count;
         out.data.vector_val->has_nulls = src.has_nulls;
         out.data.vector_val->nulls = src.nulls;
 
         if (src.type == QVector::Type::F64) {
-            const auto& in = std::get<std::vector<double>>(src.storage);
+            const auto& in = std::get<QVecF64>(src.storage);
             for (size_t i = 0; i < src.count; i++) outv[i] = static_cast<uint8_t>(in[i] != 0.0 ? 1 : 0);
             return out;
         }
         if (src.type == QVector::Type::I64) {
-            const auto& in = std::get<std::vector<int64_t>>(src.storage);
+            const auto& in = std::get<QVecI64>(src.storage);
             for (size_t i = 0; i < src.count; i++) outv[i] = static_cast<uint8_t>(in[i] != 0 ? 1 : 0);
             return out;
         }
@@ -940,7 +947,7 @@ inline QValue q_to_vector(QValue input) {
 
     if (mode == Mode::F64) {
         QValue out = qv_vector(static_cast<int>(n));
-        std::vector<double>& values = std::get<std::vector<double>>(out.data.vector_val->storage);
+        QVecF64& values = std::get<QVecF64>(out.data.vector_val->storage);
         values.resize(n, 0.0);
         out.data.vector_val->count = n;
 
@@ -967,7 +974,7 @@ inline QValue q_to_vector(QValue input) {
 
     if (mode == Mode::I64) {
         QValue out = qv_vector_i64(static_cast<int>(n));
-        std::vector<int64_t>& values = std::get<std::vector<int64_t>>(out.data.vector_val->storage);
+        QVecI64& values = std::get<QVecI64>(out.data.vector_val->storage);
         values.resize(n, 0);
         out.data.vector_val->count = n;
 
@@ -1057,17 +1064,17 @@ inline QValue q_to_list(QValue input) {
 
         switch (v.type) {
             case QVector::Type::I64: {
-                const auto& vals = std::get<std::vector<int64_t>>(v.storage);
+                const auto& vals = std::get<QVecI64>(v.storage);
                 items.push_back(qv_int(vals[i]));
                 break;
             }
             case QVector::Type::F64: {
-                const auto& vals = std::get<std::vector<double>>(v.storage);
+                const auto& vals = std::get<QVecF64>(v.storage);
                 items.push_back(qv_float(vals[i]));
                 break;
             }
             case QVector::Type::BOOL: {
-                const auto& vals = std::get<std::vector<uint8_t>>(v.storage);
+                const auto& vals = std::get<QVecU8>(v.storage);
                 items.push_back(qv_bool(vals[i] != 0));
                 break;
             }
@@ -1096,7 +1103,7 @@ inline QValue q_to_list(QValue input) {
 // If either input has nulls, allocates the null mask on the output.
 inline QValue q_vec_cmp_alloc_bool(size_t n, bool hasNulls) {
     QValue out = qv_vector_bool(static_cast<int>(n));
-    auto& outv = std::get<std::vector<uint8_t>>(out.data.vector_val->storage);
+    auto& outv = std::get<QVecU8>(out.data.vector_val->storage);
     outv.resize(n, 0);
     out.data.vector_val->count = n;
     if (hasNulls) {
@@ -1124,7 +1131,7 @@ inline QValue q_vec_cmp_f64_impl(QValue a, QValue b, CmpOp op) {
         const bool aNull = a.data.vector_val->has_nulls;
         const bool bNull = b.data.vector_val->has_nulls;
         QValue out = q_vec_cmp_alloc_bool(n, aNull || bNull);
-        auto& outv = std::get<std::vector<uint8_t>>(out.data.vector_val->storage);
+        auto& outv = std::get<QVecU8>(out.data.vector_val->storage);
         if (!aNull && !bNull) {
             for (size_t i = 0; i < n; i++) {
                 outv[i] = static_cast<uint8_t>(op(av[i], bv[i]) ? 1 : 0);
@@ -1151,7 +1158,7 @@ inline QValue q_vec_cmp_f64_impl(QValue a, QValue b, CmpOp op) {
         const size_t n = av.size();
         const bool aNull = a.data.vector_val->has_nulls;
         QValue out = q_vec_cmp_alloc_bool(n, aNull);
-        auto& outv = std::get<std::vector<uint8_t>>(out.data.vector_val->storage);
+        auto& outv = std::get<QVecU8>(out.data.vector_val->storage);
         if (!aNull) {
             for (size_t i = 0; i < n; i++) {
                 outv[i] = static_cast<uint8_t>(op(av[i], bs) ? 1 : 0);
@@ -1178,7 +1185,7 @@ inline QValue q_vec_cmp_f64_impl(QValue a, QValue b, CmpOp op) {
         const size_t n = bv.size();
         const bool bNull = b.data.vector_val->has_nulls;
         QValue out = q_vec_cmp_alloc_bool(n, bNull);
-        auto& outv = std::get<std::vector<uint8_t>>(out.data.vector_val->storage);
+        auto& outv = std::get<QVecU8>(out.data.vector_val->storage);
         if (!bNull) {
             for (size_t i = 0; i < n; i++) {
                 outv[i] = static_cast<uint8_t>(op(as, bv[i]) ? 1 : 0);
@@ -1214,7 +1221,7 @@ inline QValue q_vec_cmp_i64_impl(QValue a, QValue b, CmpOp op) {
         const bool aNull = a.data.vector_val->has_nulls;
         const bool bNull = b.data.vector_val->has_nulls;
         QValue out = q_vec_cmp_alloc_bool(n, aNull || bNull);
-        auto& outv = std::get<std::vector<uint8_t>>(out.data.vector_val->storage);
+        auto& outv = std::get<QVecU8>(out.data.vector_val->storage);
         if (!aNull && !bNull) {
             for (size_t i = 0; i < n; i++) {
                 outv[i] = static_cast<uint8_t>(op((*avp)[i], (*bvp)[i]) ? 1 : 0);
@@ -1240,7 +1247,7 @@ inline QValue q_vec_cmp_i64_impl(QValue a, QValue b, CmpOp op) {
         const size_t n = avp->size();
         const bool aNull = a.data.vector_val->has_nulls;
         QValue out = q_vec_cmp_alloc_bool(n, aNull);
-        auto& outv = std::get<std::vector<uint8_t>>(out.data.vector_val->storage);
+        auto& outv = std::get<QVecU8>(out.data.vector_val->storage);
         if (!aNull) {
             for (size_t i = 0; i < n; i++) {
                 outv[i] = static_cast<uint8_t>(op((*avp)[i], bs) ? 1 : 0);
@@ -1266,7 +1273,7 @@ inline QValue q_vec_cmp_i64_impl(QValue a, QValue b, CmpOp op) {
         const size_t n = bvp->size();
         const bool bNull = b.data.vector_val->has_nulls;
         QValue out = q_vec_cmp_alloc_bool(n, bNull);
-        auto& outv = std::get<std::vector<uint8_t>>(out.data.vector_val->storage);
+        auto& outv = std::get<QVecU8>(out.data.vector_val->storage);
         if (!bNull) {
             for (size_t i = 0; i < n; i++) {
                 outv[i] = static_cast<uint8_t>(op(as, (*bvp)[i]) ? 1 : 0);
@@ -1301,7 +1308,7 @@ inline QValue q_vec_cmp_bool_impl(QValue a, QValue b, CmpOp op) {
         const bool aNull = a.data.vector_val->has_nulls;
         const bool bNull = b.data.vector_val->has_nulls;
         QValue out = q_vec_cmp_alloc_bool(n, aNull || bNull);
-        auto& outv = std::get<std::vector<uint8_t>>(out.data.vector_val->storage);
+        auto& outv = std::get<QVecU8>(out.data.vector_val->storage);
         if (!aNull && !bNull) {
             for (size_t i = 0; i < n; i++) {
                 outv[i] = static_cast<uint8_t>(op(av[i] != 0, bv[i] != 0) ? 1 : 0);
@@ -1326,7 +1333,7 @@ inline QValue q_vec_cmp_bool_impl(QValue a, QValue b, CmpOp op) {
         const size_t n = av.size();
         const bool aNull = a.data.vector_val->has_nulls;
         QValue out = q_vec_cmp_alloc_bool(n, aNull);
-        auto& outv = std::get<std::vector<uint8_t>>(out.data.vector_val->storage);
+        auto& outv = std::get<QVecU8>(out.data.vector_val->storage);
         if (!aNull) {
             for (size_t i = 0; i < n; i++) {
                 outv[i] = static_cast<uint8_t>(op(av[i] != 0, bs) ? 1 : 0);
@@ -1351,7 +1358,7 @@ inline QValue q_vec_cmp_bool_impl(QValue a, QValue b, CmpOp op) {
         const size_t n = bv.size();
         const bool bNull = b.data.vector_val->has_nulls;
         QValue out = q_vec_cmp_alloc_bool(n, bNull);
-        auto& outv = std::get<std::vector<uint8_t>>(out.data.vector_val->storage);
+        auto& outv = std::get<QVecU8>(out.data.vector_val->storage);
         if (!bNull) {
             for (size_t i = 0; i < n; i++) {
                 outv[i] = static_cast<uint8_t>(op(as, bv[i] != 0) ? 1 : 0);
@@ -1388,7 +1395,7 @@ inline QValue q_vec_cmp_str_eq(QValue a, QValue b, bool negate) {
         const bool aNull = av.has_nulls;
         const bool bNull = bv.has_nulls;
         QValue out = q_vec_cmp_alloc_bool(n, aNull || bNull);
-        auto& outv = std::get<std::vector<uint8_t>>(out.data.vector_val->storage);
+        auto& outv = std::get<QVecU8>(out.data.vector_val->storage);
         if (!aNull && !bNull) {
             for (size_t i = 0; i < n; i++) {
                 bool eq = (aStrs[i] == bStrs[i]);
@@ -1416,7 +1423,7 @@ inline QValue q_vec_cmp_str_eq(QValue a, QValue b, bool negate) {
         const std::string scalar(b.data.string_val);
         const bool aNull = av.has_nulls;
         QValue out = q_vec_cmp_alloc_bool(n, aNull);
-        auto& outv = std::get<std::vector<uint8_t>>(out.data.vector_val->storage);
+        auto& outv = std::get<QVecU8>(out.data.vector_val->storage);
         if (!aNull) {
             for (size_t i = 0; i < n; i++) {
                 bool eq = (aStrs[i] == scalar);
@@ -1568,11 +1575,11 @@ inline QValue q_vec_get_scalar(QValue vec, QValue index) {
 
     switch (v.type) {
         case QVector::Type::F64:
-            return qv_float(std::get<std::vector<double>>(v.storage)[i]);
+            return qv_float(std::get<QVecF64>(v.storage)[i]);
         case QVector::Type::I64:
-            return qv_int(std::get<std::vector<int64_t>>(v.storage)[i]);
+            return qv_int(std::get<QVecI64>(v.storage)[i]);
         case QVector::Type::BOOL:
-            return qv_bool(std::get<std::vector<uint8_t>>(v.storage)[i] != 0);
+            return qv_bool(std::get<QVecU8>(v.storage)[i] != 0);
         case QVector::Type::STR: {
             const auto& s = std::get<QStringStorage>(v.storage);
             uint32_t start = s.offsets[i];
@@ -1606,7 +1613,7 @@ inline QValue q_vec_mask_filter(QValue data, QValue mask) {
         std::exit(1);
     }
 
-    const auto& maskBits = std::get<std::vector<uint8_t>>(mv.storage);
+    const auto& maskBits = std::get<QVecU8>(mv.storage);
     const size_t n = dv.count;
 
     // Count selected elements (mask=1 and mask not null)
@@ -1618,13 +1625,13 @@ inline QValue q_vec_mask_filter(QValue data, QValue mask) {
     switch (dv.type) {
         case QVector::Type::F64: {
             QValue out = qv_vector(static_cast<int>(selected));
-            auto& outv = std::get<std::vector<double>>(out.data.vector_val->storage);
+            auto& outv = std::get<QVecF64>(out.data.vector_val->storage);
             outv.reserve(selected);
             out.data.vector_val->count = 0;
             bool hasNulls = false;
             for (size_t i = 0; i < n; i++) {
                 if (q_vec_is_null_at(mv, i) || maskBits[i] == 0) continue;
-                outv.push_back(std::get<std::vector<double>>(dv.storage)[i]);
+                outv.push_back(std::get<QVecF64>(dv.storage)[i]);
                 if (q_vec_is_null_at(dv, i)) hasNulls = true;
             }
             out.data.vector_val->count = outv.size();
@@ -1643,13 +1650,13 @@ inline QValue q_vec_mask_filter(QValue data, QValue mask) {
         }
         case QVector::Type::I64: {
             QValue out = qv_vector_i64(static_cast<int>(selected));
-            auto& outv = std::get<std::vector<int64_t>>(out.data.vector_val->storage);
+            auto& outv = std::get<QVecI64>(out.data.vector_val->storage);
             outv.reserve(selected);
             out.data.vector_val->count = 0;
             bool hasNulls = false;
             for (size_t i = 0; i < n; i++) {
                 if (q_vec_is_null_at(mv, i) || maskBits[i] == 0) continue;
-                outv.push_back(std::get<std::vector<int64_t>>(dv.storage)[i]);
+                outv.push_back(std::get<QVecI64>(dv.storage)[i]);
                 if (q_vec_is_null_at(dv, i)) hasNulls = true;
             }
             out.data.vector_val->count = outv.size();
@@ -1668,13 +1675,13 @@ inline QValue q_vec_mask_filter(QValue data, QValue mask) {
         }
         case QVector::Type::BOOL: {
             QValue out = qv_vector_bool(static_cast<int>(selected));
-            auto& outv = std::get<std::vector<uint8_t>>(out.data.vector_val->storage);
+            auto& outv = std::get<QVecU8>(out.data.vector_val->storage);
             outv.reserve(selected);
             out.data.vector_val->count = 0;
             bool hasNulls = false;
             for (size_t i = 0; i < n; i++) {
                 if (q_vec_is_null_at(mv, i) || maskBits[i] == 0) continue;
-                outv.push_back(std::get<std::vector<uint8_t>>(dv.storage)[i]);
+                outv.push_back(std::get<QVecU8>(dv.storage)[i]);
                 if (q_vec_is_null_at(dv, i)) hasNulls = true;
             }
             out.data.vector_val->count = outv.size();
@@ -1696,7 +1703,7 @@ inline QValue q_vec_mask_filter(QValue data, QValue mask) {
             auto strs = q_vec_decode_strings(std::get<QStringStorage>(dv.storage), n);
             std::vector<std::string> filtered;
             filtered.reserve(selected);
-            std::vector<uint8_t> filteredNulls;
+            QVecU8 filteredNulls;
             bool hasNulls = false;
             for (size_t i = 0; i < n; i++) {
                 if (q_vec_is_null_at(mv, i) || maskBits[i] == 0) continue;

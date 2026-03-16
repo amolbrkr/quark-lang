@@ -60,15 +60,15 @@ inline QValue q_iter_get(QValue iterable, QValue index) {
 
     switch (vec.type) {
         case QVector::Type::F64: {
-            const auto& values = std::get<std::vector<double>>(vec.storage);
+            const auto& values = std::get<QVecF64>(vec.storage);
             return qv_float(values[pos]);
         }
         case QVector::Type::I64: {
-            const auto& values = std::get<std::vector<int64_t>>(vec.storage);
+            const auto& values = std::get<QVecI64>(vec.storage);
             return qv_int(static_cast<long long>(values[pos]));
         }
         case QVector::Type::BOOL: {
-            const auto& values = std::get<std::vector<uint8_t>>(vec.storage);
+            const auto& values = std::get<QVecU8>(vec.storage);
             return qv_bool(values[pos] != 0);
         }
         case QVector::Type::STR: {

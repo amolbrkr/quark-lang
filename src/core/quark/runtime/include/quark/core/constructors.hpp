@@ -108,11 +108,10 @@ inline QValue q_result_error(const QValue& v) {
 }
 
 // List value constructor with optional initial capacity
-// Note: std::vector internally uses new/delete, which Boehm GC intercepts
 inline QValue qv_list(int initial_cap = 0) {
     QValue q;
     q.type = QValue::VAL_LIST;
-    q.data.list_val = new QList();  // Boehm GC intercepts operator new
+    q.data.list_val = q_new<QList>();
     if (initial_cap > 0) {
         q.data.list_val->reserve(initial_cap);
     }
@@ -123,7 +122,7 @@ inline QValue qv_list(int initial_cap = 0) {
 inline QValue qv_list_from(int count, ...) {
     QValue q;
     q.type = QValue::VAL_LIST;
-    q.data.list_val = new QList();  // Boehm GC intercepts operator new
+    q.data.list_val = q_new<QList>();
     q.data.list_val->reserve(count);
     va_list args;
     va_start(args, count);
@@ -138,7 +137,7 @@ inline QValue qv_list_from(int count, ...) {
 inline QValue qv_list_init(std::initializer_list<QValue> items) {
     QValue q;
     q.type = QValue::VAL_LIST;
-    q.data.list_val = new QList(items);  // Boehm GC intercepts operator new
+    q.data.list_val = q_new<QList>(items);
     return q;
 }
 

@@ -9,14 +9,26 @@
 #include <cstdio>
 #include <cstdlib>
 
+// GC-aware string key type so key payload bytes are allocated via q_allocator.
+using QDictKey = std::basic_string<char, std::char_traits<char>, q_allocator<char>>;
+
+// QDictMap: unordered_map whose internal nodes and key payload bytes are
+// GC-allocated so the collector can track all dictionary-owned memory.
+using QDictMap = std::unordered_map<
+    QDictKey, QValue,
+    std::hash<QDictKey>,
+    std::equal_to<QDictKey>,
+    q_allocator<std::pair<const QDictKey, QValue>>
+>;
+
 struct QDict {
-    std::unordered_map<std::string, QValue> entries;
+    QDictMap entries;
 };
 
 inline QValue qv_dict() {
     QValue q;
     q.type = QValue::VAL_DICT;
-    q.data.dict_val = new QDict();
+    q.data.dict_val = q_new<QDict>();
     return q;
 }
 
@@ -46,7 +58,8 @@ inline QValue q_dict_get(QValue dict, QValue key) {
     if (!dict.data.dict_val) {
         return qv_null();
     }
-    auto it = dict.data.dict_val->entries.find(key.data.string_val ? key.data.string_val : "");
+    const char* raw_key = key.data.string_val ? key.data.string_val : "";
+    auto it = dict.data.dict_val->entries.find(QDictKey(raw_key));
     if (it == dict.data.dict_val->entries.end()) {
         return qv_null();
     }
@@ -61,9 +74,10 @@ inline QValue q_dict_set(QValue dict, QValue key, QValue value) {
         return qv_null();
     }
     if (!dict.data.dict_val) {
-        dict.data.dict_val = new QDict();
+        dict.data.dict_val = q_new<QDict>();
     }
-    dict.data.dict_val->entries[std::string(key.data.string_val ? key.data.string_val : "")] = value;
+    const char* raw_key = key.data.string_val ? key.data.string_val : "";
+    dict.data.dict_val->entries[QDictKey(raw_key)] = value;
     return dict;
 }
 
@@ -77,7 +91,8 @@ inline QValue q_dict_has(QValue dict, QValue key) {
     if (!dict.data.dict_val) {
         return qv_bool(false);
     }
-    auto it = dict.data.dict_val->entries.find(key.data.string_val ? key.data.string_val : "");
+    const char* raw_key = key.data.string_val ? key.data.string_val : "";
+    auto it = dict.data.dict_val->entries.find(QDictKey(raw_key));
     return qv_bool(it != dict.data.dict_val->entries.end());
 }
 

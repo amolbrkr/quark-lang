@@ -4,6 +4,7 @@
 
 #include <cstdlib>
 #include <vector>
+#include "gc.hpp"
 
 // Forward declarations
 struct QValue;
@@ -12,8 +13,9 @@ struct QDict;
 struct QClosure;
 struct QVector;
 
-// Type alias for list storage
-using QList = std::vector<QValue>;
+// Type alias for list storage — uses q_allocator so the GC can scan
+// the vector's internal buffer for pointers to collectible objects.
+using QList = std::vector<QValue, q_allocator<QValue>>;
 
 // QValue: Tagged union for all Quark runtime values
 struct QValue {
@@ -37,7 +39,7 @@ struct QValue {
         bool bool_val;
         QList* list_val;    // std::vector<QValue>* - automatic memory management
         QVector* vector_val; // typed column vector (f64/i64/bool/str/cat)
-        QDict* dict_val;    // std::unordered_map<std::string, QValue>*
+        QDict* dict_val;    // QDictMap* (GC-allocator-backed map)
         void* func_val;
         QResult* result_val;
     } data;

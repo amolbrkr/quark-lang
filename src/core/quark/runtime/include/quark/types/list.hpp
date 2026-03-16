@@ -228,11 +228,17 @@ inline QValue q_reverse(QValue list) {
     return list;
 }
 
-// Free list memory (for manual cleanup if needed)
+// Free list memory for non-GC builds.
+// In GC mode, object lifetime is collector-owned; manual free is a no-op.
 inline void q_list_free(QValue list) {
+#ifndef QUARK_USE_GC
     if (list.type == QValue::VAL_LIST && list.data.list_val) {
-        delete list.data.list_val;
+        list.data.list_val->~QList();
+        q_free(list.data.list_val);
     }
+#else
+    (void)list;
+#endif
 }
 
 // Range functions - generate lists of integers

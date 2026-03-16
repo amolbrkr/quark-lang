@@ -1,0 +1,3 @@
+use 'std/demo_math' as dm
+
+dm.add10(32) | println()

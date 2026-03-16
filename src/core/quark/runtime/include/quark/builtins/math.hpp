@@ -81,7 +81,7 @@ inline QValue q_sum(QValue v) {
     if (v.type == QValue::VAL_VECTOR) {
         return q_vec_sum(v);
     }
-    std::fprintf(stderr, "runtime error: sum() expects numeric vector or list, got %s\n", q_type_name_math(v.type));
+    std::fprintf(stderr, "runtime error: sum() expects numeric or bool vector, got %s\n", q_type_name_math(v.type));
     std::exit(1);
 }
 

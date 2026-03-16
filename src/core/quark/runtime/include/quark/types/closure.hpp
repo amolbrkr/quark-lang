@@ -17,7 +17,9 @@ struct QClosure {
 
 // Allocate a closure with N captures via GC
 inline QClosure* q_alloc_closure(void* func, int capture_count) {
-    size_t size = sizeof(QClosure) + capture_count * sizeof(QValue);
+    // captures[] is QCell*[], so allocate pointer-sized slots (not QValue-sized)
+    static_assert(sizeof(QCell*) <= sizeof(QValue), "QCell* must not exceed QValue size");
+    size_t size = sizeof(QClosure) + capture_count * sizeof(QCell*);
     QClosure* cl = static_cast<QClosure*>(q_malloc(size));
     cl->func = func;
     cl->capture_count = capture_count;

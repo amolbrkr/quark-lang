@@ -70,6 +70,16 @@ func ValidateCallPlans(root *ast.TreeNode, plans map[*ast.TreeNode]*ir.CallPlan)
 			firstErr = invError("INV-ARGCHECK", n, "call plan for '%s' did not record argument type-checking", plan.CalleeName)
 			return
 		}
+		// INV-DISPATCH-MODE: every call plan must have a resolved dispatch mode.
+		if plan.Dispatch != ir.DispatchBuiltin && plan.Dispatch != ir.DispatchDirect && plan.Dispatch != ir.DispatchClosure {
+			firstErr = invError("INV-DISPATCH-MODE", n, "call plan for '%s' has unresolved dispatch mode", plan.CalleeName)
+			return
+		}
+		// INV-RUNTIME-SYMBOL: builtin and direct calls must have a runtime symbol.
+		if (plan.Dispatch == ir.DispatchDirect || plan.Dispatch == ir.DispatchBuiltin) && plan.RuntimeSymbol == "" {
+			firstErr = invError("INV-RUNTIME-SYMBOL", n, "call plan for '%s' requires runtime symbol but has none", plan.CalleeName)
+			return
+		}
 		if plan.Dispatch == ir.DispatchBuiltin {
 			if plan.CalleeName == "" {
 				firstErr = invError("INV-BUILTIN-NAME", n, "builtin call plan missing callee name")

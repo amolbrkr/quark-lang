@@ -668,10 +668,23 @@ func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
 			member := funcNode.Children[1].TokenLiteral()
 			funcExpr = fmt.Sprintf("%s->value", sanitizeVarName(member))
 		}
-		return fmt.Sprintf("q_calln(%s, std::vector<QValue>{%s})", funcExpr, strings.Join(args, ", "))
+		return EmitClosureCall(funcExpr, args)
 	default:
 		panic(fmt.Sprintf("internal compiler error [INV-CALLPLAN-DISPATCH]: unknown dispatch for '%s'", funcName))
 	}
+}
+
+// EmitClosureCall emits a direct q_callN when arity is known (0..12),
+// falling back to q_calln with a std::vector only for >12 args.
+func EmitClosureCall(funcExpr string, args []string) string {
+	n := len(args)
+	if n <= 12 {
+		if n == 0 {
+			return fmt.Sprintf("q_call0(%s)", funcExpr)
+		}
+		return fmt.Sprintf("q_call%d(%s, %s)", n, funcExpr, strings.Join(args, ", "))
+	}
+	return fmt.Sprintf("q_calln(%s, std::vector<QValue>{%s})", funcExpr, strings.Join(args, ", "))
 }
 
 func (g *Generator) generatePipe(node *ast.TreeNode) string {
@@ -718,7 +731,7 @@ func (g *Generator) generatePipe(node *ast.TreeNode) string {
 			member := funcNode.Children[1].TokenLiteral()
 			funcExpr = fmt.Sprintf("%s->value", sanitizeVarName(member))
 		}
-		return fmt.Sprintf("q_calln(%s, std::vector<QValue>{%s})", funcExpr, strings.Join(args, ", "))
+		return EmitClosureCall(funcExpr, args)
 	default:
 		panic(fmt.Sprintf("internal compiler error [INV-CALLPLAN-DISPATCH]: unknown dispatch for '%s'", funcName))
 	}

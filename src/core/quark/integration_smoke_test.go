@@ -293,6 +293,150 @@ func TestDefaults_DynamicCallViaAlias(t *testing.T) {
 	}
 }
 
+// TestGCManagedSelfCheck compiles a standalone C++ program that allocates core
+// runtime values and verifies (via GC_base) that object and internal storage
+// buffers land on the Boehm GC heap.
+func TestGCManagedSelfCheck(t *testing.T) {
+	// Locate a C++ compiler.
+	compiler := "clang++"
+	if _, err := exec.LookPath("clang++"); err != nil {
+		compiler = "g++"
+		if _, err := exec.LookPath("g++"); err != nil {
+			t.Skip("skipping: no C++ compiler in PATH")
+		}
+	}
+
+	// Resolve runtime include and GC paths (same helpers the compiler uses).
+	runtimeInclude := getRuntimeIncludePath()
+	gcInclude, gcLib, err := ensureGC()
+	if err != nil {
+		t.Fatalf("ensureGC: %v", err)
+	}
+
+	tmp := t.TempDir()
+	cppFile := filepath.Join(tmp, "gc_selfcheck.cpp")
+	source := `
+#include "quark/quark.hpp"
+#include <cstdio>
+
+int main() {
+    q_gc_init();
+
+    int pass = 0;
+    int fail = 0;
+
+    #define CHECK(label, ptr) do {                                       \
+        if (GC_base((void*)(ptr)) != nullptr) { pass++; }               \
+        else { fail++; std::fprintf(stderr, "FAIL: %s not GC-managed\n", label); } \
+    } while(0)
+
+    /* --- strings --- */
+    QValue s = qv_string("hello");
+    CHECK("string", s.data.string_val);
+
+    /* --- list (object + internal buffer via gc_allocator) --- */
+    QValue l = qv_list(4);
+    CHECK("list_object", l.data.list_val);
+    l.data.list_val->push_back(qv_int(1));
+    CHECK("list_buffer", l.data.list_val->data());
+
+	/* --- dict (object + key storage via gc_allocator) --- */
+    QValue d = qv_dict();
+    CHECK("dict_object", d.data.dict_val);
+	d = q_dict_set(d, qv_string("long_dictionary_key_that_forces_heap_allocation_1234567890"), qv_int(1));
+	auto dit = d.data.dict_val->entries.begin();
+	CHECK("dict_key_cstr", dit->first.c_str());
+
+	/* --- vectors: object + per-type storage buffers --- */
+	QValue vf = qv_vector(4);
+	CHECK("vector_f64_object", vf.data.vector_val);
+	vf = q_vec_push(vf, qv_float(1.25));
+	CHECK("vector_f64_buffer", std::get<QVecF64>(vf.data.vector_val->storage).data());
+
+	QValue vi = qv_vector_i64(4);
+	CHECK("vector_i64_object", vi.data.vector_val);
+	vi = q_vec_push_i64(vi, qv_int(7));
+	CHECK("vector_i64_buffer", std::get<QVecI64>(vi.data.vector_val->storage).data());
+
+	QValue vb = qv_vector_bool(4);
+	CHECK("vector_bool_object", vb.data.vector_val);
+	vb = q_vec_push_bool(vb, qv_bool(true));
+	CHECK("vector_bool_buffer", std::get<QVecU8>(vb.data.vector_val->storage).data());
+
+	QValue vs = q_to_vector(qv_list_from(1, qv_string("hello")));
+	CHECK("vector_str_object", vs.data.vector_val);
+	const auto& sstorage = std::get<QStringStorage>(vs.data.vector_val->storage);
+	CHECK("vector_str_offsets", sstorage.offsets.data());
+	CHECK("vector_str_bytes", sstorage.bytes.data());
+
+    /* --- closure --- */
+    QClosure* cl = q_alloc_closure(nullptr, 0);
+    CHECK("closure", cl);
+
+    /* --- cell --- */
+    QCell* cell = q_new_cell(qv_int(1));
+    CHECK("cell", cell);
+
+    /* --- ok result --- */
+    QValue rok = qv_ok(qv_int(42));
+    CHECK("ok_result", rok.data.result_val);
+
+    /* --- err result --- */
+    QValue rerr = qv_err(qv_string("oops"));
+    CHECK("err_result", rerr.data.result_val);
+
+	std::printf("gc_selfcheck: %d passed, %d failed\n", pass, fail);
+    return fail > 0 ? 1 : 0;
+}
+`
+	if err := os.WriteFile(cppFile, []byte(source), 0o644); err != nil {
+		t.Fatalf("write %s: %v", cppFile, err)
+	}
+
+	outName := "gc_selfcheck"
+	if runtime.GOOS == "windows" {
+		outName += ".exe"
+	}
+	outBin := filepath.Join(tmp, outName)
+
+	args := []string{
+		"-std=c++17", "-O0",
+		"-DQUARK_USE_GC",
+		"-I" + runtimeInclude,
+		"-I" + gcInclude,
+		"-o", outBin,
+		cppFile,
+		gcLib,
+	}
+	if runtime.GOOS != "windows" {
+		args = append(args, "-lm")
+	}
+
+	compileCmd := exec.Command(compiler, args...)
+	var compileBuf bytes.Buffer
+	compileCmd.Stdout = &compileBuf
+	compileCmd.Stderr = &compileBuf
+	if err := compileCmd.Run(); err != nil {
+		t.Fatalf("compile gc_selfcheck failed:\n%s\n%v", compileBuf.String(), err)
+	}
+
+	runCmd := exec.Command(outBin)
+	var runOut, runErr bytes.Buffer
+	runCmd.Stdout = &runOut
+	runCmd.Stderr = &runErr
+	if err := runCmd.Run(); err != nil {
+		t.Fatalf("gc_selfcheck failed:\nstdout: %s\nstderr: %s\n%v",
+			runOut.String(), runErr.String(), err)
+	}
+
+	got := strings.TrimSpace(runOut.String())
+	if !strings.Contains(got, "0 failed") {
+		t.Fatalf("gc_selfcheck reported failures:\nstdout: %s\nstderr: %s",
+			got, runErr.String())
+	}
+	t.Logf("gc_selfcheck: %s", got)
+}
+
 func TestAnyTypeAnnotations_Runtime(t *testing.T) {
 	tmp := t.TempDir()
 	program := filepath.Join(tmp, "any_type_annotations.qrk")

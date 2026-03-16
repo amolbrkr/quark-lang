@@ -197,32 +197,40 @@ func main() {
 
 	case "build":
 		if len(os.Args) < 3 {
-			fmt.Println("Usage: quark build <file.qrk> [-o output]")
+			fmt.Println("Usage: quark build <file.qrk> [-o output] [--lto]")
 			os.Exit(1)
 		}
 		output := ""
 		useGC := true
+		lto := false
 		for i := 3; i < len(os.Args); i++ {
 			if os.Args[i] == "-o" && i+1 < len(os.Args) {
 				output = os.Args[i+1]
 				i++ // Skip next arg
 			}
+			if os.Args[i] == "--lto" {
+				lto = true
+			}
 		}
-		runBuild(os.Args[2], output, useGC)
+		runBuild(os.Args[2], output, useGC, lto)
 
 	case "run":
 		if len(os.Args) < 3 {
-			fmt.Println("Usage: quark run <file.qrk> [--debug]")
+			fmt.Println("Usage: quark run <file.qrk> [--debug] [--lto]")
 			os.Exit(1)
 		}
 		debug := false
 		useGC := true
+		lto := false
 		for _, arg := range os.Args[3:] {
 			if arg == "--debug" || arg == "-d" {
 				debug = true
 			}
+			if arg == "--lto" {
+				lto = true
+			}
 		}
-		runRun(os.Args[2], debug, useGC)
+		runRun(os.Args[2], debug, useGC, lto)
 
 	case "help", "-h", "--help":
 		printUsage()
@@ -232,12 +240,16 @@ func main() {
 		if strings.HasSuffix(os.Args[1], ".qrk") {
 			debug := false
 			useGC := true
+			lto := false
 			for _, arg := range os.Args[2:] {
 				if arg == "--debug" || arg == "-d" {
 					debug = true
 				}
+				if arg == "--lto" {
+					lto = true
+				}
 			}
-			runRun(os.Args[1], debug, useGC)
+			runRun(os.Args[1], debug, useGC, lto)
 		} else {
 			fmt.Printf("Unknown command: %s\n", command)
 			printUsage()
@@ -262,6 +274,7 @@ func printUsage() {
 	fmt.Println()
 	fmt.Println("Flags:")
 	fmt.Println("  --debug, -d    Save generated C++ file (for run/build)")
+	fmt.Println("  --lto          Enable link-time optimization (for run/build)")
 	fmt.Println()
 	fmt.Println("Examples:")
 	fmt.Println("  quark run test.qrk                # Compile and run with GC")
@@ -433,7 +446,7 @@ func runEmit(filename string) {
 	fmt.Println(cCode)
 }
 
-func runBuild(filename string, output string, useGC bool) {
+func runBuild(filename string, output string, useGC bool, lto bool) {
 	content, err := os.ReadFile(filename)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading file: %s\n", err)
@@ -525,6 +538,9 @@ func runBuild(filename string, output string, useGC bool) {
 			"-Rpass-analysis=loop-vectorize",
 		)
 	}
+	if lto {
+		args = append(args, "-flto")
+	}
 	var gcLibPath string
 	// Add GC flags if enabled
 	if useGC {
@@ -561,7 +577,7 @@ func runBuild(filename string, output string, useGC bool) {
 	fmt.Printf("Built: %s\n", output)
 }
 
-func runRun(filename string, debug bool, useGC bool) {
+func runRun(filename string, debug bool, useGC bool, lto bool) {
 	content, err := os.ReadFile(filename)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading file: %s\n", err)
@@ -660,6 +676,9 @@ func runRun(filename string, debug bool, useGC bool) {
 			"-Rpass-missed=loop-vectorize",
 			"-Rpass-analysis=loop-vectorize",
 		)
+	}
+	if lto {
+		args = append(args, "-flto")
 	}
 	var gcLibPath string
 	// Add GC flags if enabled

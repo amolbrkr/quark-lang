@@ -904,6 +904,7 @@ inline QValue q_to_vector(QValue input) {
             case QValue::VAL_DICT: return "dict";
             case QValue::VAL_FUNC: return "fn";
             case QValue::VAL_RESULT: return "result";
+            case QValue::VAL_RESOURCE: return "resource";
             default: return "unknown";
         }
     };

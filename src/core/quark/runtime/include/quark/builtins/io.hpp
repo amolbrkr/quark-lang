@@ -5,6 +5,7 @@
 #include "../core/value.hpp"
 #include "../core/constructors.hpp"
 #include "../types/dict.hpp"
+#include "../types/resource.hpp"
 #include <cstdio>
 #include <cstring>
 
@@ -37,6 +38,9 @@ inline void print_qvalue(QValue v) {
             break;
         case QValue::VAL_FUNC:
             printf("<function>");
+            break;
+        case QValue::VAL_RESOURCE:
+            printf("<%s>", q_resource_kind_name(v.data.resource_val ? v.data.resource_val->kind : QRES_KIND_NONE));
             break;
         default:
             printf("<value>");

@@ -4,6 +4,7 @@
 
 #include "../core/value.hpp"
 #include "../core/constructors.hpp"
+#include "../types/resource.hpp"
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
@@ -103,6 +104,14 @@ inline QValue q_eq(QValue a, QValue b) {
             return qv_bool(strcmp(a.data.string_val, b.data.string_val) == 0);
         case QValue::VAL_NULL:
             return qv_bool(true);
+        case QValue::VAL_RESOURCE:
+            if (!a.data.resource_val || !b.data.resource_val) {
+                return qv_bool(a.data.resource_val == b.data.resource_val);
+            }
+            return qv_bool(
+                a.data.resource_val->slot == b.data.resource_val->slot &&
+                a.data.resource_val->generation == b.data.resource_val->generation &&
+                a.data.resource_val->kind == b.data.resource_val->kind);
         default:
             return qv_bool(false);
     }

@@ -26,6 +26,7 @@
 #include "types/list.hpp"
 #include "types/dict.hpp"
 #include "types/function.hpp"
+#include "types/resource.hpp"
 
 // Core helpers depending on type definitions
 #include "core/truthy.hpp"
@@ -37,6 +38,7 @@
 
 // Built-in functions
 #include "builtins/io.hpp"
+#include "builtins/fileio.hpp"
 #include "builtins/conversion.hpp"
 #include "builtins/math.hpp"
 #include "builtins/dict.hpp"

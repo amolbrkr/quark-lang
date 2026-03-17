@@ -5,6 +5,7 @@
 #include "value.hpp"
 #include "../types/vector.hpp"
 #include "../types/dict.hpp"
+#include "../types/resource.hpp"
 #include <cstring>
 
 // Check if a value is truthy (used for conditions)
@@ -30,6 +31,8 @@ inline bool q_truthy(QValue v) {
             return v.data.func_val != nullptr;
         case QValue::VAL_RESULT:
             return v.data.result_val && v.data.result_val->is_ok;
+        case QValue::VAL_RESOURCE:
+            return q_resource_is_alive(v);
         default:
             return false;
     }

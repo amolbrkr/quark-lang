@@ -61,6 +61,13 @@ inline QValue qv_func(void* f) {
     return q;
 }
 
+inline QValue qv_resource(QResourceHandle* h) {
+    QValue q;
+    q.type = QValue::VAL_RESOURCE;
+    q.data.resource_val = h;
+    return q;
+}
+
 inline QValue qv_ok(QValue v) {
     QValue q;
     QResult* result = static_cast<QResult*>(q_malloc(sizeof(QResult)));

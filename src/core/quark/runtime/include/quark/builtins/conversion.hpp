@@ -6,6 +6,7 @@
 #include "../core/constructors.hpp"
 #include "../core/truthy.hpp"
 #include "../types/dict.hpp"
+#include "../types/resource.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -113,6 +114,8 @@ inline QValue q_str(QValue v) {
             return qv_string(buffer);
         case QValue::VAL_FUNC:
             return qv_string("<function>");
+        case QValue::VAL_RESOURCE:
+            return qv_string(q_resource_kind_name(v.data.resource_val ? v.data.resource_val->kind : QRES_KIND_NONE));
         default:
             return qv_string("<value>");
     }
@@ -141,8 +144,8 @@ inline QValue q_int(QValue v) {
             return qv_int(result);
         }
         default: {
-            static const char* names[] = {"int","float","str","bool","null","list","vector","dict","fn","result"};
-            const char* tname = (v.type >= 0 && v.type <= 9) ? names[v.type] : "unknown";
+            static const char* names[] = {"int","float","str","bool","null","list","vector","dict","fn","result","resource"};
+            const char* tname = (v.type >= 0 && v.type <= 10) ? names[v.type] : "unknown";
             std::fprintf(stderr, "runtime error: to_int() cannot convert %s to int\n", tname);
             std::exit(1);
         }
@@ -172,8 +175,8 @@ inline QValue q_float(QValue v) {
             return qv_float(result);
         }
         default: {
-            static const char* names[] = {"int","float","str","bool","null","list","vector","dict","fn","result"};
-            const char* tname = (v.type >= 0 && v.type <= 9) ? names[v.type] : "unknown";
+            static const char* names[] = {"int","float","str","bool","null","list","vector","dict","fn","result","resource"};
+            const char* tname = (v.type >= 0 && v.type <= 10) ? names[v.type] : "unknown";
             std::fprintf(stderr, "runtime error: to_float() cannot convert %s to float\n", tname);
             std::exit(1);
         }
@@ -206,6 +209,8 @@ inline QValue q_type(QValue v) {
             return qv_string("fn");
         case QValue::VAL_RESULT:
             return qv_string("result");
+        case QValue::VAL_RESOURCE:
+            return qv_string(q_resource_kind_name(v.data.resource_val ? v.data.resource_val->kind : QRES_KIND_NONE));
         case QValue::VAL_VECTOR: {
             if (!q_vec_has_valid_handle(v) || !q_vec_validate(*v.data.vector_val)) {
                 return qv_string("vector[invalid]");

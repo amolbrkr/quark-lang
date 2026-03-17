@@ -95,6 +95,18 @@ func mapBuiltinTypeKey(key builtins.TypeKey) Type {
 		return &DictType{KeyType: TypeAny, ValueType: TypeAny}
 	case builtins.TypeVectorAny:
 		return &VectorType{ElementType: TypeAny}
+	case builtins.TypeFileHandle:
+		return TypeFileHandle
+	case builtins.TypeResultAny:
+		return &ResultType{OkType: TypeAny, ErrType: TypeString}
+	case builtins.TypeResultString:
+		return &ResultType{OkType: TypeString, ErrType: TypeString}
+	case builtins.TypeResultInt:
+		return &ResultType{OkType: TypeInt, ErrType: TypeString}
+	case builtins.TypeResultNull:
+		return &ResultType{OkType: TypeNull, ErrType: TypeString}
+	case builtins.TypeResultFileHandle:
+		return &ResultType{OkType: TypeFileHandle, ErrType: TypeString}
 	default:
 		return TypeAny
 	}
@@ -190,6 +202,10 @@ func functionTypeFromLambdaNode(lambdaNode *ast.TreeNode) *FunctionType {
 				paramTypes[i] = &DictType{KeyType: TypeAny, ValueType: TypeAny}
 			case "vector":
 				paramTypes[i] = &VectorType{ElementType: TypeAny}
+			case "resource":
+				paramTypes[i] = TypeResource
+			case "file_handle":
+				paramTypes[i] = TypeFileHandle
 			default:
 				paramTypes[i] = TypeAny
 			}
@@ -247,6 +263,10 @@ func resolveTypeNodeStatic(node *ast.TreeNode) Type {
 		return &VectorType{ElementType: TypeFloat}
 	case "result":
 		return &ResultType{OkType: TypeAny, ErrType: TypeAny}
+	case "resource":
+		return TypeResource
+	case "file_handle":
+		return TypeFileHandle
 	default:
 		return TypeAny
 	}
@@ -2224,6 +2244,10 @@ func (a *Analyzer) resolveTypeNode(node *ast.TreeNode) Type {
 		return &VectorType{ElementType: TypeFloat}
 	case "result":
 		return &ResultType{OkType: TypeAny, ErrType: TypeAny}
+	case "resource":
+		return TypeResource
+	case "file_handle":
+		return TypeFileHandle
 	default:
 		a.errorAt(node, "unknown type '%s'", name)
 		return TypeAny

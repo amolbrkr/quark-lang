@@ -30,13 +30,15 @@ func (t *BasicType) Equals(other Type) bool {
 
 // Predefined basic types
 var (
-	TypeInt    = &BasicType{Name: "int"}
-	TypeFloat  = &BasicType{Name: "float"}
-	TypeString = &BasicType{Name: "str"}
-	TypeBool   = &BasicType{Name: "bool"}
-	TypeNull   = &BasicType{Name: "null"}
-	TypeAny    = &BasicType{Name: "any"}  // For unresolved types
-	TypeVoid   = &BasicType{Name: "void"} // For statements with no value
+	TypeInt        = &BasicType{Name: "int"}
+	TypeFloat      = &BasicType{Name: "float"}
+	TypeString     = &BasicType{Name: "str"}
+	TypeBool       = &BasicType{Name: "bool"}
+	TypeNull       = &BasicType{Name: "null"}
+	TypeAny        = &BasicType{Name: "any"}  // For unresolved types
+	TypeVoid       = &BasicType{Name: "void"} // For statements with no value
+	TypeResource   = &BasicType{Name: "resource"}
+	TypeFileHandle = &BasicType{Name: "file_handle"}
 )
 
 // ListType represents a list of elements
@@ -92,8 +94,8 @@ func (t *DictType) Equals(other Type) bool {
 type FunctionType struct {
 	ParamTypes          []Type
 	ReturnType          Type
-	AnnotatedReturnType Type   // Declared return type (nil = not annotated)
-	DefaultCount        int    // Number of parameters with default values (always trailing)
+	AnnotatedReturnType Type                // Declared return type (nil = not annotated)
+	DefaultCount        int                 // Number of parameters with default values (always trailing)
 	DefaultValues       []*DefaultValueInfo // Default value info per parameter (nil = no default)
 }
 
@@ -284,7 +286,8 @@ func CanAssign(dstType, srcType Type) bool {
 		_, isDict := dstType.(*DictType)
 		_, isFunc := dstType.(*FunctionType)
 		_, isResult := dstType.(*ResultType)
-		return isList || isDict || isFunc || isResult
+		isResource := dstType.Equals(TypeResource) || dstType.Equals(TypeFileHandle)
+		return isList || isDict || isFunc || isResult || isResource
 	}
 	// Int can be promoted to float
 	if dstType.Equals(TypeFloat) && srcType.Equals(TypeInt) {

@@ -1,0 +1,11 @@
+module io:
+    fn seek_set() int -> 0
+    fn seek_cur() int -> 1
+    fn seek_end() int -> 2
+
+    fn open(path: str, mode: str = 'r', binary: bool = false) result -> _file_open(path, mode, binary)
+    fn read(file: file_handle, n: int) result -> _file_read(file, n)
+    fn write(file: file_handle, data: str) result -> _file_write(file, data)
+    fn close(file: file_handle) result -> _file_close(file)
+    fn seek(file: file_handle, offset: int, whence: int = 0) result -> _file_seek(file, offset, whence)
+    fn exists(path: str) bool -> _file_exists(path)

@@ -215,6 +215,17 @@ func TestSmokePrograms_Run(t *testing.T) {
 				"1",
 			),
 		},
+		{
+			name: "stdlib_io",
+			file: filepath.Join(testfilesDir, "smoke_stdlib_io.qrk"),
+			expected: join(
+				"== smoke: stdlib io ==",
+				"11",
+				"true",
+				"6",
+				"world",
+			),
+		},
 	}
 
 	for _, tc := range cases {
@@ -288,6 +299,37 @@ func TestDefaults_DynamicCallViaAlias(t *testing.T) {
 	got := runQuark(t, "run", program)
 	gotNorm := strings.TrimSpace(normalizeNewlines(got))
 	expected := strings.Join([]string{"15", "25", "17", "15"}, "\n")
+	if gotNorm != expected {
+		t.Fatalf("unexpected output\n--- got ---\n%s\n--- expected ---\n%s", gotNorm, expected)
+	}
+}
+
+func TestFileBuiltins_V0(t *testing.T) {
+	tmp := t.TempDir()
+	targetPath := filepath.Join(tmp, "io_v0.txt")
+	targetForQuark := strings.ReplaceAll(targetPath, "\\", "/")
+
+	program := filepath.Join(tmp, "file_builtins_v0.qrk")
+	source := strings.Join([]string{
+		"p = '" + targetForQuark + "'",
+		"f = unwrap(_file_open(p, 'w'))",
+		"println(type(f))",
+		"println(type(_file_exists(p)))",
+		"_file_write(f, 'hello file') | unwrap() | println()",
+		"_file_close(f) | unwrap()",
+		"r = unwrap(_file_open(p, 'r'))",
+		"println(unwrap(_file_read(r, 64)))",
+		"_file_close(r) | unwrap()",
+		"println(_file_exists(p))",
+		"",
+	}, "\n")
+	if err := os.WriteFile(program, []byte(source), 0o644); err != nil {
+		t.Fatalf("write %s: %v", program, err)
+	}
+
+	got := runQuark(t, "run", program)
+	gotNorm := strings.TrimSpace(normalizeNewlines(got))
+	expected := strings.Join([]string{"file_handle", "bool", "10", "hello file", "true"}, "\n")
 	if gotNorm != expected {
 		t.Fatalf("unexpected output\n--- got ---\n%s\n--- expected ---\n%s", gotNorm, expected)
 	}

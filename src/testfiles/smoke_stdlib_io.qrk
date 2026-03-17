@@ -1,0 +1,14 @@
+use 'std/io' as io
+
+println('== smoke: stdlib io ==')
+p = './quark_stdlib_io_smoke_tmp.txt'
+
+f = unwrap(io.open(p, 'w'))
+io.write(f, 'hello world') | unwrap() | println()
+io.close(f) | unwrap()
+println(io.exists(p))
+
+r = unwrap(io.open(p, 'r'))
+io.seek(r, 6, io.seek_set()) | unwrap() | println()
+println(unwrap(io.read(r, 5)))
+io.close(r) | unwrap()

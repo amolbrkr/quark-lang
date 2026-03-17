@@ -12,6 +12,7 @@ struct QResult;
 struct QDict;
 struct QClosure;
 struct QVector;
+struct QResourceHandle;
 
 // Type alias for list storage — uses q_allocator so the GC can scan
 // the vector's internal buffer for pointers to collectible objects.
@@ -29,7 +30,8 @@ struct QValue {
         VAL_VECTOR,
         VAL_DICT,
         VAL_FUNC,
-        VAL_RESULT
+        VAL_RESULT,
+        VAL_RESOURCE
     } type;
 
     union {
@@ -42,6 +44,7 @@ struct QValue {
         QDict* dict_val;    // QDictMap* (GC-allocator-backed map)
         void* func_val;
         QResult* result_val;
+        QResourceHandle* resource_val;
     } data;
 };
 

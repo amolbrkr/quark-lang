@@ -226,6 +226,23 @@ func TestSmokePrograms_Run(t *testing.T) {
 				"world",
 			),
 		},
+		{
+			name: "prefixed_builtins",
+			file: filepath.Join(testfilesDir, "smoke_prefixed_builtins.qrk"),
+			expected: join(
+				"== smoke: prefixed builtins ==",
+				"3",
+				"20",
+				"hello",
+				"true",
+				"2",
+				"2",
+				"list",
+				"list",
+				"2",
+				"row.....|00000042",
+			),
+		},
 	}
 
 	for _, tc := range cases {

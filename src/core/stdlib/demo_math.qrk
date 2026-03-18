@@ -1,2 +1,0 @@
-module demo_math:
-    fn add10(n) -> n + 10

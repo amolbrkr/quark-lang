@@ -56,7 +56,7 @@ println(min(v))
 println(max(v))
 
 // Vector phase-2 helpers
-vi = astype(v, 'i64')
+vi = vastype(v, 'i64')
 println(vi)
 println(sum(vi))
 println(min(vi))
@@ -68,18 +68,18 @@ println(vplus)
 vmul = vi * vplus
 println(vmul)
 
-vfilled = fillna(vi, 0)
+vfilled = vfillna(vi, 0)
 println(vfilled)
 
 println(type(v))
 println(type(vi))
 
-v_from_list = to_vector(list [10, 20, 30])
+v_from_list = vfrom_list(list [10, 20, 30])
 println(v_from_list)
 println(sum(v_from_list))
 
 // to_list conversion (vector -> list)
-back_to_list = to_list(v_from_list)
+back_to_list = vto_list(v_from_list)
 println(back_to_list)
 println(type(back_to_list))
-println(get(back_to_list, 0))
+println(lget(back_to_list, 0))

@@ -9,7 +9,7 @@ println(type(vi_lit))
 println(type(vs_lit))
 
 // --- to_vector homogeneous string list ---
-vs_from_list = to_vector(list ['x', 'y', 'z'])
+vs_from_list = vfrom_list(list ['x', 'y', 'z'])
 println(type(vs_from_list))
 
 // --- Ordering comparisons (vec vs scalar) ---

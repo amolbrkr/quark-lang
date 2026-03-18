@@ -1,0 +1,24 @@
+println('== smoke: prefixed builtins ==')
+
+xs = list [10, 20]
+xs = lpush(xs, 30)
+println(len(xs))
+println(lget(xs, 1))
+
+text = '  hello  '
+println(strim(text))
+println(scontains('abcdef', 'cde'))
+
+m = dict { a: 1, b: 2 }
+println(len(dkeys(m)))
+println(len(dvalues(m)))
+
+items = ditems(m)
+println(type(items))
+
+pairs = enumerate(list ['x', 'y'])
+println(type(pairs))
+println(len(pairs))
+
+print('row', '|', 8, 'left', '.')
+print('42', '\n', 8, 'right', '0')

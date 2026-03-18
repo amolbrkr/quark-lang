@@ -4,44 +4,44 @@
 println('== smoke: string/list builtins ==')
 
 // Strings
-upper('hello world') | println()
-lower('HELLO WORLD') | println()
-trim('  hello  ') | println()
+supper('hello world') | println()
+slower('HELLO WORLD') | println()
+strim('  hello  ') | println()
 
-contains('hello world', 'world') | println()
-contains('hello world', 'xyz') | println()
-startswith('hello world', 'hello') | println()
-endswith('hello world', 'world') | println()
+scontains('hello world', 'world') | println()
+scontains('hello world', 'xyz') | println()
+sstartswith('hello world', 'hello') | println()
+sendswith('hello world', 'world') | println()
 
-replace('hello world', 'world', 'quark') | println()
-concat('hello ', 'world') | println()
+sreplace('hello world', 'world', 'quark') | println()
+sconcat('hello ', 'world') | println()
 
-'  HELLO world  ' | trim() | lower() | replace('world', 'quark') | println()
+'  HELLO world  ' | strim() | slower() | sreplace('world', 'quark') | println()
 
 // Lists
 lst = list [10, 20, 30]
 len(lst) | println()
 
 // Indexing (includes negative index)
-get(lst, 0) | println()
-get(lst, -1) | println()
-get(lst, 999) | println()     // null
+lget(lst, 0) | println()
+lget(lst, -1) | println()
+lget(lst, 999) | println()     // null
 
 // push/pop
-lst = push(lst, 40)
-pop(lst) | println()          // 40
+lst = lpush(lst, 40)
+lpop(lst) | println()          // 40
 
 // set/insert/remove
-set(lst, 1, 99) | println()
-lst = insert(lst, 1, 55)
-remove(lst, 0) | println()
+lset(lst, 1, 99) | println()
+lst = linsert(lst, 1, 55)
+lremove(lst, 0) | println()
 
 // slice/reverse/concat
-slice(lst, 0, 2) | println()
-reverse(lst) | println()
+lslice(lst, 0, 2) | println()
+lreverse(lst) | println()
 
 lst2 = list [1, 2]
-concat(lst, lst2) | println()
+lconcat(lst, lst2) | println()
 
 // range
 range(5) | println()

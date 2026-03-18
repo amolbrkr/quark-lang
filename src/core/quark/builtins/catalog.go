@@ -79,14 +79,13 @@ var catalog = []Spec{
 	{Name: "sendswith", Runtime: "q_endswith", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeString, TypeString}, ReturnType: TypeBool},
 	{Name: "sreplace", Runtime: "q_replace", MinArgs: 3, MaxArgs: 3, ParamTypes: []TypeKey{TypeString, TypeString, TypeString}, ReturnType: TypeString},
 	{Name: "sconcat", Runtime: "q_str_concat", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeString, TypeString}, ReturnType: TypeString},
-	{Name: "lconcat", Runtime: "q_list_concat", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeListAny, TypeListAny}, ReturnType: TypeListAny},
 	{Name: "ssplit", Runtime: "q_split", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeString, TypeString}, ReturnType: TypeListString},
 
 	// List
+	{Name: "lconcat", Runtime: "q_list_concat", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeListAny, TypeListAny}, ReturnType: TypeListAny},
 	{Name: "lpush", Runtime: "q_push", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeListAny, TypeAny}, ReturnType: TypeListAny},
 	{Name: "lpop", Runtime: "q_pop", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeListAny}, ReturnType: TypeAny},
 	{Name: "lget", Runtime: "q_get", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeListAny, TypeInt}, ReturnType: TypeAny},
-	{Name: "vget", Runtime: "q_get", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeVectorAny, TypeInt}, ReturnType: TypeAny},
 	{Name: "lset", Runtime: "q_set", MinArgs: 3, MaxArgs: 3, ParamTypes: []TypeKey{TypeListAny, TypeInt, TypeAny}, ReturnType: TypeAny},
 	{Name: "linsert", Runtime: "q_insert", MinArgs: 3, MaxArgs: 3, ParamTypes: []TypeKey{TypeListAny, TypeInt, TypeAny}, ReturnType: TypeListAny},
 	{Name: "lremove", Runtime: "q_remove", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeListAny, TypeInt}, ReturnType: TypeAny},
@@ -102,6 +101,7 @@ var catalog = []Spec{
 	{Name: "ditems", Runtime: "q_ditems", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeDictAny}, ReturnType: TypeListAny},
 
 	// Vector
+	{Name: "vget", Runtime: "q_get", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeVectorAny, TypeInt}, ReturnType: TypeAny},
 	{Name: "vfillna", Runtime: "q_fillna", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeVectorAny, TypeAny}, ReturnType: TypeVectorAny},
 	{Name: "vastype", Runtime: "q_astype", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeVectorAny, TypeString}, ReturnType: TypeVectorAny},
 	{Name: "vfrom_list", Runtime: "q_to_vector", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeAny},

@@ -2,6 +2,13 @@
 
 This document describes the built-in functions available in Quark. All standard library functions are implemented in C++ for performance and are automatically available without any imports.
 
+Current builtin surface uses explicit prefixes for collections and strings:
+
+- `s*` for string builtins (`supper`, `ssplit`, ...)
+- `l*` for list builtins (`lpush`, `lget`, ...)
+- `d*` for dict builtins (`dget`, `ditems`, ...)
+- `v*` for vector conversion/utilities (`vfrom_list`, `vastype`, ...)
+
 **Invocation model**: All builtins use function-call syntax: `callable(entity, ...)`. Dot-call syntax on values (`entity.method()`) is not supported. Dot is used for dict key access and module-qualified calls via aliases (for example `use 'std/math' as math`, `math.floor(...)`). Use pipes for chaining: `entity | callable() | next()`.
 
 ### Design principles
@@ -16,7 +23,7 @@ This document describes the built-in functions available in Quark. All standard 
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `print` | `value -> void` | Print value without newline |
+| `print` | `value[, end: str[, width: int[, align: str[, pad: str]]]] -> void` | Print value with configurable line ending and optional width/alignment |
 | `println` | `value -> void` | Print value with newline |
 | `input` | `[prompt: str] -> str` | Read line from stdin; optional prompt must be a string |
 
@@ -27,6 +34,42 @@ println(name)
 
 name = input('Name: ')
 println(name)
+
+print('row', '|', 8, 'left', '.')
+print('42', '\n', 8, 'right', '0')
+```
+
+`print` alignment values:
+
+- `left` (default)
+- `right`
+- `center`
+
+If `width` is `0` or smaller than the rendered text width, no padding is applied.
+
+Default behavior is `print(value)` with newline (`end='\n'`). Use `print(value, '')` for no trailing newline.
+
+### File I/O Intrinsics and std/io
+
+Low-level file I/O is exposed through `_file_*` builtins. The first-party module [src/core/stdlib/io.qrk](src/core/stdlib/io.qrk) provides thin wrappers (`io.open`, `io.read`, ...).
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `_file_open` | `path: str, mode: str[, binary: bool] -> result` | Open file and return `ok(file_handle)` or `err(str)`; current modes are `r` and `w` |
+| `_file_read` | `file: file_handle, n: int -> result` | Read up to `n` bytes/chars and return `ok(str)` or `err(str)` |
+| `_file_write` | `file: file_handle, data: str -> result` | Write string data and return `ok(int)` byte count or `err(str)` |
+| `_file_close` | `file: file_handle -> result` | Close file and return `ok(null)` or `err(str)` |
+| `_file_seek` | `file: file_handle, offset: int, whence: int -> result` | Seek and return `ok(int)` new cursor position or `err(str)` |
+| `_file_exists` | `path: str -> bool` | Check path existence |
+
+```quark
+use 'std/io' as io
+
+when io.open('tmp.txt', 'w'):
+  ok f ->
+    _ = io.write(f, 'hello')
+    _ = io.close(f)
+  err msg -> println(msg)
 ```
 
 ### Type Conversion
@@ -80,15 +123,16 @@ List operations backed by `std::vector<QValue>` for efficient data processing.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `push` | `list, any -> list` | Add item to end of list |
-| `pop` | `list -> any` | Remove and return last item. **Runtime error on empty list.** |
-| `get` | `list, int -> any` | Get item at index (supports negative) |
-| `set` | `list, int, any -> any` | Set item at index |
-| `insert` | `list, int, any -> list` | Insert item at index |
-| `remove` | `list, int -> any` | Remove and return item at index |
-| `slice` | `list, int, int -> list` | Get sublist [start:end) |
-| `reverse` | `list -> list` | Reverse list in place |
-| `concat` | `list, list -> list` | Concatenate two lists |
+| `lpush` | `list, any -> list` | Add item to end of list |
+| `lpop` | `list -> any` | Remove and return last item. **Runtime error on empty list.** |
+| `lget` | `list, int -> any` | Get item at index (supports negative; out-of-bounds returns `null`) |
+| `lset` | `list, int, any -> any` | Set item at index |
+| `linsert` | `list, int, any -> list` | Insert item at index |
+| `lremove` | `list, int -> any` | Remove and return item at index |
+| `lslice` | `list, int, int -> list` | Get sublist [start:end) |
+| `lreverse` | `list -> list` | Reverse list in place |
+| `lconcat` | `list, list -> list` | Concatenate two lists |
+| `enumerate` | `list\|str\|vector -> list` | Build list of `{ index, value }` records |
 | `len` | `list -> int` | Get number of items |
 
 ### Examples
@@ -98,34 +142,37 @@ List operations backed by `std::vector<QValue>` for efficient data processing.
 list = list [1, 2, 3]
 
 // Basic operations
-list = push(list, 10)
-list = push(list, 20)
-list = push(list, 30)
+list = lpush(list, 10)
+list = lpush(list, 20)
+list = lpush(list, 30)
 
-get(list, 0) | println()        // 10
-get(list, -1) | println()       // 30 (negative index)
+lget(list, 0) | println()        // 10
+lget(list, -1) | println()       // 30 (negative index)
 
 // Modify
-set(list, 1, 99)
-get(list, 1) | println()        // 99
+lset(list, 1, 99)
+lget(list, 1) | println()        // 99
 
 // Remove
-pop(list) | println()           // 30
+lpop(list) | println()           // 30
 len(list) | println()           // 2
 
 // Slice (returns new list)
-sublist = slice(list, 0, 2)
+sublist = lslice(list, 0, 2)
+
+pairs = enumerate(list ['a', 'b'])
+println(pairs)
 ```
 
 ### Notes
 
 - Lists use `std::vector` internally for O(1) push/pop and O(1) random access
 - Negative indices count from the end: `-1` is last item, `-2` is second-to-last
-- `slice` returns a new list; original is not modified
-- `reverse` modifies the list in place
-- `get` out-of-bounds access returns `null`; `set`, `insert`, and `remove` with invalid arguments cause a runtime error
-- `pop` on an empty list causes a runtime error
-- Most list builtins require a `list` first argument at compile time; `set` is currently more permissive in the analyzer and is runtime-validated
+- `lslice` returns a new list; original is not modified
+- `lreverse` modifies the list in place
+- `lget` out-of-bounds access returns `null`; `lset`, `linsert`, and `lremove` with invalid arguments cause a runtime error
+- `lpop` on an empty list causes a runtime error
+- `enumerate` returns list records shaped like `dict { index: int, value: any }`
 
 ## Dict Functions
 
@@ -150,6 +197,9 @@ If the key comes from a variable/expression, use these helpers:
 |----------|-----------|-------------|
 | `dget` | `dict, any -> any` | Get value by key (key is converted to str); missing key returns `null` |
 | `dset` | `dict, any, any -> dict` | Set value by key (key is converted to str); returns the dict |
+| `dkeys` | `dict -> list` | Return key list |
+| `dvalues` | `dict -> list` | Return value list |
+| `ditems` | `dict -> list` | Return list of records shaped like `dict { key, value }` |
 
 ```quark
 mydict = dict { a: 1, b: 2 }
@@ -159,6 +209,10 @@ for item in list ['a', 'b', 'c']:
 
 mydict = dset(mydict, 'x', 99)
 println(mydict.x)   // 99
+
+for item in ditems(mydict):
+  println(item.key)
+  println(item.value)
 ```
 
 ## Math Functions
@@ -206,7 +260,8 @@ sqrt(10) | floor() | println()  // 3
 
 ### Notes
 
-- `print()` and `println()` require exactly one argument
+- `print()` accepts 1 to 5 args: `value[, end[, width[, align[, pad]]]]`
+- `println()` accepts exactly one argument
 - `abs` accepts only `int` or `float`; passing any other type is a compile-time error
 - `abs` preserves the input type (int returns int, float returns float)
 - `min` and `max` return float if either argument is float; single-argument vector overloads are documented in the Vector section
@@ -222,9 +277,10 @@ Typed vector operations for data-oriented workloads.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `to_vector` | `list\|vector -> vector` | Convert list to typed vector (or clone vector) |
-| `to_list` | `vector\|list -> list` | Convert vector back to list (identity for lists) |
-| `astype` | `vector, str -> vector` | Cast vector dtype (`f64`, `i64`, `bool`) |
+| `vfrom_list` | `list\|vector -> vector` | Convert list to typed vector (or clone vector) |
+| `vto_list` | `vector\|list -> list` | Convert vector back to list (identity for lists) |
+| `vastype` | `vector, str -> vector` | Cast vector dtype (`f64`, `i64`, `bool`) |
+| `vget` | `vector, int -> any` | Get scalar value at index |
 
 ### Reductions and Utilities
 
@@ -233,7 +289,7 @@ Typed vector operations for data-oriented workloads.
 | `sum` | `vector -> float` | Sum of all vector elements; `vector[bool]` is supported (true=1, false=0) |
 | `min` | `vector -> float` | Minimum element in vector |
 | `max` | `vector -> float` | Maximum element in vector |
-| `fillna` | `vector, any -> vector` | Replace null entries in a vector |
+| `vfillna` | `vector, any -> vector` | Replace null entries in a vector |
 
 ### Examples
 
@@ -248,11 +304,11 @@ println(type(vf))
 println(type(vs))
 
 // Homogeneous conversion from list
-v2 = to_vector(list [10, 20, 30])
+v2 = vfrom_list(list [10, 20, 30])
 println(type(v2))
 
 // Mixed list conversion is invalid
-// to_vector(list [1, '2', 3])     // error
+// vfrom_list(list [1, '2', 3])     // error
 
 // Numeric vector arithmetic
 a = vector [10, 20, 30, 40]
@@ -264,22 +320,22 @@ println(sum(z))
 // but arithmetic (+, -, *, /) is not supported.
 
 // Null fill and casts
-filled = fillna(a, 0)
-iv = astype(vf, 'i64')
+filled = vfillna(a, 0)
+iv = vastype(vf, 'i64')
 
 // Convert vector back to list
-back = to_list(v2)
+back = vto_list(v2)
 println(type(back))              // list
 ```
 
 ### Notes
 
 - Vector literals must be homogeneous (`int`, `float`, or `str`)
-- `to_vector` enforces the same homogeneity rule as vector literals
+- `vfrom_list` enforces the same homogeneity rule as vector literals
 - Numeric vector arithmetic (`+`, `-`, `*`, `/`) supports numeric vectors only
 - `sum`, `min`, and `max` return float
 - `sum` supports `vector[bool]` (counts `true` as 1, `false` as 0) — useful for boolean mask operations like `sum(v > 25)`
-- `astype` currently supports casts among numeric/bool vector dtypes
+- `vastype` currently supports casts among numeric/bool vector dtypes
 
 ## String Functions
 
@@ -287,60 +343,60 @@ String manipulation functions implemented in the C++ runtime.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `upper` | `str -> str` | Convert to uppercase |
-| `lower` | `str -> str` | Convert to lowercase |
-| `trim` | `str -> str` | Remove leading/trailing whitespace |
-| `contains` | `str, str -> bool` | Check if contains substring |
-| `startswith` | `str, str -> bool` | Check if starts with prefix |
-| `endswith` | `str, str -> bool` | Check if ends with suffix |
-| `replace` | `str, str, str -> str` | Replace all occurrences |
-| `concat` | `str, str -> str` | Concatenate two strings |
-| `split` | `str, str -> list` | Split string by separator |
+| `supper` | `str -> str` | Convert to uppercase |
+| `slower` | `str -> str` | Convert to lowercase |
+| `strim` | `str -> str` | Remove leading/trailing whitespace |
+| `scontains` | `str, str -> bool` | Check if contains substring |
+| `sstartswith` | `str, str -> bool` | Check if starts with prefix |
+| `sendswith` | `str, str -> bool` | Check if ends with suffix |
+| `sreplace` | `str, str, str -> str` | Replace all occurrences |
+| `sconcat` | `str, str -> str` | Concatenate two strings |
+| `ssplit` | `str, str -> list` | Split string by separator |
 
 ### Examples
 
 ```quark
 // Case conversion
-upper('hello world') | println()     // HELLO WORLD
-lower('HELLO WORLD') | println()     // hello world
+supper('hello world') | println()     // HELLO WORLD
+slower('HELLO WORLD') | println()     // hello world
 
 // Whitespace
-trim('  hello  ') | println()        // hello
+strim('  hello  ') | println()        // hello
 
 // Searching
-contains('hello world', 'world') | println()    // true
-contains('hello world', 'xyz') | println()      // false
+scontains('hello world', 'world') | println()    // true
+scontains('hello world', 'xyz') | println()      // false
 
-startswith('hello world', 'hello') | println()  // true
-startswith('hello world', 'world') | println()  // false
+sstartswith('hello world', 'hello') | println()  // true
+sstartswith('hello world', 'world') | println()  // false
 
-endswith('hello world', 'world') | println()    // true
-endswith('hello world', 'hello') | println()    // false
+sendswith('hello world', 'world') | println()    // true
+sendswith('hello world', 'hello') | println()    // false
 
 // Manipulation
-replace('hello world', 'world', 'quark') | println()  // hello quark
-concat('hello ', 'world') | println()                  // hello world
+sreplace('hello world', 'world', 'quark') | println()  // hello quark
+sconcat('hello ', 'world') | println()                  // hello world
 
-split('a,b,c', ',') | println()                       // ["a", "b", "c"]
+ssplit('a,b,c', ',') | println()                       // ["a", "b", "c"]
 
 // With pipe
-'a,b,c' | split(',') | println()
+'a,b,c' | ssplit(',') | println()
 
 // Chaining
-'  hello world  ' | trim() | upper() | println()   // HELLO WORLD
+'  hello world  ' | strim() | supper() | println()   // HELLO WORLD
 ```
 
 ### Notes
 
 - All string functions return new strings (original is not modified)
-- `replace` replaces all occurrences, not just the first
-- `concat` also supports list + list and returns a list; mixed types (e.g. str + list) cause a runtime error
-- `split` preserves empty fields (`,a,` becomes `['', 'a', '']`)
+- `sreplace` replaces all occurrences, not just the first
+- `sconcat` is string-only; list concatenation uses `lconcat`
+- `ssplit` preserves empty fields (`,a,` becomes `['', 'a', '']`)
 - Empty string handling:
-  - `upper('')` returns `''`
-  - `trim('')` returns `''`
-  - `contains('', 'x')` returns `false`
-  - `replace('hello', '', 'x')` returns `'hello'` (no-op for empty pattern)
+  - `supper('')` returns `''`
+  - `strim('')` returns `''`
+  - `scontains('', 'x')` returns `false`
+  - `sreplace('hello', '', 'x')` returns `'hello'` (no-op for empty pattern)
 
 ## Result Functions
 
@@ -395,7 +451,7 @@ Quark supports both single-quoted and double-quoted string literals in v0.1.
 ```quark
 s1 = 'hello'
 s2 = "world"
-println(concat(s1, ' '))
+println(sconcat(s1, ' '))
 println(s2)
 ```
 
@@ -414,14 +470,14 @@ All functions work seamlessly with Quark's pipe operator:
 
 ```quark
 // Single argument functions pipe naturally
-'hello' | upper() | println()
+'hello' | supper() | println()
 
 // Multi-argument functions receive piped value as first argument
-'hello world' | replace('world', 'quark') | println()
-// Equivalent to: replace('hello world', 'world', 'quark')
+'hello world' | sreplace('world', 'quark') | println()
+// Equivalent to: sreplace('hello world', 'world', 'quark')
 
 // Complex chains
-'  HELLO world  ' | trim() | lower() | replace('world', 'quark') | println()
+'  HELLO world  ' | strim() | slower() | sreplace('world', 'quark') | println()
 // Output: hello quark
 ```
 
@@ -454,22 +510,22 @@ Builtins are validated in two phases:
 
 | Category | Behavior | Examples |
 |----------|----------|---------|
-| Type mismatch | Runtime error (crash) | `to_int('abc')`, `sqrt('hello')`, `upper(42)` |
-| Domain error | Runtime error (crash) | `pop()` on empty list, `sqrt(-1)` |
-| Arity mismatch | Compile-time error | `push(list)` (missing arg), `len(a, b)` (extra arg) |
+| Type mismatch | Runtime error (crash) | `to_int('abc')`, `sqrt('hello')`, `supper(42)` |
+| Domain error | Runtime error (crash) | `lpop(list [])`, `sqrt(-1)` |
+| Arity mismatch | Compile-time error | `lpush(list [1])` (missing arg), `len(a, b)` (extra arg) |
 | Bool-only | Compile-time error | `if 1:`, `while 'yes':`, `x and 3` |
 | Result misuse | Compile-time error | `x: int = some_result_fn()` |
 
 **Intentional `null` data-return APIs** (documented exceptions to the crash policy):
 
-- `get(list, idx)` when index is out of bounds
+- `lget(list, idx)` when index is out of bounds
 - `dget(dict, key)` when key is missing
 
 Vector-specific typing behavior:
 
 - Vector literals infer homogeneous element type (`vector[i64]`, `vector[f64]`, `vector[str]`)
 - Mixed element vector literals are analyzer errors
-- `to_vector(list [...])` applies the same homogeneity rule
+- `vfrom_list(list [...])` applies the same homogeneity rule
 - Numeric vector arithmetic is allowed for numeric vectors; string vector arithmetic is rejected
 
 ### Builtin Wiring
@@ -501,7 +557,7 @@ This section is a forward-looking roadmap and is not part of the currently imple
 
 #### 1) `string`
 
-Baseline text APIs beyond existing `upper/lower/trim/contains/startswith/endswith/replace/concat/split`:
+Baseline text APIs beyond existing `supper/slower/strim/scontains/sstartswith/sendswith/sreplace/sconcat/ssplit`:
 
 - `join(parts, sep) -> str`
 - `lstrip(s) -> str`
@@ -615,7 +671,7 @@ Behavior notes:
 
 #### 7) `vector`
 
-Current core (`to_vector`, `to_list`, `astype`, `fillna`, arithmetic/reductions) plus QoL:
+Current core (`vfrom_list`, `vto_list`, `vastype`, `vfillna`, arithmetic/reductions) plus QoL:
 
 - `dtype(v) -> str`
 - `head(v, n=5) -> vector`

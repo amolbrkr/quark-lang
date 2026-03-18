@@ -5,6 +5,7 @@
 #include "../core/value.hpp"
 #include "../core/constructors.hpp"
 #include "string.hpp"
+#include "dict.hpp"
 
 // Push item to end of list
 inline QValue q_push(QValue list, QValue item) {
@@ -226,6 +227,31 @@ inline QValue q_reverse(QValue list) {
     }
     std::reverse(list.data.list_val->begin(), list.data.list_val->end());
     return list;
+}
+
+// enumerate(seq) -> list[dict{index: int, value: any}]
+// Supports list, string, and vector sequences.
+inline QValue q_enumerate(QValue seq) {
+    int len = 0;
+    if (seq.type == QValue::VAL_LIST && seq.data.list_val) {
+        len = static_cast<int>(seq.data.list_val->size());
+    } else if (seq.type == QValue::VAL_STRING && seq.data.string_val) {
+        len = static_cast<int>(std::strlen(seq.data.string_val));
+    } else if (seq.type == QValue::VAL_VECTOR) {
+        len = q_vec_size(seq);
+    } else {
+        std::fprintf(stderr, "runtime error: enumerate() expects list, string, or vector\n");
+        std::exit(1);
+    }
+
+    QValue out = qv_list(len);
+    for (int i = 0; i < len; i++) {
+        QValue item = qv_dict();
+        item = q_dict_set(item, qv_string("index"), qv_int(i));
+        item = q_dict_set(item, qv_string("value"), q_get(seq, qv_int(i)));
+        out.data.list_val->push_back(item);
+    }
+    return out;
 }
 
 // Free list memory for non-GC builds.

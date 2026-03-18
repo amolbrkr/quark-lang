@@ -36,7 +36,7 @@ type Spec struct {
 
 var catalog = []Spec{
 	// I/O
-	{Name: "print", Runtime: "q_print", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeVoid},
+	{Name: "print", Runtime: "q_print", MinArgs: 1, MaxArgs: 5, ParamTypes: []TypeKey{TypeAny, TypeString, TypeInt, TypeString, TypeString}, ReturnType: TypeVoid},
 	{Name: "println", Runtime: "q_println", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeVoid},
 	{Name: "input", Runtime: "q_input", MinArgs: 0, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeString},
 	{Name: "_file_open", Runtime: "q_file_open", MinArgs: 2, MaxArgs: 3, ParamTypes: []TypeKey{TypeString, TypeString, TypeBool}, ReturnType: TypeResultFileHandle},
@@ -71,35 +71,41 @@ var catalog = []Spec{
 	{Name: "round", Runtime: "q_round", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeFloat}, ReturnType: TypeInt},
 
 	// String
-	{Name: "upper", Runtime: "q_upper", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeString},
-	{Name: "lower", Runtime: "q_lower", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeString},
-	{Name: "trim", Runtime: "q_trim", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeString},
-	{Name: "contains", Runtime: "q_contains", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeString, TypeString}, ReturnType: TypeBool},
-	{Name: "startswith", Runtime: "q_startswith", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeString, TypeString}, ReturnType: TypeBool},
-	{Name: "endswith", Runtime: "q_endswith", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeString, TypeString}, ReturnType: TypeBool},
-	{Name: "replace", Runtime: "q_replace", MinArgs: 3, MaxArgs: 3, ParamTypes: []TypeKey{TypeString, TypeString, TypeString}, ReturnType: TypeString},
-	{Name: "concat", Runtime: "q_concat", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeAny, TypeAny}, ReturnType: TypeAny},
-	{Name: "split", Runtime: "q_split", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeString, TypeString}, ReturnType: TypeListString},
+	{Name: "supper", Runtime: "q_upper", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeString},
+	{Name: "slower", Runtime: "q_lower", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeString},
+	{Name: "strim", Runtime: "q_trim", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeString},
+	{Name: "scontains", Runtime: "q_contains", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeString, TypeString}, ReturnType: TypeBool},
+	{Name: "sstartswith", Runtime: "q_startswith", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeString, TypeString}, ReturnType: TypeBool},
+	{Name: "sendswith", Runtime: "q_endswith", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeString, TypeString}, ReturnType: TypeBool},
+	{Name: "sreplace", Runtime: "q_replace", MinArgs: 3, MaxArgs: 3, ParamTypes: []TypeKey{TypeString, TypeString, TypeString}, ReturnType: TypeString},
+	{Name: "sconcat", Runtime: "q_str_concat", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeString, TypeString}, ReturnType: TypeString},
+	{Name: "lconcat", Runtime: "q_list_concat", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeListAny, TypeListAny}, ReturnType: TypeListAny},
+	{Name: "ssplit", Runtime: "q_split", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeString, TypeString}, ReturnType: TypeListString},
 
 	// List
-	{Name: "push", Runtime: "q_push", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeListAny, TypeAny}, ReturnType: TypeListAny},
-	{Name: "pop", Runtime: "q_pop", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeListAny}, ReturnType: TypeAny},
-	{Name: "get", Runtime: "q_get", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeListAny, TypeInt}, ReturnType: TypeAny},
-	{Name: "set", Runtime: "q_set", MinArgs: 3, MaxArgs: 3, ParamTypes: []TypeKey{TypeAny, TypeInt, TypeAny}, ReturnType: TypeAny},
-	{Name: "insert", Runtime: "q_insert", MinArgs: 3, MaxArgs: 3, ParamTypes: []TypeKey{TypeListAny, TypeInt, TypeAny}, ReturnType: TypeListAny},
-	{Name: "remove", Runtime: "q_remove", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeListAny, TypeInt}, ReturnType: TypeAny},
-	{Name: "slice", Runtime: "q_slice", MinArgs: 3, MaxArgs: 3, ParamTypes: []TypeKey{TypeListAny, TypeInt, TypeInt}, ReturnType: TypeListAny},
-	{Name: "reverse", Runtime: "q_reverse", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeListAny}, ReturnType: TypeListAny},
+	{Name: "lpush", Runtime: "q_push", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeListAny, TypeAny}, ReturnType: TypeListAny},
+	{Name: "lpop", Runtime: "q_pop", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeListAny}, ReturnType: TypeAny},
+	{Name: "lget", Runtime: "q_get", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeListAny, TypeInt}, ReturnType: TypeAny},
+	{Name: "vget", Runtime: "q_get", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeVectorAny, TypeInt}, ReturnType: TypeAny},
+	{Name: "lset", Runtime: "q_set", MinArgs: 3, MaxArgs: 3, ParamTypes: []TypeKey{TypeListAny, TypeInt, TypeAny}, ReturnType: TypeAny},
+	{Name: "linsert", Runtime: "q_insert", MinArgs: 3, MaxArgs: 3, ParamTypes: []TypeKey{TypeListAny, TypeInt, TypeAny}, ReturnType: TypeListAny},
+	{Name: "lremove", Runtime: "q_remove", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeListAny, TypeInt}, ReturnType: TypeAny},
+	{Name: "lslice", Runtime: "q_slice", MinArgs: 3, MaxArgs: 3, ParamTypes: []TypeKey{TypeListAny, TypeInt, TypeInt}, ReturnType: TypeListAny},
+	{Name: "lreverse", Runtime: "q_reverse", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeListAny}, ReturnType: TypeListAny},
+	{Name: "enumerate", Runtime: "q_enumerate", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeListAny},
 
 	// Dict
 	{Name: "dget", Runtime: "q_dget", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeDictAny, TypeAny}, ReturnType: TypeAny},
 	{Name: "dset", Runtime: "q_dset", MinArgs: 3, MaxArgs: 3, ParamTypes: []TypeKey{TypeDictAny, TypeAny, TypeAny}, ReturnType: TypeDictAny},
+	{Name: "dkeys", Runtime: "q_dkeys", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeDictAny}, ReturnType: TypeListAny},
+	{Name: "dvalues", Runtime: "q_dvalues", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeDictAny}, ReturnType: TypeListAny},
+	{Name: "ditems", Runtime: "q_ditems", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeDictAny}, ReturnType: TypeListAny},
 
 	// Vector
-	{Name: "fillna", Runtime: "q_fillna", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeVectorAny, TypeAny}, ReturnType: TypeVectorAny},
-	{Name: "astype", Runtime: "q_astype", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeVectorAny, TypeString}, ReturnType: TypeVectorAny},
-	{Name: "to_vector", Runtime: "q_to_vector", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeAny},
-	{Name: "to_list", Runtime: "q_to_list", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeAny},
+	{Name: "vfillna", Runtime: "q_fillna", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeVectorAny, TypeAny}, ReturnType: TypeVectorAny},
+	{Name: "vastype", Runtime: "q_astype", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeVectorAny, TypeString}, ReturnType: TypeVectorAny},
+	{Name: "vfrom_list", Runtime: "q_to_vector", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeAny},
+	{Name: "vto_list", Runtime: "q_to_list", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeAny},
 }
 
 var byName map[string]Spec

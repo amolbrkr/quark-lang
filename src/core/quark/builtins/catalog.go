@@ -80,6 +80,8 @@ var catalog = []Spec{
 	{Name: "sreplace", Runtime: "q_replace", MinArgs: 3, MaxArgs: 3, ParamTypes: []TypeKey{TypeString, TypeString, TypeString}, ReturnType: TypeString},
 	{Name: "sconcat", Runtime: "q_str_concat", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeString, TypeString}, ReturnType: TypeString},
 	{Name: "ssplit", Runtime: "q_split", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeString, TypeString}, ReturnType: TypeListString},
+	{Name: "sslice", Runtime: "q_str_slice", MinArgs: 3, MaxArgs: 3, ParamTypes: []TypeKey{TypeString, TypeInt, TypeInt}, ReturnType: TypeString},
+	{Name: "sjoin", Runtime: "q_str_join", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeListAny, TypeString}, ReturnType: TypeString},
 
 	// List
 	{Name: "lconcat", Runtime: "q_list_concat", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeListAny, TypeListAny}, ReturnType: TypeListAny},

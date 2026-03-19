@@ -49,6 +49,48 @@ func TestCodegen_EmitsSplit(t *testing.T) {
 	}
 }
 
+func TestCodegen_EmitsSslice(t *testing.T) {
+	res := testutil.GenerateCPP("println(sslice('hello', 1, 4))\n")
+	if len(res.ParserErrors) > 0 {
+		t.Fatalf("unexpected parse errors: %v", res.ParserErrors)
+	}
+	if len(res.TypeErrors) > 0 {
+		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
+	}
+	if !strings.Contains(res.CPP, "q_str_slice") {
+		t.Fatalf("expected codegen to call q_str_slice, cpp=\n%s", res.CPP)
+	}
+}
+
+func TestCodegen_EmitsSjoin(t *testing.T) {
+	res := testutil.GenerateCPP("parts = list ['a', 'b']\nprintln(sjoin(parts, ','))\n")
+	if len(res.ParserErrors) > 0 {
+		t.Fatalf("unexpected parse errors: %v", res.ParserErrors)
+	}
+	if len(res.TypeErrors) > 0 {
+		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
+	}
+	if !strings.Contains(res.CPP, "q_str_join") {
+		t.Fatalf("expected codegen to call q_str_join, cpp=\n%s", res.CPP)
+	}
+}
+
+func TestCodegen_SslicePipeChain(t *testing.T) {
+	res := testutil.GenerateCPP("'hello world' | sslice(6, 11) | supper() | println()\n")
+	if len(res.ParserErrors) > 0 {
+		t.Fatalf("unexpected parse errors: %v", res.ParserErrors)
+	}
+	if len(res.TypeErrors) > 0 {
+		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
+	}
+	if !strings.Contains(res.CPP, "q_str_slice") {
+		t.Fatalf("expected pipe chain to emit q_str_slice, cpp=\n%s", res.CPP)
+	}
+	if !strings.Contains(res.CPP, "q_upper") {
+		t.Fatalf("expected pipe chain to emit q_upper, cpp=\n%s", res.CPP)
+	}
+}
+
 func TestCodegen_EmitsVectorLiteral(t *testing.T) {
 	res := testutil.GenerateCPP("v = vector [1, 2, 3]\n")
 	if len(res.ParserErrors) > 0 {

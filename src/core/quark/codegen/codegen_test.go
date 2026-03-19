@@ -24,7 +24,7 @@ func TestCodegen_EmitsListConstruction(t *testing.T) {
 }
 
 func TestCodegen_EmitsDictHelpers(t *testing.T) {
-	res := testutil.GenerateCPP("d = dict { a: 1 }\nprintln(dget(d, 'a'))\n")
+	res := testutil.GenerateCPP("d = dict { a: 1 }\nprintln(d.get('a'))\n")
 	if len(res.ParserErrors) > 0 {
 		t.Fatalf("unexpected parse errors: %v", res.ParserErrors)
 	}
@@ -37,7 +37,7 @@ func TestCodegen_EmitsDictHelpers(t *testing.T) {
 }
 
 func TestCodegen_EmitsSplit(t *testing.T) {
-	res := testutil.GenerateCPP("println(split('a,b', ','))\n")
+	res := testutil.GenerateCPP("println('a,b'.split(','))\n")
 	if len(res.ParserErrors) > 0 {
 		t.Fatalf("unexpected parse errors: %v", res.ParserErrors)
 	}
@@ -50,7 +50,7 @@ func TestCodegen_EmitsSplit(t *testing.T) {
 }
 
 func TestCodegen_EmitsSslice(t *testing.T) {
-	res := testutil.GenerateCPP("println(sslice('hello', 1, 4))\n")
+	res := testutil.GenerateCPP("println('hello'.slice(1, 4))\n")
 	if len(res.ParserErrors) > 0 {
 		t.Fatalf("unexpected parse errors: %v", res.ParserErrors)
 	}
@@ -63,7 +63,7 @@ func TestCodegen_EmitsSslice(t *testing.T) {
 }
 
 func TestCodegen_EmitsSjoin(t *testing.T) {
-	res := testutil.GenerateCPP("parts = list ['a', 'b']\nprintln(sjoin(parts, ','))\n")
+	res := testutil.GenerateCPP("parts = list ['a', 'b']\nprintln(parts.join(','))\n")
 	if len(res.ParserErrors) > 0 {
 		t.Fatalf("unexpected parse errors: %v", res.ParserErrors)
 	}
@@ -76,7 +76,7 @@ func TestCodegen_EmitsSjoin(t *testing.T) {
 }
 
 func TestCodegen_SslicePipeChain(t *testing.T) {
-	res := testutil.GenerateCPP("'hello world' | sslice(6, 11) | supper() | println()\n")
+	res := testutil.GenerateCPP("s = 'hello world'\nprintln(s.slice(6, 11).upper())\n")
 	if len(res.ParserErrors) > 0 {
 		t.Fatalf("unexpected parse errors: %v", res.ParserErrors)
 	}
@@ -105,7 +105,7 @@ func TestCodegen_EmitsVectorLiteral(t *testing.T) {
 }
 
 func TestCodegen_EmitsToVectorBuiltin(t *testing.T) {
-	res := testutil.GenerateCPP("xs = list [1, 2, 3]\nv = to_vector(xs)\n")
+	res := testutil.GenerateCPP("xs = list [1, 2, 3]\nv = vfrom_list(xs)\n")
 	if len(res.ParserErrors) > 0 {
 		t.Fatalf("unexpected parse errors: %v", res.ParserErrors)
 	}
@@ -118,7 +118,7 @@ func TestCodegen_EmitsToVectorBuiltin(t *testing.T) {
 }
 
 func TestCodegen_ForLoopUsesGenericLenForVector(t *testing.T) {
-	res := testutil.GenerateCPP("for x in to_vector(range(3)):\n    println(x)\n")
+	res := testutil.GenerateCPP("for x in vfrom_list(range(3)):\n    println(x)\n")
 	if len(res.ParserErrors) > 0 {
 		t.Fatalf("unexpected parse errors: %v", res.ParserErrors)
 	}

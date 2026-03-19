@@ -32,4 +32,7 @@ type CallPlan struct {
 	RuntimeSymbol   string
 	ArgTypesChecked bool
 	DefaultNodes    []*ast.TreeNode // Trailing default args to append in call order.
+	IsMethod        bool            // True when call was x.method(args) — receiver is first runtime arg.
+	ReceiverNode    *ast.TreeNode   // The receiver expression node (x in x.method(args)).
+	ReceiverTypeKey string          // builtins.TypeKey of the receiver (set when IsMethod == true).
 }

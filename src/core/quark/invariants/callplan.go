@@ -85,14 +85,31 @@ func ValidateCallPlans(root *ast.TreeNode, plans map[*ast.TreeNode]*ir.CallPlan)
 				firstErr = invError("INV-BUILTIN-NAME", n, "builtin call plan missing callee name")
 				return
 			}
-			spec, ok := builtins.Lookup(plan.CalleeName)
-			if !ok {
-				firstErr = invError("INV-BUILTIN-CATALOG", n, "builtin '%s' is not in catalog", plan.CalleeName)
-				return
-			}
-			if plan.RuntimeSymbol == "" || plan.RuntimeSymbol != spec.Runtime {
-				firstErr = invError("INV-BUILTIN-RUNTIME", n, "builtin '%s' runtime symbol mismatch: plan='%s' catalog='%s'", plan.CalleeName, plan.RuntimeSymbol, spec.Runtime)
-				return
+			if plan.IsMethod {
+				// Method call: validate via the method table.
+				if plan.ReceiverTypeKey == "" {
+					firstErr = invError("INV-METHOD-RECEIVER", n, "method call plan for '%s' missing receiver type key", plan.CalleeName)
+					return
+				}
+				spec, ok := builtins.LookupMethod(builtins.TypeKey(plan.ReceiverTypeKey), plan.CalleeName)
+				if !ok {
+					firstErr = invError("INV-BUILTIN-CATALOG", n, "method '%s' is not in catalog for receiver type '%s'", plan.CalleeName, plan.ReceiverTypeKey)
+					return
+				}
+				if plan.RuntimeSymbol == "" || plan.RuntimeSymbol != spec.Runtime {
+					firstErr = invError("INV-BUILTIN-RUNTIME", n, "method '%s' runtime symbol mismatch: plan='%s' catalog='%s'", plan.CalleeName, plan.RuntimeSymbol, spec.Runtime)
+					return
+				}
+			} else {
+				spec, ok := builtins.Lookup(plan.CalleeName)
+				if !ok {
+					firstErr = invError("INV-BUILTIN-CATALOG", n, "builtin '%s' is not in catalog", plan.CalleeName)
+					return
+				}
+				if plan.RuntimeSymbol == "" || plan.RuntimeSymbol != spec.Runtime {
+					firstErr = invError("INV-BUILTIN-RUNTIME", n, "builtin '%s' runtime symbol mismatch: plan='%s' catalog='%s'", plan.CalleeName, plan.RuntimeSymbol, spec.Runtime)
+					return
+				}
 			}
 		}
 

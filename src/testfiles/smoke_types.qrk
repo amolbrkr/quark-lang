@@ -31,13 +31,13 @@ println(d.a)
 d.c = 99
 println(d.c)
 
-// Dict dynamic key access via helpers
+// Dict dynamic key access via methods
 keys = list ['a', 'b', 'c', 'missing']
 for k in keys:
-    println(dget(d, k))
+    println(d.get(k))
 
 // Set dynamic key
-d = dset(d, 'z', 123)
+d = d.set('z', 123)
 println(d.z)
 
 // Vector MVP (1D only)
@@ -56,7 +56,7 @@ println(min(v))
 println(max(v))
 
 // Vector phase-2 helpers
-vi = vastype(v, 'i64')
+vi = v.astype('i64')
 println(vi)
 println(sum(vi))
 println(min(vi))
@@ -68,18 +68,18 @@ println(vplus)
 vmul = vi * vplus
 println(vmul)
 
-vfilled = vfillna(vi, 0)
+vfilled = vi.fillna(0)
 println(vfilled)
 
 println(type(v))
 println(type(vi))
 
-v_from_list = vfrom_list(list [10, 20, 30])
+v_from_list = list [10, 20, 30].to_vector()
 println(v_from_list)
 println(sum(v_from_list))
 
 // to_list conversion (vector -> list)
-back_to_list = vto_list(v_from_list)
+back_to_list = v_from_list.to_list()
 println(back_to_list)
 println(type(back_to_list))
-println(lget(back_to_list, 0))
+println(back_to_list.get(0))

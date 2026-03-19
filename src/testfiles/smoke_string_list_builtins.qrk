@@ -1,47 +1,47 @@
 // smoke_string_list_builtins.qrk
-// Covers: string + list builtins (pipes + direct calls).
+// Covers: string + list builtins (method syntax).
 
 println('== smoke: string/list builtins ==')
 
 // Strings
-supper('hello world') | println()
-slower('HELLO WORLD') | println()
-strim('  hello  ') | println()
+'hello world'.upper() | println()
+'HELLO WORLD'.lower() | println()
+'  hello  '.trim() | println()
 
-scontains('hello world', 'world') | println()
-scontains('hello world', 'xyz') | println()
-sstartswith('hello world', 'hello') | println()
-sendswith('hello world', 'world') | println()
+'hello world'.contains('world') | println()
+'hello world'.contains('xyz') | println()
+'hello world'.startswith('hello') | println()
+'hello world'.endswith('world') | println()
 
-sreplace('hello world', 'world', 'quark') | println()
-sconcat('hello ', 'world') | println()
+'hello world'.replace('world', 'quark') | println()
+'hello '.concat('world') | println()
 
-'  HELLO world  ' | strim() | slower() | sreplace('world', 'quark') | println()
+'  HELLO world  '.trim().lower().replace('world', 'quark') | println()
 
 // Lists
 lst = list [10, 20, 30]
 len(lst) | println()
 
 // Indexing (includes negative index)
-lget(lst, 0) | println()
-lget(lst, -1) | println()
-lget(lst, 999) | println()     // null
+lst.get(0) | println()
+lst.get(-1) | println()
+lst.get(999) | println()     // null
 
 // push/pop
-lst = lpush(lst, 40)
-lpop(lst) | println()          // 40
+lst = lst.push(40)
+lst.pop() | println()          // 40
 
 // set/insert/remove
-lset(lst, 1, 99) | println()
-lst = linsert(lst, 1, 55)
-lremove(lst, 0) | println()
+lst.set(1, 99) | println()
+lst = lst.insert(1, 55)
+lst.remove(0) | println()
 
 // slice/reverse/concat
-lslice(lst, 0, 2) | println()
-lreverse(lst) | println()
+lst.slice(0, 2) | println()
+lst.reverse() | println()
 
 lst2 = list [1, 2]
-lconcat(lst, lst2) | println()
+lst.concat(lst2) | println()
 
 // range
 range(5) | println()

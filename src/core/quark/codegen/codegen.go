@@ -633,7 +633,7 @@ func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
 	argsNode := node.Children[1]
 	plan := g.getCallPlanOrPanic(node)
 
-	// Dot-call syntax on values is rejected by analyzer; only module-qualified dot calls are allowed here.
+	// Dot-call syntax on values is rejected by analyzer unless it's a known method dispatch.
 	if funcNode.NodeType == ast.OperatorNode && funcNode.Token != nil && funcNode.Token.Type == token.DOT && plan.Dispatch == ir.DispatchClosure && !strings.Contains(plan.CalleeName, ".") {
 		return "(fprintf(stderr, \"compile error: dot-call syntax is not supported\\n\"), qv_null())"
 	}
@@ -646,6 +646,12 @@ func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
 		args = append(args, g.generateExpr(arg))
 	}
 	args = g.appendPlannedDefaults(args, plan)
+
+	// For method calls, inject the receiver as the first argument.
+	if plan.IsMethod && plan.ReceiverNode != nil {
+		receiver := g.generateExpr(plan.ReceiverNode)
+		args = append([]string{receiver}, args...)
+	}
 
 	switch plan.Dispatch {
 	case ir.DispatchBuiltin:
@@ -713,6 +719,12 @@ func (g *Generator) generatePipe(node *ast.TreeNode) string {
 		args = append(args, g.generateExpr(arg))
 	}
 	args = g.appendPlannedDefaults(args, plan)
+
+	// For method calls, inject the receiver as the first argument (before piped input).
+	if plan.IsMethod && plan.ReceiverNode != nil {
+		receiver := g.generateExpr(plan.ReceiverNode)
+		args = append([]string{receiver}, args...)
+	}
 
 	switch plan.Dispatch {
 	case ir.DispatchBuiltin:

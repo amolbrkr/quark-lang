@@ -25,17 +25,21 @@ const (
 )
 
 // Spec is the single source of truth for builtin definitions.
+// ReceiverType is empty for free functions.
+// When non-empty, the builtin is a method: x.Method(args) where x has type ReceiverType.
+// The receiver is injected as the first argument at codegen time.
 type Spec struct {
-	Name       string
-	Runtime    string
-	MinArgs    int
-	MaxArgs    int
-	ParamTypes []TypeKey
-	ReturnType TypeKey
+	Name         string
+	Runtime      string
+	MinArgs      int
+	MaxArgs      int
+	ParamTypes   []TypeKey
+	ReturnType   TypeKey
+	ReceiverType TypeKey // empty = free function; non-empty = method on this type
 }
 
 var catalog = []Spec{
-	// I/O
+	// I/O (free functions)
 	{Name: "print", Runtime: "q_print", MinArgs: 1, MaxArgs: 5, ParamTypes: []TypeKey{TypeAny, TypeString, TypeInt, TypeString, TypeString}, ReturnType: TypeVoid},
 	{Name: "println", Runtime: "q_println", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeVoid},
 	{Name: "input", Runtime: "q_input", MinArgs: 0, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeString},
@@ -46,7 +50,7 @@ var catalog = []Spec{
 	{Name: "_file_seek", Runtime: "q_file_seek", MinArgs: 3, MaxArgs: 3, ParamTypes: []TypeKey{TypeFileHandle, TypeInt, TypeInt}, ReturnType: TypeResultInt},
 	{Name: "_file_exists", Runtime: "q_file_exists", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeBool},
 
-	// Conversions
+	// Conversions (free functions)
 	{Name: "len", Runtime: "q_len", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeInt},
 	{Name: "to_str", Runtime: "q_str", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeString},
 	{Name: "to_int", Runtime: "q_int", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeInt},
@@ -57,10 +61,10 @@ var catalog = []Spec{
 	{Name: "is_err", Runtime: "q_is_err_builtin", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeBool},
 	{Name: "unwrap", Runtime: "q_unwrap", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeAny},
 
-	// Range
+	// Range (free function)
 	{Name: "range", Runtime: "q_range", MinArgs: 1, MaxArgs: 3, ParamTypes: []TypeKey{TypeFloat, TypeFloat, TypeFloat}, ReturnType: TypeListInt},
 
-	// Math
+	// Math (free functions)
 	{Name: "abs", Runtime: "q_abs", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeAny},
 	{Name: "min", Runtime: "q_min", MinArgs: 1, MaxArgs: 2, ParamTypes: []TypeKey{TypeAny, TypeAny}, ReturnType: TypeAny},
 	{Name: "max", Runtime: "q_max", MinArgs: 1, MaxArgs: 2, ParamTypes: []TypeKey{TypeAny, TypeAny}, ReturnType: TypeAny},
@@ -70,52 +74,70 @@ var catalog = []Spec{
 	{Name: "ceil", Runtime: "q_ceil", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeFloat}, ReturnType: TypeInt},
 	{Name: "round", Runtime: "q_round", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeFloat}, ReturnType: TypeInt},
 
-	// String
-	{Name: "supper", Runtime: "q_upper", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeString},
-	{Name: "slower", Runtime: "q_lower", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeString},
-	{Name: "strim", Runtime: "q_trim", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeString},
-	{Name: "scontains", Runtime: "q_contains", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeString, TypeString}, ReturnType: TypeBool},
-	{Name: "sstartswith", Runtime: "q_startswith", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeString, TypeString}, ReturnType: TypeBool},
-	{Name: "sendswith", Runtime: "q_endswith", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeString, TypeString}, ReturnType: TypeBool},
-	{Name: "sreplace", Runtime: "q_replace", MinArgs: 3, MaxArgs: 3, ParamTypes: []TypeKey{TypeString, TypeString, TypeString}, ReturnType: TypeString},
-	{Name: "sconcat", Runtime: "q_str_concat", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeString, TypeString}, ReturnType: TypeString},
-	{Name: "ssplit", Runtime: "q_split", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeString, TypeString}, ReturnType: TypeListString},
-	{Name: "sslice", Runtime: "q_str_slice", MinArgs: 3, MaxArgs: 3, ParamTypes: []TypeKey{TypeString, TypeInt, TypeInt}, ReturnType: TypeString},
-	{Name: "sjoin", Runtime: "q_str_join", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeListAny, TypeString}, ReturnType: TypeString},
+	// String methods (receiver = str)
+	{Name: "upper", Runtime: "q_upper", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeString, ReceiverType: TypeString},
+	{Name: "lower", Runtime: "q_lower", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeString, ReceiverType: TypeString},
+	{Name: "trim", Runtime: "q_trim", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeString, ReceiverType: TypeString},
+	{Name: "contains", Runtime: "q_contains", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeBool, ReceiverType: TypeString},
+	{Name: "startswith", Runtime: "q_startswith", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeBool, ReceiverType: TypeString},
+	{Name: "endswith", Runtime: "q_endswith", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeBool, ReceiverType: TypeString},
+	{Name: "replace", Runtime: "q_replace", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeString, TypeString}, ReturnType: TypeString, ReceiverType: TypeString},
+	{Name: "concat", Runtime: "q_str_concat", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeString, ReceiverType: TypeString},
+	{Name: "split", Runtime: "q_split", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeListString, ReceiverType: TypeString},
+	{Name: "slice", Runtime: "q_str_slice", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeInt, TypeInt}, ReturnType: TypeString, ReceiverType: TypeString},
+	// Note: join is on list, not str — runtime signature is q_str_join(list, sep).
 
-	// List
-	{Name: "lconcat", Runtime: "q_list_concat", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeListAny, TypeListAny}, ReturnType: TypeListAny},
-	{Name: "lpush", Runtime: "q_push", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeListAny, TypeAny}, ReturnType: TypeListAny},
-	{Name: "lpop", Runtime: "q_pop", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeListAny}, ReturnType: TypeAny},
-	{Name: "lget", Runtime: "q_get", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeListAny, TypeInt}, ReturnType: TypeAny},
-	{Name: "lset", Runtime: "q_set", MinArgs: 3, MaxArgs: 3, ParamTypes: []TypeKey{TypeListAny, TypeInt, TypeAny}, ReturnType: TypeAny},
-	{Name: "linsert", Runtime: "q_insert", MinArgs: 3, MaxArgs: 3, ParamTypes: []TypeKey{TypeListAny, TypeInt, TypeAny}, ReturnType: TypeListAny},
-	{Name: "lremove", Runtime: "q_remove", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeListAny, TypeInt}, ReturnType: TypeAny},
-	{Name: "lslice", Runtime: "q_slice", MinArgs: 3, MaxArgs: 3, ParamTypes: []TypeKey{TypeListAny, TypeInt, TypeInt}, ReturnType: TypeListAny},
-	{Name: "lreverse", Runtime: "q_reverse", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeListAny}, ReturnType: TypeListAny},
+	// List methods (receiver = list)
+	{Name: "concat", Runtime: "q_list_concat", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeListAny}, ReturnType: TypeListAny, ReceiverType: TypeListAny},
+	{Name: "push", Runtime: "q_push", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeListAny, ReceiverType: TypeListAny},
+	{Name: "pop", Runtime: "q_pop", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeAny, ReceiverType: TypeListAny},
+	{Name: "get", Runtime: "q_get", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeInt}, ReturnType: TypeAny, ReceiverType: TypeListAny},
+	{Name: "set", Runtime: "q_set", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeInt, TypeAny}, ReturnType: TypeAny, ReceiverType: TypeListAny},
+	{Name: "insert", Runtime: "q_insert", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeInt, TypeAny}, ReturnType: TypeListAny, ReceiverType: TypeListAny},
+	{Name: "remove", Runtime: "q_remove", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeInt}, ReturnType: TypeAny, ReceiverType: TypeListAny},
+	{Name: "slice", Runtime: "q_slice", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeInt, TypeInt}, ReturnType: TypeListAny, ReceiverType: TypeListAny},
+	{Name: "reverse", Runtime: "q_reverse", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeListAny},
+	{Name: "enumerate", Runtime: "q_enumerate", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeListAny},
+	{Name: "join", Runtime: "q_str_join", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeString, ReceiverType: TypeListAny},
+	{Name: "to_vector", Runtime: "q_to_vector", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeAny, ReceiverType: TypeListAny},
+
+	// Dict methods (receiver = dict)
+	{Name: "get", Runtime: "q_dget", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeAny, ReceiverType: TypeDictAny},
+	{Name: "set", Runtime: "q_dset", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeAny, TypeAny}, ReturnType: TypeDictAny, ReceiverType: TypeDictAny},
+	{Name: "keys", Runtime: "q_dkeys", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeDictAny},
+	{Name: "values", Runtime: "q_dvalues", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeDictAny},
+	{Name: "items", Runtime: "q_ditems", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeDictAny},
+
+	// Vector methods (receiver = vector)
+	{Name: "get", Runtime: "q_get", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeInt}, ReturnType: TypeAny, ReceiverType: TypeVectorAny},
+	{Name: "fillna", Runtime: "q_fillna", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeVectorAny, ReceiverType: TypeVectorAny},
+	{Name: "astype", Runtime: "q_astype", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeVectorAny, ReceiverType: TypeVectorAny},
+	{Name: "to_list", Runtime: "q_to_list", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeAny, ReceiverType: TypeVectorAny},
+
+	// Free-function aliases kept for backward compat during transition
 	{Name: "enumerate", Runtime: "q_enumerate", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeListAny},
-
-	// Dict
-	{Name: "dget", Runtime: "q_dget", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeDictAny, TypeAny}, ReturnType: TypeAny},
-	{Name: "dset", Runtime: "q_dset", MinArgs: 3, MaxArgs: 3, ParamTypes: []TypeKey{TypeDictAny, TypeAny, TypeAny}, ReturnType: TypeDictAny},
-	{Name: "dkeys", Runtime: "q_dkeys", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeDictAny}, ReturnType: TypeListAny},
-	{Name: "dvalues", Runtime: "q_dvalues", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeDictAny}, ReturnType: TypeListAny},
-	{Name: "ditems", Runtime: "q_ditems", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeDictAny}, ReturnType: TypeListAny},
-
-	// Vector
-	{Name: "vget", Runtime: "q_get", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeVectorAny, TypeInt}, ReturnType: TypeAny},
-	{Name: "vfillna", Runtime: "q_fillna", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeVectorAny, TypeAny}, ReturnType: TypeVectorAny},
-	{Name: "vastype", Runtime: "q_astype", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeVectorAny, TypeString}, ReturnType: TypeVectorAny},
 	{Name: "vfrom_list", Runtime: "q_to_vector", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeAny},
-	{Name: "vto_list", Runtime: "q_to_list", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeAny},
 }
 
 var byName map[string]Spec
+var byMethod map[TypeKey]map[string]Spec
 
 func init() {
 	byName = make(map[string]Spec, len(catalog))
+	byMethod = make(map[TypeKey]map[string]Spec)
 	for _, s := range catalog {
-		byName[s.Name] = s
+		if s.ReceiverType == "" {
+			// Free function: index by name. First definition wins.
+			if _, exists := byName[s.Name]; !exists {
+				byName[s.Name] = s
+			}
+		} else {
+			// Method: index by (ReceiverType, Name).
+			if byMethod[s.ReceiverType] == nil {
+				byMethod[s.ReceiverType] = make(map[string]Spec)
+			}
+			byMethod[s.ReceiverType][s.Name] = s
+		}
 	}
 }
 
@@ -128,4 +150,15 @@ func Catalog() []Spec {
 func Lookup(name string) (Spec, bool) {
 	s, ok := byName[name]
 	return s, ok
+}
+
+// LookupMethod looks up a method by receiver type and method name.
+// receiverType must be one of the TypeKey constants.
+func LookupMethod(receiverType TypeKey, methodName string) (Spec, bool) {
+	if m, ok := byMethod[receiverType]; ok {
+		if s, ok := m[methodName]; ok {
+			return s, true
+		}
+	}
+	return Spec{}, false
 }

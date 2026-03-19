@@ -36,7 +36,8 @@ type Analyzer struct {
 	moduleAliases   map[string]string        // Alias -> module name mapping from use statements
 	currentModule   string                   // Current module being defined (empty if global)
 	builtins        map[string]*builtinSignature
-	captures        map[*ast.TreeNode][]string // Lambda node → captured variable names
+	methods         map[builtins.TypeKey]map[string]*builtinSignature // receiver type → method name → sig
+	captures        map[*ast.TreeNode][]string                        // Lambda node → captured variable names
 	callPlans       map[*ast.TreeNode]*ir.CallPlan
 	returnValidated map[*ast.TreeNode]bool
 	loopDepth       int    // >0 when inside for/while loop (for break/continue validation)
@@ -47,6 +48,7 @@ func NewAnalyzer() *Analyzer {
 	globalScope := NewScope(nil)
 
 	builtinSigs := make(map[string]*builtinSignature)
+	methodSigs := make(map[builtins.TypeKey]map[string]*builtinSignature)
 	funcs := make(map[string]*FunctionType)
 	for _, spec := range builtins.Catalog() {
 		paramTypes := make([]Type, 0, len(spec.ParamTypes))
@@ -54,9 +56,24 @@ func NewAnalyzer() *Analyzer {
 			paramTypes = append(paramTypes, mapBuiltinTypeKey(key))
 		}
 		funcType := &FunctionType{ParamTypes: paramTypes, ReturnType: mapBuiltinTypeKey(spec.ReturnType)}
-		globalScope.Define(spec.Name, funcType, false)
-		funcs[spec.Name] = funcType
-		builtinSigs[spec.Name] = &builtinSignature{Type: funcType, MinArgs: spec.MinArgs, MaxArgs: spec.MaxArgs}
+		sig := &builtinSignature{Type: funcType, MinArgs: spec.MinArgs, MaxArgs: spec.MaxArgs}
+
+		if spec.ReceiverType == "" {
+			// Free function: register in scope and builtin map (first definition wins).
+			if _, exists := builtinSigs[spec.Name]; !exists {
+				globalScope.Define(spec.Name, funcType, false)
+				funcs[spec.Name] = funcType
+				builtinSigs[spec.Name] = sig
+			}
+		} else {
+			// Method: register in method map by (receiverType, name).
+			if methodSigs[spec.ReceiverType] == nil {
+				methodSigs[spec.ReceiverType] = make(map[string]*builtinSignature)
+			}
+			if _, exists := methodSigs[spec.ReceiverType][spec.Name]; !exists {
+				methodSigs[spec.ReceiverType][spec.Name] = sig
+			}
+		}
 	}
 
 	return &Analyzer{
@@ -67,10 +84,29 @@ func NewAnalyzer() *Analyzer {
 		moduleAliases:   make(map[string]string),
 		currentModule:   "",
 		builtins:        builtinSigs,
+		methods:         methodSigs,
 		captures:        make(map[*ast.TreeNode][]string),
 		callPlans:       make(map[*ast.TreeNode]*ir.CallPlan),
 		returnValidated: make(map[*ast.TreeNode]bool),
 	}
+}
+
+// typeToBuiltinTypeKey returns the builtins.TypeKey for a Type, used for method lookup.
+// Returns "" if the type has no method table.
+func typeToBuiltinTypeKey(t Type) builtins.TypeKey {
+	switch v := t.(type) {
+	case *BasicType:
+		if v.Name == "str" {
+			return builtins.TypeString
+		}
+	case *ListType:
+		return builtins.TypeListAny
+	case *DictType:
+		return builtins.TypeDictAny
+	case *VectorType:
+		return builtins.TypeVectorAny
+	}
+	return ""
 }
 
 func mapBuiltinTypeKey(key builtins.TypeKey) Type {
@@ -633,12 +669,66 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 		return funcType.ReturnType
 	}
 
-	// Dot-call syntax is not supported unless the left side is a known module alias.
+	// Dot-call: x.method(args) — try method dispatch from the builtin catalog.
 	if funcNode.NodeType == ast.OperatorNode && funcNode.Token != nil && funcNode.Token.Type == token.DOT {
 		if len(funcNode.Children) >= 2 {
-			method := funcNode.Children[1].TokenLiteral()
-			a.Analyze(funcNode.Children[0])
-			a.errorAt(funcNode, "dot-call syntax is not supported on values; use %s(entity, ...) or module-qualified calls", method)
+			receiverNode := funcNode.Children[0]
+			methodName := funcNode.Children[1].TokenLiteral()
+			receiverType := a.Analyze(receiverNode)
+			receiverKey := typeToBuiltinTypeKey(receiverType)
+
+			if receiverKey != "" {
+				if methodSigs, ok := a.methods[receiverKey]; ok {
+					if sig, ok := methodSigs[methodName]; ok {
+						// method arity: sig.MinArgs/MaxArgs are the non-receiver args
+						totalMin := sig.MinArgs + 1
+						totalMax := sig.MaxArgs + 1
+						runtimeSym := ""
+						if spec, ok := builtins.LookupMethod(receiverKey, methodName); ok {
+							runtimeSym = spec.Runtime
+						}
+						a.callPlans[node] = &ir.CallPlan{
+							Kind:            ir.CallBuiltin,
+							CalleeName:      methodName,
+							MinArity:        totalMin,
+							MaxArity:        totalMax,
+							Dispatch:        ir.DispatchBuiltin,
+							RuntimeSymbol:   runtimeSym,
+							IsMethod:        true,
+							ReceiverNode:    receiverNode,
+							ReceiverTypeKey: string(receiverKey),
+						}
+						if argCount < sig.MinArgs || argCount > sig.MaxArgs {
+							if sig.MinArgs == sig.MaxArgs {
+								a.errorAt(node, "method '%s' expects %d argument(s) but got %d", methodName, sig.MaxArgs, argCount)
+							} else {
+								a.errorAt(node, "method '%s' expects %d-%d arguments but got %d", methodName, sig.MinArgs, sig.MaxArgs, argCount)
+							}
+						}
+						// Build full arg types with receiver prepended for type checking
+						fullArgTypes := make([]Type, 0, argCount+1)
+						fullArgTypes = append(fullArgTypes, receiverType)
+						fullArgTypes = append(fullArgTypes, argTypes...)
+						fullParamTypes := make([]Type, 0, len(sig.Type.ParamTypes)+1)
+						fullParamTypes = append(fullParamTypes, receiverType) // receiver matches itself
+						fullParamTypes = append(fullParamTypes, sig.Type.ParamTypes...)
+						a.checkArgTypes(methodName, sig.Type.ParamTypes, argTypes, argsNode.Children)
+						a.callPlans[node].ArgTypesChecked = true
+						// Use vfrom_list inference logic for list.to_vector()
+						if methodName == "to_vector" {
+							return a.inferBuiltinReturnType("vfrom_list", []Type{receiverType}, node)
+						}
+						return sig.Type.ReturnType
+					}
+				}
+			}
+
+			// Unknown method — if receiver type is known, report an error
+			if !isUnknownType(receiverType) && receiverKey != "" {
+				a.errorAt(funcNode, "type '%s' has no method '%s'", receiverType.String(), methodName)
+			} else if !isUnknownType(receiverType) {
+				a.errorAt(funcNode, "dot-call syntax is not supported on values of type '%s'", receiverType.String())
+			}
 		}
 		a.callPlans[node] = &ir.CallPlan{
 			Kind:            ir.CallFunctionValue,
@@ -1369,6 +1459,54 @@ func (a *Analyzer) analyzePipe(node *ast.TreeNode) Type {
 		return funcType.ReturnType
 	}
 
+	// Pipe into a dot-call method: x | obj.method(extra_args)
+	// The piped value becomes the first arg; obj is the receiver.
+	if funcNode.NodeType == ast.OperatorNode && funcNode.Token != nil && funcNode.Token.Type == token.DOT {
+		if len(funcNode.Children) >= 2 {
+			receiverNode := funcNode.Children[0]
+			methodName := funcNode.Children[1].TokenLiteral()
+			receiverType := a.Analyze(receiverNode)
+			receiverKey := typeToBuiltinTypeKey(receiverType)
+
+			if receiverKey != "" {
+				if methodSigs, ok := a.methods[receiverKey]; ok {
+					if sig, ok := methodSigs[methodName]; ok {
+						// pipe into method: receiver is already fixed, piped input is an extra arg
+						// total args = explicit args + 1 (piped) checked against sig
+						pipeIntoMethodArgCount := len(argsNode.Children) + 1
+						runtimeSym := ""
+						if spec, ok := builtins.LookupMethod(receiverKey, methodName); ok {
+							runtimeSym = spec.Runtime
+						}
+						a.callPlans[rightNode] = &ir.CallPlan{
+							Kind:            ir.CallBuiltin,
+							CalleeName:      methodName,
+							MinArity:        sig.MinArgs + 1,
+							MaxArity:        sig.MaxArgs + 1,
+							Dispatch:        ir.DispatchBuiltin,
+							RuntimeSymbol:   runtimeSym,
+							IsMethod:        true,
+							ReceiverNode:    receiverNode,
+							ReceiverTypeKey: string(receiverKey),
+						}
+						if pipeIntoMethodArgCount < sig.MinArgs || pipeIntoMethodArgCount > sig.MaxArgs {
+							if sig.MinArgs == sig.MaxArgs {
+								a.errorAt(node, "method '%s' expects %d argument(s) but got %d (including piped input)", methodName, sig.MaxArgs, pipeIntoMethodArgCount)
+							} else {
+								a.errorAt(node, "method '%s' expects %d-%d arguments but got %d (including piped input)", methodName, sig.MinArgs, sig.MaxArgs, pipeIntoMethodArgCount)
+							}
+						}
+						a.callPlans[rightNode].ArgTypesChecked = true
+						if methodName == "to_vector" {
+							return a.inferBuiltinReturnType("vfrom_list", []Type{receiverType}, node)
+						}
+						return sig.Type.ReturnType
+					}
+				}
+			}
+		}
+	}
+
 	funcExprType := a.Analyze(funcNode)
 
 	if funcNode.NodeType == ast.IdentifierNode {
@@ -1548,8 +1686,8 @@ func (a *Analyzer) inferBuiltinReturnType(name string, argTypes []Type, callNode
 		return TypeAny
 	}
 
-	// All other non-to_vector builtins: use the signature's return type.
-	if name != "to_vector" {
+	// All other non-vfrom_list builtins: use the signature's return type.
+	if name != "vfrom_list" {
 		if sig, ok := a.builtins[name]; ok {
 			return sig.Type.ReturnType
 		}

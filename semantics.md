@@ -222,7 +222,9 @@ The scrutinee is evaluated once. For result patterns, the analyzer checks that t
 
 - Created with `dict { key: value }`. Keys in literals are identifiers converted to strings.
 - **String keys only** — enforced at runtime.
-- Dot access: `d.key` reads/writes dict entries. This is the **only** use of dot syntax on values.
+- Dot syntax on values serves two purposes:
+  - **Key access**: `d.key` reads/writes dict entries (`d.key = val` writes, `d.key` reads)
+  - **Method dispatch**: `value.method(args)` calls a built-in method for the receiver's type (e.g. `'hello'.upper()`, `xs.push(4)`, `d.get('key')`)
 - Missing keys return `null` (not an error).
 - Dicts are unordered.
 
@@ -233,8 +235,8 @@ Typed columnar arrays with four dtype variants: `f64` (default), `i64`, `bool`, 
 - Element-wise arithmetic: `vec + vec`, `vec * scalar`, etc. Operands must have matching lengths (or one is a scalar).
 - Division of i64 vectors always produces f64 (same rationale as scalar division).
 - Comparison operators produce bool vectors.
-- Null support via a per-element null mask; `fillna(vec, value)` replaces nulls.
-- `to_vector(list)` converts a homogeneous list; `to_list(vec)` converts back.
+- Null support via a per-element null mask; `vec.fillna(value)` replaces nulls.
+- `list.to_vector()` converts a homogeneous list; `vec.to_list()` converts back.
 - String vectors use offset-based columnar storage internally (not pointers per element).
 
 ---
@@ -403,7 +405,8 @@ All runtime errors are **fatal** — they print to stderr and call `exit(1)` (or
 | Vector size mismatch in arithmetic | Fatal |
 | `min()`/`max()` on empty vector | Fatal |
 | Non-string dict key | Fatal |
-| Dot access on non-dict | Fatal |
+| Dot-key access on non-dict (static key read/write) | Fatal |
+| Dot method call with unknown method name for type | Compile-time error |
 | Member access on null | Fatal |
 | Non-bool condition (if/while/ternary) | Fatal |
 | Non-bool operand to and/or/! | Fatal |
@@ -414,7 +417,7 @@ All runtime errors are **fatal** — they print to stderr and call `exit(1)` (or
 |-----------|---------------------|
 | `get(list, oob_index)` | Returns `null` |
 | `get(string, oob_index)` | Returns `null` |
-| `dict.missing_key` / `dget(dict, missing)` | Returns `null` |
+| `dict.missing_key` / `dict.get(missing)` | Returns `null` |
 | `q_result_value()` on err | Returns `null` |
 | `q_result_error()` on ok | Returns `null` |
 

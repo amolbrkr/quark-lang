@@ -112,7 +112,7 @@ var catalog = []Spec{
 	{Name: "get", Runtime: "q_get", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeInt}, ReturnType: TypeAny, ReceiverType: TypeVectorAny},
 	{Name: "fillna", Runtime: "q_fillna", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeVectorAny, ReceiverType: TypeVectorAny},
 	{Name: "astype", Runtime: "q_astype", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeVectorAny, ReceiverType: TypeVectorAny},
-	{Name: "to_list", Runtime: "q_to_list", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeAny, ReceiverType: TypeVectorAny},
+	{Name: "to_list", Runtime: "q_to_list", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeVectorAny},
 
 	// Free-function aliases kept for backward compat during transition
 	{Name: "enumerate", Runtime: "q_enumerate", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeListAny},

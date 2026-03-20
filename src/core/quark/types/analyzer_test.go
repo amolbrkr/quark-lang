@@ -481,3 +481,37 @@ func TestUnwrapRejectsNonResultAtAnalysisTime(t *testing.T) {
 		t.Fatalf("expected unwrap result diagnostic, got: %v", typeErrs)
 	}
 }
+
+func TestPipeMethod_ChecksArgumentTypes(t *testing.T) {
+	_, _, parseErrs, typeErrs := testutil.Analyze("x = 1 | 'abc'.concat()\n")
+	if len(parseErrs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", parseErrs)
+	}
+	if len(typeErrs) == 0 {
+		t.Fatalf("expected type error for piped int into str.concat")
+	}
+	joined := strings.Join(typeErrs, "\n")
+	if !strings.Contains(joined, "argument 1 of 'concat' expects str, got int") {
+		t.Fatalf("expected concat argument type error, got: %v", typeErrs)
+	}
+}
+
+func TestVectorToList_ReturnsListTypeForMethodChains(t *testing.T) {
+	_, _, parseErrs, typeErrs := testutil.Analyze("xs = vector [1,2,3].to_list()\nprintln(xs.get(0))\n")
+	if len(parseErrs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", parseErrs)
+	}
+	if len(typeErrs) > 0 {
+		t.Fatalf("unexpected type errors: %v", typeErrs)
+	}
+}
+
+func TestForLoop_AllowsStringIterable(t *testing.T) {
+	_, _, parseErrs, typeErrs := testutil.Analyze("for ch in 'ab':\n    println(ch)\n")
+	if len(parseErrs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", parseErrs)
+	}
+	if len(typeErrs) > 0 {
+		t.Fatalf("unexpected type errors: %v", typeErrs)
+	}
+}

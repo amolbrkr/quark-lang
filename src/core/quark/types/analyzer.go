@@ -705,18 +705,14 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 								a.errorAt(node, "method '%s' expects %d-%d arguments but got %d", methodName, sig.MinArgs, sig.MaxArgs, argCount)
 							}
 						}
-						// Build full arg types with receiver prepended for type checking
-						fullArgTypes := make([]Type, 0, argCount+1)
-						fullArgTypes = append(fullArgTypes, receiverType)
-						fullArgTypes = append(fullArgTypes, argTypes...)
-						fullParamTypes := make([]Type, 0, len(sig.Type.ParamTypes)+1)
-						fullParamTypes = append(fullParamTypes, receiverType) // receiver matches itself
-						fullParamTypes = append(fullParamTypes, sig.Type.ParamTypes...)
 						a.checkArgTypes(methodName, sig.Type.ParamTypes, argTypes, argsNode.Children)
 						a.callPlans[node].ArgTypesChecked = true
 						// Use vfrom_list inference logic for list.to_vector()
 						if methodName == "to_vector" {
 							return a.inferBuiltinReturnType("vfrom_list", []Type{receiverType}, node)
+						}
+						if methodName == "to_list" {
+							return inferToListReturnType(receiverType)
 						}
 						return sig.Type.ReturnType
 					}
@@ -865,6 +861,17 @@ func calleeNameFromNode(node *ast.TreeNode) string {
 	return "function"
 }
 
+func inferToListReturnType(receiverType Type) Type {
+	vec, ok := receiverType.(*VectorType)
+	if !ok {
+		return &ListType{ElementType: TypeAny}
+	}
+	if isUnknownType(vec.ElementType) {
+		return &ListType{ElementType: TypeAny}
+	}
+	return &ListType{ElementType: vec.ElementType}
+}
+
 func (a *Analyzer) analyzeIfStatement(node *ast.TreeNode) Type {
 	if len(node.Children) < 2 {
 		return TypeVoid
@@ -984,9 +991,11 @@ func (a *Analyzer) analyzeForLoop(node *ast.TreeNode) Type {
 	// Enforce supported iterable types for runtime/codegen compatibility
 	if _, ok := iterType.(*ListType); !ok {
 		if _, isVector := iterType.(*VectorType); !isVector {
-			if !isUnknownType(iterType) {
-				a.errorAt(iterNode, "for loop expects list or vector iterable, got %s", iterType.String())
-				return TypeVoid
+			if !iterType.Equals(TypeString) {
+				if !isUnknownType(iterType) {
+					a.errorAt(iterNode, "for loop expects list, vector, or str iterable, got %s", iterType.String())
+					return TypeVoid
+				}
 			}
 		}
 	}
@@ -1003,7 +1012,9 @@ func (a *Analyzer) analyzeForLoop(node *ast.TreeNode) Type {
 	case *VectorType:
 		varType = t.ElementType
 	default:
-		if !isUnknownType(iterType) {
+		if iterType.Equals(TypeString) {
+			varType = TypeString
+		} else if !isUnknownType(iterType) {
 			a.errorAt(iterNode, "value of type '%s' is not iterable", iterType.String())
 		}
 	}
@@ -1496,9 +1507,17 @@ func (a *Analyzer) analyzePipe(node *ast.TreeNode) Type {
 								a.errorAt(node, "method '%s' expects %d-%d arguments but got %d (including piped input)", methodName, sig.MinArgs, sig.MaxArgs, pipeIntoMethodArgCount)
 							}
 						}
+						pipeMethodArgTypes := []Type{inputType}
+						pipeMethodArgTypes = append(pipeMethodArgTypes, argTypes...)
+						pipeMethodArgNodes := []*ast.TreeNode{inputNode}
+						pipeMethodArgNodes = append(pipeMethodArgNodes, argsNode.Children...)
+						a.checkArgTypes(methodName, sig.Type.ParamTypes, pipeMethodArgTypes, pipeMethodArgNodes)
 						a.callPlans[rightNode].ArgTypesChecked = true
 						if methodName == "to_vector" {
 							return a.inferBuiltinReturnType("vfrom_list", []Type{receiverType}, node)
+						}
+						if methodName == "to_list" {
+							return inferToListReturnType(receiverType)
 						}
 						return sig.Type.ReturnType
 					}

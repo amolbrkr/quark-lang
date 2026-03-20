@@ -109,6 +109,9 @@ func (a *Analyzer) pushScope() {
 }
 
 func (a *Analyzer) popScope() {
+	if a.currentScope == nil || a.currentScope.Parent == nil {
+		panic("internal compiler error: popScope called at root scope")
+	}
 	a.currentScope = a.currentScope.Parent
 }
 

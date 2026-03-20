@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"quark/ast"
+	"quark/diagnostics"
 	"quark/lexer"
 	"quark/parser"
 	"quark/token"
@@ -19,7 +20,7 @@ type ModuleLoader struct {
 	loadedModules map[string]string // absolute path -> primary module name
 	resolving     map[string]int    // absolute paths currently in DFS stack (for cycle detection)
 	stack         []string          // current import chain
-	errors        []string
+	errors        []diagnostics.Diagnostic
 }
 
 // NewModuleLoader creates a new module loader.
@@ -29,17 +30,38 @@ func NewModuleLoader() *ModuleLoader {
 		loadedModules: make(map[string]string),
 		resolving:     make(map[string]int),
 		stack:         make([]string, 0),
-		errors:        make([]string, 0),
+		errors:        make([]diagnostics.Diagnostic, 0),
 	}
 }
 
 // Errors returns any errors encountered during import resolution.
 func (ml *ModuleLoader) Errors() []string {
-	return ml.errors
+	out := make([]string, 0, len(ml.errors))
+	for _, d := range ml.errors {
+		out = append(out, d.String())
+	}
+	return out
 }
 
-func (ml *ModuleLoader) addError(format string, args ...interface{}) {
-	ml.errors = append(ml.errors, fmt.Sprintf(format, args...))
+func (ml *ModuleLoader) Diagnostics() []diagnostics.Diagnostic {
+	out := make([]diagnostics.Diagnostic, len(ml.errors))
+	copy(out, ml.errors)
+	return out
+}
+
+func (ml *ModuleLoader) addErrorAt(line int, col int, format string, args ...interface{}) {
+	msg := fmt.Sprintf(format, args...)
+	var loc *diagnostics.Location
+	if line > 0 {
+		loc = &diagnostics.Location{Line: line, Column: col}
+	}
+	ml.errors = append(ml.errors, diagnostics.Diagnostic{
+		Code:     "QK-LOAD-001",
+		Stage:    diagnostics.StageLoad,
+		Severity: diagnostics.SeverityError,
+		Message:  msg,
+		Location: loc,
+	})
 }
 
 func (ml *ModuleLoader) beginResolve(absPath string) {
@@ -188,7 +210,7 @@ func buildSyntheticUseNode(moduleName string, alias string, useLine int) *ast.Tr
 func (ml *ModuleLoader) ResolveImports(root *ast.TreeNode, currentFilePath string) {
 	absPath, err := filepath.Abs(currentFilePath)
 	if err != nil {
-		ml.addError("cannot resolve path for '%s': %s", currentFilePath, err)
+		ml.addErrorAt(0, 0, "cannot resolve path for '%s': %s", currentFilePath, err)
 		return
 	}
 	ml.beginResolve(absPath)
@@ -237,25 +259,25 @@ func (ml *ModuleLoader) resolveImportsInNode(node *ast.TreeNode, currentFilePath
 			// Tier 2: stdlib import
 			stdResolved, err := normalizeStdlibImportPath(importPath, currentFilePath)
 			if err != nil {
-				ml.addError("line %d: %s", useLine, err)
+				ml.addErrorAt(useLine, 0, "%s", err)
 				continue
 			}
 			resolvedPath = stdResolved
 		} else {
-			ml.addError("line %d: unsupported import path '%s'; use relative, absolute, or std/... path", useLine, importPath)
+			ml.addErrorAt(useLine, 0, "unsupported import path '%s'; use relative, absolute, or std/... path", importPath)
 			continue
 		}
 
 		absResolved, err := filepath.Abs(resolvedPath)
 		if err != nil {
-			ml.addError("line %d: cannot resolve import path '%s': %s", useLine, importPath, err)
+			ml.addErrorAt(useLine, 0, "cannot resolve import path '%s': %s", importPath, err)
 			continue
 		}
 
 		// Check for circular import (current DFS path)
 		if idx, inProgress := ml.resolving[absResolved]; inProgress {
 			chain := append(append([]string{}, ml.stack[idx:]...), absResolved)
-			ml.addError("line %d: circular import detected: %s", useLine, formatImportChain(chain))
+			ml.addErrorAt(useLine, 0, "circular import detected: %s", formatImportChain(chain))
 			continue
 		}
 
@@ -269,14 +291,14 @@ func (ml *ModuleLoader) resolveImportsInNode(node *ast.TreeNode, currentFilePath
 
 		// Check file exists
 		if _, err := os.Stat(absResolved); os.IsNotExist(err) {
-			ml.addError("line %d: cannot find module '%s': file '%s' does not exist", useLine, importPath, absResolved)
+			ml.addErrorAt(useLine, 0, "cannot find module '%s': file '%s' does not exist", importPath, absResolved)
 			continue
 		}
 
 		// Read and parse the imported file
 		content, err := os.ReadFile(absResolved)
 		if err != nil {
-			ml.addError("line %d: cannot read '%s': %s", useLine, absResolved, err)
+			ml.addErrorAt(useLine, 0, "cannot read '%s': %s", absResolved, err)
 			continue
 		}
 
@@ -288,7 +310,7 @@ func (ml *ModuleLoader) resolveImportsInNode(node *ast.TreeNode, currentFilePath
 
 		if len(p.Errors()) > 0 {
 			for _, pErr := range p.Errors() {
-				ml.addError("in '%s': %s", importPath, pErr)
+				ml.addErrorAt(useLine, 0, "in '%s': %s", importPath, pErr)
 			}
 			continue
 		}
@@ -305,7 +327,7 @@ func (ml *ModuleLoader) resolveImportsInNode(node *ast.TreeNode, currentFilePath
 		ml.endResolve(absResolved)
 
 		if len(directModules) == 0 {
-			ml.addError("line %d: imported file '%s' does not define a module", useLine, importPath)
+			ml.addErrorAt(useLine, 0, "imported file '%s' does not define a module", importPath)
 			continue
 		}
 
@@ -323,7 +345,7 @@ func (ml *ModuleLoader) resolveImportsInNode(node *ast.TreeNode, currentFilePath
 			moduleName = directModules[0].Children[0].TokenLiteral()
 		}
 		if moduleName == "" {
-			ml.addError("line %d: module in '%s' has no name", useLine, importPath)
+			ml.addErrorAt(useLine, 0, "module in '%s' has no name", importPath)
 			continue
 		}
 		ml.loadedModules[absResolved] = moduleName

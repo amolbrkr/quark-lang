@@ -3,6 +3,7 @@ package parser
 import (
 	"fmt"
 	"quark/ast"
+	"quark/diagnostics"
 	"quark/token"
 )
 
@@ -12,13 +13,13 @@ type Parser struct {
 	tokens   []token.Token
 	pos      int
 	curToken token.Token
-	errors   []string
+	errors   []diagnostics.Diagnostic
 }
 
 func New(tokens []token.Token) *Parser {
 	p := &Parser{
 		tokens: tokens,
-		errors: make([]string, 0),
+		errors: make([]diagnostics.Diagnostic, 0),
 	}
 	if len(tokens) > 0 {
 		p.curToken = tokens[0]
@@ -27,12 +28,29 @@ func New(tokens []token.Token) *Parser {
 }
 
 func (p *Parser) Errors() []string {
-	return p.errors
+	out := make([]string, 0, len(p.errors))
+	for _, d := range p.errors {
+		out = append(out, d.String())
+	}
+	return out
+}
+
+func (p *Parser) Diagnostics() []diagnostics.Diagnostic {
+	out := make([]diagnostics.Diagnostic, len(p.errors))
+	copy(out, p.errors)
+	return out
 }
 
 func (p *Parser) addError(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
-	p.errors = append(p.errors, fmt.Sprintf("line %d: %s", p.curToken.Line, msg))
+	loc := &diagnostics.Location{Line: p.curToken.Line, Column: p.curToken.Column}
+	p.errors = append(p.errors, diagnostics.Diagnostic{
+		Code:     "QK-PARSE-001",
+		Stage:    diagnostics.StageParse,
+		Severity: diagnostics.SeverityError,
+		Message:  msg,
+		Location: loc,
+	})
 }
 
 func (p *Parser) nextToken() {

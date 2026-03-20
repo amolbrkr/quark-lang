@@ -11,6 +11,7 @@ import (
 
 	"quark/ast"
 	"quark/codegen"
+	"quark/diagnostics"
 	"quark/invariants"
 	"quark/lexer"
 	"quark/loader"
@@ -282,6 +283,12 @@ func printUsage() {
 	fmt.Println("  quark test.qrk                    # Shorthand for run")
 }
 
+func printDiagnostics(diags []diagnostics.Diagnostic) {
+	for _, d := range diags {
+		fmt.Fprintln(os.Stderr, d.String())
+	}
+}
+
 // resolveImports runs the module loader on the parsed AST to splice in external file imports.
 // Returns true if successful, false if there were errors (printed to stderr).
 func resolveImports(tree *ast.TreeNode, filename string) bool {
@@ -295,10 +302,7 @@ func resolveImports(tree *ast.TreeNode, filename string) bool {
 	ml.ResolveImports(tree, absPath)
 
 	if len(ml.Errors()) > 0 {
-		fmt.Fprintln(os.Stderr, "Import errors:")
-		for _, e := range ml.Errors() {
-			fmt.Fprintf(os.Stderr, "  %s\n", e)
-		}
+		printDiagnostics(diagnostics.WithDefaultFile(ml.Diagnostics(), absPath))
 		return false
 	}
 	return true
@@ -338,10 +342,7 @@ func runParser(filename string) {
 	tree := p.Parse()
 
 	if len(p.Errors()) > 0 {
-		fmt.Println("Parser errors:")
-		for _, err := range p.Errors() {
-			fmt.Printf("  %s\n", err)
-		}
+		printDiagnostics(diagnostics.WithDefaultFile(p.Diagnostics(), filename))
 		os.Exit(1)
 	}
 
@@ -369,10 +370,7 @@ func runCheck(filename string) {
 	tree := p.Parse()
 
 	if len(p.Errors()) > 0 {
-		fmt.Println("Parser errors:")
-		for _, err := range p.Errors() {
-			fmt.Printf("  %s\n", err)
-		}
+		printDiagnostics(diagnostics.WithDefaultFile(p.Diagnostics(), filename))
 		os.Exit(1)
 	}
 
@@ -384,10 +382,7 @@ func runCheck(filename string) {
 	analyzer.Analyze(tree)
 
 	if len(analyzer.Errors()) > 0 {
-		fmt.Println("Type errors:")
-		for _, err := range analyzer.Errors() {
-			fmt.Printf("  %s\n", err)
-		}
+		printDiagnostics(diagnostics.WithDefaultFile(analyzer.Diagnostics(), filename))
 		os.Exit(1)
 	}
 
@@ -408,10 +403,7 @@ func runEmit(filename string) {
 	tree := p.Parse()
 
 	if len(p.Errors()) > 0 {
-		fmt.Println("Parser errors:")
-		for _, err := range p.Errors() {
-			fmt.Printf("  %s\n", err)
-		}
+		printDiagnostics(diagnostics.WithDefaultFile(p.Diagnostics(), filename))
 		os.Exit(1)
 	}
 
@@ -424,10 +416,7 @@ func runEmit(filename string) {
 	analyzer.Analyze(tree)
 
 	if len(analyzer.Errors()) > 0 {
-		fmt.Fprintln(os.Stderr, "Type errors:")
-		for _, err := range analyzer.Errors() {
-			fmt.Fprintf(os.Stderr, "  %s\n", err)
-		}
+		printDiagnostics(diagnostics.WithDefaultFile(analyzer.Diagnostics(), filename))
 		os.Exit(1)
 	}
 
@@ -467,10 +456,7 @@ func runBuild(filename string, output string, useGC bool, lto bool) {
 	tree := p.Parse()
 
 	if len(p.Errors()) > 0 {
-		fmt.Fprintln(os.Stderr, "Parser errors:")
-		for _, err := range p.Errors() {
-			fmt.Fprintf(os.Stderr, "  %s\n", err)
-		}
+		printDiagnostics(diagnostics.WithDefaultFile(p.Diagnostics(), filename))
 		os.Exit(1)
 	}
 
@@ -483,10 +469,7 @@ func runBuild(filename string, output string, useGC bool, lto bool) {
 	analyzer.Analyze(tree)
 
 	if len(analyzer.Errors()) > 0 {
-		fmt.Fprintln(os.Stderr, "Type errors:")
-		for _, err := range analyzer.Errors() {
-			fmt.Fprintf(os.Stderr, "  %s\n", err)
-		}
+		printDiagnostics(diagnostics.WithDefaultFile(analyzer.Diagnostics(), filename))
 		os.Exit(1)
 	}
 
@@ -592,10 +575,7 @@ func runRun(filename string, debug bool, useGC bool, lto bool) {
 	tree := p.Parse()
 
 	if len(p.Errors()) > 0 {
-		fmt.Fprintln(os.Stderr, "Parser errors:")
-		for _, err := range p.Errors() {
-			fmt.Fprintf(os.Stderr, "  %s\n", err)
-		}
+		printDiagnostics(diagnostics.WithDefaultFile(p.Diagnostics(), filename))
 		os.Exit(1)
 	}
 
@@ -608,10 +588,7 @@ func runRun(filename string, debug bool, useGC bool, lto bool) {
 	analyzer.Analyze(tree)
 
 	if len(analyzer.Errors()) > 0 {
-		fmt.Fprintln(os.Stderr, "Type errors:")
-		for _, err := range analyzer.Errors() {
-			fmt.Fprintf(os.Stderr, "  %s\n", err)
-		}
+		printDiagnostics(diagnostics.WithDefaultFile(analyzer.Diagnostics(), filename))
 		os.Exit(1)
 	}
 

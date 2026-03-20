@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"quark/ast"
 	"quark/builtins"
+	"quark/diagnostics"
 	"quark/ir"
 )
 
@@ -29,7 +30,7 @@ type Module struct {
 // Analyzer performs semantic analysis on the AST
 type Analyzer struct {
 	currentScope    *Scope
-	errors          []string
+	errors          []diagnostics.Diagnostic
 	functions       map[string]*FunctionType // Track function signatures
 	modules         map[string]*Module       // Track defined modules
 	moduleAliases   map[string]string        // Alias -> module name mapping from use statements
@@ -75,7 +76,7 @@ func NewAnalyzer() *Analyzer {
 
 	return &Analyzer{
 		currentScope:    globalScope,
-		errors:          make([]string, 0),
+		errors:          make([]diagnostics.Diagnostic, 0),
 		functions:       funcs,
 		modules:         make(map[string]*Module),
 		moduleAliases:   make(map[string]string),
@@ -89,19 +90,41 @@ func NewAnalyzer() *Analyzer {
 }
 
 func (a *Analyzer) Errors() []string {
-	return a.errors
+	out := make([]string, 0, len(a.errors))
+	for _, d := range a.errors {
+		out = append(out, d.String())
+	}
+	return out
+}
+
+func (a *Analyzer) Diagnostics() []diagnostics.Diagnostic {
+	out := make([]diagnostics.Diagnostic, len(a.errors))
+	copy(out, a.errors)
+	return out
 }
 
 func (a *Analyzer) addError(format string, args ...interface{}) {
-	a.errors = append(a.errors, fmt.Sprintf(format, args...))
+	a.errors = append(a.errors, diagnostics.Diagnostic{
+		Code:     "QK-CHECK-001",
+		Stage:    diagnostics.StageCheck,
+		Severity: diagnostics.SeverityError,
+		Message:  fmt.Sprintf(format, args...),
+	})
 }
 
 func (a *Analyzer) errorAt(node *ast.TreeNode, format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
+	var loc *diagnostics.Location
 	if node != nil && node.Token != nil {
-		msg = fmt.Sprintf("line %d, col %d: %s", node.Token.Line, node.Token.Column, msg)
+		loc = &diagnostics.Location{Line: node.Token.Line, Column: node.Token.Column}
 	}
-	a.errors = append(a.errors, msg)
+	a.errors = append(a.errors, diagnostics.Diagnostic{
+		Code:     "QK-CHECK-001",
+		Stage:    diagnostics.StageCheck,
+		Severity: diagnostics.SeverityError,
+		Message:  msg,
+		Location: loc,
+	})
 }
 
 func (a *Analyzer) pushScope() {

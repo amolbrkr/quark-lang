@@ -268,6 +268,102 @@ func TestSmokePrograms_Run(t *testing.T) {
 				"row.....|00000042",
 			),
 		},
+		{
+			name: "default_params",
+			file: filepath.Join(testfilesDir, "smoke_default_params.qrk"),
+			expected: join(
+				"== smoke: default parameters ==",
+				"Hello World",
+				"Hi World",
+				"localhost:8080",
+				"localhost:3000",
+				"localhost:3000",
+				"3",
+				"5",
+				"test",
+				"[VERBOSE] test",
+				"10",
+				"15",
+				"15",
+				"25",
+				"5",
+				"10",
+				"5",
+				"null",
+				"9",
+				"15",
+				"Result: 42!",
+				"Result: 42.",
+			),
+		},
+		{
+			name: "functions_closures",
+			file: filepath.Join(testfilesDir, "smoke_functions_closures.qrk"),
+			expected: join(
+				"55",
+				"1",
+				"2",
+			),
+		},
+		{
+			name: "return_types",
+			file: filepath.Join(testfilesDir, "smoke_return_types.qrk"),
+			expected: join(
+				"== smoke: return type annotations ==",
+				"7",
+				"10",
+				"3.14",
+				"Hello, World",
+				"true",
+				"false",
+				"5",
+				"division by zero",
+				"36",
+				"zero",
+				"one",
+				"other",
+				"5",
+				"3",
+				"3",
+				"10",
+				"120",
+			),
+		},
+		{
+			name: "vectors",
+			file: filepath.Join(testfilesDir, "smoke_vectors.qrk"),
+			expected: join(
+				"== smoke: vectors ==",
+				"vector[i64]",
+				"vector[str]",
+				"vector[str]",
+				"[vector len=5]",
+				"3",
+				"2",
+				"3",
+				"3",
+				"1",
+				"4",
+				"1",
+				"[vector len=3]",
+				"3",
+				"10",
+				"50",
+				"50",
+				"120",
+				"0",
+				"[vector len=2]",
+				"1",
+				"4",
+			),
+		},
+		{
+			name: "modules_error_graph",
+			file: filepath.Join(testfilesDir, "smoke_modules_error_graph.qrk"),
+			expected: join(
+				"2",
+			),
+		},
 	}
 
 	for _, tc := range cases {
@@ -293,6 +389,41 @@ func TestSmokePrograms_Run(t *testing.T) {
 			expNorm := strings.TrimSpace(normalizeNewlines(tc.expected))
 			if gotNorm != expNorm {
 				t.Fatalf("unexpected output\n--- got ---\n%s\n--- expected ---\n%s", gotNorm, expNorm)
+			}
+		})
+	}
+}
+
+func TestSmokePrograms_CompileError(t *testing.T) {
+	root := repoRootFromThisFile(t)
+	testfilesDir := filepath.Join(root, "src", "testfiles")
+
+	cases := []struct {
+		name       string
+		file       string
+		errSubstr  string
+	}{
+		{
+			name:      "modules_error_resolve",
+			file:      filepath.Join(testfilesDir, "smoke_modules_error_resolve.qrk"),
+			errSubstr: "cannot find module",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exec.Command(quarkExePath, "run", tc.file)
+			var out bytes.Buffer
+			var errBuf bytes.Buffer
+			cmd.Stdout = &out
+			cmd.Stderr = &errBuf
+			err := cmd.Run()
+			if err == nil {
+				t.Fatalf("expected compile error for %s, but it succeeded with output:\n%s", tc.name, out.String())
+			}
+			combined := out.String() + errBuf.String()
+			if !strings.Contains(combined, tc.errSubstr) {
+				t.Fatalf("expected error containing %q, got:\nstdout: %s\nstderr: %s", tc.errSubstr, out.String(), errBuf.String())
 			}
 		})
 	}

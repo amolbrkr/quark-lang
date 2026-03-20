@@ -18,7 +18,7 @@ fn pi() float -> 3.14
 println(pi())
 
 // String return type
-fn greet(name: str) str -> concat('Hello, ', name)
+fn greet(name: str) str -> 'Hello, '.concat(name)
 
 println(greet('World'))
 

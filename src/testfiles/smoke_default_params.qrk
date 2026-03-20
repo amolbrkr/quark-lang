@@ -3,14 +3,14 @@ println('== smoke: default parameters ==')
 
 // Basic default parameter
 fn greet(name: str, greeting: str = 'Hello') str ->
-    concat(greeting, concat(' ', name))
+    greeting.concat(' ').concat(name)
 
 println(greet('World'))
 println(greet('World', 'Hi'))
 
 // Multiple defaults
 fn connect(host: str, port: int = 8080, timeout: int = 30) str ->
-    concat(host, concat(':', to_str(port)))
+    host.concat(':').concat(to_str(port))
 
 println(connect('localhost'))
 println(connect('localhost', 3000))
@@ -25,7 +25,7 @@ println(repeat_n('hello', 5))
 // Default with bool
 fn log_msg(msg: str, verbose: bool = false) str ->
     if verbose:
-        concat('[VERBOSE] ', msg)
+        '[VERBOSE] '.concat(msg)
     else:
         msg
 
@@ -69,7 +69,7 @@ println(offset(10, 5))
 
 // Mixed required and default params
 fn format(prefix: str, value: int, suffix: str = '!') str ->
-    concat(prefix, concat(to_str(value), suffix))
+    prefix.concat(to_str(value)).concat(suffix)
 
 println(format('Result: ', 42))
 println(format('Result: ', 42, '.'))

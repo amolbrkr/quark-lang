@@ -207,8 +207,7 @@ IfStatement     ::= "if" Expression ":" Block
 ForLoop         ::= "for" ID "in" Expression ":" Block
 ```
 
-Current semantic restriction:
-- Iterable must be `list` or `vector`
+Supported iterables: `list`, `vector`, `str`
 
 ### 8.3 While loop
 
@@ -328,13 +327,16 @@ Interpolation parsing rules (future):
 
 ## 11) Runtime-Oriented Semantic Rules
 
-### 11.1 Dict/member rules
+### 11.1 Dot syntax rules
 
-- `d.key` reads dict key
-- `d.key = value` writes dict key
-- Dot access on non-dict is an analyzer/runtime error
-- Dot-call on values (`x.f()`) is unsupported
-- Module-qualified calls are supported after `use ... as alias`: `alias.fn(...)`
+Dot syntax (`.`) serves three purposes:
+
+- `d.key` — dict key read
+- `d.key = value` — dict key write
+- `value.method(args)` — method dispatch (receiver type determines which method is resolved; see stdlib.md for available methods per type)
+- `alias.fn(args)` — module-qualified call after `use ... as alias`
+
+Dot-key access on a non-dict value is a runtime error. Method calls on types that don't define the method are a compile-time error.
 
 ### 11.2 Indexing
 
@@ -377,27 +379,25 @@ Result construction and use:
 
 ## 12) Builtin Surface (Current)
 
-### 12.1 I/O
-- `print`, `println`, `input`
+### 12.1 Free functions
 
-### 12.2 Conversion/introspection
-- `len`, `to_str`, `to_int`, `to_float`, `to_bool`, `type`
-- `is_ok`, `is_err`, `unwrap`
+| Category | Functions |
+|----------|-----------|
+| I/O | `print`, `println`, `input` |
+| Conversion | `len`, `to_str`, `to_int`, `to_float`, `to_bool`, `type` |
+| Result | `is_ok`, `is_err`, `unwrap` |
+| Math/range | `range`, `abs`, `min`, `max`, `sum`, `sqrt`, `floor`, `ceil`, `round` |
+| Iteration | `enumerate` |
+| File I/O | `_file_open`, `_file_read`, `_file_write`, `_file_close`, `_file_seek`, `_file_exists` |
 
-### 12.3 Math and range
-- `range`, `abs`, `min`, `max`, `sum`, `sqrt`, `floor`, `ceil`, `round`
+### 12.2 Methods (by receiver type)
 
-### 12.4 String
-- `upper`, `lower`, `trim`, `contains`, `startswith`, `endswith`, `replace`, `concat`, `split`
-
-### 12.5 List
-- `push`, `pop`, `get`, `set`, `insert`, `remove`, `slice`, `reverse`, `concat`
-
-### 12.6 Dict
-- `dget`, `dset`
-
-### 12.7 Vector
-- `to_vector`, `to_list`, `fillna`, `astype`
+| Receiver | Methods |
+|----------|---------|
+| `str` | `.upper()`, `.lower()`, `.trim()`, `.contains(sub)`, `.startswith(s)`, `.endswith(s)`, `.replace(old, new)`, `.concat(s)`, `.split(sep)`, `.slice(start, end)` |
+| `list` | `.push(item)`, `.pop()`, `.get(idx)`, `.set(idx, val)`, `.insert(idx, val)`, `.remove(idx)`, `.slice(start, end)`, `.reverse()`, `.concat(other)`, `.join(sep)`, `.enumerate()`, `.to_vector()` |
+| `dict` | `.get(key)`, `.set(key, val)`, `.keys()`, `.values()`, `.items()` |
+| `vector` | `.get(idx)`, `.fillna(val)`, `.astype(dtype)`, `.to_list()` |
 
 ## 13) Feature Status Matrix
 
@@ -416,7 +416,7 @@ Result construction and use:
 | Vector literals (`vector [...]`) | Implemented | 1D only |
 | Dict literals (`dict {k: v}`) | Implemented | Keys are identifiers in source |
 | Loop control (`break`, `continue`) | Implemented | Exits/skips nearest enclosing loop; compile error outside loops |
-| Dot-call syntax on values | Not implemented | Use function-call/pipe model |
+| Method dispatch (`value.method()`) | Implemented | String, list, dict, vector methods |
 | Module-qualified call syntax (`alias.fn(...)`) | Implemented | Requires `use ... as alias` |
 | Dot data access on dict | Implemented | read/write |
 | Result values `ok` / `err` | Implemented | Analyzer has `ResultType` |
@@ -429,18 +429,16 @@ Result construction and use:
 
 ## 14) Known Limits / Current Diagnostics
 
-- `for` iterables are currently restricted to list/vector
 - Quoted non-path imports must use `std/...`; bare quoted names are rejected
-- Dict bracket indexing is rejected by analyzer
-- Dot access is dict-only for data; module-qualified calls are the only supported dot-call form
+- Dict bracket indexing is rejected by analyzer; use dot access or `.get()`/`.set()`
 - String interpolation (`!{...}`) is deferred from v0.1
 
 ## 15) Source of Truth Policy
 
 To reduce drift:
 - `grammar.md` is canonical for syntax and semantic surface definitions.
+- `semantics.md` is canonical for runtime behaviour, error model, and design decisions.
 - `stdlib.md` is canonical for builtin surface and documented behavior contracts.
+- `architecture.md` documents implementation internals (compiler pipeline, runtime structs, codegen).
 - `src/core/quark/builtins/catalog.go` is the code-level source of truth for builtin names, arity, and runtime symbol mapping.
-- During Phase 1 stabilization, changes to language behavior must update both files in the same change.
 
-If either file conflicts with implementation, treat it as a release blocker and resolve before adding features.

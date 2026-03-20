@@ -85,7 +85,15 @@ Runtime tests use Catch2: `src/core/quark/runtime/tests/`
 - **Shared mutable captures** use `QCell*` — multiple closures over the same variable share one cell.
 - **Memory** — Boehm GC vendored at `deps/bdwgc/`. Use `q_malloc_atomic()` for data without pointers (strings, numeric buffers).
 - **CallPlan** (`ir/call.go`) — IR metadata attached to each call site by the analyzer. Tracks call kind (builtin vs user), arity, default arg filling. Codegen reads these instead of re-analyzing.
-- **Builtin catalog** (`builtins/`) — shared metadata (name, arity, signatures) used by both analyzer and codegen.
+- **Builtin catalog** (`builtins/`) — shared metadata (name, arity, signatures) used by both analyzer and codegen. Methods are indexed by `(ReceiverType, methodName)` pair, separate from free functions.
+- **Method dispatch** — When codegen sees `IsMethod=true` on a CallPlan, the receiver expression is injected as the first runtime argument (e.g., `"hello".upper()` becomes `q_upper(receiver_val)`).
+
+## Adding a New Builtin
+
+1. Add a `Spec` entry in `builtins/catalog.go` (set `ReceiverType` for methods, leave empty for free functions)
+2. Implement the C++ function in `runtime/include/quark/builtins/*.hpp` with `q_` prefix
+3. Analyzer and codegen pick it up automatically via the catalog
+4. Add a smoke test in `src/testfiles/smoke_*.qrk`
 
 ## Test Files
 

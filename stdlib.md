@@ -433,15 +433,4 @@ list ['a', 'b', 'c'].join(',') | println()   // a,b,c
 
 ---
 
-## Builtin Wiring
-
-Builtin definitions are wired through a shared catalog plus runtime implementation:
-
-1. C++ implementation in headers under `src/core/quark/runtime/include/quark/`
-2. Shared catalog (`src/core/quark/builtins/catalog.go`) — names, arity, type keys, runtime symbols, and receiver types
-3. Analyzer and codegen consume catalog data instead of maintaining hardcoded lists
-
-**Adding a new builtin:**
-1. Add C++ implementation in the runtime header
-2. Register in catalog with `ReceiverType` set to the receiver type key for methods, or empty for free functions
-3. Add tests in `codegen/codegen_test.go` and `types/analyzer_test.go`
+For implementation details on how builtins are wired (catalog, runtime headers, codegen), see **architecture.md** §6.

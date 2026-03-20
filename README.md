@@ -35,26 +35,29 @@ Quark currently supports:
 - Conditionals, loops, ternary expressions, and pattern matching.
 - Explicit result values using ok/err pattern and related helpers.
 - Pipelined call style via the pipe operator.
+- Method dispatch on strings, lists, dicts, and vectors.
 - Multi-file imports and stdlib path imports.
 
-
 ```quark
-push(nums, 4)
+nums = list [1, 2, 3]
+nums.push(4)
 len(nums)
-upper('hello')
+'hello'.upper()
 ```
 
-Pipes are equivalent call sugar:
+Pipes chain free-function calls:
 
 ```quark
-'hello' | upper() | println()
+'hello'.upper() | println()
 ```
 
-Dot access is for dict data access, with one exception: module-qualified calls via aliases.
+Dot syntax serves three purposes: dict key access, method calls, and module-qualified calls.
 
 ```quark
 d = dict { name: 'quark' }
 println(d.name)
+
+'hello world'.split(' ') | println()
 
 use 'std/demo_math' as dm
 println(dm.add10(5))
@@ -187,16 +190,16 @@ when safe_div(10, 2):
 ### Pipes for readable transformations
 
 ```quark
-'  quark  ' | trim() | upper() | println()
+'  quark  '.trim().upper() | println()
 ```
 
 ### Lists for general-purpose dynamic collections
 
 ```quark
 nums = list [1, 2, 3]
-push(nums, 4)
-println(get(nums, 0))
-println(len(nums))
+nums.push(4)
+nums.get(0) | println()
+len(nums) | println()
 ```
 
 ### Vectors for typed, data-oriented operations
@@ -215,8 +218,8 @@ user = dict { name: 'alex', age: 30 }
 println(user.name)
 
 k = 'name'
-println(dget(user, k))
-user = dset(user, 'city', 'dublin')
+user.get(k) | println()
+user = user.set('city', 'dublin')
 println(user.city)
 ```
 
@@ -250,15 +253,17 @@ println(dm.add10(32))
 
 All builtins are globally available; no import is required.
 
-### I/O
+### Free Functions
+
+#### I/O
 
 | Function | Arity | Returns | Notes |
 |---|---:|---|---|
-| print | 1 | void | Prints without newline |
+| print | 1..5 | void | Configurable end, width, alignment, pad |
 | println | 1 | void | Prints with newline |
 | input | 0..1 | str | Optional prompt must be string |
 
-### Conversions, Introspection, Result Helpers
+#### Conversions, Introspection, Result Helpers
 
 | Function | Arity | Returns | Notes |
 |---|---:|---|---|
@@ -272,78 +277,94 @@ All builtins are globally available; no import is required.
 | is_err | 1 | bool | Expects result value |
 | unwrap | 1 | any | Panics on err |
 
-### Range
+#### Range
 
 | Function | Arity | Returns | Notes |
 |---|---:|---|---|
-| range | 1..3 | list[int] | range(end), range(start,end), range(start,end,step) |
+| range | 1..3 | list | range(end), range(start,end), range(start,end,step) |
 
-### Math
+#### Math
 
 | Function | Arity | Returns | Notes |
 |---|---:|---|---|
-| abs | 1 | any | Numeric/vector behaviors enforced by analyzer/runtime |
-| min | 1..2 | any | Scalar or vector overload behavior |
-| max | 1..2 | any | Scalar or vector overload behavior |
-| sum | 1 | any | Scalar/list/vector dependent behavior |
+| abs | 1 | any | Preserves type |
+| min | 1..2 | any | Scalar or vector |
+| max | 1..2 | any | Scalar or vector |
+| sum | 1 | any | Vector/list reduction |
 | sqrt | 1 | float | Domain error on negative |
 | floor | 1 | int | Float to int |
 | ceil | 1 | int | Float to int |
 | round | 1 | int | Float to nearest int |
 
-### String
+#### Other
 
 | Function | Arity | Returns | Notes |
 |---|---:|---|---|
-| upper | 1 | str | Uppercase copy |
-| lower | 1 | str | Lowercase copy |
-| trim | 1 | str | Strip leading/trailing whitespace |
-| contains | 2 | bool | substring test |
-| startswith | 2 | bool | prefix test |
-| endswith | 2 | bool | suffix test |
-| replace | 3 | str | Replace all occurrences |
-| concat | 2 | any | Supports str+str and list+list |
-| split | 2 | list[str] | Separator-based split |
+| enumerate | 1 | list | Build list of `{ index, value }` records |
 
-### List
+### Methods (by receiver type)
 
-| Function | Arity | Returns | Notes |
-|---|---:|---|---|
-| push | 2 | list | Append item |
-| pop | 1 | any | Runtime error on empty list |
-| get | 2 | any | Out-of-bounds returns null |
-| set | 3 | any | Index assignment semantics |
-| insert | 3 | list | Insert at index |
-| remove | 2 | any | Remove at index |
-| slice | 3 | list | [start, end) |
-| reverse | 1 | list | In-place reverse |
+#### String methods (`str`)
 
-### Dict
+| Method | Description |
+|--------|-------------|
+| `.upper()` | Uppercase copy |
+| `.lower()` | Lowercase copy |
+| `.trim()` | Strip leading/trailing whitespace |
+| `.contains(sub)` | Substring test |
+| `.startswith(prefix)` | Prefix test |
+| `.endswith(suffix)` | Suffix test |
+| `.replace(old, new)` | Replace all occurrences |
+| `.concat(other)` | Concatenate strings |
+| `.split(sep)` | Split by separator |
+| `.slice(start, end)` | Substring `[start:end)` |
 
-| Function | Arity | Returns | Notes |
-|---|---:|---|---|
-| dget | 2 | any | Missing key returns null |
-| dset | 3 | dict | Set key/value and return dict |
+#### List methods (`list`)
 
-### Vector
+| Method | Description |
+|--------|-------------|
+| `.push(item)` | Append item; returns updated list |
+| `.pop()` | Remove and return last item |
+| `.get(idx)` | Get at index (out-of-bounds → null) |
+| `.set(idx, val)` | Set at index; returns value |
+| `.insert(idx, val)` | Insert at index; returns list |
+| `.remove(idx)` | Remove at index; returns removed item |
+| `.slice(start, end)` | Sublist `[start:end)` |
+| `.reverse()` | Reverse in place; returns list |
+| `.concat(other)` | Concatenate two lists |
+| `.join(sep)` | Join elements with separator |
+| `.enumerate()` | Build `{ index, value }` records |
+| `.to_vector()` | Convert to typed vector |
 
-| Function | Arity | Returns | Notes |
-|---|---:|---|---|
-| fillna | 2 | vector | Replace null-like entries |
-| astype | 2 | vector | Cast vector dtype |
-| to_vector | 1 | any | Convert list/vector to vector form |
-| to_list | 1 | any | Convert vector/list to list form |
+#### Dict methods (`dict`)
+
+| Method | Description |
+|--------|-------------|
+| `.get(key)` | Get value by key (missing → null) |
+| `.set(key, val)` | Set key/value; returns updated dict |
+| `.keys()` | Return list of keys |
+| `.values()` | Return list of values |
+| `.items()` | Return list of `{ key, value }` records |
+
+#### Vector methods (`vector`)
+
+| Method | Description |
+|--------|-------------|
+| `.get(idx)` | Get scalar value at index |
+| `.fillna(val)` | Replace null entries |
+| `.astype(dtype)` | Cast vector dtype |
+| `.to_list()` | Convert back to list |
 
 ### Quick stdlib snippets
 
 ```quark
 println(to_int('42'))
 println(range(1, 5))
-println(upper('quark'))
+'quark'.upper() | println()
 
 vals = list [1, 2, 3]
-push(vals, 4)
-println(sum(to_vector(vals)))
+vals.push(4)
+println(sum(vals.to_vector()))
 ```
 
 For a deeper narrative and behavior notes, see stdlib.md.
@@ -429,8 +450,8 @@ Quark favors explicit failure:
 
 Documented exceptions:
 
-- get(list, idx) may return null for out-of-bounds.
-- dget(dict, key) returns null for missing keys.
+- `.get(idx)` on list returns null for out-of-bounds.
+- `.get(key)` on dict returns null for missing keys.
 
 ### Status summary
 
@@ -440,6 +461,7 @@ Implemented:
 - Closures and function values.
 - Pipes, control-flow, pattern matching.
 - Lists, dicts, vectors, results.
+- Method dispatch on str, list, dict, vector.
 - Multi-file imports and stdlib imports.
 
 Planned:
@@ -447,6 +469,8 @@ Planned:
 - Structs and impl blocks.
 - Tensor type.
 - Additional optimizer passes beyond current architecture.
+
+For detailed implementation internals, see architecture.md.
 
 ## License
 

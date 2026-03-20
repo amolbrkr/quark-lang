@@ -101,6 +101,9 @@ inline QValue q_eq(QValue a, QValue b) {
         case QValue::VAL_BOOL:
             return qv_bool(a.data.bool_val == b.data.bool_val);
         case QValue::VAL_STRING:
+            if (!a.data.string_val || !b.data.string_val) {
+                return qv_bool(a.data.string_val == b.data.string_val);
+            }
             return qv_bool(strcmp(a.data.string_val, b.data.string_val) == 0);
         case QValue::VAL_NULL:
             return qv_bool(true);

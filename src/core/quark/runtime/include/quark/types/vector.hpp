@@ -526,6 +526,10 @@ inline QValue q_vec_div_i64(QValue a, QValue b) {
         outv.resize(avp->size());
         out.data.vector_val->count = avp->size();
         for (size_t i = 0; i < avp->size(); i++) {
+            if ((*bvp)[i] == 0) {
+                std::fprintf(stderr, "runtime error: division by zero in vector element %zu\n", i);
+                std::exit(1);
+            }
             outv[i] = static_cast<double>((*avp)[i]) / static_cast<double>((*bvp)[i]);
         }
         return out;
@@ -537,6 +541,10 @@ inline QValue q_vec_div_i64(QValue a, QValue b) {
             return qv_null();
         }
         const double bs = static_cast<double>(q_to_i64_scalar(b));
+        if (bs == 0.0) {
+            std::fprintf(stderr, "runtime error: division by zero in vector / scalar\n");
+            std::exit(1);
+        }
         QValue out = qv_vector(static_cast<int>(avp->size()));
         QVecF64& outv = std::get<QVecF64>(out.data.vector_val->storage);
         outv.resize(avp->size());
@@ -558,6 +566,10 @@ inline QValue q_vec_div_i64(QValue a, QValue b) {
         outv.resize(bvp->size());
         out.data.vector_val->count = bvp->size();
         for (size_t i = 0; i < bvp->size(); i++) {
+            if ((*bvp)[i] == 0) {
+                std::fprintf(stderr, "runtime error: division by zero in vector element %zu\n", i);
+                std::exit(1);
+            }
             outv[i] = as / static_cast<double>((*bvp)[i]);
         }
         return out;
@@ -603,7 +615,13 @@ inline QValue q_vec_div(QValue a, QValue b) {
             return out;
         }
     }
-    return q_vec_binary_impl(a, b, [](double x, double y) { return x / y; });
+    return q_vec_binary_impl(a, b, [](double x, double y) -> double {
+        if (y == 0.0) {
+            std::fprintf(stderr, "runtime error: vector division by zero (f64)\n");
+            std::exit(1);
+        }
+        return x / y;
+    });
 }
 
 inline QValue q_vec_sum(QValue vec) {

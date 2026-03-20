@@ -117,7 +117,7 @@ inline QValue q_file_open(QValue path, QValue mode, QValue binary) {
         return q_file_sys_err("open", path.data.string_val);
     }
 
-    QFilePayload* payload = static_cast<QFilePayload*>(std::malloc(sizeof(QFilePayload)));
+    QFilePayload* payload = static_cast<QFilePayload*>(q_malloc(sizeof(QFilePayload)));
     if (!payload) {
 #ifdef _WIN32
         _close(fd);
@@ -138,7 +138,7 @@ inline QValue q_file_open(QValue path, QValue mode, QValue binary) {
 #else
         ::close(fd);
 #endif
-        std::free(payload);
+        // payload is GC-managed, no manual free needed
         std::fprintf(stderr, "runtime error: _file_open() failed to allocate resource handle\n");
         std::exit(1);
     }
@@ -233,7 +233,7 @@ inline QValue q_file_close(QValue file) {
         return q_file_sys_err("close", nullptr);
     }
 
-    std::free(payload);
+    // payload is GC-managed, no manual free needed
     q_resource_invalidate(handle);
     return qv_ok(qv_null());
 }

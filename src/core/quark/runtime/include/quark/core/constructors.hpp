@@ -37,6 +37,19 @@ inline QValue qv_string(const char* v) {
     return q;
 }
 
+// String value constructor that takes ownership of an already GC-allocated buffer.
+// The caller must have allocated v with q_malloc_atomic/q_strdup — no copy is made.
+inline QValue qv_string_own(char* v) {
+    QValue q;
+    if (!v) {
+        q.type = QValue::VAL_NULL;
+        return q;
+    }
+    q.type = QValue::VAL_STRING;
+    q.data.string_val = v;
+    return q;
+}
+
 // Boolean value constructor
 inline QValue qv_bool(bool v) {
     QValue q;

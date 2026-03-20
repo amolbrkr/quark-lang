@@ -17,13 +17,11 @@ inline QValue q_upper(QValue v) {
         std::fprintf(stderr, "runtime error: upper() expects str\n");
         std::exit(1);
     }
-    char* result = q_strdup(v.data.string_val);
-    for (int i = 0; result[i]; i++) {
+        char* result = q_strdup(v.data.string_val);
+        for (size_t i = 0; result[i] != '\0'; i++) {
         result[i] = static_cast<char>(toupper(static_cast<unsigned char>(result[i])));
     }
-    QValue q = qv_string(result);
-    // GC will handle cleanup - no explicit free needed
-    return q;
+        return qv_string_own(result);
 }
 
 // Convert string to lowercase
@@ -33,13 +31,11 @@ inline QValue q_lower(QValue v) {
         std::fprintf(stderr, "runtime error: lower() expects str\n");
         std::exit(1);
     }
-    char* result = q_strdup(v.data.string_val);
-    for (int i = 0; result[i]; i++) {
+        char* result = q_strdup(v.data.string_val);
+        for (size_t i = 0; result[i] != '\0'; i++) {
         result[i] = static_cast<char>(tolower(static_cast<unsigned char>(result[i])));
     }
-    QValue q = qv_string(result);
-    // GC will handle cleanup - no explicit free needed
-    return q;
+        return qv_string_own(result);
 }
 
 // Trim whitespace from both ends
@@ -58,12 +54,10 @@ inline QValue q_trim(QValue v) {
 
     size_t len = static_cast<size_t>(end - start + 1);
     char* result = static_cast<char*>(q_malloc_atomic(len + 1));
-    strncpy(result, start, len);
+        memcpy(result, start, len);
     result[len] = '\0';
 
-    QValue q = qv_string(result);
-    // GC will handle cleanup - no explicit free needed
-    return q;
+        return qv_string_own(result);
 }
 
 // Check if string contains substring
@@ -160,9 +154,7 @@ inline QValue q_replace(QValue str, QValue old_str, QValue new_str) {
     }
     *dest = '\0';
 
-    QValue q = qv_string(result);
-    // GC will handle cleanup - no explicit free needed
-    return q;
+    return qv_string_own(result);
 }
 
 // Concatenate two strings
@@ -174,6 +166,10 @@ inline QValue q_str_concat(QValue a, QValue b) {
     }
     size_t alen = strlen(a.data.string_val);
     size_t blen = strlen(b.data.string_val);
+        if (alen > SIZE_MAX - blen - 1) {
+            std::fprintf(stderr, "runtime error: concat() overflow while building result\n");
+            std::exit(1);
+        }
     char* result = static_cast<char*>(q_malloc_atomic(alen + blen + 1));
     if (!result) {
         std::fprintf(stderr, "runtime error: concat() failed to allocate result\n");
@@ -182,7 +178,7 @@ inline QValue q_str_concat(QValue a, QValue b) {
     memcpy(result, a.data.string_val, alen);
     memcpy(result + alen, b.data.string_val, blen);
     result[alen + blen] = '\0';
-    return qv_string(result);
+        return qv_string_own(result);
 }
 
 // Get character at index (supports negative indexing)

@@ -55,6 +55,10 @@ inline QValue q_add(QValue a, QValue b) {
         }
         size_t alen = strlen(a.data.string_val);
         size_t blen = strlen(b.data.string_val);
+        if (alen > SIZE_MAX - blen - 1) {
+            std::fprintf(stderr, "runtime error: operator '+' overflow while building string result\n");
+            std::exit(1);
+        }
         char* result = static_cast<char*>(q_malloc_atomic(alen + blen + 1));
         if (!result) {
             std::fprintf(stderr, "runtime error: operator '+' failed to allocate string result\n");

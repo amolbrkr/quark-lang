@@ -8,6 +8,7 @@
 #include "../builtins/conversion.hpp"
 
 #include <string>
+#include <cstring>
 #include <cstdio>
 #include <cstdlib>
 
@@ -42,7 +43,7 @@ inline QValue q_str_slice(QValue str, QValue start, QValue end) {
     }
     memcpy(result, str.data.string_val + s, rlen);
     result[rlen] = '\0';
-    return qv_string(result);
+    return qv_string_own(result);
 }
 
 // sjoin(list[str], sep) -> str
@@ -98,7 +99,7 @@ inline QValue q_str_join(QValue lst, QValue sep) {
         }
     }
     *dest = '\0';
-    return qv_string(result);
+    return qv_string_own(result);
 }
 
 // split(string, sep) -> list[str]

@@ -647,10 +647,12 @@ func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
 	}
 	args = g.appendPlannedDefaults(args, plan)
 
-	// For method calls, inject the receiver as the first argument.
+	// For method calls, cache receiver in a temp to avoid re-evaluation,
+	// then inject as the first argument.
 	if plan.IsMethod && plan.ReceiverNode != nil {
-		receiver := g.generateExpr(plan.ReceiverNode)
-		args = append([]string{receiver}, args...)
+		receiverTemp := g.newTemp()
+		g.emitLine("QValue %s = %s;", receiverTemp, g.generateExpr(plan.ReceiverNode))
+		args = append([]string{receiverTemp}, args...)
 	}
 
 	switch plan.Dispatch {
@@ -720,10 +722,12 @@ func (g *Generator) generatePipe(node *ast.TreeNode) string {
 	}
 	args = g.appendPlannedDefaults(args, plan)
 
-	// For method calls, inject the receiver as the first argument (before piped input).
+	// For method calls, cache receiver in a temp to avoid re-evaluation,
+	// then inject as the first argument (before piped input).
 	if plan.IsMethod && plan.ReceiverNode != nil {
-		receiver := g.generateExpr(plan.ReceiverNode)
-		args = append([]string{receiver}, args...)
+		receiverTemp := g.newTemp()
+		g.emitLine("QValue %s = %s;", receiverTemp, g.generateExpr(plan.ReceiverNode))
+		args = append([]string{receiverTemp}, args...)
 	}
 
 	switch plan.Dispatch {
@@ -767,7 +771,7 @@ func (g *Generator) generateIf(node *ast.TreeNode) string {
 	}
 
 	temp := g.newTemp()
-	g.emitLine("QValue %s;", temp)
+	g.emitLine("QValue %s = qv_null();", temp)
 
 	cond := g.generateExpr(node.Children[0])
 	g.emitLine("if (q_condition_bool(%s, \"if\")) {", cond)
@@ -814,7 +818,7 @@ func (g *Generator) generateWhen(node *ast.TreeNode) string {
 	matchExpr := g.generateExpr(node.Children[0])
 	matchTemp := g.newTemp()
 
-	g.emitLine("QValue %s;", temp)
+	g.emitLine("QValue %s = qv_null();", temp)
 	g.emitLine("QValue %s = %s;", matchTemp, matchExpr)
 
 	first := true

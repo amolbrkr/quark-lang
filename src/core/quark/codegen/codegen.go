@@ -2,7 +2,6 @@ package codegen
 
 import (
 	"fmt"
-	"os"
 	"quark/ast"
 	"quark/ir"
 	"quark/token"
@@ -19,6 +18,7 @@ type funcDecl struct {
 type Generator struct {
 	output        strings.Builder
 	indentLevel   int
+	sourceName    string
 	funcDecls     []funcDecl               // Function declarations with param counts
 	lambdas       []*ast.TreeNode          // Lambda expressions to generate
 	lambdaNames   map[*ast.TreeNode]string // Maps lambda nodes to their generated names
@@ -44,7 +44,16 @@ func New() *Generator {
 		captures:     make(map[*ast.TreeNode][]string),
 		funcNames:    make(map[string]bool),
 		callPlans:    make(map[*ast.TreeNode]*ir.CallPlan),
+		sourceName:   "<unknown>",
 	}
+}
+
+// SetSourceName configures the source file label used for runtime diagnostics.
+func (g *Generator) SetSourceName(name string) {
+	if strings.TrimSpace(name) == "" {
+		return
+	}
+	g.sourceName = name
 }
 
 // SetCaptures passes the captured variable info from the analyzer to the generator
@@ -104,6 +113,23 @@ func (g *Generator) newTemp() string {
 func (g *Generator) newLambda() string {
 	g.lambdaCounter++
 	return fmt.Sprintf("_lambda%d", g.lambdaCounter)
+}
+
+func escapeCppString(s string) string {
+	escaped := strings.ReplaceAll(s, "\\", "\\\\")
+	escaped = strings.ReplaceAll(escaped, "\"", "\\\"")
+	escaped = strings.ReplaceAll(escaped, "\n", "\\n")
+	escaped = strings.ReplaceAll(escaped, "\t", "\\t")
+	escaped = strings.ReplaceAll(escaped, "\r", "\\r")
+	return escaped
+}
+
+func (g *Generator) emitSourceLoc(node *ast.TreeNode) {
+	if node == nil || node.Token == nil {
+		return
+	}
+	file := escapeCppString(g.sourceName)
+	g.emitLine("q_set_source_loc(\"%s\", %d, %d);", file, node.Token.Line, node.Token.Column)
 }
 
 func (g *Generator) paramName(node *ast.TreeNode) string {
@@ -180,6 +206,7 @@ func (g *Generator) Generate(node *ast.TreeNode) string {
 	// Generate top-level statements that aren't function/module definitions
 	for _, child := range node.Children {
 		if child.NodeType != ast.FunctionNode && child.NodeType != ast.ModuleNode && child.NodeType != ast.UseNode {
+			g.emitSourceLoc(child)
 			g.emitLine("%s;", g.generateExpr(child))
 		}
 	}
@@ -358,6 +385,7 @@ func (g *Generator) generateModuleBindings(node *ast.TreeNode) {
 		if child == nil || child.NodeType == ast.UseNode || child.NodeType == ast.ModuleNode {
 			continue
 		}
+		g.emitSourceLoc(child)
 		expr := g.generateExpr(child)
 		g.emitLine("%s;", expr)
 	}
@@ -371,6 +399,7 @@ func (g *Generator) generateBlock(node *ast.TreeNode) string {
 	defer g.popScope()
 	var lastExpr string = "qv_null()"
 	for idx, child := range node.Children {
+		g.emitSourceLoc(child)
 		lastExpr = g.generateExpr(child)
 		if idx < len(node.Children)-1 {
 			g.emitLine("%s;", lastExpr)
@@ -434,9 +463,7 @@ func (g *Generator) generateExpr(node *ast.TreeNode) string {
 		g.emitLine("continue;")
 		return "qv_null()"
 	default:
-		fmt.Fprintf(os.Stderr, "internal compiler error: unhandled AST node type '%s' at line %d\n",
-			node.NodeType.String(), node.Token.Line)
-		os.Exit(2)
+		panicICEf("INV-NODE-TYPE", node, "unhandled AST node type '%s'", node.NodeType.String())
 		return ""
 	}
 }
@@ -587,13 +614,18 @@ func (g *Generator) generateOperator(node *ast.TreeNode) string {
 }
 
 func panicMissingCallPlan(callNode *ast.TreeNode) {
+	panicICEf("INV-CALLPLAN-MISSING", callNode, "missing CallPlan for call")
+}
+
+func panicICEf(code string, node *ast.TreeNode, format string, args ...interface{}) {
+	msg := fmt.Sprintf(format, args...)
 	line := 0
 	col := 0
-	if callNode != nil && callNode.Token != nil {
-		line = callNode.Token.Line
-		col = callNode.Token.Column
+	if node != nil && node.Token != nil {
+		line = node.Token.Line
+		col = node.Token.Column
 	}
-	panic(fmt.Sprintf("internal compiler error [INV-CALLPLAN-MISSING]: missing CallPlan for call at line %d, col %d", line, col))
+	panic(fmt.Errorf("error[%s] (codegen): %s at line %d, col %d", code, msg, line, col))
 }
 
 func (g *Generator) getCallPlanOrPanic(callNode *ast.TreeNode) *ir.CallPlan {
@@ -635,7 +667,8 @@ func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
 
 	// Dot-call syntax on values is rejected by analyzer unless it's a known method dispatch.
 	if funcNode.NodeType == ast.OperatorNode && funcNode.Token != nil && funcNode.Token.Type == token.DOT && plan.Dispatch == ir.DispatchClosure && !strings.Contains(plan.CalleeName, ".") {
-		return "(fprintf(stderr, \"compile error: dot-call syntax is not supported\\n\"), qv_null())"
+		panicICEf("INV-DOT-CALL", node, "dot-call syntax is not supported")
+		return "qv_null()"
 	}
 
 	funcName := funcNode.TokenLiteral()
@@ -658,12 +691,12 @@ func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
 	switch plan.Dispatch {
 	case ir.DispatchBuiltin:
 		if plan.RuntimeSymbol == "" {
-			panic(fmt.Sprintf("internal compiler error [INV-CALLPLAN-RUNTIME]: builtin call '%s' missing runtime symbol", plan.CalleeName))
+			panicICEf("INV-CALLPLAN-RUNTIME", node, "builtin call '%s' missing runtime symbol", plan.CalleeName)
 		}
 		return generateBuiltinCall(plan.RuntimeSymbol, args)
 	case ir.DispatchDirect:
 		if plan.RuntimeSymbol == "" {
-			panic(fmt.Sprintf("internal compiler error [INV-CALLPLAN-RUNTIME]: direct call '%s' missing runtime symbol", plan.CalleeName))
+			panicICEf("INV-CALLPLAN-RUNTIME", node, "direct call '%s' missing runtime symbol", plan.CalleeName)
 		}
 		if len(args) == 0 {
 			return fmt.Sprintf("%s(nullptr)", plan.RuntimeSymbol)
@@ -678,8 +711,10 @@ func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
 		}
 		return EmitClosureCall(funcExpr, args)
 	default:
-		panic(fmt.Sprintf("internal compiler error [INV-CALLPLAN-DISPATCH]: unknown dispatch for '%s'", funcName))
+		panicICEf("INV-CALLPLAN-DISPATCH", node, "unknown dispatch for '%s'", funcName)
 	}
+
+	return "qv_null()"
 }
 
 // EmitClosureCall emits a direct q_callN when arity is known (0..12),
@@ -733,12 +768,12 @@ func (g *Generator) generatePipe(node *ast.TreeNode) string {
 	switch plan.Dispatch {
 	case ir.DispatchBuiltin:
 		if plan.RuntimeSymbol == "" {
-			panic(fmt.Sprintf("internal compiler error [INV-CALLPLAN-RUNTIME]: builtin call '%s' missing runtime symbol", plan.CalleeName))
+			panicICEf("INV-CALLPLAN-RUNTIME", rightNode, "builtin call '%s' missing runtime symbol", plan.CalleeName)
 		}
 		return generateBuiltinCall(plan.RuntimeSymbol, args)
 	case ir.DispatchDirect:
 		if plan.RuntimeSymbol == "" {
-			panic(fmt.Sprintf("internal compiler error [INV-CALLPLAN-RUNTIME]: direct call '%s' missing runtime symbol", plan.CalleeName))
+			panicICEf("INV-CALLPLAN-RUNTIME", rightNode, "direct call '%s' missing runtime symbol", plan.CalleeName)
 		}
 		return fmt.Sprintf("%s(nullptr, %s)", plan.RuntimeSymbol, strings.Join(args, ", "))
 	case ir.DispatchClosure:
@@ -749,8 +784,10 @@ func (g *Generator) generatePipe(node *ast.TreeNode) string {
 		}
 		return EmitClosureCall(funcExpr, args)
 	default:
-		panic(fmt.Sprintf("internal compiler error [INV-CALLPLAN-DISPATCH]: unknown dispatch for '%s'", funcName))
+		panicICEf("INV-CALLPLAN-DISPATCH", rightNode, "unknown dispatch for '%s'", funcName)
 	}
+
+	return "qv_null()"
 }
 
 func (g *Generator) generateTernary(node *ast.TreeNode) string {
@@ -769,6 +806,7 @@ func (g *Generator) generateIf(node *ast.TreeNode) string {
 	if len(node.Children) < 2 {
 		return "qv_null()"
 	}
+	g.emitSourceLoc(node)
 
 	temp := g.newTemp()
 	g.emitLine("QValue %s = qv_null();", temp)
@@ -813,6 +851,7 @@ func (g *Generator) generateWhen(node *ast.TreeNode) string {
 	if len(node.Children) < 2 {
 		return "qv_null()"
 	}
+	g.emitSourceLoc(node)
 
 	temp := g.newTemp()
 	matchExpr := g.generateExpr(node.Children[0])
@@ -910,6 +949,7 @@ func (g *Generator) generateFor(node *ast.TreeNode) string {
 	if len(node.Children) < 3 {
 		return "qv_null()"
 	}
+	g.emitSourceLoc(node)
 
 	varNode := node.Children[0]
 	rangeNode := node.Children[1]
@@ -935,10 +975,12 @@ func (g *Generator) generateFor(node *ast.TreeNode) string {
 
 	if bodyNode.NodeType == ast.BlockNode {
 		for _, stmt := range bodyNode.Children {
+			g.emitSourceLoc(stmt)
 			expr := g.generateExpr(stmt)
 			g.emitLine("%s;", expr)
 		}
 	} else {
+		g.emitSourceLoc(bodyNode)
 		expr := g.generateExpr(bodyNode)
 		g.emitLine("%s;", expr)
 	}
@@ -955,6 +997,7 @@ func (g *Generator) generateWhile(node *ast.TreeNode) string {
 	if len(node.Children) < 2 {
 		return "qv_null()"
 	}
+	g.emitSourceLoc(node)
 
 	condNode := node.Children[0]
 	bodyNode := node.Children[1]
@@ -965,10 +1008,12 @@ func (g *Generator) generateWhile(node *ast.TreeNode) string {
 	// Generate body
 	if bodyNode.NodeType == ast.BlockNode {
 		for _, stmt := range bodyNode.Children {
+			g.emitSourceLoc(stmt)
 			expr := g.generateExpr(stmt)
 			g.emitLine("%s;", expr)
 		}
 	} else {
+		g.emitSourceLoc(bodyNode)
 		expr := g.generateExpr(bodyNode)
 		g.emitLine("%s;", expr)
 	}

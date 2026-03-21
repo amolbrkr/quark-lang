@@ -16,7 +16,7 @@ func tokenPos(node *ast.TreeNode) (int, int) {
 
 func invError(code string, node *ast.TreeNode, format string, args ...interface{}) error {
 	line, col := tokenPos(node)
-	return fmt.Errorf("internal compiler error [%s] at line %d, col %d: %s", code, line, col, fmt.Sprintf(format, args...))
+	return fmt.Errorf("error[%s] (invariants): %s at line %d, col %d", code, fmt.Sprintf(format, args...), line, col)
 }
 
 func walk(node *ast.TreeNode, fn func(*ast.TreeNode)) {

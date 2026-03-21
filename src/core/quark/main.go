@@ -421,6 +421,7 @@ func runEmit(filename string) {
 	}
 
 	gen := codegen.New()
+	gen.SetSourceName(filename)
 	if err := invariants.ValidateCallPlans(tree, analyzer.GetCallPlans()); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
@@ -474,6 +475,7 @@ func runBuild(filename string, output string, useGC bool, lto bool) {
 	}
 
 	gen := codegen.New()
+	gen.SetSourceName(filename)
 	if err := invariants.ValidateCallPlans(tree, analyzer.GetCallPlans()); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
@@ -593,6 +595,7 @@ func runRun(filename string, debug bool, useGC bool, lto bool) {
 	}
 
 	gen := codegen.New()
+	gen.SetSourceName(filename)
 	if err := invariants.ValidateCallPlans(tree, analyzer.GetCallPlans()); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)

@@ -19,7 +19,7 @@ inline QValue q_lt(QValue a, QValue b) {
     // Type guard: only INT and FLOAT are valid
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
-        std::fprintf(stderr, "runtime error: operator '<' expects numeric operands\n");
+        q_runtime_reportf("runtime error: operator '<' expects numeric operands\n");
         std::exit(1);
     }
     if (quark::detail::either_float(a, b)) {
@@ -36,7 +36,7 @@ inline QValue q_lte(QValue a, QValue b) {
     // Type guard: only INT and FLOAT are valid
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
-        std::fprintf(stderr, "runtime error: operator '<=' expects numeric operands\n");
+        q_runtime_reportf("runtime error: operator '<=' expects numeric operands\n");
         std::exit(1);
     }
     if (quark::detail::either_float(a, b)) {
@@ -53,7 +53,7 @@ inline QValue q_gt(QValue a, QValue b) {
     // Type guard: only INT and FLOAT are valid
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
-        std::fprintf(stderr, "runtime error: operator '>' expects numeric operands\n");
+        q_runtime_reportf("runtime error: operator '>' expects numeric operands\n");
         std::exit(1);
     }
     if (quark::detail::either_float(a, b)) {
@@ -70,7 +70,7 @@ inline QValue q_gte(QValue a, QValue b) {
     // Type guard: only INT and FLOAT are valid
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
-        std::fprintf(stderr, "runtime error: operator '>=' expects numeric operands\n");
+        q_runtime_reportf("runtime error: operator '>=' expects numeric operands\n");
         std::exit(1);
     }
     if (quark::detail::either_float(a, b)) {

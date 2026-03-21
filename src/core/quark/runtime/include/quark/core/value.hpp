@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <vector>
 #include "gc.hpp"
+#include "diagnostics.hpp"
 
 // Forward declarations
 struct QValue;

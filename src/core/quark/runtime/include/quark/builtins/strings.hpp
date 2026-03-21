@@ -18,11 +18,11 @@
 // Clamps out-of-range indices rather than erroring.
 inline QValue q_str_slice(QValue str, QValue start, QValue end) {
     if (str.type != QValue::VAL_STRING || !str.data.string_val) {
-        std::fprintf(stderr, "runtime error: sslice() expects str as first argument\n");
+        q_runtime_reportf("runtime error: sslice() expects str as first argument\n");
         std::exit(1);
     }
     if (start.type != QValue::VAL_INT || end.type != QValue::VAL_INT) {
-        std::fprintf(stderr, "runtime error: sslice() start and end must be int\n");
+        q_runtime_reportf("runtime error: sslice() start and end must be int\n");
         std::exit(1);
     }
     int len = static_cast<int>(strlen(str.data.string_val));
@@ -38,7 +38,7 @@ inline QValue q_str_slice(QValue str, QValue start, QValue end) {
     size_t rlen = static_cast<size_t>(e - s);
     char* result = static_cast<char*>(q_malloc_atomic(rlen + 1));
     if (!result) {
-        std::fprintf(stderr, "runtime error: sslice() failed to allocate result\n");
+        q_runtime_reportf("runtime error: sslice() failed to allocate result\n");
         std::exit(1);
     }
     memcpy(result, str.data.string_val + s, rlen);
@@ -51,11 +51,11 @@ inline QValue q_str_slice(QValue str, QValue start, QValue end) {
 // Non-string elements are coerced via q_str().
 inline QValue q_str_join(QValue lst, QValue sep) {
     if (lst.type != QValue::VAL_LIST) {
-        std::fprintf(stderr, "runtime error: sjoin() expects list as first argument\n");
+        q_runtime_reportf("runtime error: sjoin() expects list as first argument\n");
         std::exit(1);
     }
     if (sep.type != QValue::VAL_STRING || !sep.data.string_val) {
-        std::fprintf(stderr, "runtime error: sjoin() expects str as second argument\n");
+        q_runtime_reportf("runtime error: sjoin() expects str as second argument\n");
         std::exit(1);
     }
     if (!lst.data.list_val || lst.data.list_val->empty()) {
@@ -79,7 +79,7 @@ inline QValue q_str_join(QValue lst, QValue sep) {
 
     char* result = static_cast<char*>(q_malloc_atomic(total + 1));
     if (!result) {
-        std::fprintf(stderr, "runtime error: sjoin() failed to allocate result\n");
+        q_runtime_reportf("runtime error: sjoin() failed to allocate result\n");
         std::exit(1);
     }
 
@@ -107,11 +107,11 @@ inline QValue q_str_join(QValue lst, QValue sep) {
 // - Preserves empty fields (leading/trailing separators produce "").
 inline QValue q_split(QValue str, QValue sep) {
     if (str.type != QValue::VAL_STRING || sep.type != QValue::VAL_STRING) {
-        std::fprintf(stderr, "runtime error: split() expects (str, str)\n");
+        q_runtime_reportf("runtime error: split() expects (str, str)\n");
         std::exit(1);
     }
     if (!str.data.string_val || !sep.data.string_val) {
-        std::fprintf(stderr, "runtime error: split() expects non-null string arguments\n");
+        q_runtime_reportf("runtime error: split() expects non-null string arguments\n");
         std::exit(1);
     }
 

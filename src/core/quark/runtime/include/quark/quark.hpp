@@ -16,6 +16,7 @@
 // Core types and constructors (gc.hpp must precede value.hpp — QList needs q_allocator)
 #include "core/gc.hpp"
 #include "core/value.hpp"
+#include "core/diagnostics.hpp"
 #include "core/cell.hpp"
 #include "types/closure.hpp"
 #include "core/constructors.hpp"

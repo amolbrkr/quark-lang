@@ -18,6 +18,7 @@
 #include <new>        // placement new
 #include <memory>     // std::allocator (non-GC fallback)
 #include <utility>    // std::forward
+#include "diagnostics.hpp"
 
 #ifdef QUARK_USE_GC
     #include <gc.h>
@@ -79,7 +80,7 @@ template<typename T, typename... Args>
 inline T* q_new(Args&&... args) {
     void* mem = q_malloc(sizeof(T));
     if (!mem) {
-        std::fprintf(stderr, "runtime error: allocation failed\n");
+        q_runtime_reportf("runtime error: allocation failed\n");
         std::exit(1);
     }
     return ::new(mem) T(std::forward<Args>(args)...);

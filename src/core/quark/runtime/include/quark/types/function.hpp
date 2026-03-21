@@ -13,7 +13,7 @@ inline bool q_require_callable(const QValue& f) {
     if (f.type == QValue::VAL_FUNC) {
         return true;
     }
-    std::fprintf(stderr, "runtime error: attempted to call a non-function value\n");
+    q_runtime_reportf("runtime error: attempted to call a non-function value\n");
     std::exit(1);
 }
 
@@ -116,7 +116,7 @@ inline QValue q_calln(QValue f, const std::vector<QValue>& args) {
         case 11: return q_call11(f, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10]);
         case 12: return q_call12(f, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10], args[11]);
         default:
-            std::fprintf(stderr, "runtime error: function call supports up to 12 arguments, got %zu\n", args.size());
+            q_runtime_reportf("runtime error: function call supports up to 12 arguments, got %zu\n", args.size());
             std::exit(1);
     }
 }

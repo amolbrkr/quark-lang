@@ -27,7 +27,7 @@ inline QValue q_dset(QValue dict, QValue key, QValue value) {
 // dkeys(dict) -> list[str]
 inline QValue q_dkeys(QValue dict) {
     if (dict.type != QValue::VAL_DICT || !dict.data.dict_val) {
-        std::fprintf(stderr, "runtime error: dkeys() expects dict\n");
+        q_runtime_reportf("runtime error: dkeys() expects dict\n");
         std::exit(1);
     }
 
@@ -41,7 +41,7 @@ inline QValue q_dkeys(QValue dict) {
 // dvalues(dict) -> list
 inline QValue q_dvalues(QValue dict) {
     if (dict.type != QValue::VAL_DICT || !dict.data.dict_val) {
-        std::fprintf(stderr, "runtime error: dvalues() expects dict\n");
+        q_runtime_reportf("runtime error: dvalues() expects dict\n");
         std::exit(1);
     }
 
@@ -55,7 +55,7 @@ inline QValue q_dvalues(QValue dict) {
 // ditems(dict) -> list[dict{key:..., value:...}]
 inline QValue q_ditems(QValue dict) {
     if (dict.type != QValue::VAL_DICT || !dict.data.dict_val) {
-        std::fprintf(stderr, "runtime error: ditems() expects dict\n");
+        q_runtime_reportf("runtime error: ditems() expects dict\n");
         std::exit(1);
     }
 

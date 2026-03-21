@@ -23,7 +23,7 @@ inline QValue q_len(QValue v) {
         case QValue::VAL_DICT:
             return qv_int(v.data.dict_val ? static_cast<long long>(v.data.dict_val->entries.size()) : 0);
         default:
-            std::fprintf(stderr, "runtime error: len() expects str, list, dict, or vector\n");
+            q_runtime_reportf("runtime error: len() expects str, list, dict, or vector\n");
             std::exit(1);
     }
 }
@@ -34,15 +34,15 @@ inline QValue q_iter_get(QValue iterable, QValue index) {
         return q_get(iterable, index);
     }
     if (iterable.type != QValue::VAL_VECTOR) {
-        std::fprintf(stderr, "runtime error: for-loop iterable must be list, string, or vector\n");
+        q_runtime_reportf("runtime error: for-loop iterable must be list, string, or vector\n");
         std::exit(1);
     }
     if (!q_vec_has_valid_handle(iterable) || !q_vec_validate(*iterable.data.vector_val)) {
-        std::fprintf(stderr, "runtime error: for-loop iterable vector is invalid\n");
+        q_runtime_reportf("runtime error: for-loop iterable vector is invalid\n");
         std::exit(1);
     }
     if (index.type != QValue::VAL_INT) {
-        std::fprintf(stderr, "runtime error: iterable index must be int\n");
+        q_runtime_reportf("runtime error: iterable index must be int\n");
         std::exit(1);
     }
 
@@ -80,7 +80,7 @@ inline QValue q_iter_get(QValue iterable, QValue index) {
             return qv_string(s.c_str());
         }
         default:
-            std::fprintf(stderr, "runtime error: unsupported vector dtype in iteration\n");
+            q_runtime_reportf("runtime error: unsupported vector dtype in iteration\n");
             std::exit(1);
     }
 }
@@ -132,13 +132,13 @@ inline QValue q_int(QValue v) {
             return qv_int(v.data.bool_val ? 1 : 0);
         case QValue::VAL_STRING: {
             if (!v.data.string_val || v.data.string_val[0] == '\0') {
-                std::fprintf(stderr, "runtime error: to_int() cannot convert empty string\n");
+                q_runtime_reportf("runtime error: to_int() cannot convert empty string\n");
                 std::exit(1);
             }
             char* end = nullptr;
             long long result = strtoll(v.data.string_val, &end, 10);
             if (end == v.data.string_val || *end != '\0') {
-                std::fprintf(stderr, "runtime error: to_int() cannot parse '%s' as integer\n", v.data.string_val);
+                q_runtime_reportf("runtime error: to_int() cannot parse '%s' as integer\n", v.data.string_val);
                 std::exit(1);
             }
             return qv_int(result);
@@ -146,7 +146,7 @@ inline QValue q_int(QValue v) {
         default: {
             static const char* names[] = {"int","float","str","bool","null","list","vector","dict","fn","result","resource"};
             const char* tname = (v.type >= 0 && v.type <= 10) ? names[v.type] : "unknown";
-            std::fprintf(stderr, "runtime error: to_int() cannot convert %s to int\n", tname);
+            q_runtime_reportf("runtime error: to_int() cannot convert %s to int\n", tname);
             std::exit(1);
         }
     }
@@ -163,13 +163,13 @@ inline QValue q_float(QValue v) {
             return qv_float(v.data.bool_val ? 1.0 : 0.0);
         case QValue::VAL_STRING: {
             if (!v.data.string_val || v.data.string_val[0] == '\0') {
-                std::fprintf(stderr, "runtime error: to_float() cannot convert empty string\n");
+                q_runtime_reportf("runtime error: to_float() cannot convert empty string\n");
                 std::exit(1);
             }
             char* end = nullptr;
             double result = strtod(v.data.string_val, &end);
             if (end == v.data.string_val || *end != '\0') {
-                std::fprintf(stderr, "runtime error: to_float() cannot parse '%s' as float\n", v.data.string_val);
+                q_runtime_reportf("runtime error: to_float() cannot parse '%s' as float\n", v.data.string_val);
                 std::exit(1);
             }
             return qv_float(result);
@@ -177,7 +177,7 @@ inline QValue q_float(QValue v) {
         default: {
             static const char* names[] = {"int","float","str","bool","null","list","vector","dict","fn","result","resource"};
             const char* tname = (v.type >= 0 && v.type <= 10) ? names[v.type] : "unknown";
-            std::fprintf(stderr, "runtime error: to_float() cannot convert %s to float\n", tname);
+            q_runtime_reportf("runtime error: to_float() cannot convert %s to float\n", tname);
             std::exit(1);
         }
     }
@@ -234,8 +234,8 @@ inline QValue q_is_err_builtin(QValue v) {
 
 inline QValue q_unwrap(QValue v) {
     if (v.type != QValue::VAL_RESULT || !v.data.result_val) {
-        std::fprintf(stderr, "runtime panic: unwrap expects result\n");
-        std::abort();
+        q_runtime_reportf("runtime error: unwrap expects result\n");
+        std::exit(1);
     }
     if (v.data.result_val->is_ok) {
         return v.data.result_val->payload;
@@ -246,8 +246,8 @@ inline QValue q_unwrap(QValue v) {
     const char* msg = (errText.type == QValue::VAL_STRING && errText.data.string_val)
         ? errText.data.string_val
         : "<error>";
-    std::fprintf(stderr, "runtime panic: unwrap on err: %s\n", msg);
-    std::abort();
+    q_runtime_reportf("runtime error: unwrap on err: %s\n", msg);
+    std::exit(1);
 }
 
 #endif // QUARK_BUILTINS_CONVERSION_HPP

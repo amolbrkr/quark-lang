@@ -85,11 +85,11 @@ inline QFilePayload* q_expect_file_payload(QValue file, const char* op) {
     QResourceHandle* handle = nullptr;
     const char* err = nullptr;
     if (!q_resource_resolve(file, QRES_KIND_FILE, slot, handle, err)) {
-        std::fprintf(stderr, "runtime error: %s() expects live file_handle (%s)\n", op, err ? err : "invalid handle");
+        q_runtime_reportf("runtime error: %s() expects live file_handle (%s)\n", op, err ? err : "invalid handle");
         std::exit(1);
     }
     if (!slot || !slot->payload) {
-        std::fprintf(stderr, "runtime error: %s() file_handle has no payload\n", op);
+        q_runtime_reportf("runtime error: %s() file_handle has no payload\n", op);
         std::exit(1);
     }
     return static_cast<QFilePayload*>(slot->payload);
@@ -97,15 +97,15 @@ inline QFilePayload* q_expect_file_payload(QValue file, const char* op) {
 
 inline QValue q_file_open(QValue path, QValue mode, QValue binary) {
     if (path.type != QValue::VAL_STRING || !path.data.string_val) {
-        std::fprintf(stderr, "runtime error: _file_open() argument 1 must be str\n");
+        q_runtime_reportf("runtime error: _file_open() argument 1 must be str\n");
         std::exit(1);
     }
     if (mode.type != QValue::VAL_STRING || !mode.data.string_val) {
-        std::fprintf(stderr, "runtime error: _file_open() argument 2 must be str\n");
+        q_runtime_reportf("runtime error: _file_open() argument 2 must be str\n");
         std::exit(1);
     }
     if (binary.type != QValue::VAL_BOOL) {
-        std::fprintf(stderr, "runtime error: _file_open() argument 3 must be bool\n");
+        q_runtime_reportf("runtime error: _file_open() argument 3 must be bool\n");
         std::exit(1);
     }
 
@@ -124,7 +124,7 @@ inline QValue q_file_open(QValue path, QValue mode, QValue binary) {
 #else
         ::close(fd);
 #endif
-        std::fprintf(stderr, "runtime error: _file_open() failed to allocate payload\n");
+        q_runtime_reportf("runtime error: _file_open() failed to allocate payload\n");
         std::exit(1);
     }
 
@@ -139,7 +139,7 @@ inline QValue q_file_open(QValue path, QValue mode, QValue binary) {
         ::close(fd);
 #endif
         // payload is GC-managed, no manual free needed
-        std::fprintf(stderr, "runtime error: _file_open() failed to allocate resource handle\n");
+        q_runtime_reportf("runtime error: _file_open() failed to allocate resource handle\n");
         std::exit(1);
     }
 
@@ -152,11 +152,11 @@ inline QValue q_file_open(QValue path, QValue mode) {
 
 inline QValue q_file_read(QValue file, QValue n) {
     if (n.type != QValue::VAL_INT) {
-        std::fprintf(stderr, "runtime error: _file_read() argument 2 must be int\n");
+        q_runtime_reportf("runtime error: _file_read() argument 2 must be int\n");
         std::exit(1);
     }
     if (n.data.int_val < 0) {
-        std::fprintf(stderr, "runtime error: _file_read() argument 2 must be >= 0\n");
+        q_runtime_reportf("runtime error: _file_read() argument 2 must be >= 0\n");
         std::exit(1);
     }
 
@@ -189,7 +189,7 @@ inline QValue q_file_read(QValue file, QValue n) {
 
 inline QValue q_file_write(QValue file, QValue data) {
     if (data.type != QValue::VAL_STRING || !data.data.string_val) {
-        std::fprintf(stderr, "runtime error: _file_write() argument 2 must be str\n");
+        q_runtime_reportf("runtime error: _file_write() argument 2 must be str\n");
         std::exit(1);
     }
 
@@ -240,11 +240,11 @@ inline QValue q_file_close(QValue file) {
 
 inline QValue q_file_seek(QValue file, QValue offset, QValue whence) {
     if (offset.type != QValue::VAL_INT) {
-        std::fprintf(stderr, "runtime error: _file_seek() argument 2 must be int\n");
+        q_runtime_reportf("runtime error: _file_seek() argument 2 must be int\n");
         std::exit(1);
     }
     if (whence.type != QValue::VAL_INT) {
-        std::fprintf(stderr, "runtime error: _file_seek() argument 3 must be int\n");
+        q_runtime_reportf("runtime error: _file_seek() argument 3 must be int\n");
         std::exit(1);
     }
 
@@ -256,7 +256,7 @@ inline QValue q_file_seek(QValue file, QValue offset, QValue whence) {
     } else if (whence.data.int_val == 2) {
         cWhence = SEEK_END;
     } else {
-        std::fprintf(stderr, "runtime error: _file_seek() whence must be 0, 1, or 2\n");
+        q_runtime_reportf("runtime error: _file_seek() whence must be 0, 1, or 2\n");
         std::exit(1);
     }
 
@@ -271,7 +271,7 @@ inline QValue q_file_seek(QValue file, QValue offset, QValue whence) {
 
 inline QValue q_file_exists(QValue path) {
     if (path.type != QValue::VAL_STRING || !path.data.string_val) {
-        std::fprintf(stderr, "runtime error: _file_exists() argument 1 must be str\n");
+        q_runtime_reportf("runtime error: _file_exists() argument 1 must be str\n");
         std::exit(1);
     }
 

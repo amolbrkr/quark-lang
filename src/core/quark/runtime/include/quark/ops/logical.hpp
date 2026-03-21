@@ -12,7 +12,7 @@ inline void q_require_bool(QValue v, const char* op) {
     if (v.type != QValue::VAL_BOOL) {
         static const char* names[] = {"int", "float", "str", "bool", "null", "list", "vector", "dict", "fn", "result"};
         const char* tname = (v.type >= 0 && v.type <= 9) ? names[v.type] : "unknown";
-        std::fprintf(stderr, "runtime error: '%s' expects bool operand, got %s\n", op, tname);
+        q_runtime_reportf("runtime error: '%s' expects bool operand, got %s\n", op, tname);
         std::exit(1);
     }
 }
@@ -21,7 +21,7 @@ inline bool q_condition_bool(QValue v, const char* context) {
     if (v.type != QValue::VAL_BOOL) {
         static const char* names[] = {"int", "float", "str", "bool", "null", "list", "vector", "dict", "fn", "result"};
         const char* tname = (v.type >= 0 && v.type <= 9) ? names[v.type] : "unknown";
-        std::fprintf(stderr, "runtime error: %s condition must be bool, got %s\n", context, tname);
+        q_runtime_reportf("runtime error: %s condition must be bool, got %s\n", context, tname);
         std::exit(1);
     }
     return v.data.bool_val;

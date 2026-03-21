@@ -36,7 +36,7 @@ inline bool q_require_dict(const QValue& v, const char* action) {
     if (v.type == QValue::VAL_DICT) {
         return true;
     }
-    std::fprintf(stderr, "runtime error: %s expects dict\n", action);
+    q_runtime_reportf("runtime error: %s expects dict\n", action);
     std::exit(1);
 }
 
@@ -44,7 +44,7 @@ inline bool q_require_string_key(const QValue& key) {
     if (key.type == QValue::VAL_STRING) {
         return true;
     }
-    std::fprintf(stderr, "runtime error: dict key must be string\n");
+    q_runtime_reportf("runtime error: dict key must be string\n");
     std::exit(1);
 }
 

@@ -85,7 +85,7 @@ inline QValue qv_ok(QValue v) {
     QValue q;
     QResult* result = static_cast<QResult*>(q_malloc(sizeof(QResult)));
     if (!result) {
-        std::fprintf(stderr, "runtime error: failed to allocate ok-result payload\n");
+        q_runtime_reportf("runtime error: failed to allocate ok-result payload\n");
         std::exit(1);
     }
     q.type = QValue::VAL_RESULT;
@@ -99,7 +99,7 @@ inline QValue qv_err(QValue v) {
     QValue q;
     QResult* result = static_cast<QResult*>(q_malloc(sizeof(QResult)));
     if (!result) {
-        std::fprintf(stderr, "runtime error: failed to allocate err-result payload\n");
+        q_runtime_reportf("runtime error: failed to allocate err-result payload\n");
         std::exit(1);
     }
     q.type = QValue::VAL_RESULT;

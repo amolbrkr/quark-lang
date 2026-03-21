@@ -59,25 +59,25 @@ inline QValue q_print(QValue v) {
 
 inline QValue q_print_impl(QValue v, QValue end, QValue width, QValue align, QValue pad) {
     if (end.type != QValue::VAL_STRING || !end.data.string_val) {
-        std::fprintf(stderr, "runtime error: print() end must be str\n");
+        q_runtime_reportf("runtime error: print() end must be str\n");
         std::exit(1);
     }
     if (width.type != QValue::VAL_INT) {
-        std::fprintf(stderr, "runtime error: print() width must be int\n");
+        q_runtime_reportf("runtime error: print() width must be int\n");
         std::exit(1);
     }
     if (align.type != QValue::VAL_STRING || !align.data.string_val) {
-        std::fprintf(stderr, "runtime error: print() align must be str\n");
+        q_runtime_reportf("runtime error: print() align must be str\n");
         std::exit(1);
     }
     if (pad.type != QValue::VAL_STRING || !pad.data.string_val) {
-        std::fprintf(stderr, "runtime error: print() pad must be str\n");
+        q_runtime_reportf("runtime error: print() pad must be str\n");
         std::exit(1);
     }
 
     QValue sv = q_str(v);
     if (sv.type != QValue::VAL_STRING || !sv.data.string_val) {
-        std::fprintf(stderr, "runtime error: print() failed to stringify value\n");
+        q_runtime_reportf("runtime error: print() failed to stringify value\n");
         std::exit(1);
     }
 
@@ -132,7 +132,7 @@ inline QValue q_println(QValue v) {
 // Read line from stdin (with optional prompt)
 inline QValue q_input(QValue prompt) {
     if (prompt.type != QValue::VAL_NULL && prompt.type != QValue::VAL_STRING) {
-        std::fprintf(stderr, "runtime error: input() optional prompt must be str\n");
+        q_runtime_reportf("runtime error: input() optional prompt must be str\n");
         std::exit(1);
     }
     // Print prompt if it's a string

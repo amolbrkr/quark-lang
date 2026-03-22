@@ -28,6 +28,17 @@ func (t *BasicType) Equals(other Type) bool {
 	return false
 }
 
+// ErrorType represents a type error that has already been reported.
+// It propagates silently through expressions, suppressing cascading errors.
+// Distinct from TypeAny which means "genuinely unknown but no error."
+type errorType struct{}
+
+func (t *errorType) String() string  { return "<error>" }
+func (t *errorType) Equals(other Type) bool {
+	_, ok := other.(*errorType)
+	return ok
+}
+
 // Predefined basic types
 var (
 	TypeInt        = &BasicType{Name: "int"}
@@ -39,7 +50,14 @@ var (
 	TypeVoid       = &BasicType{Name: "void"} // For statements with no value
 	TypeResource   = &BasicType{Name: "resource"}
 	TypeFileHandle = &BasicType{Name: "file_handle"}
+	TypeError      = &errorType{}             // Poison type — error already reported upstream
 )
+
+// IsErrorType returns true if the type is the poison error type.
+func IsErrorType(t Type) bool {
+	_, ok := t.(*errorType)
+	return ok
+}
 
 // ListType represents a list of elements
 type ListType struct {
@@ -276,8 +294,17 @@ func IsComparable(t Type) bool {
 
 // CanAssign checks if srcType can be assigned to dstType
 func CanAssign(dstType, srcType Type) bool {
-	// Any type can be assigned to any
-	if dstType.Equals(TypeAny) || srcType.Equals(TypeAny) {
+	// ErrorType is permissive — error already reported upstream
+	if IsErrorType(dstType) || IsErrorType(srcType) {
+		return true
+	}
+	// Any type can be assigned to any (destination is any)
+	if dstType.Equals(TypeAny) {
+		return true
+	}
+	// Source is any — only assignable if destination is also any (already handled above)
+	// This prevents unsound assignments like list[int] <- list[any]
+	if srcType.Equals(TypeAny) {
 		return true
 	}
 	// Null can be assigned to any reference type
@@ -331,15 +358,19 @@ func CanAssign(dstType, srcType Type) bool {
 }
 
 // MergeTypes combines multiple type possibilities into the most precise representation.
+// ErrorType is filtered out — it should not appear in merged results.
 func MergeTypes(types ...Type) Type {
 	resultTypes := make([]*ResultType, 0)
 	hasNonResult := false
 	for _, t := range types {
-		if t == nil {
+		if t == nil || IsErrorType(t) {
 			continue
 		}
 		if union, ok := t.(*UnionType); ok {
 			for _, opt := range union.Options {
+				if IsErrorType(opt) {
+					continue
+				}
 				if rt, ok := opt.(*ResultType); ok {
 					resultTypes = append(resultTypes, rt)
 				} else {
@@ -367,12 +398,14 @@ func MergeTypes(types ...Type) Type {
 
 	unique := make(map[string]Type)
 	for _, t := range types {
-		if t == nil {
+		if t == nil || IsErrorType(t) {
 			continue
 		}
 		if union, ok := t.(*UnionType); ok {
 			for _, opt := range union.Options {
-				unique[typeKey(opt)] = opt
+				if !IsErrorType(opt) {
+					unique[typeKey(opt)] = opt
+				}
 			}
 			continue
 		}

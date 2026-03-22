@@ -13,7 +13,7 @@ func (a *Analyzer) analyzeIdentifier(node *ast.TreeNode) Type {
 	sym := a.currentScope.Lookup(name)
 	if sym == nil {
 		a.errorAt(node, "undefined identifier '%s'", name)
-		return TypeAny
+		return TypeError
 	}
 	return sym.Type
 }
@@ -35,35 +35,38 @@ func (a *Analyzer) analyzeLiteral(node *ast.TreeNode) Type {
 		return TypeNull
 	default:
 		a.errorAt(node, "unsupported literal type: %s", node.Token.Type)
-		return TypeAny
+		return TypeError
 	}
 }
 
 func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 	if node.Token == nil || len(node.Children) == 0 {
 		a.errorAt(node, "malformed operator expression")
-		return TypeAny
+		return TypeError
 	}
 	op := node.Token.Type
 	if len(node.Children) >= 2 {
 		if node.Children[0] == nil || node.Children[1] == nil {
 			a.errorAt(node, "malformed operator expression")
-			return TypeAny
+			return TypeError
 		}
 	}
 	if op == token.DOT {
 		if len(node.Children) < 2 {
-			return TypeAny
+			return TypeError
 		}
 		if node.Children[0] == nil || node.Children[1] == nil {
 			a.errorAt(node, "malformed dot access expression")
-			return TypeAny
+			return TypeError
 		}
 		targetType := a.Analyze(node.Children[0])
+		if IsErrorType(targetType) {
+			return TypeError
+		}
 		member := node.Children[1].TokenLiteral()
 		if targetType.Equals(TypeNull) {
 			a.errorAt(node.Children[0], "cannot access member '%s' on null", member)
-			return TypeAny
+			return TypeError
 		}
 		switch t := targetType.(type) {
 		case *DictType:
@@ -73,11 +76,14 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 				return TypeAny
 			}
 			a.errorAt(node, "dot access is only supported on dict; use len(entity), upper(entity), etc. instead of entity.%s", member)
-			return TypeAny
+			return TypeError
 		}
 	}
 	if len(node.Children) == 1 {
 		operandType := a.Analyze(node.Children[0])
+		if IsErrorType(operandType) {
+			return TypeError
+		}
 		switch op {
 		case token.MINUS:
 			if IsNumeric(operandType) {
@@ -87,7 +93,7 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 				return TypeAny
 			}
 			a.errorAt(node, "unary '-' expects numeric operand, got %s", operandType.String())
-			return TypeAny
+			return TypeError
 		case token.BANG:
 			if !isBoolLike(operandType) && !isUnknownType(operandType) {
 				a.errorAt(node, "unary '!' expects bool operand, got %s", operandType.String())
@@ -100,7 +106,7 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 		target := node.Children[0]
 		if target == nil {
 			a.errorAt(node, "left side of assignment must be an identifier")
-			return TypeAny
+			return TypeError
 		}
 		if target.NodeType == ast.IdentifierNode && node.Children[1].NodeType == ast.LambdaNode {
 			varName := target.TokenLiteral()
@@ -118,7 +124,11 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 				a.errorAt(target.Children[0], "cannot assign member on null")
 				return rightType
 			}
-			if _, ok := targetType.(*DictType); ok {
+			if dictType, ok := targetType.(*DictType); ok {
+				// Check value type compatibility
+				if !isUnknownType(rightType) && !IsErrorType(rightType) && !isUnknownType(dictType.ValueType) && !CanAssign(dictType.ValueType, rightType) {
+					a.warnAt(target, "assigning '%s' to dict with value type '%s'", rightType.String(), dictType.ValueType.String())
+				}
 				return rightType
 			}
 			if isUnknownType(targetType) {
@@ -187,6 +197,10 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 
 	leftType := a.Analyze(node.Children[0])
 	rightType := a.Analyze(node.Children[1])
+	// Propagate ErrorType silently
+	if IsErrorType(leftType) || IsErrorType(rightType) {
+		return TypeError
+	}
 	leftVec, leftIsVec := leftType.(*VectorType)
 	rightVec, rightIsVec := rightType.(*VectorType)
 	isNumericScalar := func(t Type) bool { return t.Equals(TypeInt) || t.Equals(TypeFloat) }
@@ -195,11 +209,11 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 		if leftIsVec && rightIsVec {
 			if !IsNumeric(leftVec.ElementType) && !isUnknownType(leftVec.ElementType) {
 				a.errorAt(node, "operator '%s' requires numeric vector operands, got %s", node.Token.Type.String(), leftType.String())
-				return TypeAny
+				return TypeError
 			}
 			if !IsNumeric(rightVec.ElementType) && !isUnknownType(rightVec.ElementType) {
 				a.errorAt(node, "operator '%s' requires numeric vector operands, got %s", node.Token.Type.String(), rightType.String())
-				return TypeAny
+				return TypeError
 			}
 			if leftVec.ElementType.Equals(TypeFloat) || rightVec.ElementType.Equals(TypeFloat) {
 				return &VectorType{ElementType: TypeFloat}
@@ -215,7 +229,7 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 		if leftIsVec && (isNumericScalar(rightType) || isUnknownType(rightType)) {
 			if !IsNumeric(leftVec.ElementType) && !isUnknownType(leftVec.ElementType) {
 				a.errorAt(node, "operator '%s' requires numeric vector operands, got %s", node.Token.Type.String(), leftType.String())
-				return TypeAny
+				return TypeError
 			}
 			if op == token.DIVIDE && leftVec.ElementType.Equals(TypeInt) && rightType.Equals(TypeInt) {
 				return &VectorType{ElementType: TypeFloat}
@@ -225,7 +239,7 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 		if rightIsVec && (isNumericScalar(leftType) || isUnknownType(leftType)) {
 			if !IsNumeric(rightVec.ElementType) && !isUnknownType(rightVec.ElementType) {
 				a.errorAt(node, "operator '%s' requires numeric vector operands, got %s", node.Token.Type.String(), rightType.String())
-				return TypeAny
+				return TypeError
 			}
 			if op == token.DIVIDE && rightVec.ElementType.Equals(TypeInt) && leftType.Equals(TypeInt) {
 				return &VectorType{ElementType: TypeFloat}
@@ -244,7 +258,7 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 				return TypeAny
 			}
 			a.errorAt(node, "operator '%%' requires integer operands, got %s and %s", leftType.String(), rightType.String())
-			return TypeAny
+			return TypeError
 		}
 		if op == token.PLUS && isStringLike(leftType) && isStringLike(rightType) {
 			return TypeString
@@ -265,7 +279,7 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 			return TypeAny
 		}
 		a.errorAt(node, "operator '%s' requires numeric operands, got %s and %s", node.Token.Type.String(), leftType.String(), rightType.String())
-		return TypeAny
+		return TypeError
 	case token.LT, token.LTE, token.GT, token.GTE:
 		if leftIsVec || rightIsVec {
 			if leftIsVec && !IsNumeric(leftVec.ElementType) && !isUnknownType(leftVec.ElementType) {
@@ -306,7 +320,7 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 		return TypeBool
 	}
 	a.errorAt(node, "unsupported operator '%s'", node.Token.Type.String())
-	return TypeAny
+	return TypeError
 }
 
 func (a *Analyzer) analyzeList(node *ast.TreeNode) Type {
@@ -408,7 +422,7 @@ func (a *Analyzer) analyzeIndex(node *ast.TreeNode) Type {
 			return vecType
 		}
 		a.errorAt(node.Children[1], "vector index must be int or bool vector, got %s", indexType.String())
-		return TypeAny
+		return TypeError
 	}
 	if listType, ok := targetType.(*ListType); ok {
 		if !isIntLike(indexType) && !isUnknownType(indexType) {
@@ -424,10 +438,14 @@ func (a *Analyzer) analyzeIndex(node *ast.TreeNode) Type {
 	}
 	if _, ok := targetType.(*DictType); ok {
 		a.errorAt(node, "use dot access for dicts: d.key instead of d['key']")
-		return TypeAny
+		return TypeError
+	}
+	if IsErrorType(targetType) {
+		return TypeError
 	}
 	if !isUnknownType(targetType) {
 		a.errorAt(node, "type '%s' is not indexable", targetType.String())
+		return TypeError
 	}
 	return TypeAny
 }
@@ -435,7 +453,7 @@ func (a *Analyzer) analyzeIndex(node *ast.TreeNode) Type {
 func (a *Analyzer) analyzeVarDecl(node *ast.TreeNode) Type {
 	if len(node.Children) < 3 {
 		a.errorAt(node, "invalid typed declaration")
-		return TypeAny
+		return TypeError
 	}
 	nameNode := node.Children[0]
 	typeNode := node.Children[1]

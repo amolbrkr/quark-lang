@@ -40,6 +40,7 @@ func (a *Analyzer) inferBuiltinReturnType(name string, argTypes []Type, callNode
 				return t
 			}
 			a.errorAt(callNode, "argument 1 of 'abs' expects int or float, got %s", t.String())
+			return TypeError
 		}
 		return TypeAny
 	case "sum":

@@ -90,9 +90,39 @@ func NewAnalyzer() *Analyzer {
 }
 
 func (a *Analyzer) Errors() []string {
-	out := make([]string, 0, len(a.errors))
-	for _, d := range a.errors {
+	errDiags := a.ErrorDiagnostics()
+	out := make([]string, 0, len(errDiags))
+	for _, d := range errDiags {
 		out = append(out, d.String())
+	}
+	return out
+}
+
+func (a *Analyzer) HasErrors() bool {
+	for _, d := range a.errors {
+		if d.Severity == "" || d.Severity == diagnostics.SeverityError {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *Analyzer) ErrorDiagnostics() []diagnostics.Diagnostic {
+	out := make([]diagnostics.Diagnostic, 0, len(a.errors))
+	for _, d := range a.errors {
+		if d.Severity == "" || d.Severity == diagnostics.SeverityError {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+func (a *Analyzer) WarningDiagnostics() []diagnostics.Diagnostic {
+	out := make([]diagnostics.Diagnostic, 0, len(a.errors))
+	for _, d := range a.errors {
+		if d.Severity == diagnostics.SeverityWarning {
+			out = append(out, d)
+		}
 	}
 	return out
 }
@@ -127,13 +157,28 @@ func (a *Analyzer) errorAt(node *ast.TreeNode, format string, args ...interface{
 	})
 }
 
+func (a *Analyzer) warnAt(node *ast.TreeNode, format string, args ...interface{}) {
+	msg := fmt.Sprintf(format, args...)
+	var loc *diagnostics.Location
+	if node != nil && node.Token != nil {
+		loc = &diagnostics.Location{Line: node.Token.Line, Column: node.Token.Column}
+	}
+	a.errors = append(a.errors, diagnostics.Diagnostic{
+		Code:     "QK-CHECK-002",
+		Stage:    diagnostics.StageCheck,
+		Severity: diagnostics.SeverityWarning,
+		Message:  msg,
+		Location: loc,
+	})
+}
+
 func (a *Analyzer) pushScope() {
 	a.currentScope = NewScope(a.currentScope)
 }
 
 func (a *Analyzer) popScope() {
 	if a.currentScope == nil || a.currentScope.Parent == nil {
-		panic(fmt.Errorf("error[QK-CHECK-ICE-001] (check): popScope called at root scope"))
+		panic("internal compiler error: popScope called at root scope")
 	}
 	a.currentScope = a.currentScope.Parent
 }

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"quark/ast"
+	"quark/diagnostics"
 	"quark/internal/testutil"
 	qtypes "quark/types"
 )
@@ -112,6 +113,45 @@ func TestDictHelpers_BuiltinsRegistered(t *testing.T) {
 	}
 	if len(typeErrs) > 0 {
 		t.Fatalf("unexpected type errors: %v", typeErrs)
+	}
+}
+
+func TestWarnings_DoNotFailTypeErrors(t *testing.T) {
+	analyzer, _, parseErrs, typeErrs := testutil.Analyze("d = dict { a: 1 }\nd.a = 'x'\n")
+	if len(parseErrs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", parseErrs)
+	}
+	if len(typeErrs) > 0 {
+		t.Fatalf("warnings should not be treated as type errors, got: %v", typeErrs)
+	}
+
+	warnings := analyzer.WarningDiagnostics()
+	if len(warnings) == 0 {
+		t.Fatalf("expected at least one warning diagnostic")
+	}
+	if warnings[0].Severity != diagnostics.SeverityWarning {
+		t.Fatalf("expected warning severity, got: %s", warnings[0].Severity)
+	}
+	if warnings[0].Code != "QK-CHECK-002" {
+		t.Fatalf("expected warning code QK-CHECK-002, got: %s", warnings[0].Code)
+	}
+
+	if analyzer.HasErrors() {
+		t.Fatalf("expected HasErrors=false when only warnings are present")
+	}
+}
+
+func TestUnionMethodCall_ValidatesArgsAcrossMembers(t *testing.T) {
+	_, _, parseErrs, typeErrs := testutil.Analyze("fn pick(flag) ->\n    if flag:\n        list [1, 2]\n    else:\n        dict { a: 1 }\n\nx = pick(true)\nprintln(x.get('a'))\n")
+	if len(parseErrs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", parseErrs)
+	}
+	if len(typeErrs) == 0 {
+		t.Fatalf("expected type error from union method arg mismatch")
+	}
+	joined := strings.Join(typeErrs, "\n")
+	if !strings.Contains(joined, "argument 1 of 'get' expects int, got str") {
+		t.Fatalf("expected union argument type-check error, got: %v", typeErrs)
 	}
 }
 

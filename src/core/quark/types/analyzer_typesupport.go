@@ -96,12 +96,15 @@ func (a *Analyzer) resolveTypeNode(node *ast.TreeNode) Type {
 		return TypeFileHandle
 	default:
 		a.errorAt(node, "unknown type '%s'", name)
-		return TypeAny
+		return TypeError
 	}
 }
 
 func isUnknownType(t Type) bool {
 	if t == nil {
+		return true
+	}
+	if IsErrorType(t) {
 		return true
 	}
 	if t.Equals(TypeAny) {

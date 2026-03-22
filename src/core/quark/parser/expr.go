@@ -245,7 +245,7 @@ func (p *Parser) parseListLiteral() *ast.TreeNode {
 			if p.curToken.Type == token.RBRACKET {
 				break // trailing comma
 			}
-			elem := p.parseExpression(ast.PrecTernary)
+			elem := p.parseExpression(ast.PrecPipe)
 			if elem != nil {
 				node.AddChild(elem)
 			}
@@ -297,7 +297,7 @@ func (p *Parser) parseDictLiteral() *ast.TreeNode {
 				return nil
 			}
 
-			value := p.parseExpression(ast.PrecTernary)
+			value := p.parseExpression(ast.PrecPipe)
 			if value == nil {
 				p.addError("expected value after ':' in dict literal")
 				return nil
@@ -345,7 +345,7 @@ func (p *Parser) parseVectorLiteral() *ast.TreeNode {
 				return nil
 			}
 
-			elem := p.parseExpression(ast.PrecTernary)
+			elem := p.parseExpression(ast.PrecPipe)
 			if elem != nil {
 				node.AddChild(elem)
 			}
@@ -451,7 +451,7 @@ func (p *Parser) parseCallExpression(callee *ast.TreeNode) *ast.TreeNode {
 
 	// Parse comma-separated arguments until ')'
 	for {
-		arg := p.parseExpression(ast.PrecTernary)
+		arg := p.parseExpression(ast.PrecPipe)
 		if arg != nil {
 			args.AddChild(arg)
 		}

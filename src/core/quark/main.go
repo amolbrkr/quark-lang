@@ -380,9 +380,12 @@ func runCheck(filename string) {
 
 	analyzer := types.NewAnalyzer()
 	analyzer.Analyze(tree)
+	analyzerDiags := diagnostics.WithDefaultFile(analyzer.Diagnostics(), filename)
+	if len(analyzerDiags) > 0 {
+		printDiagnostics(analyzerDiags)
+	}
 
-	if len(analyzer.Errors()) > 0 {
-		printDiagnostics(diagnostics.WithDefaultFile(analyzer.Diagnostics(), filename))
+	if analyzer.HasErrors() {
 		os.Exit(1)
 	}
 
@@ -414,9 +417,12 @@ func runEmit(filename string) {
 	// Run analyzer to compute closure captures
 	analyzer := types.NewAnalyzer()
 	analyzer.Analyze(tree)
+	analyzerDiags := diagnostics.WithDefaultFile(analyzer.Diagnostics(), filename)
+	if len(analyzerDiags) > 0 {
+		printDiagnostics(analyzerDiags)
+	}
 
-	if len(analyzer.Errors()) > 0 {
-		printDiagnostics(diagnostics.WithDefaultFile(analyzer.Diagnostics(), filename))
+	if analyzer.HasErrors() {
 		os.Exit(1)
 	}
 
@@ -468,9 +474,12 @@ func runBuild(filename string, output string, useGC bool, lto bool) {
 	// Type checking phase
 	analyzer := types.NewAnalyzer()
 	analyzer.Analyze(tree)
+	analyzerDiags := diagnostics.WithDefaultFile(analyzer.Diagnostics(), filename)
+	if len(analyzerDiags) > 0 {
+		printDiagnostics(analyzerDiags)
+	}
 
-	if len(analyzer.Errors()) > 0 {
-		printDiagnostics(diagnostics.WithDefaultFile(analyzer.Diagnostics(), filename))
+	if analyzer.HasErrors() {
 		os.Exit(1)
 	}
 
@@ -588,9 +597,12 @@ func runRun(filename string, debug bool, useGC bool, lto bool) {
 	// Type checking phase
 	analyzer := types.NewAnalyzer()
 	analyzer.Analyze(tree)
+	analyzerDiags := diagnostics.WithDefaultFile(analyzer.Diagnostics(), filename)
+	if len(analyzerDiags) > 0 {
+		printDiagnostics(analyzerDiags)
+	}
 
-	if len(analyzer.Errors()) > 0 {
-		printDiagnostics(diagnostics.WithDefaultFile(analyzer.Diagnostics(), filename))
+	if analyzer.HasErrors() {
 		os.Exit(1)
 	}
 

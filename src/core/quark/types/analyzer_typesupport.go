@@ -8,8 +8,17 @@ import (
 func typeToBuiltinTypeKey(t Type) builtins.TypeKey {
 	switch v := t.(type) {
 	case *BasicType:
-		if v.Name == "str" {
+		switch v.Name {
+		case "str":
 			return builtins.TypeString
+		case "int":
+			return builtins.TypeInt
+		case "float":
+			return builtins.TypeFloat
+		case "bool":
+			return builtins.TypeBool
+		case "file_handle":
+			return builtins.TypeFileHandle
 		}
 	case *ListType:
 		return builtins.TypeListAny
@@ -17,6 +26,8 @@ func typeToBuiltinTypeKey(t Type) builtins.TypeKey {
 		return builtins.TypeDictAny
 	case *VectorType:
 		return builtins.TypeVectorAny
+	case *ResultType:
+		return builtins.TypeResultAny
 	}
 	return ""
 }

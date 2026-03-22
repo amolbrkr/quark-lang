@@ -77,7 +77,7 @@
       "patterns": [
         {
           "comment": "I/O builtins",
-          "match": "\\b(print|println|input)(?=\\s*\\()",
+          "match": "\\b(print|println|input|_file_open|_file_read|_file_write|_file_close|_file_seek|_file_exists)(?=\\s*\\()",
           "name": "support.function.builtin.quark"
         },
         {
@@ -92,7 +92,7 @@
         },
         {
           "comment": "Range builtin",
-          "match": "\\b(range)(?=\\s*\\()",
+          "match": "\\b(range|enumerate|vfrom_list)(?=\\s*\\()",
           "name": "support.function.builtin.quark"
         },
         {
@@ -107,12 +107,12 @@
         },
         {
           "comment": "List builtins",
-          "match": "\\b(push|pop|get|set|insert|remove|slice|reverse)(?=\\s*\\()",
+          "match": "\\b(push|pop|get|set|insert|remove|slice|reverse|concat|join|enumerate|to_vector)(?=\\s*\\()",
           "name": "support.function.builtin.quark"
         },
         {
           "comment": "Dict builtins",
-          "match": "\\b(dget|dset)(?=\\s*\\()",
+          "match": "\\b(dget|dset|keys|values|items)(?=\\s*\\()",
           "name": "support.function.builtin.quark"
         },
         {
@@ -137,7 +137,7 @@
       "patterns": [
         {
           "name": "keyword.control.quark",
-          "match": "\\b(if|else|elseif|for|while|when|in|use|module|break|continue)\\b"
+          "match": "\\b(if|else|elseif|for|while|when|in|use|as|module|break|continue)\\b"
         },
         {
           "name": "keyword.operator.logical.quark",

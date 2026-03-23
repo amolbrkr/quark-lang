@@ -1,0 +1,49 @@
+// smoke_numeric_lowering.qrk
+// Verifies that type-directed scalar lowering produces correct results:
+// int and float locals use native C++ storage, arithmetic uses raw operators.
+
+println('== smoke: numeric lowering ==')
+
+// Integer arithmetic in a loop — loop var and accumulator are long long
+total = 0
+for i in range(5):
+    total = total + i
+println(total)   // 0+1+2+3+4 = 10
+
+// Float arithmetic
+x = 1.5
+y = 2.5
+println(x + y)   // 4.0
+
+// Mixed int + float promotes to float
+a = 3
+b = 1.5
+println(a + b)   // 4.5
+
+// Integer comparison
+p = 10
+q = 20
+println(p < q)   // true
+
+// Nested arithmetic
+n = 6
+val = n * n - 1
+println(val)   // 35
+
+// Bool variable
+flag = true
+println(flag)    // true
+
+// Closure over an int var — base is captured so it uses QCell*, not scalar
+fn make_adder(base) ->
+    adder = fn(x) -> base + x
+    adder
+
+add5 = make_adder(5)
+println(add5(3))   // 8
+println(add5(10))  // 15
+
+// Integer division promotes to float
+m = 7
+dv = 2
+println(m / dv)   // 3.5

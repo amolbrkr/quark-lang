@@ -9,11 +9,14 @@
 #include <cstdio>
 #include <cstdlib>
 
-// GC-aware string key type so key payload bytes are allocated via q_allocator.
-using QDictKey = std::basic_string<char, std::char_traits<char>, q_allocator<char>>;
+// Plain string key — std::hash is only specialized for std::string, not for
+// strings with custom allocators, so using gc_allocator<char> here breaks
+// compilation with g++ (and is unnecessary: the GC traces QValue values via
+// the map nodes, not the key bytes themselves).
+using QDictKey = std::string;
 
-// QDictMap: unordered_map whose internal nodes and key payload bytes are
-// GC-allocated so the collector can track all dictionary-owned memory.
+// QDictMap: unordered_map with GC-allocated nodes so the collector can reach
+// the QValue values stored inside.
 using QDictMap = std::unordered_map<
     QDictKey, QValue,
     std::hash<QDictKey>,

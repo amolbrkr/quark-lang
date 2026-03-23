@@ -89,3 +89,51 @@ func (a *Analyzer) GetCallPlans() map[*ast.TreeNode]*ir.CallPlan {
 func (a *Analyzer) GetReturnValidation() map[*ast.TreeNode]bool {
 	return a.returnValidated
 }
+
+// GetCapturedByFunction returns, for each function or lambda node, the set of
+// variable names that any directly-nested lambda captures from that scope.
+// Codegen uses this to decide: QCell* (captured) vs QValue (stack-local).
+func (a *Analyzer) GetCapturedByFunction(root *ast.TreeNode) map[*ast.TreeNode]map[string]bool {
+	result := make(map[*ast.TreeNode]map[string]bool)
+	if root == nil || len(a.captures) == 0 {
+		return result
+	}
+
+	// Walk the AST tracking the immediately enclosing function/lambda for each node.
+	// When we hit a LambdaNode that has captures, attribute those names to its
+	// enclosing function/lambda — that is the scope that owns the variables.
+	var walk func(n *ast.TreeNode, enclosing *ast.TreeNode)
+	walk = func(n *ast.TreeNode, enclosing *ast.TreeNode) {
+		if n == nil {
+			return
+		}
+		if n.NodeType == ast.LambdaNode {
+			if enclosing != nil {
+				if names, ok := a.captures[n]; ok {
+					if result[enclosing] == nil {
+						result[enclosing] = make(map[string]bool)
+					}
+					for _, name := range names {
+						result[enclosing][name] = true
+					}
+				}
+			}
+			// Children of this lambda are now enclosed by it.
+			for _, child := range n.Children {
+				walk(child, n)
+			}
+			return
+		}
+		if n.NodeType == ast.FunctionNode {
+			for _, child := range n.Children {
+				walk(child, n)
+			}
+			return
+		}
+		for _, child := range n.Children {
+			walk(child, enclosing)
+		}
+	}
+	walk(root, nil)
+	return result
+}

@@ -44,6 +44,7 @@
 #include "builtins/math.hpp"
 #include "builtins/dict.hpp"
 #include "builtins/strings.hpp"
+#include "builtins/fmt.hpp"
 
 // Member access (must come after types and builtins)
 #include "ops/member.hpp"

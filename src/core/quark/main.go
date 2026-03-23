@@ -438,6 +438,7 @@ func runEmit(filename string) {
 	}
 	gen.SetCaptures(analyzer.GetCaptures())
 	gen.SetCallPlans(analyzer.GetCallPlans())
+	gen.SetCapturedByFunction(analyzer.GetCapturedByFunction(tree))
 	cCode := gen.Generate(tree)
 	fmt.Println(cCode)
 }
@@ -495,6 +496,7 @@ func runBuild(filename string, output string, useGC bool, lto bool) {
 	}
 	gen.SetCaptures(analyzer.GetCaptures())
 	gen.SetCallPlans(analyzer.GetCallPlans())
+	gen.SetCapturedByFunction(analyzer.GetCapturedByFunction(tree))
 	cCode := gen.Generate(tree)
 
 	// Write C++ code to temp file
@@ -506,15 +508,16 @@ func runBuild(filename string, output string, useGC bool, lto bool) {
 		os.Exit(1)
 	}
 
-	// Compile with clang++ (or g++ as fallback)
-	compiler := "clang++"
+	// Quark requires clang++ — g++ is not supported due to gc_allocator
+	// incompatibilities with custom-allocator string keys in unordered_map.
 	if _, err := exec.LookPath("clang++"); err != nil {
-		compiler = "g++"
-		if _, err := exec.LookPath("g++"); err != nil {
-			fmt.Fprintln(os.Stderr, "Error: neither clang++ nor g++ found in PATH")
-			os.Exit(1)
-		}
+		fmt.Fprintln(os.Stderr, "Error: clang++ not found in PATH")
+		fmt.Fprintln(os.Stderr, "Quark requires clang++ to compile. Install it with:")
+		fmt.Fprintln(os.Stderr, "  Ubuntu/Debian: sudo apt install clang")
+		fmt.Fprintln(os.Stderr, "  macOS:         brew install llvm")
+		os.Exit(1)
 	}
+	compiler := "clang++"
 
 	// Get runtime include path
 	runtimeInclude := getRuntimeIncludePath()
@@ -618,6 +621,7 @@ func runRun(filename string, debug bool, useGC bool, lto bool) {
 	}
 	gen.SetCaptures(analyzer.GetCaptures())
 	gen.SetCallPlans(analyzer.GetCallPlans())
+	gen.SetCapturedByFunction(analyzer.GetCapturedByFunction(tree))
 	cCode := gen.Generate(tree)
 
 	// Determine file paths
@@ -643,15 +647,16 @@ func runRun(filename string, debug bool, useGC bool, lto bool) {
 		fmt.Fprintf(os.Stderr, "Debug: Generated C++ file: %s\n", cFile)
 	}
 
-	// Compile with clang++ (or g++ as fallback)
-	compiler := "clang++"
+	// Quark requires clang++ — g++ is not supported due to gc_allocator
+	// incompatibilities with custom-allocator string keys in unordered_map.
 	if _, err := exec.LookPath("clang++"); err != nil {
-		compiler = "g++"
-		if _, err := exec.LookPath("g++"); err != nil {
-			fmt.Fprintln(os.Stderr, "Error: neither clang++ nor g++ found in PATH")
-			os.Exit(1)
-		}
+		fmt.Fprintln(os.Stderr, "Error: clang++ not found in PATH")
+		fmt.Fprintln(os.Stderr, "Quark requires clang++ to compile. Install it with:")
+		fmt.Fprintln(os.Stderr, "  Ubuntu/Debian: sudo apt install clang")
+		fmt.Fprintln(os.Stderr, "  macOS:         brew install llvm")
+		os.Exit(1)
 	}
+	compiler := "clang++"
 
 	// Get runtime include path
 	runtimeInclude := getRuntimeIncludePath()

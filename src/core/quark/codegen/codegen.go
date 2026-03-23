@@ -49,25 +49,68 @@ type Generator struct {
 	inFunction    bool
 	currentFunc   string
 	declaredVars  map[string]bool            // Tracks declared variables to avoid redeclaration
+	cellVars      map[string]bool            // Subset of declaredVars that are QCell* (vs QValue)
 	scopeStack    []map[string]bool          // Stack of variable scopes for nested blocks
+	cellStack     []map[string]bool          // Mirrors scopeStack for cellVars
 	captures      map[*ast.TreeNode][]string // Lambda node → captured variable names (from analyzer)
 	funcNames     map[string]bool            // Set of declared function names (for first-class funcs)
 	callPlans     map[*ast.TreeNode]*ir.CallPlan
+	// capturedByFunction maps each function/lambda node to the set of variable
+	// names that any directly-nested lambda captures from it. A variable NOT in
+	// this set for the current function can be emitted as a stack QValue instead
+	// of a heap-allocated QCell*.
+	capturedByFunction map[*ast.TreeNode]map[string]bool
+	// currentFuncNode is the AST node for the function/lambda currently being
+	// generated. Used to look up capturedByFunction.
+	currentFuncNode *ast.TreeNode
 }
 
 func New() *Generator {
 	return &Generator{
-		funcDecls:    make([]funcDecl, 0),
-		lambdas:      make([]*ast.TreeNode, 0),
-		lambdaNames:  make(map[*ast.TreeNode]string),
-		tempCounter:  0,
-		sourceName:   "<unknown>",
-		declaredVars: make(map[string]bool),
-		scopeStack:   make([]map[string]bool, 0),
-		captures:     make(map[*ast.TreeNode][]string),
-		funcNames:    make(map[string]bool),
-		callPlans:    make(map[*ast.TreeNode]*ir.CallPlan),
+		funcDecls:          make([]funcDecl, 0),
+		lambdas:            make([]*ast.TreeNode, 0),
+		lambdaNames:        make(map[*ast.TreeNode]string),
+		tempCounter:        0,
+		sourceName:         "<unknown>",
+		declaredVars:       make(map[string]bool),
+		cellVars:           make(map[string]bool),
+		scopeStack:         make([]map[string]bool, 0),
+		cellStack:          make([]map[string]bool, 0),
+		captures:           make(map[*ast.TreeNode][]string),
+		funcNames:          make(map[string]bool),
+		callPlans:          make(map[*ast.TreeNode]*ir.CallPlan),
+		capturedByFunction: make(map[*ast.TreeNode]map[string]bool),
 	}
+}
+
+// SetCapturedByFunction passes the per-function captured-variable sets from the
+// analyzer so codegen can elide QCell* for variables that are never captured.
+func (g *Generator) SetCapturedByFunction(m map[*ast.TreeNode]map[string]bool) {
+	if m != nil {
+		g.capturedByFunction = m
+	}
+}
+
+// isCaptured returns true if the named variable is captured by a nested lambda
+// within the function currently being generated, meaning it must stay a QCell*.
+func (g *Generator) isCaptured(name string) bool {
+	if g.currentFuncNode == nil {
+		return false
+	}
+	if captured := g.capturedByFunction[g.currentFuncNode]; captured != nil {
+		return captured[name]
+	}
+	return false
+}
+
+// markCell records that varName is stored as QCell* in the current scope.
+func (g *Generator) markCell(name string) {
+	g.cellVars[name] = true
+}
+
+// isCell reports whether varName is stored as QCell* in the current scope.
+func (g *Generator) isCell(name string) bool {
+	return g.cellVars[name]
 }
 
 // SetSourceName configures the source file label used for runtime diagnostics.
@@ -158,17 +201,26 @@ func (g *Generator) paramName(node *ast.TreeNode) string {
 // pushScope saves current variable scope and creates an isolated one (used for functions)
 func (g *Generator) pushScope() {
 	g.scopeStack = append(g.scopeStack, g.declaredVars)
+	g.cellStack = append(g.cellStack, g.cellVars)
 	g.declaredVars = make(map[string]bool)
+	g.cellVars = make(map[string]bool)
 }
 
 func (g *Generator) pushBlockScope() {
 	parent := g.declaredVars
+	parentCells := g.cellVars
 	g.scopeStack = append(g.scopeStack, parent)
+	g.cellStack = append(g.cellStack, parentCells)
 	child := make(map[string]bool)
 	for k, v := range parent {
 		child[k] = v
 	}
+	childCells := make(map[string]bool)
+	for k, v := range parentCells {
+		childCells[k] = v
+	}
 	g.declaredVars = child
+	g.cellVars = childCells
 }
 
 // popScope restores the previous variable scope
@@ -176,6 +228,10 @@ func (g *Generator) popScope() {
 	if len(g.scopeStack) > 0 {
 		g.declaredVars = g.scopeStack[len(g.scopeStack)-1]
 		g.scopeStack = g.scopeStack[:len(g.scopeStack)-1]
+	}
+	if len(g.cellStack) > 0 {
+		g.cellVars = g.cellStack[len(g.cellStack)-1]
+		g.cellStack = g.cellStack[:len(g.cellStack)-1]
 	}
 }
 
@@ -240,7 +296,7 @@ func (g *Generator) predeclareMainFunctionBindings(root *ast.TreeNode) {
 			return
 		}
 		cName := sanitizeVarName(name)
-		g.emitLine("QCell* %s = q_new_cell(qv_null());", cName)
+		g.emitLine("QValue %s = qv_null();", cName)
 		g.declaredVars[name] = true
 	}
 
@@ -332,6 +388,7 @@ func (g *Generator) generateFunction(node *ast.TreeNode) {
 
 	funcName := nameNode.TokenLiteral()
 	g.currentFunc = funcName
+	g.currentFuncNode = node
 	g.inFunction = true
 	g.pushScope() // Create new scope for function
 
@@ -356,8 +413,13 @@ func (g *Generator) generateFunction(node *ast.TreeNode) {
 		}
 		cName := sanitizeVarName(paramName)
 		argName := sanitizeArgName(paramName)
-		g.emitLine("QCell* %s = q_new_cell(%s);", cName, argName)
-		g.declaredVars[paramName] = true // Parameters are already declared
+		if g.isCaptured(paramName) {
+			g.emitLine("QCell* %s = q_new_cell(%s);", cName, argName)
+			g.markCell(paramName)
+		} else {
+			g.emitLine("QValue %s = %s;", cName, argName)
+		}
+		g.declaredVars[paramName] = true
 	}
 
 	// Generate body
@@ -369,6 +431,7 @@ func (g *Generator) generateFunction(node *ast.TreeNode) {
 
 	g.popScope() // Restore previous scope
 	g.inFunction = false
+	g.currentFuncNode = nil
 }
 
 func (g *Generator) generateModule(node *ast.TreeNode) {
@@ -521,7 +584,10 @@ func (g *Generator) generateIdentifier(node *ast.TreeNode) string {
 		return "qv_null()"
 	}
 	if g.declaredVars[name] {
-		return fmt.Sprintf("%s->value", sanitizeVarName(name))
+		if g.isCell(name) {
+			return fmt.Sprintf("%s->value", sanitizeVarName(name))
+		}
+		return sanitizeVarName(name)
 	}
 	if g.funcNames[name] {
 		return fmt.Sprintf("qv_func((void*)quark_%s)", name)
@@ -612,15 +678,25 @@ func (g *Generator) generateOperator(node *ast.TreeNode) string {
 		varName := lhs.TokenLiteral()
 		cName := sanitizeVarName(varName)
 		if g.declaredVars[varName] {
-			// Variable already declared, assign cell value
-			g.emitLine("%s->value = %s;", cName, right)
-		} else {
-			// First declaration: allocate mutable cell before RHS use (supports self-recursive lambdas)
+			// Already declared — write using whichever storage type was used at declaration.
+			if g.isCell(varName) {
+				g.emitLine("%s->value = %s;", cName, right)
+				return fmt.Sprintf("%s->value", cName)
+			}
+			g.emitLine("%s = %s;", cName, right)
+			return cName
+		}
+		// First declaration — choose storage based on whether a nested lambda captures this var.
+		if g.isCaptured(varName) {
 			g.emitLine("QCell* %s = q_new_cell(qv_null());", cName)
 			g.emitLine("%s->value = %s;", cName, right)
 			g.declaredVars[varName] = true
+			g.markCell(varName)
+			return fmt.Sprintf("%s->value", cName)
 		}
-		return fmt.Sprintf("%s->value", cName)
+		g.emitLine("QValue %s = %s;", cName, right)
+		g.declaredVars[varName] = true
+		return cName
 	}
 
 	return "qv_null()"
@@ -978,7 +1054,12 @@ func (g *Generator) generateFor(node *ast.TreeNode) string {
 
 	g.pushBlockScope()
 	g.declaredVars[varName] = true // Loop variable is declared
-	g.emitLine("QCell* %s = q_new_cell(q_iter_get(%s, qv_int(%s)));", cVarName, listTemp, idxTemp)
+	if g.isCaptured(varName) {
+		g.emitLine("QCell* %s = q_new_cell(q_iter_get(%s, qv_int(%s)));", cVarName, listTemp, idxTemp)
+		g.markCell(varName)
+	} else {
+		g.emitLine("QValue %s = q_iter_get(%s, qv_int(%s));", cVarName, listTemp, idxTemp)
+	}
 
 	if bodyNode.NodeType == ast.BlockNode {
 		for _, stmt := range bodyNode.Children {
@@ -1103,13 +1184,23 @@ func (g *Generator) generateVarDecl(node *ast.TreeNode) string {
 	cName := sanitizeVarName(name)
 	value := g.generateExpr(valueNode)
 	if g.declaredVars[name] {
+		if g.isCell(name) {
+			g.emitLine("%s->value = %s;", cName, value)
+			return fmt.Sprintf("%s->value", cName)
+		}
+		g.emitLine("%s = %s;", cName, value)
+		return cName
+	}
+	if g.isCaptured(name) {
+		g.emitLine("QCell* %s = q_new_cell(qv_null());", cName)
 		g.emitLine("%s->value = %s;", cName, value)
+		g.declaredVars[name] = true
+		g.markCell(name)
 		return fmt.Sprintf("%s->value", cName)
 	}
-	g.emitLine("QCell* %s = q_new_cell(qv_null());", cName)
-	g.emitLine("%s->value = %s;", cName, value)
+	g.emitLine("QValue %s = %s;", cName, value)
 	g.declaredVars[name] = true
-	return fmt.Sprintf("%s->value", cName)
+	return cName
 }
 
 func (g *Generator) generateLambdaExpr(node *ast.TreeNode) string {
@@ -1156,6 +1247,7 @@ func (g *Generator) generateLambdaFunc(node *ast.TreeNode) {
 
 	g.inFunction = true
 	g.currentFunc = lambdaName
+	g.currentFuncNode = node
 	g.pushScope() // Create new scope for lambda
 
 	// Build parameter list: QClosure* _cl as hidden first param, then user params
@@ -1179,16 +1271,22 @@ func (g *Generator) generateLambdaFunc(node *ast.TreeNode) {
 		}
 		cName := sanitizeVarName(paramName)
 		argName := sanitizeArgName(paramName)
-		g.emitLine("QCell* %s = q_new_cell(%s);", cName, argName)
-		g.declaredVars[paramName] = true // Parameters are already declared
+		if g.isCaptured(paramName) {
+			g.emitLine("QCell* %s = q_new_cell(%s);", cName, argName)
+			g.markCell(paramName)
+		} else {
+			g.emitLine("QValue %s = %s;", cName, argName)
+		}
+		g.declaredVars[paramName] = true
 	}
 
-	// Extract captured variables from closure
+	// Extract captured variables from closure — always QCell* (shared with outer scope)
 	if caps, ok := g.captures[node]; ok {
 		for i, capName := range caps {
 			cName := sanitizeVarName(capName)
 			g.emitLine("QCell* %s = _cl->captures[%d];", cName, i)
 			g.declaredVars[capName] = true
+			g.markCell(capName)
 		}
 	}
 
@@ -1201,4 +1299,5 @@ func (g *Generator) generateLambdaFunc(node *ast.TreeNode) {
 
 	g.popScope() // Restore previous scope
 	g.inFunction = false
+	g.currentFuncNode = nil
 }

@@ -117,6 +117,12 @@ var catalog = []Spec{
 	// Free-function aliases kept for backward compat during transition
 	{Name: "enumerate", Runtime: "q_enumerate", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeListAny},
 	{Name: "vfrom_list", Runtime: "q_to_vector", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeAny},
+
+	// fmt builtins (prefixed _ to signal stdlib-internal use)
+	{Name: "_fmt_list", Runtime: "q_fmt_list", MinArgs: 3, MaxArgs: 3, ParamTypes: []TypeKey{TypeListAny, TypeInt, TypeBool}, ReturnType: TypeString},
+	{Name: "_fmt_vector", Runtime: "q_fmt_vector", MinArgs: 3, MaxArgs: 3, ParamTypes: []TypeKey{TypeVectorAny, TypeInt, TypeBool}, ReturnType: TypeString},
+	{Name: "_fmt_dict", Runtime: "q_fmt_dict", MinArgs: 3, MaxArgs: 3, ParamTypes: []TypeKey{TypeDictAny, TypeInt, TypeBool}, ReturnType: TypeString},
+	{Name: "_fmt_table", Runtime: "q_fmt_table", MinArgs: 3, MaxArgs: 3, ParamTypes: []TypeKey{TypeDictAny, TypeInt, TypeBool}, ReturnType: TypeString},
 }
 
 var byName map[string]Spec

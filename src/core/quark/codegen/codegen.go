@@ -6,6 +6,7 @@ import (
 	"quark/ast"
 	"quark/ir"
 	"quark/token"
+	"quark/types"
 	"strings"
 )
 
@@ -63,6 +64,14 @@ type Generator struct {
 	// currentFuncNode is the AST node for the function/lambda currently being
 	// generated. Used to look up capturedByFunction.
 	currentFuncNode *ast.TreeNode
+	// nodeTypes maps every AST expression node to the type the analyzer inferred
+	// for it. Codegen uses this to decide scalar storage and native operator lowering.
+	nodeTypes map[*ast.TreeNode]types.Type
+	// varTiers tracks the C++ storage tier chosen for each declared variable in
+	// the current scope: "long long", "double", "bool", or "" (meaning QValue).
+	// Mirrors declaredVars / scopeStack.
+	varTiers  map[string]string
+	tierStack []map[string]string
 }
 
 func New() *Generator {
@@ -80,6 +89,9 @@ func New() *Generator {
 		funcNames:          make(map[string]bool),
 		callPlans:          make(map[*ast.TreeNode]*ir.CallPlan),
 		capturedByFunction: make(map[*ast.TreeNode]map[string]bool),
+		nodeTypes:          make(map[*ast.TreeNode]types.Type),
+		varTiers:           make(map[string]string),
+		tierStack:          make([]map[string]string, 0),
 	}
 }
 
@@ -89,6 +101,73 @@ func (g *Generator) SetCapturedByFunction(m map[*ast.TreeNode]map[string]bool) {
 	if m != nil {
 		g.capturedByFunction = m
 	}
+}
+
+// SetNodeTypes passes the per-node inferred types from the analyzer to the generator.
+func (g *Generator) SetNodeTypes(m map[*ast.TreeNode]types.Type) {
+	if m != nil {
+		g.nodeTypes = m
+	}
+}
+
+// nodeType returns the analyzer-inferred type for a given AST node, or nil if unknown.
+func (g *Generator) nodeType(node *ast.TreeNode) types.Type {
+	if node == nil {
+		return nil
+	}
+	return g.nodeTypes[node]
+}
+
+// nativeCType returns the C++ scalar type string for a Quark type, or "" if the
+// type must stay boxed as QValue (any, unknown, composite, or nil).
+func nativeCType(t types.Type) string {
+	if t == nil {
+		return ""
+	}
+	if t.Equals(types.TypeInt) {
+		return "long long"
+	}
+	if t.Equals(types.TypeFloat) {
+		return "double"
+	}
+	if t.Equals(types.TypeBool) {
+		return "bool"
+	}
+	return ""
+}
+
+// markTier records the C++ storage tier for varName in the current scope.
+func (g *Generator) markTier(name string, ctype string) {
+	g.varTiers[name] = ctype
+}
+
+// tierOf returns the C++ storage tier for varName, or "" for QValue/unknown.
+func (g *Generator) tierOf(name string) string {
+	return g.varTiers[name]
+}
+
+// boxExpr wraps a C++ expression of the given tier into a QValue.
+// If tier is "" (already QValue), expr is returned unchanged.
+func boxExpr(expr string, tier string) string {
+	switch tier {
+	case "long long":
+		return fmt.Sprintf("qv_int(%s)", expr)
+	case "double":
+		return fmt.Sprintf("qv_float(%s)", expr)
+	case "bool":
+		return fmt.Sprintf("qv_bool(%s)", expr)
+	}
+	return expr
+}
+
+// unboxForTier extracts the raw scalar value from a QValue expression.
+// generateExpr always returns QValue, so we always use .data field access.
+func unboxForTier(expr string, tier string, _ types.Type) string {
+	field := unboxFieldAccessor(tier)
+	if field != "" {
+		return fmt.Sprintf("(%s).data.%s", expr, field)
+	}
+	return expr
 }
 
 // isCaptured returns true if the named variable is captured by a nested lambda
@@ -202,15 +281,19 @@ func (g *Generator) paramName(node *ast.TreeNode) string {
 func (g *Generator) pushScope() {
 	g.scopeStack = append(g.scopeStack, g.declaredVars)
 	g.cellStack = append(g.cellStack, g.cellVars)
+	g.tierStack = append(g.tierStack, g.varTiers)
 	g.declaredVars = make(map[string]bool)
 	g.cellVars = make(map[string]bool)
+	g.varTiers = make(map[string]string)
 }
 
 func (g *Generator) pushBlockScope() {
 	parent := g.declaredVars
 	parentCells := g.cellVars
+	parentTiers := g.varTiers
 	g.scopeStack = append(g.scopeStack, parent)
 	g.cellStack = append(g.cellStack, parentCells)
+	g.tierStack = append(g.tierStack, parentTiers)
 	child := make(map[string]bool)
 	for k, v := range parent {
 		child[k] = v
@@ -219,8 +302,13 @@ func (g *Generator) pushBlockScope() {
 	for k, v := range parentCells {
 		childCells[k] = v
 	}
+	childTiers := make(map[string]string)
+	for k, v := range parentTiers {
+		childTiers[k] = v
+	}
 	g.declaredVars = child
 	g.cellVars = childCells
+	g.varTiers = childTiers
 }
 
 // popScope restores the previous variable scope
@@ -232,6 +320,10 @@ func (g *Generator) popScope() {
 	if len(g.cellStack) > 0 {
 		g.cellVars = g.cellStack[len(g.cellStack)-1]
 		g.cellStack = g.cellStack[:len(g.cellStack)-1]
+	}
+	if len(g.tierStack) > 0 {
+		g.varTiers = g.tierStack[len(g.tierStack)-1]
+		g.tierStack = g.tierStack[:len(g.tierStack)-1]
 	}
 }
 
@@ -424,7 +516,8 @@ func (g *Generator) generateFunction(node *ast.TreeNode) {
 
 	// Generate body
 	result := g.generateBlock(bodyNode)
-	g.emitLine("return %s;", result)
+	// Functions return QValue — box any scalar result.
+	g.emitLine("return %s;", g.boxResultToQValue(result, bodyNode))
 
 	g.indentLevel--
 	g.emit("}\n\n")
@@ -587,12 +680,186 @@ func (g *Generator) generateIdentifier(node *ast.TreeNode) string {
 		if g.isCell(name) {
 			return fmt.Sprintf("%s->value", sanitizeVarName(name))
 		}
-		return sanitizeVarName(name)
+		cName := sanitizeVarName(name)
+		// Box scalar variables back to QValue at read sites so the rest of
+		// codegen always works with QValue expressions.
+		return boxExpr(cName, g.tierOf(name))
 	}
 	if g.funcNames[name] {
 		return fmt.Sprintf("qv_func((void*)quark_%s)", name)
 	}
 	return sanitizeVarName(name)
+}
+
+// boxToQValue ensures expr (which may be a raw scalar or already a QValue) is
+// returned as a QValue. tier is the C++ storage tier of expr ("long long",
+// "double", "bool", or "" for QValue).
+func boxToQValue(expr string, tier string) string {
+	return boxExpr(expr, tier)
+}
+
+// boxResultToQValue is a no-op since generateExpr already returns QValue-compatible
+// expressions (identifiers are boxed at read time via generateIdentifier).
+// Kept as a named function for documentation clarity at return sites.
+func (g *Generator) boxResultToQValue(expr string, _ *ast.TreeNode) string {
+	return expr
+}
+
+// scalarExpr attempts to generate a raw C++ scalar expression for node without
+// any QValue boxing. Returns (expr, tier) where tier is non-empty iff the
+// entire expression evaluates to a raw C++ scalar.
+//
+// Handles recursively:
+//   - Scalar literals (int, float, bool)
+//   - Scalar-tiered local variables
+//   - Unary minus on a scalar operand
+//   - Binary arithmetic on two scalar operands (recurses into sub-expressions)
+//
+// Falls back to ("", "") — caller must use the boxed generateExpr path.
+func (g *Generator) scalarExpr(node *ast.TreeNode) (string, string) {
+	if node == nil {
+		return "", ""
+	}
+	switch node.NodeType {
+	case ast.LiteralNode:
+		if node.Token == nil {
+			return "", ""
+		}
+		switch node.Token.Type {
+		case token.INT:
+			return node.Token.Literal, "long long"
+		case token.FLOAT:
+			return node.Token.Literal, "double"
+		case token.TRUE:
+			return "true", "bool"
+		case token.FALSE:
+			return "false", "bool"
+		}
+
+	case ast.IdentifierNode:
+		name := node.TokenLiteral()
+		if g.declaredVars[name] && !g.isCell(name) {
+			tier := g.tierOf(name)
+			if tier != "" {
+				return sanitizeVarName(name), tier
+			}
+		}
+
+	case ast.OperatorNode:
+		if node.Token == nil {
+			return "", ""
+		}
+		op := node.Token.Type
+
+		// Unary minus: -x where x is scalar
+		if len(node.Children) == 1 && op == token.MINUS {
+			operand, tier := g.scalarExpr(node.Children[0])
+			if tier != "" && tier != "bool" {
+				return fmt.Sprintf("(-%s)", operand), tier
+			}
+			return "", ""
+		}
+
+		// Binary arithmetic: both operands must be scalar
+		if len(node.Children) == 2 {
+			if cppOp := nativeArithOp(op); cppOp != "" && op != token.DOUBLESTAR {
+				lRaw, lTier := g.scalarExpr(node.Children[0])
+				rRaw, rTier := g.scalarExpr(node.Children[1])
+				if lTier != "" && rTier != "" {
+					resTier := promotedTier(lTier, rTier, op)
+					if resTier != "" {
+						expr := fmt.Sprintf("((%s)%s %s (%s)%s)", resTier, lRaw, cppOp, resTier, rRaw)
+						return expr, resTier
+					}
+				}
+			}
+		}
+	}
+	return "", ""
+}
+
+// nativeArithOp returns the C++ infix operator string for a token type, or "".
+func nativeArithOp(op token.TokenType) string {
+	switch op {
+	case token.PLUS:
+		return "+"
+	case token.MINUS:
+		return "-"
+	case token.MULTIPLY:
+		return "*"
+	case token.DIVIDE:
+		return "/"
+	case token.MODULO:
+		return "%"
+	}
+	return ""
+}
+
+// nativeCompareOp returns the C++ infix comparison operator string for a token type, or "".
+func nativeCompareOp(op token.TokenType) string {
+	switch op {
+	case token.LT:
+		return "<"
+	case token.LTE:
+		return "<="
+	case token.GT:
+		return ">"
+	case token.GTE:
+		return ">="
+	case token.DEQ:
+		return "=="
+	case token.NE:
+		return "!="
+	}
+	return ""
+}
+
+// promotedTier returns the result tier for a binary op on two scalar tiers.
+// Division always promotes to double. Everything else follows C++ promotion rules.
+func promotedTier(leftTier, rightTier string, op token.TokenType) string {
+	if leftTier == "double" || rightTier == "double" {
+		return "double"
+	}
+	if op == token.DIVIDE && leftTier == "long long" && rightTier == "long long" {
+		return "double"
+	}
+	if leftTier == "long long" && rightTier == "long long" {
+		return "long long"
+	}
+	if leftTier == "bool" && rightTier == "bool" {
+		return "bool"
+	}
+	return ""
+}
+
+// unboxFieldAccessor returns the QValue data field name for a scalar tier.
+// Used to extract raw values from QValue expressions inline.
+func unboxFieldAccessor(tier string) string {
+	switch tier {
+	case "long long":
+		return "int_val"
+	case "double":
+		return "float_val"
+	case "bool":
+		return "bool_val"
+	}
+	return ""
+}
+
+// loopVarTier returns the C++ scalar tier for a for-loop variable based on the
+// analyzer-inferred type of the range expression. Returns "" if not scalar.
+func (g *Generator) loopVarTier(rangeNode *ast.TreeNode) string {
+	t := g.nodeType(rangeNode)
+	if t == nil {
+		return ""
+	}
+	switch v := t.(type) {
+	case *types.ListType:
+		return nativeCType(v.ElementType)
+	case *types.VectorType:
+		return nativeCType(v.ElementType)
+	}
+	return ""
 }
 
 func (g *Generator) generateOperator(node *ast.TreeNode) string {
@@ -604,6 +871,12 @@ func (g *Generator) generateOperator(node *ast.TreeNode) string {
 
 	// Unary operators
 	if len(node.Children) == 1 {
+		// Try scalar path for unary minus before falling back to q_neg.
+		if op == token.MINUS {
+			if raw, tier := g.scalarExpr(node.Children[0]); tier != "" && tier != "bool" {
+				return boxExpr(fmt.Sprintf("(-%s)", raw), tier)
+			}
+		}
 		operand := g.generateExpr(node.Children[0])
 		switch op {
 		case token.MINUS:
@@ -624,6 +897,31 @@ func (g *Generator) generateOperator(node *ast.TreeNode) string {
 	// Binary operators
 	if len(node.Children) < 2 {
 		return "qv_null()"
+	}
+
+	// Try native scalar lowering for arithmetic and comparison ops before
+	// generating boxed QValue expressions for the operands.
+	if cppArith := nativeArithOp(op); cppArith != "" && op != token.DOUBLESTAR {
+		lRaw, lTier := g.scalarExpr(node.Children[0])
+		rRaw, rTier := g.scalarExpr(node.Children[1])
+		if lTier != "" && rTier != "" {
+			resTier := promotedTier(lTier, rTier, op)
+			if resTier != "" {
+				// Cast operands to result tier to avoid C++ integer promotion surprises.
+				lCast := fmt.Sprintf("((%s)%s)", resTier, lRaw)
+				rCast := fmt.Sprintf("((%s)%s)", resTier, rRaw)
+				rawResult := fmt.Sprintf("(%s %s %s)", lCast, cppArith, rCast)
+				return boxExpr(rawResult, resTier)
+			}
+		}
+	}
+	if cppCmp := nativeCompareOp(op); cppCmp != "" && op != token.DEQ && op != token.NE {
+		lRaw, lTier := g.scalarExpr(node.Children[0])
+		rRaw, rTier := g.scalarExpr(node.Children[1])
+		if lTier != "" && rTier != "" && lTier != "bool" && rTier != "bool" {
+			rawResult := fmt.Sprintf("(%s %s %s)", lRaw, cppCmp, rRaw)
+			return boxExpr(rawResult, "bool")
+		}
 	}
 
 	left := g.generateExpr(node.Children[0])
@@ -683,16 +981,41 @@ func (g *Generator) generateOperator(node *ast.TreeNode) string {
 				g.emitLine("%s->value = %s;", cName, right)
 				return fmt.Sprintf("%s->value", cName)
 			}
+			tier := g.tierOf(varName)
+			if tier != "" {
+				// Scalar variable: try to get a raw RHS expression directly.
+				// If scalarExpr succeeds the assignment is pure scalar — no box/unbox.
+				rawRight, rawTier := g.scalarExpr(node.Children[1])
+				if rawTier == "" {
+					rawRight = unboxForTier(right, tier, nil)
+				}
+				g.emitLine("%s = %s;", cName, rawRight)
+				return cName
+			}
 			g.emitLine("%s = %s;", cName, right)
 			return cName
 		}
-		// First declaration — choose storage based on whether a nested lambda captures this var.
+		// First declaration — choose storage.
+		// Captured variables must be QCell* regardless of type.
 		if g.isCaptured(varName) {
 			g.emitLine("QCell* %s = q_new_cell(qv_null());", cName)
 			g.emitLine("%s->value = %s;", cName, right)
 			g.declaredVars[varName] = true
 			g.markCell(varName)
 			return fmt.Sprintf("%s->value", cName)
+		}
+		// Use scalar storage when the RHS has a statically-known primitive type.
+		rhsType := g.nodeType(node.Children[1])
+		if tier := nativeCType(rhsType); tier != "" {
+			rawRight, rawTier := g.scalarExpr(node.Children[1])
+			if rawTier == "" {
+				// RHS is a compound QValue expression — unbox it.
+				rawRight = unboxForTier(right, tier, nil)
+			}
+			g.emitLine("%s %s = %s;", tier, cName, rawRight)
+			g.declaredVars[varName] = true
+			g.markTier(varName, tier)
+			return cName
 		}
 		g.emitLine("QValue %s = %s;", cName, right)
 		g.declaredVars[varName] = true
@@ -1013,7 +1336,12 @@ func (g *Generator) generateWhen(node *ast.TreeNode) string {
 				accessor = "q_result_error"
 			}
 			cName := sanitizeVarName(bind.name)
-			g.emitLine("QCell* %s = q_new_cell(%s(%s));", cName, accessor, matchTemp)
+			if g.isCaptured(bind.name) {
+				g.emitLine("QCell* %s = q_new_cell(%s(%s));", cName, accessor, matchTemp)
+				g.markCell(bind.name)
+			} else {
+				g.emitLine("QValue %s = %s(%s);", cName, accessor, matchTemp)
+			}
 			g.declaredVars[bind.name] = true
 		}
 		result := g.generateExpr(resultExprNode)
@@ -1058,7 +1386,16 @@ func (g *Generator) generateFor(node *ast.TreeNode) string {
 		g.emitLine("QCell* %s = q_new_cell(q_iter_get(%s, qv_int(%s)));", cVarName, listTemp, idxTemp)
 		g.markCell(varName)
 	} else {
-		g.emitLine("QValue %s = q_iter_get(%s, qv_int(%s));", cVarName, listTemp, idxTemp)
+		// Use scalar storage for loop variable if the iterable has a known element type.
+		loopVarTier := g.loopVarTier(rangeNode)
+		if loopVarTier != "" {
+			field := unboxFieldAccessor(loopVarTier)
+			g.emitLine("%s %s = q_iter_get(%s, qv_int(%s)).data.%s;",
+				loopVarTier, cVarName, listTemp, idxTemp, field)
+			g.markTier(varName, loopVarTier)
+		} else {
+			g.emitLine("QValue %s = q_iter_get(%s, qv_int(%s));", cVarName, listTemp, idxTemp)
+		}
 	}
 
 	if bodyNode.NodeType == ast.BlockNode {
@@ -1188,6 +1525,11 @@ func (g *Generator) generateVarDecl(node *ast.TreeNode) string {
 			g.emitLine("%s->value = %s;", cName, value)
 			return fmt.Sprintf("%s->value", cName)
 		}
+		tier := g.tierOf(name)
+		if tier != "" {
+			g.emitLine("%s = %s;", cName, unboxForTier(value, tier, g.nodeType(valueNode)))
+			return cName
+		}
 		g.emitLine("%s = %s;", cName, value)
 		return cName
 	}
@@ -1197,6 +1539,17 @@ func (g *Generator) generateVarDecl(node *ast.TreeNode) string {
 		g.declaredVars[name] = true
 		g.markCell(name)
 		return fmt.Sprintf("%s->value", cName)
+	}
+	rhsType := g.nodeType(valueNode)
+	if tier := nativeCType(rhsType); tier != "" {
+		rawValue, rawTier := g.scalarExpr(valueNode)
+		if rawTier == "" {
+			rawValue = unboxForTier(value, tier, nil)
+		}
+		g.emitLine("%s %s = %s;", tier, cName, rawValue)
+		g.declaredVars[name] = true
+		g.markTier(name, tier)
+		return cName
 	}
 	g.emitLine("QValue %s = %s;", cName, value)
 	g.declaredVars[name] = true
@@ -1292,7 +1645,8 @@ func (g *Generator) generateLambdaFunc(node *ast.TreeNode) {
 
 	// Generate body - for lambdas, the body is a single expression
 	result := g.generateExpr(bodyNode)
-	g.emitLine("return %s;", result)
+	// Lambdas return QValue — box any scalar result.
+	g.emitLine("return %s;", g.boxResultToQValue(result, bodyNode))
 
 	g.indentLevel--
 	g.emit("}\n\n")

@@ -40,6 +40,7 @@ type Analyzer struct {
 	captures        map[*ast.TreeNode][]string                        // Lambda node -> captured variable names
 	callPlans       map[*ast.TreeNode]*ir.CallPlan
 	returnValidated map[*ast.TreeNode]bool
+	nodeTypes       map[*ast.TreeNode]Type // Inferred type of every expression node
 	loopDepth       int
 	pendingFuncName string
 }
@@ -86,6 +87,7 @@ func NewAnalyzer() *Analyzer {
 		captures:        make(map[*ast.TreeNode][]string),
 		callPlans:       make(map[*ast.TreeNode]*ir.CallPlan),
 		returnValidated: make(map[*ast.TreeNode]bool),
+		nodeTypes:       make(map[*ast.TreeNode]Type),
 	}
 }
 
@@ -188,7 +190,12 @@ func (a *Analyzer) Analyze(node *ast.TreeNode) Type {
 	if node == nil {
 		return TypeVoid
 	}
+	t := a.analyze(node)
+	a.nodeTypes[node] = t
+	return t
+}
 
+func (a *Analyzer) analyze(node *ast.TreeNode) Type {
 	switch node.NodeType {
 	case ast.CompilationUnitNode:
 		return a.analyzeCompilationUnit(node)

@@ -417,6 +417,22 @@ func TestSmokePrograms_Run(t *testing.T) {
 				"[list: 3 elements]",
 			),
 		},
+		{
+			name: "numeric_lowering",
+			file: filepath.Join(testfilesDir, "smoke_numeric_lowering.qrk"),
+			expected: join(
+				"== smoke: numeric lowering ==",
+				"10",
+				"4",
+				"4.5",
+				"true",
+				"35",
+				"true",
+				"8",
+				"15",
+				"3.5",
+			),
+		},
 	}
 
 	for _, tc := range cases {

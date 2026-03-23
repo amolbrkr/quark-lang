@@ -41,10 +41,11 @@ Two-pass semantic analysis:
 1. **Predeclaration pass**: Scans top-level statements to register all named functions and function-binding assignments. This enables forward references — a function can call another function defined later in the file.
 2. **Full analysis pass**: Walks the entire AST, building scopes, type-checking expressions, computing closure captures, and generating CallPlans.
 
-The analyzer produces four metadata outputs consumed by later stages:
+The analyzer produces five metadata outputs consumed by later stages:
 - **CallPlans**: Per-call-site metadata (dispatch mode, arity, defaults to inject)
 - **Captures**: Per-lambda map of captured variable names
-- **CapturedByFunction**: Inverted capture map — per-function/lambda, the set of variable names that any directly-nested lambda captures from it. Used by codegen to decide `QCell*` vs `QValue` per variable.
+- **CapturedByFunction**: Inverted capture map — per-function/lambda, the set of variable names that any directly-nested lambda captures from it. Used by codegen to decide `QCell*` vs scalar storage per variable.
+- **NodeTypes**: Per-AST-node inferred type (`map[*ast.TreeNode]Type`). Every expression node has its analyzer-computed type recorded here. Codegen reads this to drive scalar storage selection and native operator lowering without re-deriving type information.
 - **Return validation**: Per-function declared-vs-inferred return type checks
 
 #### Type checking policy (Knowability Rule)
@@ -73,12 +74,21 @@ Walks the annotated AST and emits C++17 code using the runtime headers.
 - Value constructors use `qv_` prefix
 - Lambdas: `quark__lambda1`, `quark__lambda2`, etc.
 
-**Variables**: Storage is chosen per variable based on whether any nested lambda captures it:
-- **Captured variable** (nested lambda closes over it): `QCell*` — heap-allocated mutable reference cell. Reads emit `quark_x->value`, writes emit `quark_x->value = expr`.
-- **Non-captured variable** (local, param, loop var with no inner closure): `QValue` — stack-allocated. Reads and writes use the variable name directly.
-- **Closure capture received from enclosing scope** (extracted from `_cl->captures[i]`): always `QCell*` — the cell is shared with the outer scope.
+**Variables**: Storage is chosen per variable at first declaration using two criteria: (1) whether a nested lambda captures it, and (2) the static type from `NodeTypes`. Five storage tiers:
 
-Codegen tracks which storage type was chosen per variable in `cellVars` (a per-scope set). `generateIdentifier` consults `cellVars` to emit either `quark_x->value` or `quark_x`.
+| Tier | C++ type | Condition |
+|------|----------|-----------|
+| `QCell*` | heap reference cell | captured by any nested lambda; `->value` for reads/writes |
+| `long long` | native int | not captured + static type `int` |
+| `double` | native float | not captured + static type `float` |
+| `bool` | native bool | not captured + static type `bool` |
+| `QValue` | tagged union | not captured + unknown/any/composite type |
+
+Closure captures received from an enclosing scope (extracted from `_cl->captures[i]`) are always `QCell*` — the cell is shared with the outer scope regardless of type.
+
+`generateIdentifier` boxes scalar vars back to `QValue` at read sites (e.g., `qv_int(quark_x)`) so the rest of codegen always operates on `QValue` expressions. Scalar storage is transparent to all other codegen paths.
+
+Codegen tracks storage choices in `cellVars` (names stored as `QCell*`) and `varTiers` (names stored as a named C++ scalar type), both scoped and stacked with the scope stack.
 
 **Function calls**: Lowered according to the CallPlan's dispatch mode:
 - `DispatchBuiltin` → `q_print(arg)` (direct C++ call)
@@ -87,20 +97,23 @@ Codegen tracks which storage type was chosen per variable in `cellVars` (a per-s
 
 **Method calls**: When `IsMethod=true`, the receiver is injected as the first runtime argument (e.g., `"hello".upper()` → `q_upper(receiver_val)`).
 
+**Operator lowering**: For arithmetic (`+`, `-`, `*`, `/`, `%`) and ordering comparisons (`<`, `<=`, `>`, `>=`), codegen first checks whether both operands are scalar atoms (literals or scalar-tiered local variables). If so, it emits raw C++ operators and boxes the result — e.g., `qv_int(((long long)x) + ((long long)y))` — instead of calling `q_add(...)`. Division between two `int` operands promotes to `double`. Falls back to the boxed `q_add` etc. path whenever either operand is `QValue`/unknown.
+
 **Other lowerings**:
 - **Pipe**: `x | f(a)` → emits `f` call with `x` prepended to args
 - **Default injection**: Missing trailing args filled from DefaultNodes in the CallPlan
 - **Lambdas**: Emitted as top-level C++ functions with closure allocation at the capture site
-- **for loops**: Lowered to index-based iteration (`q_iter_get` with incrementing counter)
+- **for loops**: Lowered to index-based iteration (`q_iter_get` with incrementing counter); loop variable uses scalar tier when the iterable's element type is statically known
 - **if/while**: Conditions wrapped in `q_condition_bool()` for strict-bool enforcement
-- **when**: Lowered to a chain of if/else with result payload extraction
+- **when**: Lowered to a chain of if/else with result payload extraction; pattern bindings use `isCaptured` to choose `QCell*` vs `QValue`
 
 **Scope management**:
-- `pushScope()` — Isolate function scope (clean slate for `declaredVars` and `cellVars`)
+- `pushScope()` — Isolate function scope (clean slate for `declaredVars`, `cellVars`, `varTiers`)
 - `pushBlockScope()` — Copy parent scope for nested blocks (allows shadowing)
 - `popScope()` — Restore previous scope
 - `declaredVars` — Tracks which names have been declared to prevent redeclaration
-- `cellVars` — Tracks which declared names are stored as `QCell*` vs `QValue`
+- `cellVars` — Tracks which declared names are stored as `QCell*`
+- `varTiers` — Tracks which declared names use a native C++ scalar type (`"long long"`, `"double"`, `"bool"`); names absent from this map use `QValue`
 
 **Generation order**:
 1. Collect all function declarations (forward declarations)

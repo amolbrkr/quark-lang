@@ -78,6 +78,10 @@ func (a *Analyzer) GetModules() map[string]*Module {
 	return a.modules
 }
 
+func (a *Analyzer) GetNodeTypes() map[*ast.TreeNode]Type {
+	return a.nodeTypes
+}
+
 func (a *Analyzer) GetCaptures() map[*ast.TreeNode][]string {
 	return a.captures
 }

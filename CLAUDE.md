@@ -34,7 +34,9 @@ cd src/core/quark && go test -v -run TestSmokePrograms_Run
 ## Prerequisites
 
 - Go 1.21+
-- clang++ or g++ (C++17)
+- clang++ (C++17) — **required**, g++ is not supported
+  - Ubuntu/Debian: `sudo apt install clang`
+  - macOS: `brew install llvm`
 - CMake (for Boehm GC bootstrap on first run)
 
 ## Compiler Pipeline
@@ -82,7 +84,7 @@ Runtime tests use Catch2: `src/core/quark/runtime/tests/`
 
 - **All values are `QValue`** — a tagged union with type field. Runtime ops must check type before accessing union fields; return `qv_null()` on mismatch.
 - **All function values are `QClosure*`** — even non-capturing functions. Generated functions take `QClosure* _cl` as hidden first parameter. Direct calls pass `nullptr`.
-- **Shared mutable captures** use `QCell*` — multiple closures over the same variable share one cell.
+- **Variable storage is capture-driven**: variables captured by a nested lambda are emitted as `QCell*` (heap cell, `cell->value` for reads/writes); all other variables are emitted as stack `QValue`. The analyzer's `GetCapturedByFunction` output drives this. Codegen tracks which vars are cells in `cellVars`.
 - **Memory** — Boehm GC vendored at `deps/bdwgc/`. Use `q_malloc_atomic()` for data without pointers (strings, numeric buffers).
 - **CallPlan** (`ir/call.go`) — IR metadata attached to each call site by the analyzer. Tracks call kind (builtin vs user), arity, default arg filling. Codegen reads these instead of re-analyzing.
 - **Builtin catalog** (`builtins/`) — shared metadata (name, arity, signatures) used by both analyzer and codegen. Methods are indexed by `(ReceiverType, methodName)` pair, separate from free functions.

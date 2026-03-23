@@ -41,9 +41,10 @@ Two-pass semantic analysis:
 1. **Predeclaration pass**: Scans top-level statements to register all named functions and function-binding assignments. This enables forward references — a function can call another function defined later in the file.
 2. **Full analysis pass**: Walks the entire AST, building scopes, type-checking expressions, computing closure captures, and generating CallPlans.
 
-The analyzer produces three metadata outputs consumed by later stages:
+The analyzer produces four metadata outputs consumed by later stages:
 - **CallPlans**: Per-call-site metadata (dispatch mode, arity, defaults to inject)
 - **Captures**: Per-lambda map of captured variable names
+- **CapturedByFunction**: Inverted capture map — per-function/lambda, the set of variable names that any directly-nested lambda captures from it. Used by codegen to decide `QCell*` vs `QValue` per variable.
 - **Return validation**: Per-function declared-vs-inferred return type checks
 
 #### Type checking policy (Knowability Rule)
@@ -72,7 +73,12 @@ Walks the annotated AST and emits C++17 code using the runtime headers.
 - Value constructors use `qv_` prefix
 - Lambdas: `quark__lambda1`, `quark__lambda2`, etc.
 
-**Variables**: All variables are `QCell*`. Reads emit `quark_x->value`, writes emit `quark_x->value = expr`.
+**Variables**: Storage is chosen per variable based on whether any nested lambda captures it:
+- **Captured variable** (nested lambda closes over it): `QCell*` — heap-allocated mutable reference cell. Reads emit `quark_x->value`, writes emit `quark_x->value = expr`.
+- **Non-captured variable** (local, param, loop var with no inner closure): `QValue` — stack-allocated. Reads and writes use the variable name directly.
+- **Closure capture received from enclosing scope** (extracted from `_cl->captures[i]`): always `QCell*` — the cell is shared with the outer scope.
+
+Codegen tracks which storage type was chosen per variable in `cellVars` (a per-scope set). `generateIdentifier` consults `cellVars` to emit either `quark_x->value` or `quark_x`.
 
 **Function calls**: Lowered according to the CallPlan's dispatch mode:
 - `DispatchBuiltin` → `q_print(arg)` (direct C++ call)
@@ -90,10 +96,11 @@ Walks the annotated AST and emits C++17 code using the runtime headers.
 - **when**: Lowered to a chain of if/else with result payload extraction
 
 **Scope management**:
-- `pushScope()` — Isolate function scope (clean slate)
+- `pushScope()` — Isolate function scope (clean slate for `declaredVars` and `cellVars`)
 - `pushBlockScope()` — Copy parent scope for nested blocks (allows shadowing)
 - `popScope()` — Restore previous scope
-- `declaredVars` — Tracks declarations to prevent redeclaration
+- `declaredVars` — Tracks which names have been declared to prevent redeclaration
+- `cellVars` — Tracks which declared names are stored as `QCell*` vs `QValue`
 
 **Generation order**:
 1. Collect all function declarations (forward declarations)
@@ -167,9 +174,20 @@ using QClFunc1 = QValue (*)(QClosure*, QValue);
 
 ### 2.3 QCell
 
-Every variable (locals, parameters, loop variables) is stored in a `QCell*` — a heap-allocated mutable reference cell. Reading dereferences `cell->value`; assignment writes `cell->value`.
+`QCell` is a heap-allocated mutable reference cell used for variables that are captured by closures:
 
-This uniform-cell design means **any variable can be captured by a closure** without special handling at the capture site. Multiple closures over the same variable share the same `QCell*`, enabling shared mutable state.
+```cpp
+struct QCell {
+    QValue value;
+};
+```
+
+**Storage selection** (decided at compile time per variable):
+- A variable captured by at least one nested lambda is allocated as `QCell*`. Multiple closures over the same variable share the same cell pointer, enabling shared mutable state.
+- A variable that is never captured is emitted as a stack `QValue` — no heap allocation, no GC pressure.
+- Parameters and loop variables follow the same rule: `QCell*` only if captured, `QValue` otherwise.
+
+The analyzer's `GetCapturedByFunction` output drives this decision. Codegen records which variables are cells in `cellVars` and uses that to emit correct read/write patterns.
 
 ### 2.4 Container Types
 

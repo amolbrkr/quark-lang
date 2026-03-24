@@ -49,7 +49,7 @@ All other type mismatches are errors (compile-time when type info is available, 
 
 ## 3) Truthiness
 
-Truthiness governs `to_bool()`. It does **not** govern `if`/`while`/ternary conditions or `and`/`or` (those require strict `bool` — see §4.4).
+Truthiness governs all condition positions (`if`, `while`, ternary), the `and`/`or`/`!` operators, and the `to_bool()` builtin. Any value can be used where a boolean is expected — it will be implicitly converted using these rules.
 
 | Type | Truthy when |
 |------|------------|
@@ -96,17 +96,25 @@ Any other type combination → runtime error.
 
 ### 4.3 Logical operators
 
-`and`, `or`, and `!` are **strict-bool** — operands must be `bool`. Using a truthy non-bool value (like an int or string) is a runtime error. This is a deliberate design choice to prevent implicit truthiness bugs.
+`and`, `or`, and `!` accept **any type** and use truthiness (§3) to evaluate operands.
 
-**`and`/`or` are NOT short-circuit.** Both operands are fully evaluated before the operator runs. Use nested `if` when short-circuit evaluation is needed.
+**`and`/`or` are short-circuit** (Python semantics):
+- `x and y` — evaluates `x`; if falsy, returns `x` without evaluating `y`. Otherwise evaluates and returns `y`.
+- `x or y` — evaluates `x`; if truthy, returns `x` without evaluating `y`. Otherwise evaluates and returns `y`.
+- `!x` — returns `true` if `x` is falsy, `false` if truthy. Always returns `bool`.
+
+This enables guard patterns: `if len(lst) > 0 and lst.get(0) == 5:` is safe because the second operand is never evaluated when the list is empty.
 
 ### 4.4 Conditions (if, while, ternary)
 
-All condition positions (`if`, `elseif`, `while`, ternary `if`) require a **strict bool** value. Non-bool conditions produce a runtime error with the message:
+All condition positions (`if`, `elseif`, `while`, ternary `if`) accept **any type** and use truthiness (§3) to determine the branch. No explicit conversion is needed:
 
-> `<context> condition must be bool, got <type>`
-
-Use an explicit comparison (`x != 0`, `len(s) > 0`) or `to_bool()` to convert.
+```quark
+if my_list:          // truthy if non-empty
+if count:            // truthy if nonzero
+if name:             // truthy if non-empty string
+if to_bool(x):       // also works (explicit)
+```
 
 ---
 
@@ -271,7 +279,7 @@ Files are loaded at most once per compilation. Subsequent imports of the same ab
 
 ## 11) Error Model
 
-Quark has two error categories: compile-time diagnostics and runtime panics.
+Quark has three diagnostic/failure categories: compile-time errors, compile-time warnings, and runtime panics.
 
 ### 11.1 Compile-time errors
 
@@ -289,7 +297,17 @@ Reported by the parser, analyzer, or invariant checker. Multiple errors can be a
 
 The parser stops after 10 errors to avoid cascading noise.
 
-### 11.2 Runtime panics
+### 11.2 Compile-time warnings
+
+Warnings are emitted by semantic analysis for suspicious but still legal constructs. They are displayed to the user but are **non-fatal**.
+
+| Category | Examples |
+|----------|----------|
+| Suspicious assignments | Assigning a value whose type does not match an inferred dict value type |
+
+Warnings use `warning[QK-CHECK-002] (check): ...` formatting.
+
+### 11.3 Runtime panics
 
 All runtime errors are **fatal** — they print to stderr and exit. There are no exceptions and no recovery mechanism.
 
@@ -309,10 +327,8 @@ All runtime errors are **fatal** — they print to stderr and exit. There are no
 | Non-string dict key | Fatal |
 | Dot-key access on non-dict (static key read/write) | Fatal |
 | Member access on null | Fatal |
-| Non-bool condition (if/while/ternary) | Fatal |
-| Non-bool operand to and/or/! | Fatal |
 
-### 11.3 Safe operations (return null instead of crashing)
+### 11.4 Safe operations (return null instead of crashing)
 
 | Operation | Behaviour on failure |
 |-----------|---------------------|
@@ -426,8 +442,8 @@ For method calls, the receiver's type determines which method is resolved. See s
 |----------|-----------|
 | Division always returns float | Prevents silent truncation (`5/2` = `2.5`, not `2`) |
 | Modulo is int-only | Avoids floating-point modulo surprises |
-| Strict-bool conditions and logical ops | Prevents truthiness bugs; forces explicit intent |
-| and/or are not short-circuit | Simplifies compilation; use `if` for short-circuit |
+| Truthiness in conditions and logical ops | Familiar Python-like behaviour; any value works in `if`/`while`/`and`/`or` |
+| Short-circuit and/or (Python semantics) | Enables guard patterns (`if x and x.foo:`); returns operand values, not bool |
 | Safe reads, fatal writes | `.get()` returning null is convenient; bad `.set()` is always a bug |
 | Named functions desugar to assignments | One representation for all function values |
 | Forward references via predeclaration | Two-pass analysis allows calling functions defined later |

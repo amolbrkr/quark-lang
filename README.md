@@ -67,6 +67,39 @@ println(dm.add10(5))
 
 Quark is already usable for many small to medium programs and language experiments. It has strict analyzer/runtime checks and a full compile pipeline, but some features are still planned (for example structs/impl blocks and tensor support).
 
+### Changes Since v0.1
+
+Recent compiler/runtime work introduced several behavior and architecture changes worth calling out:
+
+1. Diagnostics are now severity-aware.
+    - Analyzer warnings are shown but non-fatal.
+    - Analyzer errors are fatal.
+    - Runtime diagnostics use a stable `QK-RUNTIME-001` code format with source location when available.
+
+2. Invariants are fail-loud.
+    - CallPlan and return-validation invariants are validated before codegen.
+    - Unexpected invariant breaches in codegen are treated as internal compiler errors (`INV-*`) instead of silently degrading behavior.
+
+3. Builtin surface expanded and normalized.
+    - Method dispatch is catalog-driven across `str`, `list`, `dict`, and `vector`.
+    - Low-level file primitives are available via `_file_open`, `_file_read`, `_file_write`, `_file_close`, `_file_seek`, `_file_exists`.
+
+4. Call lowering is now metadata-driven.
+    - Analyzer emits per-call CallPlans (dispatch mode, arity envelope, runtime symbol, default argument fill).
+    - Codegen consumes CallPlans directly rather than re-deriving call semantics.
+
+5. Module/import behavior is stricter and clearer.
+    - Module-qualified calls (`alias.fn(...)`) are resolved in analysis.
+    - Loader enforces deterministic import resolution and cycle detection.
+
+For canonical details, use:
+
+- Language behavior: [semantics.md](semantics.md)
+- Syntax and grammar: [grammar.md](grammar.md)
+- Builtins and method catalog surface: [stdlib.md](stdlib.md)
+- Compiler/runtime internals: [architecture.md](architecture.md)
+- Diagnostic and invariant code registry: [error_codes.md](error_codes.md)
+
 ## 2) Install and Run the Compiler
 
 ### Prerequisites
@@ -102,6 +135,13 @@ quark emit <file>
 quark build <file> [-o out]
 quark run <file> [--debug|-d]
 ```
+
+Diagnostics behavior:
+
+- Parser/load/analyzer diagnostics are printed with stable codes.
+- Analyzer warnings are displayed but do not fail `check`, `emit`, `build`, or `run`.
+- Analyzer errors fail the command with non-zero exit.
+- Invariant failures (INV-* class) are treated as compiler-bug conditions and fail loudly.
 
 Shorthand:
 

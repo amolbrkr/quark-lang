@@ -384,15 +384,23 @@ when safe_div(10, 0):
 ## File I/O Intrinsics
 
 Low-level file I/O via `_file_*` builtins. The first-party module `std/io` wraps these.
+These functions are intentionally primitive and fail loudly on invalid argument types.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `_file_open` | `path: str, mode: str[, binary: bool] -> result` | Open file (`r` or `w`) |
-| `_file_read` | `file: file_handle, n: int -> result` | Read up to `n` bytes |
-| `_file_write` | `file: file_handle, data: str -> result` | Write string |
-| `_file_close` | `file: file_handle -> result` | Close file |
-| `_file_seek` | `file: file_handle, offset: int, whence: int -> result` | Seek |
+| `_file_open` | `path: str, mode: str[, binary: bool] -> result[file_handle]` | Open file path with mode (`r`, `w`, `a`, etc.) |
+| `_file_read` | `file: file_handle, n: int -> result[str]` | Read up to `n` bytes/chars |
+| `_file_write` | `file: file_handle, data: str -> result[int]` | Write data and return bytes/chars written |
+| `_file_close` | `file: file_handle -> result[null]` | Close file |
+| `_file_seek` | `file: file_handle, offset: int, whence: int -> result[int]` | Seek (`0`=set, `1`=cur, `2`=end) |
 | `_file_exists` | `path: str -> bool` | Check path existence |
+
+```quark
+f = unwrap(_file_open('notes.txt', 'r'))
+chunk = unwrap(_file_read(f, 4096))
+println(chunk)
+unwrap(_file_close(f))
+```
 
 ---
 
@@ -424,7 +432,7 @@ list ['a', 'b', 'c'].join(',') | println()   // a,b,c
 | Domain error | Runtime error | `.pop()` on empty list, `sqrt(-1)` |
 | Arity mismatch | Compile-time error | `.push()` (missing arg), `len(a, b)` (extra arg) |
 | Unknown method | Compile-time error | `42.upper()` (int has no method `upper`) |
-| Bool-only | Compile-time error | `if 1:`, `while 'yes':` |
+| Truthiness | Accepted (not an error) | `if 1:`, `while 'yes':` use truthiness |
 | Result misuse | Compile-time error | `x: int = some_result_fn()` |
 
 **Intentional `null` returns (not errors):**

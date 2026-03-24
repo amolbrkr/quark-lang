@@ -4,7 +4,9 @@ This file is the canonical registry of error codes currently emitted by the comp
 
 ## Format
 
-- User-facing diagnostics use: `error[CODE] (stage): message ...`
+- User-facing diagnostics use:
+	- `error[CODE] (stage): message ...`
+	- `warning[CODE] (stage): message ...`
 - Frontend diagnostics use stable `QK-*` codes.
 - Runtime diagnostics use stable `QK-*` codes.
 - Internal invariant/ICE failures use `INV-*` codes (compiler-bug class, not user-program errors).
@@ -16,12 +18,12 @@ This file is the canonical registry of error codes currently emitted by the comp
 | `QK-PARSE-001` | `parse` | Parse error in source program. | `src/core/quark/parser/parser.go` |
 | `QK-LOAD-001` | `load` | Import/module resolution failure. | `src/core/quark/loader/loader.go` |
 | `QK-CHECK-001` | `check` | Semantic/type analysis error. | `src/core/quark/types/analyzer.go` |
-| `QK-CHECK-ICE-001` | `check` | Analyzer internal compiler error (scope underflow). | `src/core/quark/types/analyzer.go` |
+| `QK-CHECK-002` | `check` | Semantic analysis warning (non-fatal). | `src/core/quark/types/analyzer.go` |
 | `QK-RUNTIME-001` | `runtime` | Runtime failure emitted by runtime diagnostics reporter. | `src/core/quark/runtime/include/quark/core/diagnostics.hpp` |
 
 Notes:
 - `QK-RUNTIME-001` currently covers multiple runtime failure causes and is intentionally coarse for now.
-- `QK-CHECK-ICE-001` indicates a compiler bug/invariant break, not a user code mistake.
+- Analyzer warnings (`QK-CHECK-002`) are displayed but do not fail compilation/execution commands.
 
 ## Internal Invariant Codes (INV-*)
 

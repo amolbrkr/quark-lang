@@ -48,6 +48,10 @@ The analyzer produces five metadata outputs consumed by later stages:
 - **NodeTypes**: Per-AST-node inferred type (`map[*ast.TreeNode]Type`). Every expression node has its analyzer-computed type recorded here. Codegen reads this to drive scalar storage selection and native operator lowering without re-deriving type information.
 - **Return validation**: Per-function declared-vs-inferred return type checks
 
+Diagnostics emitted by the analyzer are severity-tagged:
+- **Errors** (`QK-CHECK-001`) are fatal and stop `check`/`emit`/`build`/`run`.
+- **Warnings** (`QK-CHECK-002`) are reported to the user but are non-fatal.
+
 #### Type checking policy (Knowability Rule)
 
 When either the parameter type or argument type is unknown or `any`, the check is **deferred to runtime**. Only when both types are statically known does the analyzer enforce assignability.
@@ -63,6 +67,8 @@ When either the parameter type or argument type is unknown or `any`, the check i
 ### 1.5 Invariants → Validated
 
 Pre-codegen checks that verify CallPlans are well-formed and return type annotations are consistent. Acts as a safety net between analysis and code generation.
+
+Invariant breaches are compiler-bug class failures (`INV-*`) and are treated as fail-loud conditions.
 
 ### 1.6 Codegen → C++17 Source
 
@@ -94,6 +100,8 @@ Codegen tracks storage choices in `cellVars` (names stored as `QCell*`) and `var
 - `DispatchBuiltin` → `q_print(arg)` (direct C++ call)
 - `DispatchDirect` → `quark_foo(nullptr, arg)` (known function, no closure)
 - `DispatchClosure` → `q_call1(val, arg)` (dynamic dispatch through QClosure)
+
+If codegen encounters an unexpected dispatch/runtime-symbol invariant break, it terminates with an internal compiler error (`INV-*`) rather than emitting fallback runtime behavior.
 
 **Method calls**: When `IsMethod=true`, the receiver is injected as the first runtime argument (e.g., `"hello".upper()` → `q_upper(receiver_val)`).
 

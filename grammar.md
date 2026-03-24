@@ -344,7 +344,7 @@ Dot-key access on a non-dict value is a runtime error. Method calls on types tha
 - `str[idx]` supported (returns single-character string)
 - `vector[idx]` supported
 - `vector[mask]` where `mask` is bool vector supported
-- Dict bracket indexing is not supported; use dot access or `dget/dset`
+- Dict bracket indexing is not supported; use dot access or `.get()` / `.set()` methods
 
 ### 11.3 Assignment targets
 
@@ -372,10 +372,10 @@ Result construction and use:
 
 ### 11.5 Condition and logical operator type rules
 
-- `if`, `elseif`, `while`, and ternary conditions must resolve to `bool` at compile time; passing a non-bool expression is an analyzer error
-- The unary `!` operator requires a `bool` operand; applying it to other types is an analyzer error
-- `and` and `or` require `bool` operands; the analyzer checks at compile time and the runtime enforces at execution time
-- Use `to_bool(expr)` to explicitly convert a non-bool value before using it as a condition
+- `if`, `elseif`, `while`, and ternary conditions accept **any type** — non-bool values are converted via truthiness (see semantics.md §3)
+- `and`/`or` are **short-circuit** with Python semantics: they accept any type and return one of the two operand values (not necessarily bool)
+- The unary `!` operator accepts any type and always returns `bool`
+- `to_bool(expr)` is available for explicit conversion but is no longer required in conditions
 
 ## 12) Builtin Surface (Current)
 
@@ -442,3 +442,4 @@ To reduce drift:
 - `architecture.md` documents implementation internals (compiler pipeline, runtime structs, codegen).
 - `src/core/quark/builtins/catalog.go` is the code-level source of truth for builtin names, arity, and runtime symbol mapping.
 
+Changes to language behavior must update the relevant canonical docs in the same change. If any canonical doc conflicts with implementation, treat it as a release blocker and resolve before adding features.

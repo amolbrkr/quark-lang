@@ -1,0 +1,78 @@
+// smoke_truthiness.qrk
+// Covers: truthiness in conditions, short-circuit and/or, ! on non-bool
+
+println('== smoke: truthiness ==')
+
+// Truthiness in if conditions
+if 1:
+    println('int truthy')
+if '':
+    println('SHOULD NOT PRINT')
+else:
+    println('empty str falsy')
+if list [1, 2]:
+    println('list truthy')
+if null:
+    println('SHOULD NOT PRINT')
+else:
+    println('null falsy')
+if 0:
+    println('SHOULD NOT PRINT')
+else:
+    println('zero falsy')
+
+// Truthiness in while
+x = 3
+while x:
+    println(x)
+    x = x - 1
+
+// Truthiness in ternary
+label = 'yes' if 42 else 'no'
+println(label)
+
+// Short-circuit and: right side NOT evaluated when left is falsy
+// (0 is falsy, so the right side should not be evaluated at all)
+res =0 and 999
+println(res)
+
+// Short-circuit and: right side IS evaluated when left is truthy
+res =1 and 42
+println(res)
+
+// Short-circuit or: right side NOT evaluated when left is truthy
+res =5 or 999
+println(res)
+
+// Short-circuit or: right side IS evaluated when left is falsy
+res =0 or 7
+println(res)
+
+// ! on non-bool values (truthiness negation)
+println(!0)
+println(!1)
+println(!'hello')
+println(!'')
+println(!null)
+
+// Short-circuit guard pattern (the critical fix)
+lst = list []
+if len(lst) > 0 and lst.get(0) == 5:
+    println('SHOULD NOT PRINT')
+else:
+    println('guard ok')
+
+lst = list [5, 10]
+if len(lst) > 0 and lst.get(0) == 5:
+    println('guard matched')
+
+// Chained and/or
+a = 1 and 2 and 3
+println(a)
+
+b = 0 or '' or 'fallback'
+println(b)
+
+// Mixed bool and non-bool in conditions
+if true and 1:
+    println('mixed ok')

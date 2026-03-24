@@ -141,17 +141,76 @@ func TestWarnings_DoNotFailTypeErrors(t *testing.T) {
 	}
 }
 
-func TestUnionMethodCall_ValidatesArgsAcrossMembers(t *testing.T) {
+func TestUnionMethodCall_RejectsAmbiguousRuntimeDispatch(t *testing.T) {
 	_, _, parseErrs, typeErrs := testutil.Analyze("fn pick(flag) ->\n    if flag:\n        list [1, 2]\n    else:\n        dict { a: 1 }\n\nx = pick(true)\nprintln(x.get('a'))\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
 	if len(typeErrs) == 0 {
-		t.Fatalf("expected type error from union method arg mismatch")
+		t.Fatalf("expected type error from ambiguous union method runtime dispatch")
 	}
 	joined := strings.Join(typeErrs, "\n")
-	if !strings.Contains(joined, "argument 1 of 'get' expects int, got str") {
-		t.Fatalf("expected union argument type-check error, got: %v", typeErrs)
+	if !strings.Contains(joined, "incompatible runtime dispatch") {
+		t.Fatalf("expected union runtime dispatch error, got: %v", typeErrs)
+	}
+}
+
+func TestTernary_IncompatibleBranchesAreWarnings(t *testing.T) {
+	analyzer, _, parseErrs, typeErrs := testutil.Analyze("x = 'a' if true else 1\n")
+	if len(parseErrs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", parseErrs)
+	}
+	if len(typeErrs) > 0 {
+		t.Fatalf("ternary incompatibility should be a warning, got type errors: %v", typeErrs)
+	}
+	warnings := analyzer.WarningDiagnostics()
+	if len(warnings) == 0 {
+		t.Fatalf("expected warning diagnostics")
+	}
+	joined := ""
+	for _, w := range warnings {
+		joined += w.Message + "\n"
+	}
+	if !strings.Contains(joined, "ternary branches have incompatible types") {
+		t.Fatalf("expected ternary warning, got: %v", warnings)
+	}
+}
+
+func TestFunctionReturnAnnotation_PreservedInFunctionType(t *testing.T) {
+	analyzer, node, parseErrs, typeErrs := testutil.Analyze("fn id(x: int) int -> x\nid\n")
+	if len(parseErrs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", parseErrs)
+	}
+	if len(typeErrs) > 0 {
+		t.Fatalf("unexpected type errors: %v", typeErrs)
+	}
+	if len(node.Children) < 2 {
+		t.Fatalf("expected at least two top-level nodes, got %d", len(node.Children))
+	}
+	typ := analyzer.Analyze(node.Children[1])
+	ft, ok := typ.(*qtypes.FunctionType)
+	if !ok {
+		t.Fatalf("expected function type, got %T (%v)", typ, typ)
+	}
+	if !ft.ReturnType.Equals(qtypes.TypeInt) {
+		t.Fatalf("expected preserved return type int, got %s", ft.ReturnType.String())
+	}
+	if ft.AnnotatedReturnType == nil || !ft.AnnotatedReturnType.Equals(qtypes.TypeInt) {
+		t.Fatalf("expected preserved annotated return type int, got %v", ft.AnnotatedReturnType)
+	}
+}
+
+func TestAssignment_RejectsUnknownToConcreteType(t *testing.T) {
+	_, _, parseErrs, typeErrs := testutil.Analyze("fn id(x) -> x\nx: int = 1\nx = id(2)\n")
+	if len(parseErrs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", parseErrs)
+	}
+	if len(typeErrs) == 0 {
+		t.Fatalf("expected type error assigning unknown to concrete int variable")
+	}
+	joined := strings.Join(typeErrs, "\n")
+	if !strings.Contains(joined, "unknown type") {
+		t.Fatalf("expected unknown-type assignment error, got: %v", typeErrs)
 	}
 }
 

@@ -84,7 +84,9 @@ func (a *Analyzer) analyzeFunction(node *ast.TreeNode) Type {
 	a.popScope()
 
 	a.validateReturnType(funcType, returnType, funcName, nameNode)
-	funcType.ReturnType = returnType
+	if funcType.AnnotatedReturnType == nil {
+		funcType.ReturnType = returnType
+	}
 	return funcType
 }
 

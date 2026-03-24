@@ -33,7 +33,7 @@ func (t *BasicType) Equals(other Type) bool {
 // Distinct from TypeAny which means "genuinely unknown but no error."
 type errorType struct{}
 
-func (t *errorType) String() string  { return "<error>" }
+func (t *errorType) String() string { return "<error>" }
 func (t *errorType) Equals(other Type) bool {
 	_, ok := other.(*errorType)
 	return ok
@@ -50,7 +50,7 @@ var (
 	TypeVoid       = &BasicType{Name: "void"} // For statements with no value
 	TypeResource   = &BasicType{Name: "resource"}
 	TypeFileHandle = &BasicType{Name: "file_handle"}
-	TypeError      = &errorType{}             // Poison type — error already reported upstream
+	TypeError      = &errorType{} // Poison type — error already reported upstream
 )
 
 // IsErrorType returns true if the type is the poison error type.
@@ -305,7 +305,7 @@ func CanAssign(dstType, srcType Type) bool {
 	// Source is any — only assignable if destination is also any (already handled above)
 	// This prevents unsound assignments like list[int] <- list[any]
 	if srcType.Equals(TypeAny) {
-		return true
+		return dstType.Equals(TypeAny)
 	}
 	// Null can be assigned to any reference type
 	if srcType.Equals(TypeNull) {

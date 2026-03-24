@@ -331,8 +331,8 @@ func TestCodegen_IfElseEmitsConditional(t *testing.T) {
 	if len(res.TypeErrors) > 0 {
 		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
 	}
-	if !strings.Contains(res.CPP, "q_condition_bool") {
-		t.Fatalf("expected if to emit q_condition_bool, cpp=\n%s", res.CPP)
+	if !strings.Contains(res.CPP, "q_truthy(") {
+		t.Fatalf("expected if to emit q_truthy, cpp=\n%s", res.CPP)
 	}
 	if !strings.Contains(res.CPP, "} else {") {
 		t.Fatalf("expected else branch in output, cpp=\n%s", res.CPP)
@@ -380,8 +380,8 @@ func TestCodegen_WhileLoopEmitsWhile(t *testing.T) {
 	if len(res.TypeErrors) > 0 {
 		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
 	}
-	if !strings.Contains(res.CPP, "while (q_condition_bool(") {
-		t.Fatalf("expected while loop with q_condition_bool, cpp=\n%s", res.CPP)
+	if !strings.Contains(res.CPP, "while (q_truthy(") {
+		t.Fatalf("expected while loop with q_truthy, cpp=\n%s", res.CPP)
 	}
 }
 
@@ -419,8 +419,8 @@ func TestCodegen_TernaryEmitsConditionalExpr(t *testing.T) {
 	if len(res.TypeErrors) > 0 {
 		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
 	}
-	if !strings.Contains(res.CPP, "q_condition_bool") || !strings.Contains(res.CPP, "?") {
-		t.Fatalf("expected ternary with q_condition_bool and ?, cpp=\n%s", res.CPP)
+	if !strings.Contains(res.CPP, "q_truthy(") || !strings.Contains(res.CPP, "?") {
+		t.Fatalf("expected ternary with q_truthy and ?, cpp=\n%s", res.CPP)
 	}
 }
 
@@ -548,8 +548,8 @@ func TestCodegen_UnaryBang(t *testing.T) {
 	if len(res.TypeErrors) > 0 {
 		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
 	}
-	if !strings.Contains(res.CPP, "q_not(") {
-		t.Fatalf("expected q_not for bang operator, cpp=\n%s", res.CPP)
+	if !strings.Contains(res.CPP, "qv_bool(!q_truthy(") {
+		t.Fatalf("expected qv_bool(!q_truthy(...)) for bang operator, cpp=\n%s", res.CPP)
 	}
 }
 
@@ -606,11 +606,8 @@ func TestCodegen_LogicalOperators(t *testing.T) {
 	if len(res.ParserErrors) > 0 {
 		t.Fatalf("unexpected parse errors: %v", res.ParserErrors)
 	}
-	if !strings.Contains(res.CPP, "q_and(") {
-		t.Fatalf("expected q_and for 'and' operator, cpp=\n%s", res.CPP)
-	}
-	if !strings.Contains(res.CPP, "q_or(") {
-		t.Fatalf("expected q_or for 'or' operator, cpp=\n%s", res.CPP)
+	if !strings.Contains(res.CPP, "q_truthy(_l)") {
+		t.Fatalf("expected short-circuit and/or with q_truthy, cpp=\n%s", res.CPP)
 	}
 }
 

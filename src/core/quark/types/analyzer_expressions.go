@@ -95,9 +95,7 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 			a.errorAt(node, "unary '-' expects numeric operand, got %s", operandType.String())
 			return TypeError
 		case token.BANG:
-			if !isBoolLike(operandType) && !isUnknownType(operandType) {
-				a.errorAt(node, "unary '!' expects bool operand, got %s", operandType.String())
-			}
+			// Accepts any type — uses truthiness (§4.3). Always returns bool.
 			return TypeBool
 		}
 		return operandType
@@ -181,6 +179,10 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 					return rightType
 				}
 			}
+			if isUnknownType(rightType) && !sym.Type.Equals(TypeAny) {
+				a.errorAt(target, "cannot assign value of unknown type to '%s'", sym.Type.String())
+				return rightType
+			}
 			if _, srcIsResult := rightType.(*ResultType); srcIsResult {
 				if _, dstIsResult := sym.Type.(*ResultType); !dstIsResult && !isUnknownType(sym.Type) {
 					a.errorAt(target, "[C-TYPE] cannot assign result to '%s'; use 'unwrap()' or 'when' to extract the value", sym.Type.String())
@@ -189,8 +191,14 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 			}
 			if !CanAssign(sym.Type, rightType) && !isUnknownType(rightType) {
 				a.errorAt(target, "cannot assign value of type '%s' to '%s'", rightType.String(), sym.Type.String())
+				return rightType
 			}
-			sym.Type = rightType
+			if isUnknownType(rightType) {
+				return rightType
+			}
+			if sym.Type.Equals(TypeAny) {
+				sym.Type = rightType
+			}
 		}
 		return rightType
 	}
@@ -310,14 +318,13 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 		}
 		return TypeBool
 	case token.AND, token.OR:
+		// Short-circuit, accepts any type via truthiness (Python semantics).
+		// Return type is the union of both operand types since the result
+		// is one of the two operands (not necessarily bool).
 		if isBoolLike(leftType) && isBoolLike(rightType) {
 			return TypeBool
 		}
-		if isUnknownType(leftType) || isUnknownType(rightType) {
-			return TypeBool
-		}
-		a.errorAt(node, "logical operator '%s' expects boolean operands, got %s and %s", node.Token.Type.String(), leftType.String(), rightType.String())
-		return TypeBool
+		return MergeTypes(leftType, rightType)
 	}
 	a.errorAt(node, "unsupported operator '%s'", node.Token.Type.String())
 	return TypeError

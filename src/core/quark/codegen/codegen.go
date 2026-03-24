@@ -882,7 +882,7 @@ func (g *Generator) generateOperator(node *ast.TreeNode) string {
 		case token.MINUS:
 			return fmt.Sprintf("q_neg(%s)", operand)
 		case token.BANG:
-			return fmt.Sprintf("q_not(%s)", operand)
+			return fmt.Sprintf("qv_bool(!q_truthy(%s))", operand)
 		}
 		return operand
 	}
@@ -924,6 +924,20 @@ func (g *Generator) generateOperator(node *ast.TreeNode) string {
 		}
 	}
 
+	// Short-circuit logical operators: right operand must be evaluated lazily.
+	// Python semantics: `and` returns the first falsy operand or the last;
+	// `or` returns the first truthy operand or the last.
+	if op == token.AND {
+		left := g.generateExpr(node.Children[0])
+		right := g.generateExpr(node.Children[1])
+		return fmt.Sprintf("([&]() -> QValue { auto _l = %s; return q_truthy(_l) ? (%s) : _l; }())", left, right)
+	}
+	if op == token.OR {
+		left := g.generateExpr(node.Children[0])
+		right := g.generateExpr(node.Children[1])
+		return fmt.Sprintf("([&]() -> QValue { auto _l = %s; return q_truthy(_l) ? _l : (%s); }())", left, right)
+	}
+
 	left := g.generateExpr(node.Children[0])
 	right := g.generateExpr(node.Children[1])
 
@@ -952,10 +966,6 @@ func (g *Generator) generateOperator(node *ast.TreeNode) string {
 		return fmt.Sprintf("q_eq(%s, %s)", left, right)
 	case token.NE:
 		return fmt.Sprintf("q_neq(%s, %s)", left, right)
-	case token.AND:
-		return fmt.Sprintf("q_and(%s, %s)", left, right)
-	case token.OR:
-		return fmt.Sprintf("q_or(%s, %s)", left, right)
 	case token.EQUALS:
 		lhs := node.Children[0]
 		// Member assignment: obj.member = value
@@ -1208,7 +1218,7 @@ func (g *Generator) generateTernary(node *ast.TreeNode) string {
 	trueVal := g.generateExpr(node.Children[1])
 	falseVal := g.generateExpr(node.Children[2])
 
-	return fmt.Sprintf("(q_condition_bool(%s, \"ternary\") ? %s : %s)", cond, trueVal, falseVal)
+	return fmt.Sprintf("(q_truthy(%s) ? %s : %s)", cond, trueVal, falseVal)
 }
 
 func (g *Generator) generateIf(node *ast.TreeNode) string {
@@ -1220,7 +1230,7 @@ func (g *Generator) generateIf(node *ast.TreeNode) string {
 	g.emitLine("QValue %s = qv_null();", temp)
 
 	cond := g.generateExpr(node.Children[0])
-	g.emitLine("if (q_condition_bool(%s, \"if\")) {", cond)
+	g.emitLine("if (q_truthy(%s)) {", cond)
 	g.indentLevel++
 
 	ifResult := g.generateExpr(node.Children[1])
@@ -1234,7 +1244,7 @@ func (g *Generator) generateIf(node *ast.TreeNode) string {
 		child := node.Children[i]
 		if child.NodeType == ast.IfStatementNode && len(child.Children) >= 2 {
 			// elseif
-			g.emit(" else if (q_condition_bool(%s, \"elseif\")) {\n", g.generateExpr(child.Children[0]))
+			g.emit(" else if (q_truthy(%s)) {\n", g.generateExpr(child.Children[0]))
 			g.indentLevel++
 			elseifResult := g.generateExpr(child.Children[1])
 			g.emitLine("%s = %s;", temp, elseifResult)
@@ -1424,7 +1434,7 @@ func (g *Generator) generateWhile(node *ast.TreeNode) string {
 	condNode := node.Children[0]
 	bodyNode := node.Children[1]
 
-	g.emitLine("while (q_condition_bool(%s, \"while\")) {", g.generateExpr(condNode))
+	g.emitLine("while (q_truthy(%s)) {", g.generateExpr(condNode))
 	g.indentLevel++
 
 	// Generate body

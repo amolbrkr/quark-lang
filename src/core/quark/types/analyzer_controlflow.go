@@ -9,10 +9,7 @@ func (a *Analyzer) analyzeIfStatement(node *ast.TreeNode) Type {
 	if len(node.Children) < 2 {
 		return TypeVoid
 	}
-	condType := a.Analyze(node.Children[0])
-	if !isBoolLike(condType) && !isUnknownType(condType) {
-		a.errorAt(node.Children[0], "condition must be bool, got %s; use a comparison or explicit to_bool()", condType.String())
-	}
+	a.Analyze(node.Children[0])
 	resultType := a.Analyze(node.Children[1])
 	for i := 2; i < len(node.Children); i++ {
 		branchType := a.Analyze(node.Children[i])
@@ -139,10 +136,7 @@ func (a *Analyzer) analyzeWhileLoop(node *ast.TreeNode) Type {
 	if len(node.Children) < 2 {
 		return TypeVoid
 	}
-	condType := a.Analyze(node.Children[0])
-	if !isBoolLike(condType) && !isUnknownType(condType) {
-		a.errorAt(node.Children[0], "condition must be bool, got %s; use a comparison or explicit to_bool()", condType.String())
-	}
+	a.Analyze(node.Children[0])
 	a.loopDepth++
 	a.pushScope()
 	a.Analyze(node.Children[1])
@@ -155,14 +149,11 @@ func (a *Analyzer) analyzeTernary(node *ast.TreeNode) Type {
 	if len(node.Children) < 3 {
 		return TypeAny
 	}
-	condType := a.Analyze(node.Children[0])
-	if !isBoolLike(condType) && !isUnknownType(condType) {
-		a.errorAt(node.Children[0], "ternary condition must be bool, got %s; use a comparison or explicit to_bool()", condType.String())
-	}
+	a.Analyze(node.Children[0])
 	trueType := a.Analyze(node.Children[1])
 	falseType := a.Analyze(node.Children[2])
 	if !isUnknownType(trueType) && !isUnknownType(falseType) && !CanAssign(trueType, falseType) && !CanAssign(falseType, trueType) {
-		a.errorAt(node, "[warning] ternary branches have incompatible types: '%s' and '%s'", trueType.String(), falseType.String())
+		a.warnAt(node, "ternary branches have incompatible types: '%s' and '%s'", trueType.String(), falseType.String())
 	}
 	return MergeTypes(trueType, falseType)
 }

@@ -531,6 +531,8 @@ func refineMethodReturnType(catalogReturn Type, receiverType Type, methodName st
 // and returns the merged return type. Falls back to TypeError if any member doesn't support it.
 func (a *Analyzer) analyzeUnionMethodCall(node *ast.TreeNode, unionType *UnionType, methodName string, argCount int, argTypes []Type, argNodes []*ast.TreeNode, funcNode *ast.TreeNode) Type {
 	returnTypes := make([]Type, 0, len(unionType.Options))
+	commonRuntimeSym := ""
+	runtimeSymSet := false
 	for _, opt := range unionType.Options {
 		optKey := typeToBuiltinTypeKey(opt)
 		if optKey == "" {
@@ -547,6 +549,18 @@ func (a *Analyzer) analyzeUnionMethodCall(node *ast.TreeNode, unionType *UnionTy
 			a.errorAt(funcNode, "type '%s' has no method '%s' (in union)", opt.String(), methodName)
 			return TypeError
 		}
+		spec, foundSpec := builtins.LookupMethod(optKey, methodName)
+		if !foundSpec {
+			a.errorAt(funcNode, "method '%s' is not registered for type '%s' (in union)", methodName, opt.String())
+			return TypeError
+		}
+		if !runtimeSymSet {
+			commonRuntimeSym = spec.Runtime
+			runtimeSymSet = true
+		} else if spec.Runtime != commonRuntimeSym {
+			a.errorAt(funcNode, "method '%s' has incompatible runtime dispatch across union members (%s vs %s)", methodName, commonRuntimeSym, spec.Runtime)
+			return TypeError
+		}
 		if argCount < sig.MinArgs || argCount > sig.MaxArgs {
 			if sig.MinArgs == sig.MaxArgs {
 				a.errorAt(node, "method '%s' expects %d argument(s) but got %d", methodName, sig.MaxArgs, argCount)
@@ -559,15 +573,11 @@ func (a *Analyzer) analyzeUnionMethodCall(node *ast.TreeNode, unionType *UnionTy
 	}
 	// Use the first member's method for the call plan (runtime dispatch is dynamic anyway)
 	firstKey := typeToBuiltinTypeKey(unionType.Options[0])
-	runtimeSym := ""
-	if spec, foundSpec := builtins.LookupMethod(firstKey, methodName); foundSpec {
-		runtimeSym = spec.Runtime
-	}
 	firstSig := a.methods[firstKey][methodName]
 	a.callPlans[node] = &ir.CallPlan{
 		Kind: ir.CallBuiltin, CalleeName: methodName,
 		MinArity: firstSig.MinArgs + 1, MaxArity: firstSig.MaxArgs + 1,
-		Dispatch: ir.DispatchBuiltin, RuntimeSymbol: runtimeSym,
+		Dispatch: ir.DispatchBuiltin, RuntimeSymbol: commonRuntimeSym,
 		IsMethod: true, ReceiverNode: funcNode.Children[0], ReceiverTypeKey: string(firstKey),
 	}
 	a.callPlans[node].ArgTypesChecked = true

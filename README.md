@@ -514,4 +514,9 @@ For detailed implementation internals, see architecture.md.
 
 ## License
 
-MIT License
+This repository is licensed under the GNU General Public License v3.0.
+
+See LICENSE for the full text.
+
+Third-party dependencies may use different licenses; see their respective
+license files (for example, deps/bdwgc/LICENSE).

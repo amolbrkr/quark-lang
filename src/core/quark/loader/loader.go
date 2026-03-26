@@ -112,6 +112,15 @@ func normalizeImportPath(currentDir, importPath string) string {
 	return resolved
 }
 
+// normalizeExternPath resolves an extern 'path' string to a file system path.
+// Unlike normalizeImportPath, it does not append .qrk — extern paths are .hpp files.
+func normalizeExternPath(currentDir, importPath string) string {
+	if filepath.IsAbs(importPath) {
+		return importPath
+	}
+	return filepath.Join(currentDir, importPath)
+}
+
 func isStdlibImportPath(importPath string) bool {
 	return strings.HasPrefix(importPath, "std/")
 }
@@ -229,6 +238,47 @@ func (ml *ModuleLoader) resolveImportsInNode(node *ast.TreeNode, currentFilePath
 	newChildren := make([]*ast.TreeNode, 0, len(node.Children))
 
 	for _, child := range node.Children {
+		// Resolve extern 'path' source includes — rewrite token literal to absolute path.
+		if child.NodeType == ast.ExternSourceNode && len(child.Children) > 0 {
+			pathNode := child.Children[0]
+			if pathNode != nil && pathNode.Token != nil && pathNode.Token.Type == token.STRING {
+				importPath := pathNode.Token.Literal
+				var resolvedPath string
+				if isStdlibImportPath(importPath) {
+					stdResolved, err := normalizeStdlibImportPath(importPath, currentFilePath)
+					if err != nil {
+						useLine := 0
+						if child.Token != nil {
+							useLine = child.Token.Line
+						}
+						ml.addErrorAt(useLine, 0, "%s", err)
+						newChildren = append(newChildren, child)
+						continue
+					}
+					resolvedPath = stdResolved
+				} else {
+					resolvedPath = normalizeExternPath(currentDir, importPath)
+				}
+				absResolved, err := filepath.Abs(resolvedPath)
+				if err != nil {
+					useLine := 0
+					if child.Token != nil {
+						useLine = child.Token.Line
+					}
+					ml.addErrorAt(useLine, 0, "cannot resolve extern path '%s': %s", importPath, err)
+					newChildren = append(newChildren, child)
+					continue
+				}
+				// Rewrite the literal to the resolved absolute path
+				newTok := *pathNode.Token
+				newTok.Literal = absResolved
+				newPathNode := ast.NewNode(ast.LiteralNode, &newTok)
+				child.Children[0] = newPathNode
+			}
+			newChildren = append(newChildren, child)
+			continue
+		}
+
 		if child.NodeType != ast.UseNode || len(child.Children) == 0 {
 			newChildren = append(newChildren, child)
 			continue

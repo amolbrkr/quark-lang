@@ -1,7 +1,95 @@
 # Quark Extensions Interface (QEI) Design
 
-Status: Design Document (Draft)
-Date: 2026-03-24
+Status: Implemented (Phase 1 + Phase 2a–2d complete)
+Date: 2026-03-25
+
+---
+
+## Changelog
+
+### 2026-03-25 — Phase 1 + Phase 2a–2d implemented
+
+All language prerequisites and core QEI machinery are implemented and building cleanly. Phase 3 (stdlib migration) is deferred.
+
+#### Phase 1: Language Prerequisites
+
+**`src/core/quark/token/token.go`**
+- Added `EXTERN` token type constant, name string, and keyword mapping (`"extern" → EXTERN`)
+
+**`src/core/quark/ast/ast.go`**
+- Added `ExternSourceNode` and `ExternFnNode` node types with name strings
+- Added `ExternSymbol string` and `ExternReceiver string` fields to `TreeNode` (the `as 'symbol'` name and receiver type prefix for methods)
+
+**`src/core/quark/parser/parser.go`**
+- Added `case token.EXTERN: return p.parseExtern()` dispatch in `parseStatement()`
+- Added `parseExtern()` — dispatches on string literal vs `fn` keyword
+- Added `parseExternFn()` — parses `extern fn [type.]name(params) ReturnType as 'symbol'`; detects the `type.name` method pattern by checking for a DOT after the first identifier
+- Added `isBuiltinTypeKeyword()` helper — recognizes `list`, `dict`, `vector`, `int`, `float`, `str`, `bool` tokens for method receiver detection
+
+#### Phase 2a: Loader
+
+**`src/core/quark/loader/loader.go`**
+- Added `normalizeExternPath()` helper — resolves relative paths without appending `.qrk`
+- Added `ExternSourceNode` handling in `resolveImportsInNode()`: rewrites the path token literal to the resolved absolute path (supports relative, stdlib `std/`, and absolute forms). Codegen reads this resolved path directly.
+
+#### Phase 2b: Analyzer
+
+**`src/core/quark/types/analyzer.go`**
+- Added `externFns map[string]*ir.CallPlan` and `externSources []string` fields to `Analyzer`
+- Added `case ast.ExternSourceNode` (no-op) and `case ast.ExternFnNode` dispatch in `analyze()`
+- Initialized both new fields in `NewAnalyzer()`
+
+**`src/core/quark/types/analyzer_modules.go`**
+- Added `GetExternFns() map[string]*ir.CallPlan` accessor
+- Added `analyzeExternFn()`: validates name and `as` symbol; collects `ParameterNode` children and maps annotations to native C++ types; for free functions — registers in `a.builtins`, `a.currentScope`, `a.functions`, and `a.externFns[name]`; for methods — resolves receiver key, registers in `a.methods[receiverKey]` and `a.externFns["type.method"]`; guards against redefining prelude entries
+- Added `quarkTypeToNativeCType()` — maps `Type` → C++ type string (`"int64_t"`, `"double"`, `"QVector*"`, etc.)
+- Added `receiverStringToTypeKey()` — maps `"list"`, `"vector"`, etc. to `builtins.TypeKey`
+- Added `receiverStringToNativeCType()` — maps receiver string to C++ type string
+- Fixed: `returnType := TypeAny` → `var returnType Type = TypeAny` (Go type inference was picking `*BasicType` instead of the `Type` interface, causing a build error)
+
+**`src/core/quark/types/analyzer_calls.go`**
+- Modified `analyzeFunctionCall()`: after builtin lookup, checks `a.externFns[name]`; if found, copies prototype `CallPlan`, sets `DispatchExtern`, and stores at the call site
+- Modified `resolveMethodCall()`: after method sig lookup, checks `a.externFns[receiverStr+"."+methodName]`; if found, copies prototype plan with receiver info and sets `DispatchExtern`
+- Added `typeKeyToReceiverString()` helper — maps `TypeKey` back to receiver string prefix
+
+#### Phase 2c: IR + Codegen
+
+**`src/core/quark/ir/call.go`**
+- Added `DispatchExtern` dispatch mode constant
+- Added `NativeParamTypes []string`, `NativeReturnType string`, `NativeReceiverType string` fields to `CallPlan`
+
+**`src/core/quark/codegen/codegen.go`**
+- Added `collectExternSources()` — walks AST collecting unique `ExternSourceNode` path literals (preserves order, deduplicates)
+- Added `adaptArgForExtern()` — emits unboxing helper per native type (`q_as_int()`, `q_as_float()`, `q_as_str()`, `q_as_vector()`, etc.) or passes through for `QValue`
+- Added `wrapExternReturn()` — boxes native return values back to `QValue` (`qv_int()`, `qv_float()`, `qv_vector_ptr()`, etc.)
+- Modified `Generate()` to collect and emit `#include` directives for extern sources before forward declarations
+- Added `DispatchExtern` case in `generateFunctionCall()` and `generatePipe()`: adapts receiver (for methods) and explicit args per `NativeParamTypes`, wraps result with `wrapExternReturn()`
+- Added `ast.ExternSourceNode, ast.ExternFnNode` no-op cases in `generateNode()` and `generateExpr()`
+- Modified top-level statement loop to skip `ExternSourceNode` and `ExternFnNode`
+- Fixed: `qv_vector(callExpr)` → `qv_vector_ptr(callExpr)` for `QVector*` return wrapping (`qv_vector()` takes a capacity `int`, not a pointer)
+
+#### Phase 2d: Extension Author API
+
+**`src/core/quark/runtime/include/quark/ext/api.hpp`** (new file)
+- `qext::` namespace: `box()` overloads for all types, `null_val()`, unboxing with runtime checks (`as_int()`, `as_float()`, `as_bool()`, `as_str()`, `as_vector()`, `as_list()`, `as_dict()`, `as_closure()`), memory helpers (`malloc`, `malloc_atomic`, `strdup`), error reporting (`panic()`, `panicf()`)
+- `QSlice<T>` — C++17-compatible pointer+size view (replaces `std::span` which is C++20)
+- Vector accessors: `as_f64()`, `as_f64_mut()`, `as_i64()`, `as_i64_mut()`, `as_bool_vec()`, `as_bool_vec_mut()` returning `QSlice<T>` views into internal storage
+- Vector constructors: `new_f64(n)`, `new_i64(n)`, `new_bool_vec(n)` — GC-allocated, zeroed
+- Vector metadata: `vec_size()`, `vec_has_nulls()`, `vec_dtype()`, `vec_dtype_name()`, `is_null_at()`, `null_mask()`
+- Dict helpers: `dict_get()`, `dict_set()`, `dict_size()`, `dict_has()`
+- Closure call helpers: `call(fn)` through `call(fn, a0, a1, a2)` overloads
+- Codegen-facing helpers outside namespace: `q_as_int()`, `q_as_float()`, `q_as_bool()`, `q_as_str()`, `q_as_vector()`, `q_as_list()`, `q_as_dict()`, `q_as_closure()`, `qv_vector_ptr()`, `qv_list_ptr()`, `qv_dict_ptr()`, `qv_closure_ptr()`
+
+**`src/core/quark/runtime/include/quark/quark.hpp`**
+- Added `#include "ext/api.hpp"` at the bottom so codegen-facing helpers are always available (the `q_as_*`/`qv_*_ptr` functions are emitted at `DispatchExtern` call sites regardless of whether the user's file explicitly includes `ext/api.hpp`)
+
+#### What is NOT yet implemented
+
+- **Phase 2e** (annotated function parameters with native C++ types) — deferred
+- **Phase 3** (stdlib migration: `std/io`, `std/fmt`, removal of `_`-prefixed catalog entries) — deferred
+- **Thunk generation** for extern functions used as first-class values — the `DispatchExtern` machinery is in place but thunk emission is not yet implemented; using an extern fn as a value (assigning to a variable, passing as a callback) will not work correctly in v0.1
+
+---
 
 ## 1. Vision
 
@@ -25,7 +113,7 @@ Two insights drive this design:
 
 3. **Zero-copy vector access.** Extension code operating on vectors must be able to access the underlying typed storage (`double*`, `int64_t*`) directly without copying or per-element unboxing. This is the performance bridge that makes Quark competitive with native C++ for numeric workloads.
 
-4. **No Quark-specific plugin/loading mechanism.** Extensions are compiled in — no dlopen, no plugin registry, no runtime discovery. For pure-C++ extensions (custom algorithms, data parsers), this means a single static binary with zero deployment complexity. For extensions that wrap external libraries (DuckDB, SQLite, Arrow), the extension's `.hpp` wrapper is compiled in and the external library is linked via `extern link` which passes `-l` flags to clang++. This is standard C++ linking — not a Quark-specific mechanism.
+4. **No Quark-specific plugin/loading mechanism.** Extensions are compiled in — no dlopen, no plugin registry, no runtime discovery. For pure-C++ extensions (custom algorithms, data parsers), this means a single static binary with zero deployment complexity. For extensions that wrap external libraries (DuckDB, SQLite, Arrow), the extension's `.hpp` wrapper is compiled in and the external library is linked by passing `-l` flags to clang++. A syntax for specifying these flags from within `.qrk` files (`extern link`) is planned but deferred to post-v0.1; for now, flags are passed manually.
 
 5. **Extension authors learn one small API.** The `quark/ext/api.hpp` header provides vector access, value construction, GC-aware allocation, and closure callbacks. That's it. No framework, no macros, no base classes.
 
@@ -175,7 +263,31 @@ Type annotations on `extern fn` declarations serve double duty:
 
 **The rule**: Annotate it → get the native type. Don't annotate → get QValue.
 
-For extern declarations, every parameter should be annotated. Leaving a parameter unannotated is the explicit choice to accept any type and handle dispatch yourself in C++.
+For extern declarations, every parameter should be annotated. Leaving a parameter unannotated is the explicit choice to accept any type and handle dispatch yourself in C++. The intended use case for unannotated parameters is genuinely polymorphic functions — for example, an extension that accepts either a float or int vector and dispatches on `vec_dtype()`:
+
+```cpp
+// Quark declaration — no annotation on v, accepts any vector dtype
+extern fn vec_sum(v: vector) float as 'q_vec_sum'
+
+// C++ implementation — checks dtype at runtime
+double q_vec_sum(QVector* v) {
+    switch (qext::vec_dtype(v)) {
+        case QVector::F64: {
+            auto data = qext::as_f64(v);
+            return std::accumulate(data.begin(), data.end(), 0.0);
+        }
+        case QVector::I64: {
+            auto data = qext::as_i64(v);
+            return (double)std::accumulate(data.begin(), data.end(), 0LL);
+        }
+        default: qext::panicf("vec_sum: unsupported dtype %d", qext::vec_dtype(v));
+    }
+}
+```
+
+Note: `v` is still annotated as `vector` here — the receiver and container types should always be annotated. "Unannotated" refers to leaving off the scalar type annotation to get `QValue` for a parameter that could be `int` or `float`. Don't leave parameters unannotated just to avoid thinking about types — the QValue overhead is real.
+
+**Annotation mismatch is a silent ABI bug**: The compiler never reads `.hpp` files and cannot verify that the C++ function signature matches the `extern fn` declaration. A mismatched annotation (e.g., declaring `x: int` but the C++ function takes `double`) will not be caught by Quark and may silently produce wrong results or corrupt data depending on how clang++ handles the type mismatch at the call site. Keep `extern fn` declarations and C++ signatures in sync manually.
 
 ### 2.4.1 What Changes in CallPlan
 
@@ -188,14 +300,16 @@ type CallPlan struct {
     RuntimeSymbol   string         // C++ function name from `as` clause
 
     // NEW — populated for DispatchExtern calls:
-    NativeParamTypes []string      // C++ type per param: "int64_t", "double", "bool",
+    NativeParamTypes  []string     // C++ type per param: "int64_t", "double", "bool",
                                    // "const char*", "QVector*", "QList*", "QDict*",
                                    // "QClosure*", "QValue"
-    NativeReturnType string        // C++ return type (same set as above)
+    NativeReturnType  string       // C++ return type (same set as above)
+    NativeReceiverType string      // C++ type of the method receiver, e.g. "QVector*",
+                                   // "const char*", "QList*". Empty for free functions.
 }
 ```
 
-This lets codegen handle each argument independently — some might be native, some might be QValue, depending on which parameters the extension author annotated.
+This lets codegen handle each argument independently — some might be native, some might be QValue, depending on which parameters the extension author annotated. For method calls, codegen reads `NativeReceiverType` to adapt the receiver expression independently of `NativeParamTypes` (which covers only the explicit parameters).
 
 ### 2.4.2 Thunk Generation
 
@@ -238,8 +352,10 @@ Each compiler stage has a specific, bounded responsibility for extern declaratio
 **3. Analyzer**: Processes `extern fn` nodes and registers them into the same function/method tables that `catalog.go` populates for builtins. Free functions go into the function registry; `type.name` methods go into the method registry keyed by `(ReceiverType, methodName)` — identical to how builtin methods are registered. For each extern declaration:
    - Validates parameter annotations are valid types
    - Computes `NativeParamTypes` and `NativeReturnType` from the annotations using the type mapping table (Section 2.4)
-   - Creates a `CallPlan` with `Dispatch: DispatchExtern`, the `RuntimeSymbol` from the `as` clause, and the native type arrays
+   - For methods, computes `NativeReceiverType` from the type prefix (e.g. `vector` → `"QVector*"`, `str` → `"const char*"`)
+   - Creates a `CallPlan` with `Dispatch: DispatchExtern`, the `RuntimeSymbol` from the `as` clause, and the native type fields
    - Call site validation (arity, type checking) works the same as for any other function
+   - **Thunk detection**: when an extern fn identifier appears in a non-call-site position (assigned to a variable, passed as an argument, stored in a collection), the analyzer sets a `NeedsThunk bool` flag on the extern fn's registration entry. Codegen reads this flag to decide whether to emit the thunk. This is done in the analyzer — not codegen — because the analyzer already knows the call/non-call context when resolving identifiers, and codegen is single-pass.
 
 **4. Codegen**: Two responsibilities:
    - **Preamble**: Emits `#include "resolved/path/to/impl.hpp"` for each `extern '<path>'`, before any generated code. This makes extension functions visible at all call sites.
@@ -248,9 +364,9 @@ Each compiler stage has a specific, bounded responsibility for extern declaratio
      - Argument is QValue but target is native → emit guarded unbox: `q_as_float(expr)`, `q_as_int(expr)`, etc.
      - Argument is QValue and target is QValue (unannotated param) → pass through unchanged
    - **Return**: Wraps the native return into whatever the caller needs — if caller expects QValue, emit `qv_float(result)`. If caller is also scalar-tiered, keep native.
-   - **Thunks**: If the extern function is referenced as a value (detected during codegen's identifier pass), emits the QValue thunk (Section 2.4.2) and wraps it in a `QClosure`.
+   - **Thunks**: For extern functions where the analyzer set `NeedsThunk`, emits the QValue thunk (Section 2.4.2) in the preamble and wraps it in a `QClosure` at the use site.
 
-**5. clang++**: Compiles everything together — generated code + included extension headers + runtime — into one binary. No special flags needed for pure-C++ extensions. For external library extensions, `extern link` adds `-l` flags (Section 7.3).
+**5. clang++**: Compiles everything together — generated code + included extension headers + runtime — into one binary. No special flags needed for pure-C++ extensions. For external library extensions that wrap external libraries (DuckDB, Arrow, etc.), additional `-l` flags will be needed — the mechanism for specifying these (`extern link`) is deferred to post-v0.1.
 
 The key principle: **nothing downstream of the analyzer changes its architecture.** Extern functions enter the same registries, produce the same `CallPlan` IR (with additional fields), and flow through the same codegen paths (with a new dispatch branch). The extension mechanism is an addition, not a restructuring.
 
@@ -268,7 +384,7 @@ For a program that uses an extension module, the generated C++ has this structur
 
 // ──── Thunks (only for extern fns used as function values) ────
 QValue _thunk_q_sqrt(QClosure* _cl, QValue _arg_x) {
-    return qv_float(q_sqrt(_arg_x.data.float_val));
+    return qv_float(q_sqrt(q_as_float(_arg_x)));
 }
 
 // ──── Forward declarations (Quark-defined functions) ────
@@ -315,8 +431,8 @@ y = sqrt(x)
 ```
 ```cpp
 QValue quark_x = quark_some_dynamic_value(nullptr);
-// Compiler injects unboxing at call site:
-double quark_y = q_sqrt(quark_x.data.float_val);
+// Compiler injects guarded unbox at call site:
+double quark_y = q_sqrt(q_as_float(quark_x));
 ```
 
 **Indirect call (extern fn used as a function value):**
@@ -556,6 +672,19 @@ QVector* q_vec_scale(QVector* v, double factor) {
 
 **Dtype mismatch**: If the extension calls `as_f64()` on an I64 vector, the function panics with a clear error: "expected F64 vector, got I64". Extension authors should check `vec_dtype()` if they need to handle multiple dtypes.
 
+**GC lifetime warning**: A `std::span` is not a GC root — it is a raw pointer + size into the `QVector`'s internal storage. If a GC collection runs while you hold only a span (no live `QVector*`), the underlying vector can be collected and the span becomes dangling. This is most likely in callback-heavy code: you call `qext::as_f64(v)`, then call `qext::call(f, ...)` — the callback allocates, GC runs, and if `v` was the only reference it may be collected. The rule: **hold the `QVector*` alive for the entire lifetime of any span derived from it**. In practice: extract all data you need before calling back into Quark, or re-fetch the vector after the callback returns.
+
+```cpp
+// Unsafe — span held across a callback that can allocate:
+auto data = qext::as_f64(v);
+QValue result = qext::call(f, qv_float(data[0]));  // GC may run here
+double x = data[1];  // data may be dangling
+
+// Safe — extract needed values before calling back:
+double first = qext::as_f64(v)[0];
+QValue result = qext::call(f, qv_float(first));
+```
+
 ### 4.2 Dict Access
 
 Dicts are `QDictMap` — an `unordered_map<string, QValue>` with GC-allocated nodes. Extension authors access them directly:
@@ -614,7 +743,7 @@ Extensions should panic on unrecoverable errors (dtype mismatch, out-of-bounds, 
 QValue result = qv_ok(qv_int(42));
 
 // Return an error result
-QValue result = qv_err(qv_string(q_strdup("file not found")));
+QValue result = qv_err(qv_string_copy("file not found"));
 ```
 
 ### 4.5 Value Construction
@@ -624,16 +753,17 @@ The existing `qv_*` constructors are the API. Extension authors use these to cre
 ```cpp
 QValue qv_int(long long v);
 QValue qv_float(double v);
-QValue qv_string(const char* v);    // does NOT copy — pointer must be GC-managed
+QValue qv_string(const char* v);       // does NOT copy — pointer must be GC-managed
+QValue qv_string_copy(const char* v);  // copies via q_strdup — always safe, use this by default
 QValue qv_bool(bool v);
 QValue qv_null();
-QValue qv_list(int capacity);       // creates empty list with pre-allocated capacity
-QValue qv_dict();                   // creates empty dict
+QValue qv_list(int capacity);          // creates empty list with pre-allocated capacity
+QValue qv_dict();                      // creates empty dict
 QValue qv_ok(QValue inner);
 QValue qv_err(QValue inner);
 ```
 
-**Important**: `qv_string()` stores the pointer directly — it does not copy. The string must be GC-managed memory (allocated via `q_strdup()` or `q_malloc_atomic()`). Passing a stack buffer or `std::string::c_str()` is a dangling pointer bug.
+**String construction**: Prefer `qv_string_copy()` — it calls `q_strdup()` internally and is always safe. Use `qv_string()` only when you already have a GC-managed `const char*` and want to avoid a redundant copy (e.g., a string you just allocated with `q_strdup()`). Passing a stack buffer, a `std::string::c_str()`, or any non-GC pointer to `qv_string()` is a dangling pointer bug — the GC doesn't know about the allocation and may collect it.
 
 ### 4.6 Memory Management
 
@@ -753,7 +883,9 @@ for (long long quark_i = 0; quark_i < _range_end; quark_i++) {
 
 **Fix**: Codegen recognizes `for VAR in range(...)` as a special pattern. When `range` has 1-3 literal or scalar-tiered arguments, emit a raw C++ `for` loop directly. No list allocation, no `q_iter_get()`. This is the single highest-impact optimization for numeric loops.
 
-#### 5.3.4 Annotated Function Parameters (Priority: High, Effort: Medium)
+#### 5.3.4 Annotated Function Parameters (Priority: High, Effort: Medium — Deferred to Phase 2)
+
+> **Note**: This optimization requires the `NativeParamTypes`/`NativeReturnType` machinery added to `CallPlan` for QEI (Section 2.4.1) and the thunk generation mechanism (Section 2.4.2). It is in-scope but deferred until Phase 2 of the implementation plan, after extern functions are working end-to-end.
 
 **Current behavior**: Even with type annotations, function parameters are always `QValue`:
 
@@ -830,7 +962,7 @@ The goal is not to eliminate QValue. The goal is to ensure it only appears where
 
 ## 6. Language Changes Required
 
-Two language changes are needed before QEI implementation can begin. Both add one keyword each: `extern` and `return`.
+One language change is needed before QEI implementation can begin: the `extern` keyword.
 
 ### 6.1 `extern` Keyword
 
@@ -848,28 +980,9 @@ The parser distinguishes by what follows `extern`:
 
 Described in detail in Section 2.
 
-### 6.2 `return` Keyword
+### 6.2 `return` Keyword (Future — Not Required for v0.1 QEI)
 
-Required for writing stdlib modules. Without `return`, error propagation in `.qrk` stdlib code is impossible:
-
-```quark
-# std/io.qrk
-fn read_file(path: str) result ->
-    handle = file_open(path, "r")
-    if is_err(handle): return handle
-
-    content = file_read(unwrap(handle), -1)
-    if is_err(content): return content
-
-    file_close(unwrap(handle))
-    return ok(unwrap(content))
-```
-
-`return` exits the current function with a value. Semantics:
-- `return expr` — evaluate `expr`, return it, stop executing the function
-- Only valid inside function bodies (not at top level)
-- Every function implicitly returns the last expression if no explicit `return` is hit (existing behavior, unchanged)
-- `return` without a value is not supported — always requires an expression
+Early return is a separate language feature, deferred to a future milestone. It is not required for QEI or stdlib migration.
 
 ## 7. Stdlib Migration
 
@@ -953,13 +1066,7 @@ This is a breaking change for any code using `_` prefixed names directly. The fi
 
 ### Phase 1: Language Prerequisites
 
-**1a. `return` keyword**
-- Lexer: add `RETURN` token
-- Parser: recognize `return expr` as a statement, produce `ReturnNode`
-- Codegen: emit early `return` from the generated C++ function
-- Tests: smoke test with early return in if/for/while
-
-**1b. `extern` keyword — parser + AST**
+**1a. `extern` keyword — parser + AST**
 - Lexer: add `EXTERN` token
 - Parser: recognize `extern 'path'` (source include) and `extern fn name(...) type as 'symbol'` (function declaration). Detect `type.name` pattern for methods.
 - AST: new node types `ExternSourceNode` and `ExternFnNode` with fields for params, type annotations, `as` symbol, and optional receiver type
@@ -989,6 +1096,13 @@ This is a breaking change for any code using `_` prefixed names directly. The fi
 - Implement vector accessors (`as_f64`, `as_i64`, `new_f64`, etc.) — thin wrappers over `QVector` internals
 - Implement dict accessors, closure call helpers, error reporting
 - Tests: write a small test extension (e.g., `extern fn dot(a: vector, b: vector) float as 'q_dot'`) and verify end-to-end
+
+**2e. Annotated Function Parameters (Section 5.3.4)**
+- Reuse `NativeParamTypes`/`NativeReturnType`/`NativeReceiverType` fields added in 2b
+- Analyzer: when a function has annotations on all params and return type, compute native type fields and set `Dispatch: DispatchNative` (or reuse `DispatchExtern` — TBD)
+- Thunk detection: same analyzer-side `NeedsThunk` mechanism as extern functions
+- Codegen: emit native-typed function signature; at call sites with QValue callers, inject unboxing; emit thunks for functions used as values
+- Tests: annotated functions called directly, called with QValue args, and passed as callbacks
 
 ### Phase 3: Stdlib Migration
 

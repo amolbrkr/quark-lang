@@ -327,10 +327,101 @@ func (g *Generator) popScope() {
 	}
 }
 
+// collectExternSources gathers all resolved extern source paths from the AST
+// (ExternSourceNode children with their absolute path in the token literal).
+func collectExternSources(node *ast.TreeNode) []string {
+	var paths []string
+	seen := make(map[string]bool)
+	var walk func(*ast.TreeNode)
+	walk = func(n *ast.TreeNode) {
+		if n == nil {
+			return
+		}
+		if n.NodeType == ast.ExternSourceNode && len(n.Children) > 0 {
+			pathNode := n.Children[0]
+			if pathNode != nil && pathNode.Token != nil && pathNode.Token.Literal != "" {
+				p := pathNode.Token.Literal
+				if !seen[p] {
+					seen[p] = true
+					paths = append(paths, p)
+				}
+			}
+			return
+		}
+		for _, child := range n.Children {
+			walk(child)
+		}
+	}
+	walk(node)
+	return paths
+}
+
+// adaptArgForExtern adapts a QValue expression to the native C++ type required by an extern fn.
+// If nativeType is "QValue" or the same as the source, the expression is returned unchanged.
+// Otherwise an unboxing helper is emitted.
+func adaptArgForExtern(expr string, nativeType string) string {
+	switch nativeType {
+	case "int64_t":
+		return fmt.Sprintf("q_as_int(%s)", expr)
+	case "double":
+		return fmt.Sprintf("q_as_float(%s)", expr)
+	case "bool":
+		return fmt.Sprintf("q_as_bool(%s)", expr)
+	case "const char*":
+		return fmt.Sprintf("q_as_str(%s)", expr)
+	case "QVector*":
+		return fmt.Sprintf("q_as_vector(%s)", expr)
+	case "QList*":
+		return fmt.Sprintf("q_as_list(%s)", expr)
+	case "QDict*":
+		return fmt.Sprintf("q_as_dict(%s)", expr)
+	case "QClosure*":
+		return fmt.Sprintf("q_as_closure(%s)", expr)
+	case "QValue", "":
+		return expr
+	default:
+		return expr
+	}
+}
+
+// wrapExternReturn wraps the result of a native extern call back into QValue.
+func wrapExternReturn(callExpr string, nativeReturn string) string {
+	switch nativeReturn {
+	case "int64_t":
+		return fmt.Sprintf("qv_int(%s)", callExpr)
+	case "double":
+		return fmt.Sprintf("qv_float(%s)", callExpr)
+	case "bool":
+		return fmt.Sprintf("qv_bool(%s)", callExpr)
+	case "const char*":
+		return fmt.Sprintf("qv_string(%s)", callExpr)
+	case "QVector*":
+		return fmt.Sprintf("qv_vector_ptr(%s)", callExpr)
+	case "QList*":
+		return fmt.Sprintf("qv_list_ptr(%s)", callExpr)
+	case "QDict*":
+		return fmt.Sprintf("qv_dict_ptr(%s)", callExpr)
+	case "QValue", "":
+		return callExpr
+	default:
+		return callExpr
+	}
+}
+
 // Generate produces C++ code from the AST
 func (g *Generator) Generate(node *ast.TreeNode) string {
 	// Use external modular runtime header.
-	g.output.WriteString("#include \"quark/quark.hpp\"\n\n")
+	g.output.WriteString("#include \"quark/quark.hpp\"\n")
+
+	// Emit extern source includes before any generated code
+	externPaths := collectExternSources(node)
+	if len(externPaths) > 0 {
+		g.output.WriteString("\n// Extension includes\n")
+		for _, p := range externPaths {
+			g.output.WriteString(fmt.Sprintf("#include \"%s\"\n", escapeCppString(p)))
+		}
+	}
+	g.output.WriteString("\n")
 
 	g.output.WriteString("// Forward declarations\n")
 
@@ -364,12 +455,15 @@ func (g *Generator) Generate(node *ast.TreeNode) string {
 		}
 	}
 
-	// Generate top-level statements that aren't function/module definitions
+	// Generate top-level statements that aren't function/module/extern definitions
 	for _, child := range node.Children {
-		if child.NodeType != ast.FunctionNode && child.NodeType != ast.ModuleNode && child.NodeType != ast.UseNode {
-			g.emitSourceLoc(child)
-			g.emitLine("%s;", g.generateExpr(child))
+		if child.NodeType == ast.FunctionNode || child.NodeType == ast.ModuleNode ||
+			child.NodeType == ast.UseNode || child.NodeType == ast.ExternSourceNode ||
+			child.NodeType == ast.ExternFnNode {
+			continue
 		}
+		g.emitSourceLoc(child)
+		g.emitLine("%s;", g.generateExpr(child))
 	}
 
 	g.emitLine("return 0;")
@@ -466,6 +560,9 @@ func (g *Generator) generateNode(node *ast.TreeNode) {
 		g.generateFunction(node)
 	case ast.ModuleNode:
 		g.generateModule(node)
+	case ast.ExternSourceNode, ast.ExternFnNode:
+		// No code emitted — extern sources are #included in preamble,
+		// extern fn declarations are registered in the analyzer.
 	}
 }
 
@@ -624,6 +721,9 @@ func (g *Generator) generateExpr(node *ast.TreeNode) string {
 		return "qv_null()"
 	case ast.UseNode:
 		// Use statements are handled at compile time (imports are resolved by analyzer)
+		return "qv_null()"
+	case ast.ExternSourceNode, ast.ExternFnNode:
+		// Extern declarations produce no runtime code
 		return "qv_null()"
 	case ast.BreakNode:
 		g.emitLine("break;")
@@ -1099,9 +1199,16 @@ func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
 
 	// For method calls, cache receiver in a temp to avoid re-evaluation,
 	// then inject as the first argument.
+	// For DispatchExtern methods the receiver is adapted to its native type.
 	if plan.IsMethod && plan.ReceiverNode != nil {
 		receiverTemp := g.newTemp()
-		g.emitLine("QValue %s = %s;", receiverTemp, g.generateExpr(plan.ReceiverNode))
+		receiverExpr := g.generateExpr(plan.ReceiverNode)
+		if plan.Dispatch == ir.DispatchExtern && plan.NativeReceiverType != "" {
+			receiverExpr = adaptArgForExtern(receiverExpr, plan.NativeReceiverType)
+			g.emitLine("%s %s = %s;", plan.NativeReceiverType, receiverTemp, receiverExpr)
+		} else {
+			g.emitLine("QValue %s = %s;", receiverTemp, receiverExpr)
+		}
 		args = append([]string{receiverTemp}, args...)
 	}
 
@@ -1121,6 +1228,27 @@ func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
 			return fmt.Sprintf("%s(nullptr)", plan.RuntimeSymbol)
 		}
 		return fmt.Sprintf("%s(nullptr, %s)", plan.RuntimeSymbol, strings.Join(args, ", "))
+	case ir.DispatchExtern:
+		if plan.RuntimeSymbol == "" {
+			panicICEf("INV-CALLPLAN-RUNTIME", node, "extern call '%s' missing runtime symbol", plan.CalleeName)
+			return "qv_null()"
+		}
+		// args[0] is the receiver (already adapted above if IsMethod).
+		// Remaining args need adaptation based on NativeParamTypes.
+		externArgs := make([]string, len(args))
+		copy(externArgs, args)
+		offset := 0
+		if plan.IsMethod {
+			offset = 1 // args[0] is receiver, already adapted
+		}
+		for i := offset; i < len(externArgs); i++ {
+			paramIdx := i - offset
+			if paramIdx < len(plan.NativeParamTypes) {
+				externArgs[i] = adaptArgForExtern(externArgs[i], plan.NativeParamTypes[paramIdx])
+			}
+		}
+		callExpr := fmt.Sprintf("%s(%s)", plan.RuntimeSymbol, strings.Join(externArgs, ", "))
+		return wrapExternReturn(callExpr, plan.NativeReturnType)
 	case ir.DispatchClosure:
 		// It is a closure/function value call by analyzer contract.
 		funcExpr := g.generateExpr(funcNode)
@@ -1179,7 +1307,13 @@ func (g *Generator) generatePipe(node *ast.TreeNode) string {
 	// then inject as the first argument (before piped input).
 	if plan.IsMethod && plan.ReceiverNode != nil {
 		receiverTemp := g.newTemp()
-		g.emitLine("QValue %s = %s;", receiverTemp, g.generateExpr(plan.ReceiverNode))
+		receiverExpr := g.generateExpr(plan.ReceiverNode)
+		if plan.Dispatch == ir.DispatchExtern && plan.NativeReceiverType != "" {
+			receiverExpr = adaptArgForExtern(receiverExpr, plan.NativeReceiverType)
+			g.emitLine("%s %s = %s;", plan.NativeReceiverType, receiverTemp, receiverExpr)
+		} else {
+			g.emitLine("QValue %s = %s;", receiverTemp, receiverExpr)
+		}
 		args = append([]string{receiverTemp}, args...)
 	}
 
@@ -1196,6 +1330,25 @@ func (g *Generator) generatePipe(node *ast.TreeNode) string {
 			return "qv_null()"
 		}
 		return fmt.Sprintf("%s(nullptr, %s)", plan.RuntimeSymbol, strings.Join(args, ", "))
+	case ir.DispatchExtern:
+		if plan.RuntimeSymbol == "" {
+			panicICEf("INV-CALLPLAN-RUNTIME", rightNode, "extern call '%s' missing runtime symbol", plan.CalleeName)
+			return "qv_null()"
+		}
+		externArgs := make([]string, len(args))
+		copy(externArgs, args)
+		offset := 0
+		if plan.IsMethod {
+			offset = 1
+		}
+		for i := offset; i < len(externArgs); i++ {
+			paramIdx := i - offset
+			if paramIdx < len(plan.NativeParamTypes) {
+				externArgs[i] = adaptArgForExtern(externArgs[i], plan.NativeParamTypes[paramIdx])
+			}
+		}
+		callExpr := fmt.Sprintf("%s(%s)", plan.RuntimeSymbol, strings.Join(externArgs, ", "))
+		return wrapExternReturn(callExpr, plan.NativeReturnType)
 	case ir.DispatchClosure:
 		funcExpr := g.generateExpr(funcNode)
 		if funcNode.NodeType == ast.OperatorNode && funcNode.Token != nil && funcNode.Token.Type == token.DOT && strings.Contains(plan.CalleeName, ".") && len(funcNode.Children) >= 2 {

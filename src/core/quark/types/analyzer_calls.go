@@ -79,6 +79,32 @@ func (a *Analyzer) resolveMethodCall(
 			if sig, ok := methodSigs[methodName]; ok {
 				totalMin := sig.MinArgs + 1
 				totalMax := sig.MaxArgs + 1
+
+				// Check if this method is an extern fn
+				methodKey := string(receiverKey)
+				// Convert TypeKey back to receiver string for externFns lookup
+				receiverStr := typeKeyToReceiverString(receiverKey)
+				externKey := receiverStr + "." + methodName
+				if proto, isExtern := a.externFns[externKey]; isExtern {
+					plan := *proto
+					plan.CalleeName = methodName
+					plan.ReceiverNode = receiverNode
+					plan.ReceiverTypeKey = methodKey
+					plan.MinArity = totalMin
+					plan.MaxArity = totalMax
+					if argCount < sig.MinArgs || argCount > sig.MaxArgs {
+						if sig.MinArgs == sig.MaxArgs {
+							a.errorAt(errorNode, "extern method '%s' expects %d argument(s) but got %d%s", methodName, sig.MaxArgs, argCount, arityCtx)
+						} else {
+							a.errorAt(errorNode, "extern method '%s' expects %d-%d arguments but got %d%s", methodName, sig.MinArgs, sig.MaxArgs, argCount, arityCtx)
+						}
+					}
+					a.checkArgTypes(methodName, sig.Type.ParamTypes, argTypes, argNodes)
+					plan.ArgTypesChecked = true
+					a.callPlans[planNode] = &plan
+					return methodCallResult{returnType: sig.Type.ReturnType, resolved: true}
+				}
+
 				runtimeSym := ""
 				if spec, ok := builtins.LookupMethod(receiverKey, methodName); ok {
 					runtimeSym = spec.Runtime
@@ -185,6 +211,20 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 	if funcNode.NodeType == ast.IdentifierNode {
 		name := funcNode.TokenLiteral()
 		if sig, ok := a.builtins[name]; ok {
+			// Check if this builtin is actually an extern fn (DispatchExtern)
+			if proto, isExtern := a.externFns[name]; isExtern {
+				plan := *proto // copy prototype
+				plan.CalleeName = name
+				plan.MinArity = sig.MinArgs
+				plan.MaxArity = sig.MaxArgs
+				if argCount < sig.MinArgs || argCount > sig.MaxArgs {
+					a.errorAt(node, "extern fn '%s' expects %d-%d arguments but got %d", name, sig.MinArgs, sig.MaxArgs, argCount)
+				}
+				a.checkArgTypes(name, sig.Type.ParamTypes, argTypes, argsNode.Children)
+				plan.ArgTypesChecked = true
+				a.callPlans[node] = &plan
+				return sig.Type.ReturnType
+			}
 			a.callPlans[node] = &ir.CallPlan{Kind: ir.CallBuiltin, CalleeName: name, MinArity: sig.MinArgs, MaxArity: sig.MaxArgs, Dispatch: ir.DispatchBuiltin, RuntimeSymbol: builtinsRuntimeName(name)}
 			if argCount < sig.MinArgs || argCount > sig.MaxArgs {
 				a.errorAt(node, "builtin '%s' expects %d-%d arguments but got %d", name, sig.MinArgs, sig.MaxArgs, argCount)
@@ -582,6 +622,28 @@ func (a *Analyzer) analyzeUnionMethodCall(node *ast.TreeNode, unionType *UnionTy
 	}
 	a.callPlans[node].ArgTypesChecked = true
 	return MergeTypes(returnTypes...)
+}
+
+// typeKeyToReceiverString maps a catalog TypeKey back to the receiver string
+// used as a prefix in extern fn declarations (e.g. TypeListAny → "list").
+func typeKeyToReceiverString(key builtins.TypeKey) string {
+	switch key {
+	case builtins.TypeInt:
+		return "int"
+	case builtins.TypeFloat:
+		return "float"
+	case builtins.TypeString:
+		return "str"
+	case builtins.TypeBool:
+		return "bool"
+	case builtins.TypeListAny:
+		return "list"
+	case builtins.TypeDictAny:
+		return "dict"
+	case builtins.TypeVectorAny:
+		return "vector"
+	}
+	return string(key)
 }
 
 func defaultNodesFromFunctionType(ft *FunctionType, provided int) []*ast.TreeNode {

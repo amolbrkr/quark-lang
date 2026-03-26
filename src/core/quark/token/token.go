@@ -75,6 +75,7 @@ const (
 	RESULT
 	BREAK
 	CONTINUE
+	EXTERN
 	keyword_end
 )
 
@@ -145,6 +146,7 @@ var tokenNames = map[TokenType]string{
 	RESULT:   "RESULT",
 	BREAK:    "BREAK",
 	CONTINUE: "CONTINUE",
+	EXTERN:   "EXTERN",
 }
 
 func (t TokenType) String() string {
@@ -179,6 +181,7 @@ var keywords = map[string]TokenType{
 	"result":   RESULT,
 	"break":    BREAK,
 	"continue": CONTINUE,
+	"extern":   EXTERN,
 }
 
 func LookupIdent(ident string) TokenType {

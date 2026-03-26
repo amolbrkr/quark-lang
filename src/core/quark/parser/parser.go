@@ -128,6 +128,8 @@ func (p *Parser) parseStatement() *ast.TreeNode {
 		return p.parseModule()
 	case token.USE:
 		return p.parseUse()
+	case token.EXTERN:
+		return p.parseExtern()
 	case token.IF:
 		return p.parseIfStatement()
 	case token.WHEN:
@@ -713,6 +715,113 @@ func (p *Parser) parseModule() *ast.TreeNode {
 	node.AddChild(body)
 
 	return node
+}
+
+// parseExtern parses:
+//
+//	extern 'path/to/impl.hpp'
+//	extern fn name(params) ReturnType as 'symbol'
+//	extern fn type.name(params) ReturnType as 'symbol'
+func (p *Parser) parseExtern() *ast.TreeNode {
+	tok := p.curToken
+	p.nextToken() // skip 'extern'
+
+	switch p.curToken.Type {
+	case token.STRING:
+		// extern 'path/to/impl.hpp'
+		pathTok := p.curToken
+		node := ast.NewNode(ast.ExternSourceNode, &tok)
+		pathNode := ast.NewNode(ast.LiteralNode, &pathTok)
+		node.AddChild(pathNode)
+		p.nextToken()
+		return node
+	case token.FN:
+		return p.parseExternFn(&tok)
+	default:
+		p.addError("expected string path or 'fn' after 'extern', got %s", p.curToken.Type)
+		return nil
+	}
+}
+
+// parseExternFn parses:
+//
+//	extern fn name(params) ReturnType as 'symbol'
+//	extern fn type.name(params) ReturnType as 'symbol'
+func (p *Parser) parseExternFn(externTok *token.Token) *ast.TreeNode {
+	p.nextToken() // skip 'fn'
+
+	// Parse function name — may be 'name' or 'type.name'
+	if p.curToken.Type != token.ID && !p.isBuiltinTypeKeyword() {
+		p.addError("expected function name after 'extern fn'")
+		return nil
+	}
+	firstTok := p.curToken
+	firstName := p.curToken.Literal
+	p.nextToken()
+
+	receiverType := ""
+	funcName := firstName
+
+	// Check for type.name pattern
+	if p.curToken.Type == token.DOT {
+		p.nextToken() // skip '.'
+		if p.curToken.Type != token.ID {
+			p.addError("expected method name after '.' in extern fn declaration")
+			return nil
+		}
+		receiverType = firstName
+		funcName = p.curToken.Literal
+		p.nextToken()
+	}
+
+	// Parse parameters
+	params := p.parseParameters()
+
+	// Parse return type
+	var returnTypeNode *ast.TreeNode
+	if p.isTypeToken() {
+		returnTypeNode = p.parseTypeExpr()
+	}
+
+	// Expect 'as'
+	if p.curToken.Type != token.AS {
+		p.addError("expected 'as' after extern fn signature")
+		return nil
+	}
+	p.nextToken() // skip 'as'
+
+	// Expect symbol string
+	if p.curToken.Type != token.STRING {
+		p.addError("expected string symbol after 'as' in extern fn")
+		return nil
+	}
+	symbolLiteral := p.curToken.Literal
+	p.nextToken()
+
+	nameTok := token.Token{Type: token.ID, Literal: funcName, Line: firstTok.Line, Column: firstTok.Column}
+	node := ast.NewNode(ast.ExternFnNode, &nameTok)
+	node.AddChildren(params.Children...)
+	node.ReturnType = returnTypeNode
+	node.ExternSymbol = symbolLiteral
+	node.ExternReceiver = receiverType
+
+	_ = externTok
+	return node
+}
+
+// isBuiltinTypeKeyword returns true if the current token is a type keyword that
+// can appear as the receiver prefix in an extern fn declaration (e.g. 'list', 'vector').
+func (p *Parser) isBuiltinTypeKeyword() bool {
+	switch p.curToken.Type {
+	case token.LIST, token.DICT, token.VECTOR:
+		return true
+	case token.ID:
+		switch p.curToken.Literal {
+		case "int", "float", "str", "bool":
+			return true
+		}
+	}
+	return false
 }
 
 // parseUse parses:

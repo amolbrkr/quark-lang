@@ -41,6 +41,8 @@ const (
 	UseNode
 	BreakNode
 	ContinueNode
+	ExternSourceNode // extern 'path/to/impl.hpp'
+	ExternFnNode     // extern fn name(...) type as 'symbol'
 )
 
 var nodeTypeNames = map[NodeType]string{
@@ -76,6 +78,8 @@ var nodeTypeNames = map[NodeType]string{
 	UseNode:             "Use",
 	BreakNode:           "Break",
 	ContinueNode:        "Continue",
+	ExternSourceNode:    "ExternSource",
+	ExternFnNode:        "ExternFn",
 }
 
 func (n NodeType) String() string {
@@ -99,6 +103,13 @@ type TreeNode struct {
 	Children     []*TreeNode
 	ReturnType   *TreeNode // For LambdaNode: optional return type annotation (TypeNode)
 	DefaultValue *TreeNode // For ParameterNode: optional default value expression
+
+	// ExternFnNode fields:
+	// Token.Literal = function name (e.g. "sqrt" or "list.shuffle")
+	// Children = ParameterNodes (same as function params)
+	// ReturnType = TypeNode for the return type (reusing existing field)
+	ExternSymbol   string // The 'as' symbol (C++ function name)
+	ExternReceiver string // The receiver type prefix (e.g. "list", "vector", "str") — empty for free functions
 }
 
 func NewNode(nodeType NodeType, tok *token.Token) *TreeNode {

@@ -43,6 +43,11 @@ type Analyzer struct {
 	nodeTypes       map[*ast.TreeNode]Type // Inferred type of every expression node
 	loopDepth       int
 	pendingFuncName string
+	// externFns maps extern fn registrations: free function name or "type.method" key
+	// → prototype CallPlan used to build per-call-site plans with DispatchExtern.
+	externFns map[string]*ir.CallPlan
+	// externSources holds resolved absolute paths from extern 'path' directives.
+	externSources []string
 }
 
 func NewAnalyzer() *Analyzer {
@@ -88,6 +93,8 @@ func NewAnalyzer() *Analyzer {
 		callPlans:       make(map[*ast.TreeNode]*ir.CallPlan),
 		returnValidated: make(map[*ast.TreeNode]bool),
 		nodeTypes:       make(map[*ast.TreeNode]Type),
+		externFns:       make(map[string]*ir.CallPlan),
+		externSources:   make([]string, 0),
 	}
 }
 
@@ -251,6 +258,10 @@ func (a *Analyzer) analyze(node *ast.TreeNode) Type {
 		return TypeVoid
 	case ast.LambdaNode:
 		return a.analyzeLambda(node)
+	case ast.ExternSourceNode:
+		return TypeVoid // Path recording is done by the loader; analyzer ignores content
+	case ast.ExternFnNode:
+		return a.analyzeExternFn(node)
 	default:
 		return TypeAny
 	}

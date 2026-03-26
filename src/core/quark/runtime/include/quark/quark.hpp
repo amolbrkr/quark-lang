@@ -49,4 +49,7 @@
 // Member access (must come after types and builtins)
 #include "ops/member.hpp"
 
+// Quark Extensions Interface — unboxing helpers and qext:: namespace
+#include "ext/api.hpp"
+
 #endif // QUARK_RUNTIME_HPP

@@ -873,6 +873,19 @@ func (g *Generator) scalarExpr(node *ast.TreeNode) (string, string) {
 					}
 				}
 			}
+			// Binary comparison: both operands must be scalar (non-bool for ordered ops)
+			if cppOp := nativeCompareOp(op); cppOp != "" {
+				lRaw, lTier := g.scalarExpr(node.Children[0])
+				rRaw, rTier := g.scalarExpr(node.Children[1])
+				if lTier != "" && rTier != "" {
+					// For ordered comparisons (<, <=, >, >=) skip bool operands.
+					isOrdered := op == token.LT || op == token.LTE || op == token.GT || op == token.GTE
+					if !isOrdered || (lTier != "bool" && rTier != "bool") {
+						expr := fmt.Sprintf("(%s %s %s)", lRaw, cppOp, rRaw)
+						return expr, "bool"
+					}
+				}
+			}
 		}
 	}
 	return "", ""
@@ -1015,12 +1028,15 @@ func (g *Generator) generateOperator(node *ast.TreeNode) string {
 			}
 		}
 	}
-	if cppCmp := nativeCompareOp(op); cppCmp != "" && op != token.DEQ && op != token.NE {
+	if cppCmp := nativeCompareOp(op); cppCmp != "" {
 		lRaw, lTier := g.scalarExpr(node.Children[0])
 		rRaw, rTier := g.scalarExpr(node.Children[1])
-		if lTier != "" && rTier != "" && lTier != "bool" && rTier != "bool" {
-			rawResult := fmt.Sprintf("(%s %s %s)", lRaw, cppCmp, rRaw)
-			return boxExpr(rawResult, "bool")
+		if lTier != "" && rTier != "" {
+			isOrdered := op == token.LT || op == token.LTE || op == token.GT || op == token.GTE
+			if !isOrdered || (lTier != "bool" && rTier != "bool") {
+				rawResult := fmt.Sprintf("(%s %s %s)", lRaw, cppCmp, rRaw)
+				return boxExpr(rawResult, "bool")
+			}
 		}
 	}
 
@@ -1382,8 +1398,13 @@ func (g *Generator) generateIf(node *ast.TreeNode) string {
 	temp := g.newTemp()
 	g.emitLine("QValue %s = qv_null();", temp)
 
-	cond := g.generateExpr(node.Children[0])
-	g.emitLine("if (q_truthy(%s)) {", cond)
+	var cond string
+	if rawCond, tier := g.scalarExpr(node.Children[0]); tier == "bool" {
+		cond = rawCond
+	} else {
+		cond = fmt.Sprintf("q_truthy(%s)", g.generateExpr(node.Children[0]))
+	}
+	g.emitLine("if (%s) {", cond)
 	g.indentLevel++
 
 	ifResult := g.generateExpr(node.Children[1])
@@ -1397,7 +1418,13 @@ func (g *Generator) generateIf(node *ast.TreeNode) string {
 		child := node.Children[i]
 		if child.NodeType == ast.IfStatementNode && len(child.Children) >= 2 {
 			// elseif
-			g.emit(" else if (q_truthy(%s)) {\n", g.generateExpr(child.Children[0]))
+			var elseifCond string
+			if rawCond, tier := g.scalarExpr(child.Children[0]); tier == "bool" {
+				elseifCond = rawCond
+			} else {
+				elseifCond = fmt.Sprintf("q_truthy(%s)", g.generateExpr(child.Children[0]))
+			}
+			g.emit(" else if (%s) {\n", elseifCond)
 			g.indentLevel++
 			elseifResult := g.generateExpr(child.Children[1])
 			g.emitLine("%s = %s;", temp, elseifResult)
@@ -1587,7 +1614,13 @@ func (g *Generator) generateWhile(node *ast.TreeNode) string {
 	condNode := node.Children[0]
 	bodyNode := node.Children[1]
 
-	g.emitLine("while (q_truthy(%s)) {", g.generateExpr(condNode))
+	var whileCond string
+	if rawCond, tier := g.scalarExpr(condNode); tier == "bool" {
+		whileCond = rawCond
+	} else {
+		whileCond = fmt.Sprintf("q_truthy(%s)", g.generateExpr(condNode))
+	}
+	g.emitLine("while (%s) {", whileCond)
 	g.indentLevel++
 
 	// Generate body

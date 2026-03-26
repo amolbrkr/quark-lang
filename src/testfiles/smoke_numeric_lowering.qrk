@@ -47,3 +47,27 @@ println(add5(10))  // 15
 m = 7
 dv = 2
 println(m / dv)   // 3.5
+
+// Scalar == and != (previously went through q_eq/q_neq)
+c1 = 42
+c2 = 42
+c3 = 99
+println(c1 == c2)   // true
+println(c1 != c3)   // true
+println(c1 == c3)   // false
+
+// if/elseif/while with scalar bool conditions (previously wrapped in q_truthy)
+r = 0
+w = 3
+while w > 0:
+    r = r + w
+    w = w - 1
+println(r)   // 6
+
+score = 7
+if score == 10:
+    println('perfect')
+elseif score > 5:
+    println('good')
+else:
+    println('low')

@@ -431,6 +431,11 @@ func TestSmokePrograms_Run(t *testing.T) {
 				"8",
 				"15",
 				"3.5",
+				"true",
+				"true",
+				"false",
+				"6",
+				"good",
 			),
 		},
 		{

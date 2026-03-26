@@ -1,11 +1,82 @@
 # Quark Extensions Interface (QEI) Design
 
-Status: Implemented (Phase 1 + Phase 2a–2d complete)
-Date: 2026-03-25
+Status: Implemented (Phase 1 + Phase 2a–2e complete)
+Date: 2026-03-26
 
 ---
 
 ## Changelog
+
+### 2026-03-26 — Phase 2e + scalar lowering extensions implemented
+
+Annotated user-defined functions now emit native C++ signatures (Phase 2e). Scalar lowering extended to cover `==`/`!=` comparisons and `if`/`while` bool conditions.
+
+#### Phase 2e: Annotated Function Parameters → Native C++ Signatures
+
+**`src/core/quark/ir/call.go`**
+- Added `DispatchNative` dispatch mode constant (distinct from `DispatchExtern` — for user-defined functions, not extern declarations)
+
+**`src/core/quark/types/analyzer.go`**
+- Added `nativeFns map[string]*ir.CallPlan` field, initialized in `NewAnalyzer()`
+
+**`src/core/quark/types/analyzer_modules.go`**
+- Added `GetNativeFns() map[string]*ir.CallPlan` accessor
+- Added `isFullyAnnotated()` predicate — true when all params have non-Any scalar annotations, return type is annotated as scalar, and no default params
+- Reuses `quarkTypeToNativeCType()` from Phase 2b
+
+**`src/core/quark/types/analyzer_functions.go`**
+- Added native fn registration in `analyzeLambda()` after `validateReturnType`: when `funcName != "lambda"` and `isFullyAnnotated()`, registers a `CallPlan` with `Dispatch: DispatchNative`, `RuntimeSymbol: "quark_" + name`, and `NativeParamTypes`/`NativeReturnType` populated
+
+**`src/core/quark/types/analyzer_calls.go`**
+- Modified `analyzeFunctionCall()`: checks `nativeFns` map before the `sym.Mutable` guard — necessary because lambda-assigned functions have `Mutable: true` in scope, which previously blocked the direct-dispatch path
+- Modified `analyzePipeCall()`: same check added for pipe call sites
+
+**`src/core/quark/invariants/callplan.go`**
+- Added `DispatchExtern` and `DispatchNative` to the allowed dispatch mode set (both were previously missing, causing invariant failures)
+- Updated `INV-RUNTIME-SYMBOL` check to require a runtime symbol for both `DispatchExtern` and `DispatchNative`
+
+**`src/core/quark/codegen/codegen.go`**
+- Extended `funcDecl` struct with `nativeParamTypes []string` and `nativeReturnType string`
+- Added `nativeFns map[string]*ir.CallPlan` field to `Generator`; added `SetNativeFns()` method
+- Added `nativeCppTypeToTier()` — maps C++ type strings to scalar tier strings for `scalarExpr` compatibility
+- Updated `collectFunctions()`: added `OperatorNode[=]` case to detect native lambda assignments and give them their canonical user name (e.g., `quark_add` instead of `quark__lambda1`); LambdaNode case skips already-named lambdas
+- Split `generateLambdaFunc()`: delegates to `generateNativeFunction()` for native fns, `generateQValueFunction()` for all others
+- Added `generateNativeFunction()` — emits native-typed C++ signature with `int64_t`/`double`/`bool` params; uses `scalarExpr` on the last body expression to avoid box-unbox roundtrip in return value
+- Added `generateNativeThunk()` — emits `QValue quark_name__thunk(QClosure*, QValue, ...)` wrapper for first-class use
+- Updated `generateLambdaExpr()`: returns `qv_func((void*)quark_name__thunk)` for native fns
+- Updated `generateIdentifier()`: returns thunk reference for native function names used as values
+- Added `DispatchNative` case in `generateFunctionCall()` and `generatePipe()`: uses `scalarExpr` on arg nodes to avoid box-then-unbox at call sites; falls back to `adaptArgForExtern()` for QValue args
+
+**`src/core/quark/main.go`**
+- Added `gen.SetNativeFns(analyzer.GetNativeFns())` at all three codegen call sites (emit, build, run paths)
+
+**`src/testfiles/smoke_native_fns.qrk`** (new file)
+- Tests: direct native calls, scalar-tiered variable args, multi-statement body (`clamp`), first-class use via thunk (`apply(double_it, 6)`)
+
+**`src/core/quark/integration_smoke_test.go`**
+- Added `native_fns` test case
+
+#### Scalar Lowering Extensions (Section 5.3.1 + 5.3.2)
+
+**`src/core/quark/codegen/codegen.go`**
+- Extended `scalarExpr()` OperatorNode case to handle `==` and `!=`: both operands must be scalar-tiered; result tier is `"bool"`
+- Updated `generateIf()`: checks `scalarExpr()` on condition — if tier is `"bool"`, emits raw C++ bool directly instead of `q_truthy(...)`. Same applied to `elseif` inline condition.
+- Updated `generateWhile()`: same `scalarExpr` check on condition
+
+**`src/testfiles/smoke_numeric_lowering.qrk`**
+- Added test cases for `==`/`!=` scalar lowering, scalar `while` condition, scalar `if`/`elseif` condition
+
+**`src/core/quark/integration_smoke_test.go`**
+- Updated `numeric_lowering` expected output
+
+#### What is NOT yet implemented
+
+- **Thunk generation for `extern fn`** — `DispatchNative` (user-defined) functions have thunks; `DispatchExtern` (extern declarations) do not. Using an `extern fn` as a first-class value (assigning to a variable, passing as a callback) will not work correctly.
+- **`for i in range(n)` → raw C++ loop** (Section 5.3.3) — `range(n)` still allocates a `QList` of boxed integers
+- **Direct vector literal construction** (Section 5.3.5) — `vector [1, 2, 3]` still builds an intermediate list then calls `q_to_vector()`
+- **Phase 3** (stdlib migration: `std/io`, `std/fmt`, removal of `_`-prefixed catalog entries) — deferred
+
+---
 
 ### 2026-03-25 — Phase 1 + Phase 2a–2d implemented
 

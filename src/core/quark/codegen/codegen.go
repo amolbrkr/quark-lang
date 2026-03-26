@@ -78,6 +78,10 @@ type Generator struct {
 	// nativeFns maps function name → CallPlan for fully-annotated user functions.
 	// Used by collectFunctions and generateFunction to emit native signatures + thunks.
 	nativeFns map[string]*ir.CallPlan
+	// externFns maps extern fn registration key → CallPlan (free fn name, or "type.method").
+	// Used to detect when an extern fn identifier is used as a first-class value
+	// and emit a thunk wrapping the native symbol.
+	externFns map[string]*ir.CallPlan
 }
 
 func New() *Generator {
@@ -99,6 +103,7 @@ func New() *Generator {
 		varTiers:           make(map[string]string),
 		tierStack:          make([]map[string]string, 0),
 		nativeFns:          make(map[string]*ir.CallPlan),
+		externFns:          make(map[string]*ir.CallPlan),
 	}
 }
 
@@ -106,6 +111,14 @@ func New() *Generator {
 func (g *Generator) SetNativeFns(m map[string]*ir.CallPlan) {
 	if m != nil {
 		g.nativeFns = m
+	}
+}
+
+// SetExternFns passes the extern fn registration map from the analyzer to the generator.
+// Used to detect when an extern fn name appears as a first-class value and emit a thunk.
+func (g *Generator) SetExternFns(m map[string]*ir.CallPlan) {
+	if m != nil {
+		g.externFns = m
 	}
 }
 
@@ -499,10 +512,30 @@ func (g *Generator) Generate(node *ast.TreeNode) string {
 			g.emitLine("QValue quark_%s(%s);", fd.name, strings.Join(params, ", "))
 		}
 	}
+	// Emit forward declarations for extern fn thunks (free functions only —
+	// methods are not callable as first-class values in v0.1).
+	for _, proto := range g.externFns {
+		if proto.IsMethod {
+			continue
+		}
+		thunkParams := []string{"QClosure*"}
+		for range proto.NativeParamTypes {
+			thunkParams = append(thunkParams, "QValue")
+		}
+		g.emitLine("QValue _thunk_%s(%s);", proto.RuntimeSymbol, strings.Join(thunkParams, ", "))
+	}
 	g.emit("\n")
 
 	// Generate function definitions
 	g.generateNode(node)
+
+	// Emit extern fn thunk bodies (free functions only).
+	for name, proto := range g.externFns {
+		if proto.IsMethod {
+			continue
+		}
+		g.generateExternThunk(name, proto)
+	}
 
 	// Generate main function
 	g.emit("\nint main() {\n")
@@ -873,6 +906,39 @@ func (g *Generator) generateNativeThunk(funcName string, paramNames []string, pr
 	g.emit("}\n\n")
 }
 
+// generateExternThunk emits a QValue-convention thunk for a free extern fn so it can
+// be stored in a QClosure and used as a first-class value. The thunk unboxes each
+// QValue argument to the native type, calls the native symbol directly, and boxes
+// the result back to QValue.
+func (g *Generator) generateExternThunk(_ string, proto *ir.CallPlan) {
+	symbol := proto.RuntimeSymbol // e.g. "q_sqrt"
+	paramCount := len(proto.NativeParamTypes)
+
+	thunkParams := []string{"QClosure* _cl"}
+	argNames := make([]string, paramCount)
+	for i := range argNames {
+		argNames[i] = fmt.Sprintf("_a%d", i)
+		thunkParams = append(thunkParams, fmt.Sprintf("QValue _a%d", i))
+	}
+	g.emit("QValue _thunk_%s(%s) {\n", symbol, strings.Join(thunkParams, ", "))
+	g.indentLevel++
+
+	adaptedArgs := make([]string, paramCount)
+	for i, argName := range argNames {
+		nativeType := "QValue"
+		if i < len(proto.NativeParamTypes) {
+			nativeType = proto.NativeParamTypes[i]
+		}
+		adaptedArgs[i] = adaptArgForExtern(argName, nativeType)
+	}
+
+	callExpr := fmt.Sprintf("%s(%s)", symbol, strings.Join(adaptedArgs, ", "))
+	g.emitLine("return %s;", wrapExternReturn(callExpr, proto.NativeReturnType))
+
+	g.indentLevel--
+	g.emit("}\n\n")
+}
+
 func (g *Generator) generateModule(node *ast.TreeNode) {
 	if len(node.Children) < 2 {
 		return
@@ -1039,6 +1105,10 @@ func (g *Generator) generateIdentifier(node *ast.TreeNode) string {
 			return fmt.Sprintf("qv_func((void*)quark_%s__thunk)", name)
 		}
 		return fmt.Sprintf("qv_func((void*)quark_%s)", name)
+	}
+	// Extern fn free functions used as first-class values: wrap the thunk.
+	if proto, isExtern := g.externFns[name]; isExtern && !proto.IsMethod {
+		return fmt.Sprintf("qv_func((void*)_thunk_%s)", proto.RuntimeSymbol)
 	}
 	return sanitizeVarName(name)
 }

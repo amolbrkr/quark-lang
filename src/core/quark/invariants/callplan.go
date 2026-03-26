@@ -71,12 +71,15 @@ func ValidateCallPlans(root *ast.TreeNode, plans map[*ast.TreeNode]*ir.CallPlan)
 			return
 		}
 		// INV-DISPATCH-MODE: every call plan must have a resolved dispatch mode.
-		if plan.Dispatch != ir.DispatchBuiltin && plan.Dispatch != ir.DispatchDirect && plan.Dispatch != ir.DispatchClosure {
+		if plan.Dispatch != ir.DispatchBuiltin && plan.Dispatch != ir.DispatchDirect &&
+			plan.Dispatch != ir.DispatchClosure && plan.Dispatch != ir.DispatchExtern &&
+			plan.Dispatch != ir.DispatchNative {
 			firstErr = invError("INV-DISPATCH-MODE", n, "call plan for '%s' has unresolved dispatch mode", plan.CalleeName)
 			return
 		}
-		// INV-RUNTIME-SYMBOL: builtin and direct calls must have a runtime symbol.
-		if (plan.Dispatch == ir.DispatchDirect || plan.Dispatch == ir.DispatchBuiltin) && plan.RuntimeSymbol == "" {
+		// INV-RUNTIME-SYMBOL: builtin, direct, extern, and native calls must have a runtime symbol.
+		if (plan.Dispatch == ir.DispatchDirect || plan.Dispatch == ir.DispatchBuiltin ||
+			plan.Dispatch == ir.DispatchExtern || plan.Dispatch == ir.DispatchNative) && plan.RuntimeSymbol == "" {
 			firstErr = invError("INV-RUNTIME-SYMBOL", n, "call plan for '%s' requires runtime symbol but has none", plan.CalleeName)
 			return
 		}

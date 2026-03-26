@@ -253,16 +253,24 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 	defaultNodes := defaultNodesFromFunctionType(funcType, argCount)
 	dispatch := ir.DispatchClosure
 	runtimeSymbol := ""
+	var nativeParamTypes []string
+	var nativeReturnType string
 	if funcNode.NodeType == ast.IdentifierNode {
 		name := funcNode.TokenLiteral()
-		if sym := a.currentScope.Lookup(name); sym != nil && !sym.Mutable {
+		// Check nativeFns first — applies regardless of mutability.
+		if proto, isNative := a.nativeFns[name]; isNative {
+			dispatch = ir.DispatchNative
+			runtimeSymbol = proto.RuntimeSymbol
+			nativeParamTypes = proto.NativeParamTypes
+			nativeReturnType = proto.NativeReturnType
+		} else if sym := a.currentScope.Lookup(name); sym != nil && !sym.Mutable {
 			if _, exists := a.functions[name]; exists {
 				dispatch = ir.DispatchDirect
 				runtimeSymbol = "quark_" + name
 			}
 		}
 	}
-	a.callPlans[node] = &ir.CallPlan{Kind: ir.CallFunctionValue, CalleeName: calleeNameFromNode(funcNode), MinArity: minArity, MaxArity: maxArity, Dispatch: dispatch, RuntimeSymbol: runtimeSymbol, DefaultNodes: defaultNodes}
+	a.callPlans[node] = &ir.CallPlan{Kind: ir.CallFunctionValue, CalleeName: calleeNameFromNode(funcNode), MinArity: minArity, MaxArity: maxArity, Dispatch: dispatch, RuntimeSymbol: runtimeSymbol, DefaultNodes: defaultNodes, NativeParamTypes: nativeParamTypes, NativeReturnType: nativeReturnType}
 	if argCount < minArity || argCount > maxArity {
 		if minArity == maxArity {
 			a.errorAt(node, "function expects %d arguments but got %d", maxArity, argCount)
@@ -439,16 +447,24 @@ func (a *Analyzer) analyzePipe(node *ast.TreeNode) Type {
 		defaultNodes := defaultNodesFromFunctionType(funcType, pipeArgCount)
 		dispatch := ir.DispatchClosure
 		runtimeSymbol := ""
+		var nativeParamTypes []string
+		var nativeReturnType string
 		if funcNode.NodeType == ast.IdentifierNode {
 			name := funcNode.TokenLiteral()
-			if sym := a.currentScope.Lookup(name); sym != nil && !sym.Mutable {
+			// Check nativeFns first — applies regardless of mutability.
+			if proto, isNative := a.nativeFns[name]; isNative {
+				dispatch = ir.DispatchNative
+				runtimeSymbol = proto.RuntimeSymbol
+				nativeParamTypes = proto.NativeParamTypes
+				nativeReturnType = proto.NativeReturnType
+			} else if sym := a.currentScope.Lookup(name); sym != nil && !sym.Mutable {
 				if _, exists := a.functions[name]; exists {
 					dispatch = ir.DispatchDirect
 					runtimeSymbol = "quark_" + name
 				}
 			}
 		}
-		a.callPlans[rightNode] = &ir.CallPlan{Kind: ir.CallFunctionValue, CalleeName: calleeNameFromNode(funcNode), MinArity: minArity, MaxArity: maxArity, Dispatch: dispatch, RuntimeSymbol: runtimeSymbol, DefaultNodes: defaultNodes}
+		a.callPlans[rightNode] = &ir.CallPlan{Kind: ir.CallFunctionValue, CalleeName: calleeNameFromNode(funcNode), MinArity: minArity, MaxArity: maxArity, Dispatch: dispatch, RuntimeSymbol: runtimeSymbol, DefaultNodes: defaultNodes, NativeParamTypes: nativeParamTypes, NativeReturnType: nativeReturnType}
 		if pipeArgCount < minArity || pipeArgCount > maxArity {
 			if minArity == maxArity {
 				a.errorAt(node, "function expects %d arguments but got %d (including piped input)", maxArity, pipeArgCount)

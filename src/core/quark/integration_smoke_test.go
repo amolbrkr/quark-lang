@@ -468,6 +468,23 @@ func TestSmokePrograms_Run(t *testing.T) {
 				"mixed ok",
 			),
 		},
+		{
+			name: "native_fns",
+			file: filepath.Join(testfilesDir, "smoke_native_fns.qrk"),
+			expected: join(
+				"== smoke: native functions ==",
+				"7",
+				"6",
+				"true",
+				"false",
+				"30",
+				"14",
+				"5",
+				"0",
+				"10",
+				"12",
+			),
+		},
 	}
 
 	for _, tc := range cases {

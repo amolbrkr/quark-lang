@@ -20,6 +20,7 @@ const (
 	DispatchDirect
 	DispatchClosure
 	DispatchExtern // Native-typed extern fn call
+	DispatchNative // Native-typed user-defined function (fully annotated)
 )
 
 // CallPlan is a call-focused IR node produced by the analyzer and consumed by codegen.
@@ -37,7 +38,7 @@ type CallPlan struct {
 	ReceiverNode    *ast.TreeNode   // The receiver expression node (x in x.method(args)).
 	ReceiverTypeKey string          // builtins.TypeKey of the receiver (set when IsMethod == true).
 
-	// Populated for DispatchExtern calls:
+	// Populated for DispatchExtern and DispatchNative calls:
 	// C++ type per explicit parameter: "int64_t", "double", "bool", "const char*",
 	// "QVector*", "QList*", "QDict*", "QClosure*", "QValue"
 	NativeParamTypes   []string

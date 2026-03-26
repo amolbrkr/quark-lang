@@ -31,10 +31,13 @@ func panicICEf(code string, node *ast.TreeNode, format string, args ...interface
 	os.Exit(2)
 }
 
-// funcDecl stores a function name and its parameter count for forward declarations
+// funcDecl stores a function name and signature info for forward declarations.
+// If nativeParamTypes is non-nil, the function uses a native C++ signature.
 type funcDecl struct {
-	name       string
-	paramCount int
+	name             string
+	paramCount       int
+	nativeParamTypes []string // nil = QValue params; non-nil = native-typed
+	nativeReturnType string   // "" = QValue return
 }
 
 // Generator generates C code from an AST
@@ -72,6 +75,9 @@ type Generator struct {
 	// Mirrors declaredVars / scopeStack.
 	varTiers  map[string]string
 	tierStack []map[string]string
+	// nativeFns maps function name → CallPlan for fully-annotated user functions.
+	// Used by collectFunctions and generateFunction to emit native signatures + thunks.
+	nativeFns map[string]*ir.CallPlan
 }
 
 func New() *Generator {
@@ -92,6 +98,14 @@ func New() *Generator {
 		nodeTypes:          make(map[*ast.TreeNode]types.Type),
 		varTiers:           make(map[string]string),
 		tierStack:          make([]map[string]string, 0),
+		nativeFns:          make(map[string]*ir.CallPlan),
+	}
+}
+
+// SetNativeFns passes the fully-annotated function map from the analyzer to the generator.
+func (g *Generator) SetNativeFns(m map[string]*ir.CallPlan) {
+	if m != nil {
+		g.nativeFns = m
 	}
 }
 
@@ -156,6 +170,34 @@ func boxExpr(expr string, tier string) string {
 		return fmt.Sprintf("qv_float(%s)", expr)
 	case "bool":
 		return fmt.Sprintf("qv_bool(%s)", expr)
+	}
+	return expr
+}
+
+// nativeCppTypeToTier maps a C++ native type string (as used in NativeParamTypes)
+// to the varTier string used by scalarExpr and the scalar lowering pass.
+func nativeCppTypeToTier(cppType string) string {
+	switch cppType {
+	case "int64_t":
+		return "long long"
+	case "double":
+		return "double"
+	case "bool":
+		return "bool"
+	}
+	return ""
+}
+
+// unboxToNative ensures a generateExpr result (always QValue) is unboxed to the
+// given C++ native return type. If retType is QValue or empty, returns expr unchanged.
+func unboxToNative(expr string, retType string) string {
+	tier := nativeCppTypeToTier(retType)
+	if tier == "" {
+		return expr // already QValue or non-scalar
+	}
+	field := unboxFieldAccessor(tier)
+	if field != "" {
+		return fmt.Sprintf("(%s).data.%s", expr, field)
 	}
 	return expr
 }
@@ -428,14 +470,34 @@ func (g *Generator) Generate(node *ast.TreeNode) string {
 	// First pass: collect function declarations
 	g.collectFunctions(node)
 
-	// Emit forward declarations with correct parameter counts
-	// All functions take QClosure* as hidden first parameter for closure support
+	// Emit forward declarations with correct parameter counts.
+	// All functions take QClosure* as hidden first parameter for closure support.
+	// Native functions also get a QValue-based thunk for first-class use.
 	for _, fd := range g.funcDecls {
-		params := []string{"QClosure*"}
-		for i := 0; i < fd.paramCount; i++ {
-			params = append(params, "QValue")
+		if fd.nativeParamTypes != nil {
+			// Native-typed signature
+			retType := fd.nativeReturnType
+			if retType == "" {
+				retType = "QValue"
+			}
+			params := []string{"QClosure*"}
+			for _, pt := range fd.nativeParamTypes {
+				params = append(params, pt)
+			}
+			g.emitLine("%s quark_%s(%s);", retType, fd.name, strings.Join(params, ", "))
+			// Thunk forward decl: same QValue-based signature as a regular function
+			thunkParams := []string{"QClosure*"}
+			for i := 0; i < fd.paramCount; i++ {
+				thunkParams = append(thunkParams, "QValue")
+			}
+			g.emitLine("QValue quark_%s__thunk(%s);", fd.name, strings.Join(thunkParams, ", "))
+		} else {
+			params := []string{"QClosure*"}
+			for i := 0; i < fd.paramCount; i++ {
+				params = append(params, "QValue")
+			}
+			g.emitLine("QValue quark_%s(%s);", fd.name, strings.Join(params, ", "))
 		}
-		g.emitLine("QValue quark_%s(%s);", fd.name, strings.Join(params, ", "))
 	}
 	g.emit("\n")
 
@@ -513,14 +575,21 @@ func (g *Generator) collectFunctions(node *ast.TreeNode) {
 			name := node.Children[0].TokenLiteral()
 			argsNode := node.Children[1]
 			paramCount := len(argsNode.Children)
-			g.funcDecls = append(g.funcDecls, funcDecl{
-				name:       name,
-				paramCount: paramCount,
-			})
+			fd := funcDecl{name: name, paramCount: paramCount}
+			if proto, isNative := g.nativeFns[name]; isNative {
+				fd.nativeParamTypes = proto.NativeParamTypes
+				fd.nativeReturnType = proto.NativeReturnType
+			}
+			g.funcDecls = append(g.funcDecls, fd)
 			g.funcNames[name] = true
 		}
 	case ast.LambdaNode:
-		// Assign a unique name to this lambda
+		// If this lambda was already named (via the function-binding assignment path
+		// below), skip it — it is already registered.
+		if _, already := g.lambdaNames[node]; already {
+			return
+		}
+		// Anonymous lambda: assign an auto-generated name.
 		lambdaName := g.newLambda()
 		g.lambdaNames[node] = lambdaName
 		g.lambdas = append(g.lambdas, node)
@@ -533,6 +602,38 @@ func (g *Generator) collectFunctions(node *ast.TreeNode) {
 			paramCount: paramCount,
 		}
 		g.funcDecls = append(g.funcDecls, fd)
+	case ast.OperatorNode:
+		// Detect `name = fn(...)` function-binding assignments.
+		// For native functions, use the user-visible name as the C++ function name
+		// so call sites can emit `quark_name(nullptr, ...)` directly.
+		if node.Token != nil && node.Token.Type == token.EQUALS &&
+			len(node.Children) == 2 &&
+			node.Children[0] != nil && node.Children[0].NodeType == ast.IdentifierNode &&
+			node.Children[1] != nil && node.Children[1].NodeType == ast.LambdaNode {
+			userName := node.Children[0].TokenLiteral()
+			lambdaNode := node.Children[1]
+			if proto, isNative := g.nativeFns[userName]; isNative {
+				// Give the lambda the canonical user name so codegen emits quark_<name>.
+				g.lambdaNames[lambdaNode] = userName
+				g.lambdas = append(g.lambdas, lambdaNode)
+				g.funcNames[userName] = true
+				paramCount := 0
+				if len(lambdaNode.Children) >= 1 {
+					paramCount = len(lambdaNode.Children[0].Children)
+				}
+				g.funcDecls = append(g.funcDecls, funcDecl{
+					name:             userName,
+					paramCount:       paramCount,
+					nativeParamTypes: proto.NativeParamTypes,
+					nativeReturnType: proto.NativeReturnType,
+				})
+				// Recurse into children but the lambda itself will be skipped above.
+				for _, child := range node.Children {
+					g.collectFunctions(child)
+				}
+				return
+			}
+		}
 	case ast.ModuleNode:
 		if len(node.Children) >= 2 {
 			bodyNode := node.Children[1]
@@ -576,20 +677,29 @@ func (g *Generator) generateFunction(node *ast.TreeNode) {
 	bodyNode := node.Children[2]
 
 	funcName := nameNode.TokenLiteral()
+	proto := g.nativeFns[funcName] // nil if not a native fn
+
+	if proto != nil {
+		g.generateNativeFunction(node, funcName, argsNode, bodyNode, proto)
+	} else {
+		g.generateQValueFunction(node, funcName, argsNode, bodyNode)
+	}
+}
+
+// generateQValueFunction emits the standard QValue-based function body.
+func (g *Generator) generateQValueFunction(node *ast.TreeNode, funcName string, argsNode *ast.TreeNode, bodyNode *ast.TreeNode) {
 	g.currentFunc = funcName
 	g.currentFuncNode = node
 	g.inFunction = true
-	g.pushScope() // Create new scope for function
+	g.pushScope()
 
-	// Build parameter list: QClosure* _cl as hidden first param, then user params
 	params := []string{"QClosure* _cl"}
 	for _, param := range argsNode.Children {
 		paramName := g.paramName(param)
 		if paramName == "" {
 			continue
 		}
-		cParamName := sanitizeArgName(paramName)
-		params = append(params, fmt.Sprintf("QValue %s", cParamName))
+		params = append(params, fmt.Sprintf("QValue %s", sanitizeArgName(paramName)))
 	}
 
 	g.emit("QValue quark_%s(%s) {\n", funcName, strings.Join(params, ", "))
@@ -611,17 +721,156 @@ func (g *Generator) generateFunction(node *ast.TreeNode) {
 		g.declaredVars[paramName] = true
 	}
 
-	// Generate body
 	result := g.generateBlock(bodyNode)
-	// Functions return QValue — box any scalar result.
 	g.emitLine("return %s;", g.boxResultToQValue(result, bodyNode))
 
 	g.indentLevel--
 	g.emit("}\n\n")
 
-	g.popScope() // Restore previous scope
+	g.popScope()
 	g.inFunction = false
 	g.currentFuncNode = nil
+}
+
+// generateNativeFunction emits a native-typed function body and a QValue thunk.
+func (g *Generator) generateNativeFunction(node *ast.TreeNode, funcName string, argsNode *ast.TreeNode, bodyNode *ast.TreeNode, proto *ir.CallPlan) {
+	g.currentFunc = funcName
+	g.currentFuncNode = node
+	g.inFunction = true
+	g.pushScope()
+
+	// Collect param names in order
+	paramNames := make([]string, 0, len(argsNode.Children))
+	for _, param := range argsNode.Children {
+		paramNames = append(paramNames, g.paramName(param))
+	}
+
+	// Native-typed signature
+	retType := proto.NativeReturnType
+	if retType == "" {
+		retType = "QValue"
+	}
+	params := []string{"QClosure* _cl"}
+	for i, paramName := range paramNames {
+		if paramName == "" {
+			continue
+		}
+		nativeType := "QValue"
+		if i < len(proto.NativeParamTypes) {
+			nativeType = proto.NativeParamTypes[i]
+		}
+		params = append(params, fmt.Sprintf("%s %s", nativeType, sanitizeArgName(paramName)))
+	}
+
+	g.emit("%s quark_%s(%s) {\n", retType, funcName, strings.Join(params, ", "))
+	g.indentLevel++
+
+	for i, paramName := range paramNames {
+		if paramName == "" {
+			continue
+		}
+		cName := sanitizeVarName(paramName)
+		argName := sanitizeArgName(paramName)
+		nativeType := "QValue"
+		if i < len(proto.NativeParamTypes) {
+			nativeType = proto.NativeParamTypes[i]
+		}
+		// For native params, store directly at the native tier (no unboxing needed).
+		// Captured params still need a QCell, but must be boxed first.
+		if g.isCaptured(paramName) {
+			boxed := boxExpr(argName, nativeCppTypeToTier(nativeType))
+			g.emitLine("QCell* %s = q_new_cell(%s);", cName, boxed)
+			g.markCell(paramName)
+		} else {
+			g.emitLine("%s %s = %s;", nativeType, cName, argName)
+			g.markTier(paramName, nativeCppTypeToTier(nativeType))
+		}
+		g.declaredVars[paramName] = true
+	}
+
+	// For the return value, try scalarExpr on the last body expression to avoid
+	// the box-then-unbox roundtrip (e.g. emit `x + y` directly instead of
+	// `(qv_int(x + y)).data.int_val`).
+	retTier := nativeCppTypeToTier(retType)
+	var nativeResult string
+	if retTier != "" {
+		// Find the last statement node to try scalarExpr on.
+		var lastStmt *ast.TreeNode
+		if bodyNode != nil && bodyNode.NodeType == ast.BlockNode && len(bodyNode.Children) > 0 {
+			lastStmt = bodyNode.Children[len(bodyNode.Children)-1]
+		} else {
+			lastStmt = bodyNode
+		}
+		if rawVal, tier := g.scalarExpr(lastStmt); tier == retTier {
+			// Emit all but the last body statement, then return raw.
+			if bodyNode != nil && bodyNode.NodeType == ast.BlockNode {
+				g.pushBlockScope()
+				for i, child := range bodyNode.Children {
+					if i < len(bodyNode.Children)-1 {
+						g.emitSourceLoc(child)
+						g.emitLine("%s;", g.generateExpr(child))
+					}
+				}
+				g.popScope()
+			}
+			nativeResult = rawVal
+		}
+	}
+	if nativeResult == "" {
+		result := g.generateBlock(bodyNode)
+		nativeResult = unboxToNative(result, retType)
+	}
+	g.emitLine("return %s;", nativeResult)
+
+	g.indentLevel--
+	g.emit("}\n\n")
+
+	g.popScope()
+	g.inFunction = false
+	g.currentFuncNode = nil
+
+	// Emit QValue thunk so the function can be used as a first-class value.
+	g.generateNativeThunk(funcName, paramNames, proto)
+}
+
+// generateNativeThunk emits a QValue-typed wrapper that unboxes args, calls the
+// native function, and boxes the result back. Used when the function is passed as
+// a first-class value.
+func (g *Generator) generateNativeThunk(funcName string, paramNames []string, proto *ir.CallPlan) {
+	retType := proto.NativeReturnType
+	if retType == "" {
+		retType = "QValue"
+	}
+
+	thunkParams := []string{"QClosure* _cl"}
+	for _, paramName := range paramNames {
+		if paramName == "" {
+			continue
+		}
+		thunkParams = append(thunkParams, fmt.Sprintf("QValue %s", sanitizeArgName(paramName)))
+	}
+	g.emit("QValue quark_%s__thunk(%s) {\n", funcName, strings.Join(thunkParams, ", "))
+	g.indentLevel++
+
+	// Adapt each QValue arg to its native type
+	adaptedArgs := []string{"nullptr"}
+	for i, paramName := range paramNames {
+		if paramName == "" {
+			continue
+		}
+		argName := sanitizeArgName(paramName)
+		nativeType := "QValue"
+		if i < len(proto.NativeParamTypes) {
+			nativeType = proto.NativeParamTypes[i]
+		}
+		adaptedArgs = append(adaptedArgs, adaptArgForExtern(argName, nativeType))
+	}
+
+	callExpr := fmt.Sprintf("quark_%s(%s)", funcName, strings.Join(adaptedArgs, ", "))
+	g.emitLine("return %s;", wrapExternReturn(callExpr, retType))
+
+	g.indentLevel--
+	g.emit("}\n\n")
 }
 
 func (g *Generator) generateModule(node *ast.TreeNode) {
@@ -786,6 +1035,9 @@ func (g *Generator) generateIdentifier(node *ast.TreeNode) string {
 		return boxExpr(cName, g.tierOf(name))
 	}
 	if g.funcNames[name] {
+		if _, isNative := g.nativeFns[name]; isNative {
+			return fmt.Sprintf("qv_func((void*)quark_%s__thunk)", name)
+		}
 		return fmt.Sprintf("qv_func((void*)quark_%s)", name)
 	}
 	return sanitizeVarName(name)
@@ -1244,6 +1496,32 @@ func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
 			return fmt.Sprintf("%s(nullptr)", plan.RuntimeSymbol)
 		}
 		return fmt.Sprintf("%s(nullptr, %s)", plan.RuntimeSymbol, strings.Join(args, ", "))
+	case ir.DispatchNative:
+		if plan.RuntimeSymbol == "" {
+			panicICEf("INV-CALLPLAN-RUNTIME", node, "native call '%s' missing runtime symbol", plan.CalleeName)
+			return "qv_null()"
+		}
+		nativeArgs := []string{"nullptr"}
+		argNodes := argsNode.Children
+		for i, arg := range args {
+			nativeType := ""
+			if i < len(plan.NativeParamTypes) {
+				nativeType = plan.NativeParamTypes[i]
+			}
+			// Prefer raw scalar from scalarExpr to avoid box-then-unbox.
+			if i < len(argNodes) {
+				if rawVal, tier := g.scalarExpr(argNodes[i]); tier != "" {
+					expectedTier := nativeCppTypeToTier(nativeType)
+					if expectedTier != "" && tier == expectedTier {
+						nativeArgs = append(nativeArgs, rawVal)
+						continue
+					}
+				}
+			}
+			nativeArgs = append(nativeArgs, adaptArgForExtern(arg, nativeType))
+		}
+		callExpr := fmt.Sprintf("%s(%s)", plan.RuntimeSymbol, strings.Join(nativeArgs, ", "))
+		return wrapExternReturn(callExpr, plan.NativeReturnType)
 	case ir.DispatchExtern:
 		if plan.RuntimeSymbol == "" {
 			panicICEf("INV-CALLPLAN-RUNTIME", node, "extern call '%s' missing runtime symbol", plan.CalleeName)
@@ -1346,6 +1624,33 @@ func (g *Generator) generatePipe(node *ast.TreeNode) string {
 			return "qv_null()"
 		}
 		return fmt.Sprintf("%s(nullptr, %s)", plan.RuntimeSymbol, strings.Join(args, ", "))
+	case ir.DispatchNative:
+		if plan.RuntimeSymbol == "" {
+			panicICEf("INV-CALLPLAN-RUNTIME", rightNode, "native call '%s' missing runtime symbol", plan.CalleeName)
+			return "qv_null()"
+		}
+		nativeArgs := []string{"nullptr"}
+		// args[0] is the piped input; args[1..] correspond to argsNode.Children.
+		pipeExplicitNodes := argsNode.Children
+		for i, arg := range args {
+			nativeType := ""
+			if i < len(plan.NativeParamTypes) {
+				nativeType = plan.NativeParamTypes[i]
+			}
+			// For explicit args (index > 0), try scalarExpr to avoid box-unbox.
+			explicitIdx := i - 1
+			if i > 0 && explicitIdx < len(pipeExplicitNodes) {
+				if rawVal, tier := g.scalarExpr(pipeExplicitNodes[explicitIdx]); tier != "" {
+					if expectedTier := nativeCppTypeToTier(nativeType); expectedTier != "" && tier == expectedTier {
+						nativeArgs = append(nativeArgs, rawVal)
+						continue
+					}
+				}
+			}
+			nativeArgs = append(nativeArgs, adaptArgForExtern(arg, nativeType))
+		}
+		callExpr := fmt.Sprintf("%s(%s)", plan.RuntimeSymbol, strings.Join(nativeArgs, ", "))
+		return wrapExternReturn(callExpr, plan.NativeReturnType)
 	case ir.DispatchExtern:
 		if plan.RuntimeSymbol == "" {
 			panicICEf("INV-CALLPLAN-RUNTIME", rightNode, "extern call '%s' missing runtime symbol", plan.CalleeName)
@@ -1781,7 +2086,11 @@ func (g *Generator) generateLambdaExpr(node *ast.TreeNode) string {
 		return valTemp
 	}
 
-	// No captures — use qv_func (allocates QClosure with 0 captures)
+	// No captures — use qv_func (allocates QClosure with 0 captures).
+	// For native functions, point to the thunk so the QValue call convention works.
+	if _, isNative := g.nativeFns[lambdaName]; isNative {
+		return fmt.Sprintf("qv_func((void*)quark_%s__thunk)", lambdaName)
+	}
 	return fmt.Sprintf("qv_func((void*)quark_%s)", lambdaName)
 }
 
@@ -1793,6 +2102,13 @@ func (g *Generator) generateLambdaFunc(node *ast.TreeNode) {
 	lambdaName := g.lambdaNames[node]
 	argsNode := node.Children[0]
 	bodyNode := node.Children[1]
+
+	// If this lambda is a named native function, delegate to the native path.
+	// generateNativeFunction already emits the thunk at the end.
+	if proto, isNative := g.nativeFns[lambdaName]; isNative {
+		g.generateNativeFunction(node, lambdaName, argsNode, bodyNode, proto)
+		return
+	}
 
 	g.inFunction = true
 	g.currentFunc = lambdaName

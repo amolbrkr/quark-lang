@@ -1,0 +1,44 @@
+// smoke_native_fns.qrk
+// Verifies Phase 2e: fully-annotated functions get native C++ signatures.
+
+println('== smoke: native functions ==')
+
+// Direct call — native signature, no QValue at call boundary
+fn add(x: int, y: int) int -> x + y
+println(add(3, 4))      // 7
+
+fn scale(v: float, factor: float) float -> v * factor
+println(scale(1.5, 4.0))   // 6.0
+
+fn is_pos(x: int) bool -> x > 0
+println(is_pos(5))     // true
+println(is_pos(-3))    // false
+
+// Scalar-tiered variables passed to native fn — no boxing at call site
+a = 10
+b = 20
+println(add(a, b))    // 30
+
+// Call with result used in further arithmetic
+doubled = add(7, 7)
+println(doubled)       // 14
+
+// Multi-statement body (last expr is the return value)
+fn clamp(v: int, lo: int, hi: int) int ->
+    if v < lo:
+        lo
+    elseif v > hi:
+        hi
+    else:
+        v
+
+println(clamp(5, 0, 10))    // 5
+println(clamp(-3, 0, 10))   // 0
+println(clamp(99, 0, 10))   // 10
+
+// First-class use — native fn passed through thunk
+fn apply(f, x: int) int ->
+    f(x)
+
+fn double_it(x: int) int -> x * 2
+println(apply(double_it, 6))   // 12

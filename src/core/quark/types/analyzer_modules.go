@@ -100,6 +100,37 @@ func (a *Analyzer) GetExternFns() map[string]*ir.CallPlan {
 	return a.externFns
 }
 
+// GetNativeFns returns the map of fully-annotated user-defined function entries (for codegen).
+func (a *Analyzer) GetNativeFns() map[string]*ir.CallPlan {
+	return a.nativeFns
+}
+
+// isFullyAnnotated reports whether a FunctionType has explicit type annotations on
+// all parameters and the return type, and all those types map to scalar C++ types.
+// Functions with default-value parameters are excluded (defaults are passed as QValue).
+func isFullyAnnotated(ft *FunctionType) bool {
+	if ft == nil || ft.AnnotatedReturnType == nil {
+		return false
+	}
+	if quarkTypeToNativeCType(ft.AnnotatedReturnType) == "QValue" {
+		return false
+	}
+	for _, pt := range ft.ParamTypes {
+		if pt == nil || pt.Equals(TypeAny) {
+			return false
+		}
+		if quarkTypeToNativeCType(pt) == "QValue" {
+			return false
+		}
+	}
+	// Reject if any parameter has a default value — defaults are filled in as QValue
+	// by the caller, so the native signature would need to accept QValue for those.
+	if ft.DefaultCount > 0 {
+		return false
+	}
+	return true
+}
+
 // analyzeExternFn processes an extern fn declaration and registers it into the
 // same function/method tables used by builtins. Free functions go into builtins
 // and the global scope; type.method declarations go into the methods table.

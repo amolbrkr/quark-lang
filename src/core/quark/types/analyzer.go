@@ -48,6 +48,9 @@ type Analyzer struct {
 	externFns map[string]*ir.CallPlan
 	// externSources holds resolved absolute paths from extern 'path' directives.
 	externSources []string
+	// nativeFns maps fully-annotated user-defined function names → prototype CallPlan
+	// with DispatchNative and populated NativeParamTypes/NativeReturnType.
+	nativeFns map[string]*ir.CallPlan
 }
 
 func NewAnalyzer() *Analyzer {
@@ -95,6 +98,7 @@ func NewAnalyzer() *Analyzer {
 		nodeTypes:       make(map[*ast.TreeNode]Type),
 		externFns:       make(map[string]*ir.CallPlan),
 		externSources:   make([]string, 0),
+		nativeFns:       make(map[string]*ir.CallPlan),
 	}
 }
 

@@ -1,6 +1,9 @@
 package types
 
-import "quark/ast"
+import (
+	"quark/ast"
+	"quark/ir"
+)
 
 func (a *Analyzer) analyzeCompilationUnit(node *ast.TreeNode) Type {
 	a.predeclareFunctions(node.Children)
@@ -207,6 +210,25 @@ func (a *Analyzer) analyzeLambda(node *ast.TreeNode) Type {
 		a.pendingFuncName = ""
 	}
 	a.validateReturnType(funcType, returnType, funcName, node)
+
+	// If this lambda is a named top-level function binding with full scalar annotations,
+	// register it as a native fn so call sites can use DispatchNative.
+	if funcName != "lambda" && isFullyAnnotated(funcType) {
+		nativeParams := make([]string, len(funcType.ParamTypes))
+		for i, pt := range funcType.ParamTypes {
+			nativeParams[i] = quarkTypeToNativeCType(pt)
+		}
+		a.nativeFns[funcName] = &ir.CallPlan{
+			Kind:             ir.CallFunctionValue,
+			CalleeName:       funcName,
+			MinArity:         len(funcType.ParamTypes),
+			MaxArity:         len(funcType.ParamTypes),
+			Dispatch:         ir.DispatchNative,
+			RuntimeSymbol:    "quark_" + funcName,
+			NativeParamTypes: nativeParams,
+			NativeReturnType: quarkTypeToNativeCType(funcType.AnnotatedReturnType),
+		}
+	}
 
 	return funcType
 }

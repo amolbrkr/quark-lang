@@ -362,6 +362,8 @@ func (a *Analyzer) GetCapturedByFunction(root *ast.TreeNode) map[*ast.TreeNode]m
 			walk(child, enclosing)
 		}
 	}
-	walk(root, nil)
+	// Pass root as the enclosing scope so module-level variables captured
+	// by lambdas are attributed to the root (main) scope.
+	walk(root, root)
 	return result
 }

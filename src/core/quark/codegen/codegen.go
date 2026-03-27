@@ -187,6 +187,30 @@ func boxExpr(expr string, tier string) string {
 	return expr
 }
 
+// nativeArgToQValue wraps a C++ native-typed expression into a QValue.
+// Handles both scalar tiers and non-scalar native types (const char*, QList*, etc.).
+func nativeArgToQValue(expr string, nativeType string) string {
+	switch nativeType {
+	case "int64_t":
+		return fmt.Sprintf("qv_int(%s)", expr)
+	case "double":
+		return fmt.Sprintf("qv_float(%s)", expr)
+	case "bool":
+		return fmt.Sprintf("qv_bool(%s)", expr)
+	case "const char*":
+		return fmt.Sprintf("qv_string(%s)", expr)
+	case "QList*":
+		return fmt.Sprintf("qv_list_ptr(%s)", expr)
+	case "QDict*":
+		return fmt.Sprintf("qv_dict_ptr(%s)", expr)
+	case "QVector*":
+		return fmt.Sprintf("qv_vector_ptr(%s)", expr)
+	case "QClosure*":
+		return fmt.Sprintf("qv_func((void*)%s)", expr)
+	}
+	return expr // already QValue
+}
+
 // nativeCppTypeToTier maps a C++ native type string (as used in NativeParamTypes)
 // to the varTier string used by scalarExpr and the scalar lowering pass.
 func nativeCppTypeToTier(cppType string) string {
@@ -204,13 +228,26 @@ func nativeCppTypeToTier(cppType string) string {
 // unboxToNative ensures a generateExpr result (always QValue) is unboxed to the
 // given C++ native return type. If retType is QValue or empty, returns expr unchanged.
 func unboxToNative(expr string, retType string) string {
+	// Scalar tiers
 	tier := nativeCppTypeToTier(retType)
-	if tier == "" {
-		return expr // already QValue or non-scalar
+	if tier != "" {
+		field := unboxFieldAccessor(tier)
+		if field != "" {
+			return fmt.Sprintf("(%s).data.%s", expr, field)
+		}
 	}
-	field := unboxFieldAccessor(tier)
-	if field != "" {
-		return fmt.Sprintf("(%s).data.%s", expr, field)
+	// Non-scalar native types
+	switch retType {
+	case "const char*":
+		return fmt.Sprintf("(%s).data.string_val", expr)
+	case "QList*":
+		return fmt.Sprintf("(%s).data.list_val", expr)
+	case "QDict*":
+		return fmt.Sprintf("(%s).data.dict_val", expr)
+	case "QVector*":
+		return fmt.Sprintf("(%s).data.vector_val", expr)
+	case "QClosure*":
+		return fmt.Sprintf("(QClosure*)(%s).data.func_val", expr)
 	}
 	return expr
 }
@@ -540,6 +577,8 @@ func (g *Generator) Generate(node *ast.TreeNode) string {
 	// Generate main function
 	g.emit("\nint main() {\n")
 	g.indentLevel++
+	// Set root as currentFuncNode so isCaptured() works for module-scope variables.
+	g.currentFuncNode = node
 	g.emitLine("q_gc_init();")
 	g.predeclareMainFunctionBindings(node)
 
@@ -556,6 +595,14 @@ func (g *Generator) Generate(node *ast.TreeNode) string {
 			child.NodeType == ast.UseNode || child.NodeType == ast.ExternSourceNode ||
 			child.NodeType == ast.ExternFnNode {
 			continue
+		}
+		// Skip `name = fn(...)` assignments for native functions — the function
+		// definition and thunk are already emitted by generateNativeFunction.
+		if isFunctionBindingAssignmentNode(child) {
+			name := child.Children[0].TokenLiteral()
+			if g.nativeFns[name] != nil {
+				continue
+			}
 		}
 		g.emitSourceLoc(child)
 		g.emitLine("%s;", g.generateExpr(child))
@@ -576,9 +623,20 @@ func (g *Generator) predeclareMainFunctionBindings(root *ast.TreeNode) {
 		if name == "" || g.declaredVars[name] {
 			return
 		}
+		// Native functions already have a real C++ function definition;
+		// don't shadow them with a QValue variable.
+		if g.nativeFns[name] != nil {
+			return
+		}
 		cName := sanitizeVarName(name)
-		g.emitLine("QValue %s = qv_null();", cName)
-		g.declaredVars[name] = true
+		if g.isCaptured(name) {
+			g.emitLine("QCell* %s = q_new_cell(qv_null());", cName)
+			g.declaredVars[name] = true
+			g.markCell(name)
+		} else {
+			g.emitLine("QValue %s = qv_null();", cName)
+			g.declaredVars[name] = true
+		}
 	}
 
 	for _, child := range root.Children {
@@ -808,15 +866,22 @@ func (g *Generator) generateNativeFunction(node *ast.TreeNode, funcName string, 
 		if i < len(proto.NativeParamTypes) {
 			nativeType = proto.NativeParamTypes[i]
 		}
-		// For native params, store directly at the native tier (no unboxing needed).
-		// Captured params still need a QCell, but must be boxed first.
+		// For native params with a scalar tier (int64_t/double/bool), store at
+		// that tier so scalarExpr can optimise. For non-scalar native types
+		// (const char*, QList*, etc.) box back to QValue so the body works
+		// uniformly with generateExpr.
+		tier := nativeCppTypeToTier(nativeType)
 		if g.isCaptured(paramName) {
-			boxed := boxExpr(argName, nativeCppTypeToTier(nativeType))
+			boxed := nativeArgToQValue(argName, nativeType)
 			g.emitLine("QCell* %s = q_new_cell(%s);", cName, boxed)
 			g.markCell(paramName)
-		} else {
+		} else if tier != "" {
+			// Scalar: store at native tier
 			g.emitLine("%s %s = %s;", nativeType, cName, argName)
-			g.markTier(paramName, nativeCppTypeToTier(nativeType))
+			g.markTier(paramName, tier)
+		} else {
+			// Non-scalar native (str, list, etc.): box to QValue
+			g.emitLine("QValue %s = %s;", cName, nativeArgToQValue(argName, nativeType))
 		}
 		g.declaredVars[paramName] = true
 	}
@@ -1618,7 +1683,12 @@ func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
 		funcExpr := g.generateExpr(funcNode)
 		if funcNode.NodeType == ast.OperatorNode && funcNode.Token != nil && funcNode.Token.Type == token.DOT && strings.Contains(plan.CalleeName, ".") && len(funcNode.Children) >= 2 {
 			member := funcNode.Children[1].TokenLiteral()
-			funcExpr = fmt.Sprintf("%s->value", sanitizeVarName(member))
+			cName := sanitizeVarName(member)
+			if g.isCell(member) {
+				funcExpr = fmt.Sprintf("%s->value", cName)
+			} else {
+				funcExpr = cName
+			}
 		}
 		return EmitClosureCall(funcExpr, args)
 	default:
@@ -1744,7 +1814,12 @@ func (g *Generator) generatePipe(node *ast.TreeNode) string {
 		funcExpr := g.generateExpr(funcNode)
 		if funcNode.NodeType == ast.OperatorNode && funcNode.Token != nil && funcNode.Token.Type == token.DOT && strings.Contains(plan.CalleeName, ".") && len(funcNode.Children) >= 2 {
 			member := funcNode.Children[1].TokenLiteral()
-			funcExpr = fmt.Sprintf("%s->value", sanitizeVarName(member))
+			cName := sanitizeVarName(member)
+			if g.isCell(member) {
+				funcExpr = fmt.Sprintf("%s->value", cName)
+			} else {
+				funcExpr = cName
+			}
 		}
 		return EmitClosureCall(funcExpr, args)
 	default:
@@ -1922,6 +1997,85 @@ func (g *Generator) generateWhen(node *ast.TreeNode) string {
 	return temp
 }
 
+// isRangeCall returns the argument nodes if the given node is a range() builtin call.
+func (g *Generator) isRangeCall(node *ast.TreeNode) ([]*ast.TreeNode, bool) {
+	if node == nil || node.NodeType != ast.FunctionCallNode || len(node.Children) < 2 {
+		return nil, false
+	}
+	plan := g.callPlans[node]
+	if plan == nil || plan.RuntimeSymbol != "q_range" {
+		return nil, false
+	}
+	argsNode := node.Children[1]
+	if argsNode == nil || len(argsNode.Children) == 0 {
+		return nil, false
+	}
+	return argsNode.Children, true
+}
+
+// emitRangeScalar generates a long long expression for a range() argument.
+func (g *Generator) emitRangeScalar(argNode *ast.TreeNode) string {
+	if raw, tier := g.scalarExpr(argNode); tier == "long long" {
+		return raw
+	}
+	if raw, tier := g.scalarExpr(argNode); tier == "double" {
+		return fmt.Sprintf("(long long)(%s)", raw)
+	}
+	expr := g.generateExpr(argNode)
+	return fmt.Sprintf("(%s).data.int_val", expr)
+}
+
+// generateForRange emits a raw C++ for-loop for `for i in range(...)`.
+func (g *Generator) generateForRange(cVarName string, varName string, args []*ast.TreeNode, bodyNode *ast.TreeNode) string {
+	startTemp := g.newTemp()
+	endTemp := g.newTemp()
+	stepTemp := g.newTemp()
+
+	switch len(args) {
+	case 1:
+		// range(end): 0 to end, step 1
+		g.emitLine("long long %s = 0;", startTemp)
+		g.emitLine("long long %s = %s;", endTemp, g.emitRangeScalar(args[0]))
+		g.emitLine("long long %s = 1;", stepTemp)
+	case 2:
+		// range(start, end): auto-direction
+		g.emitLine("long long %s = %s;", startTemp, g.emitRangeScalar(args[0]))
+		g.emitLine("long long %s = %s;", endTemp, g.emitRangeScalar(args[1]))
+		g.emitLine("long long %s = (%s <= %s) ? 1LL : -1LL;", stepTemp, startTemp, endTemp)
+	default:
+		// range(start, end, step)
+		g.emitLine("long long %s = %s;", startTemp, g.emitRangeScalar(args[0]))
+		g.emitLine("long long %s = %s;", endTemp, g.emitRangeScalar(args[1]))
+		g.emitLine("long long %s = %s;", stepTemp, g.emitRangeScalar(args[2]))
+	}
+
+	g.emitLine("for (long long %s = %s; %s > 0 ? (%s < %s) : (%s > %s); %s += %s) {",
+		cVarName, startTemp,
+		stepTemp, cVarName, endTemp, cVarName, endTemp,
+		cVarName, stepTemp)
+	g.indentLevel++
+
+	g.pushBlockScope()
+	g.declaredVars[varName] = true
+	g.markTier(varName, "long long")
+
+	if bodyNode.NodeType == ast.BlockNode {
+		for _, stmt := range bodyNode.Children {
+			expr := g.generateExpr(stmt)
+			g.emitLine("%s;", expr)
+		}
+	} else {
+		expr := g.generateExpr(bodyNode)
+		g.emitLine("%s;", expr)
+	}
+
+	g.popScope()
+	g.indentLevel--
+	g.emitLine("}")
+
+	return "qv_null()"
+}
+
 func (g *Generator) generateFor(node *ast.TreeNode) string {
 	if len(node.Children) < 3 {
 		return "qv_null()"
@@ -1933,6 +2087,13 @@ func (g *Generator) generateFor(node *ast.TreeNode) string {
 
 	varName := varNode.TokenLiteral()
 	cVarName := sanitizeVarName(varName)
+
+	// Range lowering: emit raw C++ loop instead of list allocation.
+	if !g.isCaptured(varName) {
+		if rangeArgs, isRange := g.isRangeCall(rangeNode); isRange {
+			return g.generateForRange(cVarName, varName, rangeArgs, bodyNode)
+		}
+	}
 
 	// Handle list iteration (for item in mylist or for i in range(10))
 	listExpr := g.generateExpr(rangeNode)
@@ -1960,6 +2121,7 @@ func (g *Generator) generateFor(node *ast.TreeNode) string {
 			g.markTier(varName, loopVarTier)
 		} else {
 			g.emitLine("QValue %s = q_iter_get(%s, qv_int(%s));", cVarName, listTemp, idxTemp)
+			delete(g.varTiers, varName) // clear any inherited scalar tier from outer scope
 		}
 	}
 
@@ -2032,7 +2194,42 @@ func (g *Generator) generateList(node *ast.TreeNode) string {
 	return temp
 }
 
+// vectorTypedOps returns the C++ constructor and typed push function for a known
+// vector element type. Returns ("", "") if the type requires the list fallback.
+func vectorTypedOps(elemType types.Type) (constructor string, pushFn string) {
+	if elemType == nil {
+		return "", ""
+	}
+	if elemType.Equals(types.TypeFloat) {
+		return "qv_vector", "q_vec_push"
+	}
+	if elemType.Equals(types.TypeInt) {
+		return "qv_vector_i64", "q_vec_push_i64"
+	}
+	if elemType.Equals(types.TypeBool) {
+		return "qv_vector_bool", "q_vec_push_bool"
+	}
+	return "", ""
+}
+
 func (g *Generator) generateVector(node *ast.TreeNode) string {
+	n := len(node.Children)
+
+	// Direct typed construction when the analyzer knows the element type.
+	if vt, ok := g.nodeType(node).(*types.VectorType); ok && vt != nil {
+		ctor, pushFn := vectorTypedOps(vt.ElementType)
+		if ctor != "" && pushFn != "" {
+			temp := g.newTemp()
+			g.emitLine("QValue %s = %s(%d);", temp, ctor, n)
+			for _, child := range node.Children {
+				elem := g.generateExpr(child)
+				g.emitLine("%s = %s(%s, %s);", temp, pushFn, temp, elem)
+			}
+			return temp
+		}
+	}
+
+	// Fallback: build list then convert.
 	tempList := g.newTemp()
 	g.emitLine("QValue %s = qv_list(%d);", tempList, len(node.Children))
 

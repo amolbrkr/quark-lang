@@ -133,7 +133,19 @@ func ensureGC() (includePath string, libPath string, err error) {
 
 	fmt.Fprintln(os.Stderr, "Boehm GC library not found; bootstrapping deps/bdwgc/build with CMake...")
 
-	configureCmd := exec.Command("cmake", "-S", gcSourceDir, "-B", buildDir)
+	configureArgs := []string{"-S", gcSourceDir, "-B", buildDir}
+	if runtime.GOOS == "windows" {
+		// Force clang so the GC library matches the MSVC ABI that
+		// clang++ targets. Without this, cmake may pick MinGW gcc
+		// which produces incompatible object files (longjmp ABI mismatch).
+		// Build static so we don't need to distribute gc.dll.
+		configureArgs = append(configureArgs,
+			"-DCMAKE_C_COMPILER=clang",
+			"-DCMAKE_BUILD_TYPE=Release",
+			"-DBUILD_SHARED_LIBS=OFF",
+		)
+	}
+	configureCmd := exec.Command("cmake", configureArgs...)
 	configureCmd.Stdout = os.Stdout
 	configureCmd.Stderr = os.Stderr
 	if runErr := configureCmd.Run(); runErr != nil {
@@ -458,6 +470,9 @@ func runBuild(filename string, output string, useGC bool, lto bool) {
 		base := filepath.Base(filename)
 		output = strings.TrimSuffix(base, filepath.Ext(base))
 	}
+	if runtime.GOOS == "windows" && !strings.HasSuffix(output, ".exe") {
+		output += ".exe"
+	}
 
 	// Compile
 	l := lexer.New(string(content))
@@ -562,7 +577,9 @@ func runBuild(filename string, output string, useGC bool, lto bool) {
 	if useGC {
 		args = append(args, gcLibPath)
 	}
-	args = append(args, "-lm")
+	if runtime.GOOS != "windows" {
+		args = append(args, "-lm")
+	}
 
 	cmd := exec.Command(compiler, args...)
 	cmd.Stdout = os.Stdout
@@ -645,6 +662,9 @@ func runRun(filename string, debug bool, useGC bool, lto bool) {
 		cFile = filepath.Join(tmpDir, "quark_temp.cpp")
 		exeFile = filepath.Join(tmpDir, "quark_temp")
 	}
+	if runtime.GOOS == "windows" && !strings.HasSuffix(exeFile, ".exe") {
+		exeFile += ".exe"
+	}
 
 	err = os.WriteFile(cFile, []byte(cCode), 0644)
 	if err != nil {
@@ -704,7 +724,9 @@ func runRun(filename string, debug bool, useGC bool, lto bool) {
 	if useGC {
 		args = append(args, gcLibPath)
 	}
-	args = append(args, "-lm")
+	if runtime.GOOS != "windows" {
+		args = append(args, "-lm")
+	}
 
 	if debug {
 		fmt.Fprintf(os.Stderr, "Debug: Runtime include path: %s\n", runtimeInclude)

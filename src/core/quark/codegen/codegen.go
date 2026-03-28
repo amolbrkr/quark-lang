@@ -349,6 +349,25 @@ func (g *Generator) emitLine(format string, args ...interface{}) {
 	g.output.WriteString("\n")
 }
 
+// emitStmtExpr emits a C++ expression as a statement, but only if the
+// originating AST node does not already emit its own side effects. Nodes
+// like VarDecl, assignment, if/when, for/while, and blocks emit their
+// own C++ statements internally — their returned expression is only a
+// residual value reference. Emitting it as a bare statement produces
+// clang's "expression result unused" warning (-Wunused-value).
+func (g *Generator) emitStmtExpr(node *ast.TreeNode, expr string) {
+	switch node.NodeType {
+	case ast.VarDeclNode, ast.IfStatementNode, ast.WhenStatementNode,
+		ast.ForLoopNode, ast.WhileLoopNode, ast.BlockNode:
+		return
+	case ast.OperatorNode:
+		if node.Token != nil && node.Token.Type == token.EQUALS {
+			return
+		}
+	}
+	g.emitLine("%s;", expr)
+}
+
 func (g *Generator) newTemp() string {
 	g.tempCounter++
 	return fmt.Sprintf("_t%d", g.tempCounter)
@@ -605,7 +624,8 @@ func (g *Generator) Generate(node *ast.TreeNode) string {
 			}
 		}
 		g.emitSourceLoc(child)
-		g.emitLine("%s;", g.generateExpr(child))
+		expr := g.generateExpr(child)
+		g.emitStmtExpr(child, expr)
 	}
 
 	g.emitLine("return 0;")
@@ -1033,7 +1053,7 @@ func (g *Generator) generateModuleBindings(node *ast.TreeNode) {
 		}
 		g.emitSourceLoc(child)
 		expr := g.generateExpr(child)
-		g.emitLine("%s;", expr)
+		g.emitStmtExpr(child, expr)
 	}
 }
 
@@ -1048,7 +1068,7 @@ func (g *Generator) generateBlock(node *ast.TreeNode) string {
 		g.emitSourceLoc(child)
 		lastExpr = g.generateExpr(child)
 		if idx < len(node.Children)-1 {
-			g.emitLine("%s;", lastExpr)
+			g.emitStmtExpr(child, lastExpr)
 		}
 	}
 	return lastExpr
@@ -2062,11 +2082,11 @@ func (g *Generator) generateForRange(cVarName string, varName string, args []*as
 	if bodyNode.NodeType == ast.BlockNode {
 		for _, stmt := range bodyNode.Children {
 			expr := g.generateExpr(stmt)
-			g.emitLine("%s;", expr)
+			g.emitStmtExpr(stmt, expr)
 		}
 	} else {
 		expr := g.generateExpr(bodyNode)
-		g.emitLine("%s;", expr)
+		g.emitStmtExpr(bodyNode, expr)
 	}
 
 	g.popScope()
@@ -2128,11 +2148,11 @@ func (g *Generator) generateFor(node *ast.TreeNode) string {
 	if bodyNode.NodeType == ast.BlockNode {
 		for _, stmt := range bodyNode.Children {
 			expr := g.generateExpr(stmt)
-			g.emitLine("%s;", expr)
+			g.emitStmtExpr(stmt, expr)
 		}
 	} else {
 		expr := g.generateExpr(bodyNode)
-		g.emitLine("%s;", expr)
+		g.emitStmtExpr(bodyNode, expr)
 	}
 
 	g.popScope()
@@ -2164,11 +2184,11 @@ func (g *Generator) generateWhile(node *ast.TreeNode) string {
 	if bodyNode.NodeType == ast.BlockNode {
 		for _, stmt := range bodyNode.Children {
 			expr := g.generateExpr(stmt)
-			g.emitLine("%s;", expr)
+			g.emitStmtExpr(stmt, expr)
 		}
 	} else {
 		expr := g.generateExpr(bodyNode)
-		g.emitLine("%s;", expr)
+		g.emitStmtExpr(bodyNode, expr)
 	}
 
 	g.indentLevel--

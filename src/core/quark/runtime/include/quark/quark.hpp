@@ -3,6 +3,14 @@
 #ifndef QUARK_RUNTIME_HPP
 #define QUARK_RUNTIME_HPP
 
+// Suppress MSVC CRT deprecation warnings for standard C functions
+// (strerror, _open, etc.) when compiling with clang on Windows.
+#ifdef _WIN32
+#ifndef _CRT_SECURE_NO_WARNINGS
+#define _CRT_SECURE_NO_WARNINGS
+#endif
+#endif
+
 // Standard library includes
 #include <cstdio>
 #include <cstdlib>
@@ -44,8 +52,6 @@
 #include "builtins/math.hpp"
 #include "builtins/dict.hpp"
 #include "builtins/strings.hpp"
-#include "builtins/fmt.hpp"
-
 // Member access (must come after types and builtins)
 #include "ops/member.hpp"
 

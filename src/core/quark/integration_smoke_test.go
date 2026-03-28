@@ -500,6 +500,20 @@ func TestSmokePrograms_Run(t *testing.T) {
 				"6",
 			),
 		},
+		{
+			name: "extern_fns",
+			file: filepath.Join(testfilesDir, "smoke_extern.qrk"),
+			expected: join(
+				"== smoke: extern fns ==",
+				"10",
+				"3.5",
+				"true",
+				"false",
+				"hello quark",
+				"5",
+				"21",
+			),
+		},
 	}
 
 	for _, tc := range cases {
@@ -535,9 +549,9 @@ func TestSmokePrograms_CompileError(t *testing.T) {
 	testfilesDir := filepath.Join(root, "src", "testfiles")
 
 	cases := []struct {
-		name       string
-		file       string
-		errSubstr  string
+		name      string
+		file      string
+		errSubstr string
 	}{
 		{
 			name:      "modules_error_resolve",
@@ -809,5 +823,52 @@ func TestAnyTypeAnnotations_Runtime(t *testing.T) {
 	expected := strings.Join([]string{"42", "ok", "changed"}, "\n")
 	if gotNorm != expected {
 		t.Fatalf("unexpected output\n--- got ---\n%s\n--- expected ---\n%s", gotNorm, expected)
+	}
+}
+
+func TestExternTypedArg_RuntimeTypeGuard(t *testing.T) {
+	tmp := t.TempDir()
+	hpp := filepath.Join(tmp, "ext_guard.hpp")
+	program := filepath.Join(tmp, "extern_type_guard.qrk")
+
+	extSource := strings.Join([]string{
+		"#ifndef EXT_GUARD_HPP",
+		"#define EXT_GUARD_HPP",
+		"#include <cstdint>",
+		"inline int64_t qei_add1(int64_t x) { return x + 1; }",
+		"#endif",
+		"",
+	}, "\n")
+	if err := os.WriteFile(hpp, []byte(extSource), 0o644); err != nil {
+		t.Fatalf("write %s: %v", hpp, err)
+	}
+
+	programSource := strings.Join([]string{
+		"extern './ext_guard.hpp'",
+		"extern fn add1(x: int) int as 'qei_add1'",
+		"fn id(x) -> x",
+		"v = id('oops')",
+		"println(add1(v))",
+		"",
+	}, "\n")
+	if err := os.WriteFile(program, []byte(programSource), 0o644); err != nil {
+		t.Fatalf("write %s: %v", program, err)
+	}
+
+	cmd := exec.Command(quarkExePath, "run", program)
+	var out bytes.Buffer
+	var errBuf bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errBuf
+	err := cmd.Run()
+	if err == nil {
+		t.Fatalf("expected runtime type error, got success\nstdout: %s\nstderr: %s", out.String(), errBuf.String())
+	}
+	combined := normalizeNewlines(out.String() + errBuf.String())
+	if !strings.Contains(combined, "QK-RUNTIME-001") {
+		t.Fatalf("expected runtime diagnostic code QK-RUNTIME-001, got:\n%s", combined)
+	}
+	if !strings.Contains(combined, "expected int, got str") {
+		t.Fatalf("expected type mismatch detail in runtime error, got:\n%s", combined)
 	}
 }

@@ -1,26 +1,25 @@
+extern 'fmt.hpp'
+
+extern fn fmt_list(lst: list, n: int, show_index: bool) str as 'q_fmt_list'
+extern fn fmt_vector(vec: vector, n: int, show_index: bool) str as 'q_fmt_vector'
+extern fn fmt_dict(dct: dict, n: int, show_index: bool) str as 'q_fmt_dict'
+extern fn fmt_table(df: dict, n: int, show_index: bool) str as 'q_fmt_table'
+
 module fmt:
-    // Print a list with optional row limit and index column.
-    // n=0 means show all rows.
     fn show_list(lst: list, n: int = 10, show_index: bool = true) str ->
-        _fmt_list(lst, n, show_index)
+        fmt_list(lst, n, show_index)
 
-    // Print a vector with optional row limit and index column.
-    fn show_vec(vec, n: int = 10, show_index: bool = true) str ->
-        _fmt_vector(vec, n, show_index)
+    fn show_vec(vec: vector, n: int = 10, show_index: bool = true) str ->
+        fmt_vector(vec, n, show_index)
 
-    // Print a dict (key/value pairs) with optional row limit and index.
     fn show_dict(dct: dict, n: int = 10, show_index: bool = true) str ->
-        _fmt_dict(dct, n, show_index)
+        fmt_dict(dct, n, show_index)
 
-    // Print a dataframe (dict of equal-length vectors/lists) as an ASCII table.
-    // n=0 shows all rows.
     fn table(df: dict, n: int = 20, show_index: bool = true) str ->
-        _fmt_table(df, n, show_index)
+        fmt_table(df, n, show_index)
 
-    // Show only the first n elements of a list.
     fn head(lst: list, n: int = 5) str ->
-        _fmt_list(lst.slice(0, n), 0, true)
+        fmt_list(lst.slice(0, n), 0, true)
 
-    // Show only the last n elements of a list.
     fn tail(lst: list, n: int = 5) str ->
-        _fmt_list(lst.slice(len(lst) - n, len(lst)), 0, true)
+        fmt_list(lst.slice(len(lst) - n, len(lst)), 0, true)

@@ -1,0 +1,25 @@
+// smoke_extern.qrk
+// Verifies extern fn: direct calls, pipe, first-class use via thunk.
+
+extern 'ext_smoke.hpp'
+
+extern fn add1(x: int) int as 'qei_add1'
+extern fn halve(x: float) float as 'qei_halve'
+extern fn is_upper(s: str) bool as 'qei_is_upper'
+extern fn greet(name: str) str as 'qei_greet'
+
+println('== smoke: extern fns ==')
+
+// Direct calls
+println(add1(9))            // 10
+println(halve(7.0))         // 3.5
+println(is_upper("Hello"))  // true
+println(is_upper("hello"))  // false
+println(greet("quark"))     // hello quark
+
+// Pipe
+println(4 | add1())         // 5
+
+// First-class use via thunk
+fn apply(f, x: int) int -> f(x)
+println(apply(add1, 20))    // 21

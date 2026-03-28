@@ -1,0 +1,53 @@
+// smoke_range_lowering.qrk - Range loop lowering to raw C++ loops
+
+println('== smoke: range lowering ==')
+
+// 1-arg: range(n)
+total = 0
+for i in range(5):
+    total = total + i
+println(total)
+
+// 2-arg forward: range(start, end)
+total2 = 0
+for i in range(3, 8):
+    total2 = total2 + i
+println(total2)
+
+// 2-arg reverse: range(start, end) with start > end
+total3 = 0
+for i in range(5, 0):
+    total3 = total3 + i
+println(total3)
+
+// 3-arg: range(start, end, step)
+total4 = 0
+for i in range(0, 10, 3):
+    total4 = total4 + i
+println(total4)
+
+// 3-arg reverse step
+total5 = 0
+for i in range(10, 0, -2):
+    total5 = total5 + i
+println(total5)
+
+// range(0) — empty loop
+total6 = 0
+for i in range(0):
+    total6 = total6 + 1
+println(total6)
+
+// nested range loops
+total7 = 0
+for i in range(3):
+    for j in range(3):
+        total7 = total7 + 1
+println(total7)
+
+// range with expression arg
+n = 4
+total8 = 0
+for i in range(n):
+    total8 = total8 + i
+println(total8)

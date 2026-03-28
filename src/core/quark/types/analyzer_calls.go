@@ -218,7 +218,11 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 				plan.MinArity = sig.MinArgs
 				plan.MaxArity = sig.MaxArgs
 				if argCount < sig.MinArgs || argCount > sig.MaxArgs {
-					a.errorAt(node, "extern fn '%s' expects %d-%d arguments but got %d", name, sig.MinArgs, sig.MaxArgs, argCount)
+					if sig.MinArgs == sig.MaxArgs {
+						a.errorAt(node, "extern fn '%s' expects %d argument(s) but got %d", name, sig.MaxArgs, argCount)
+					} else {
+						a.errorAt(node, "extern fn '%s' expects %d-%d arguments but got %d", name, sig.MinArgs, sig.MaxArgs, argCount)
+					}
 				}
 				a.checkArgTypes(name, sig.Type.ParamTypes, argTypes, argsNode.Children)
 				plan.ArgTypesChecked = true
@@ -227,7 +231,11 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 			}
 			a.callPlans[node] = &ir.CallPlan{Kind: ir.CallBuiltin, CalleeName: name, MinArity: sig.MinArgs, MaxArity: sig.MaxArgs, Dispatch: ir.DispatchBuiltin, RuntimeSymbol: builtinsRuntimeName(name)}
 			if argCount < sig.MinArgs || argCount > sig.MaxArgs {
-				a.errorAt(node, "builtin '%s' expects %d-%d arguments but got %d", name, sig.MinArgs, sig.MaxArgs, argCount)
+				if sig.MinArgs == sig.MaxArgs {
+					a.errorAt(node, "builtin '%s' expects %d argument(s) but got %d", name, sig.MaxArgs, argCount)
+				} else {
+					a.errorAt(node, "builtin '%s' expects %d-%d arguments but got %d", name, sig.MinArgs, sig.MaxArgs, argCount)
+				}
 			}
 			a.checkArgTypes(name, sig.Type.ParamTypes, argTypes, argsNode.Children)
 			a.callPlans[node].ArgTypesChecked = true
@@ -426,16 +434,38 @@ func (a *Analyzer) analyzePipe(node *ast.TreeNode) Type {
 	if funcNode.NodeType == ast.IdentifierNode {
 		name := funcNode.TokenLiteral()
 		if sig, ok := a.builtins[name]; ok {
-			a.callPlans[rightNode] = &ir.CallPlan{Kind: ir.CallBuiltin, CalleeName: name, MinArity: sig.MinArgs, MaxArity: sig.MaxArgs, Dispatch: ir.DispatchBuiltin, RuntimeSymbol: builtinsRuntimeName(name)}
-			if pipeArgCount < sig.MinArgs || pipeArgCount > sig.MaxArgs {
-				a.errorAt(node, "builtin '%s' expects %d-%d arguments but got %d (including piped input)", name, sig.MinArgs, sig.MaxArgs, pipeArgCount)
-			}
 			pipeArgTypes := make([]Type, 0, pipeArgCount)
 			pipeArgTypes = append(pipeArgTypes, inputType)
 			pipeArgTypes = append(pipeArgTypes, argTypes...)
 			pipeArgNodes := make([]*ast.TreeNode, 0, pipeArgCount)
 			pipeArgNodes = append(pipeArgNodes, inputNode)
 			pipeArgNodes = append(pipeArgNodes, argsNode.Children...)
+			// Check if this builtin is actually an extern fn (DispatchExtern)
+			if proto, isExtern := a.externFns[name]; isExtern {
+				plan := *proto
+				plan.CalleeName = name
+				plan.MinArity = sig.MinArgs
+				plan.MaxArity = sig.MaxArgs
+				if pipeArgCount < sig.MinArgs || pipeArgCount > sig.MaxArgs {
+					if sig.MinArgs == sig.MaxArgs {
+						a.errorAt(node, "extern fn '%s' expects %d argument(s) but got %d (including piped input)", name, sig.MaxArgs, pipeArgCount)
+					} else {
+						a.errorAt(node, "extern fn '%s' expects %d-%d arguments but got %d (including piped input)", name, sig.MinArgs, sig.MaxArgs, pipeArgCount)
+					}
+				}
+				a.checkArgTypes(name, sig.Type.ParamTypes, pipeArgTypes, pipeArgNodes)
+				plan.ArgTypesChecked = true
+				a.callPlans[rightNode] = &plan
+				return sig.Type.ReturnType
+			}
+			a.callPlans[rightNode] = &ir.CallPlan{Kind: ir.CallBuiltin, CalleeName: name, MinArity: sig.MinArgs, MaxArity: sig.MaxArgs, Dispatch: ir.DispatchBuiltin, RuntimeSymbol: builtinsRuntimeName(name)}
+			if pipeArgCount < sig.MinArgs || pipeArgCount > sig.MaxArgs {
+				if sig.MinArgs == sig.MaxArgs {
+					a.errorAt(node, "builtin '%s' expects %d argument(s) but got %d (including piped input)", name, sig.MaxArgs, pipeArgCount)
+				} else {
+					a.errorAt(node, "builtin '%s' expects %d-%d arguments but got %d (including piped input)", name, sig.MinArgs, sig.MaxArgs, pipeArgCount)
+				}
+			}
 			a.checkArgTypes(name, sig.Type.ParamTypes, pipeArgTypes, pipeArgNodes)
 			a.callPlans[rightNode].ArgTypesChecked = true
 			return a.inferBuiltinReturnType(name, pipeArgTypes, node)

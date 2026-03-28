@@ -365,15 +365,58 @@ inline QValue call(QClosure* fn, QValue a0, QValue a1, QValue a2) {
 // These are emitted directly by the compiler at extern call sites and must
 // therefore be available as plain C-linkage inline functions (not in a
 // namespace). Extension authors may also use them directly if preferred.
+//
+// Each helper validates QValue::type before reading the union field.
+// On type mismatch the program panics with a clear diagnostic instead
+// of silently reinterpreting the union bits as the wrong type.
 
-inline int64_t     q_as_int(QValue v)     { return v.data.int_val; }
-inline double      q_as_float(QValue v)   { return v.data.float_val; }
-inline bool        q_as_bool(QValue v)    { return v.data.bool_val; }
-inline const char* q_as_str(QValue v)     { return v.data.string_val; }
-inline QVector*    q_as_vector(QValue v)  { return v.data.vector_val; }
-inline QList*      q_as_list(QValue v)    { return v.data.list_val; }
-inline QDict*      q_as_dict(QValue v)    { return v.data.dict_val; }
-inline QClosure*   q_as_closure(QValue v) { return static_cast<QClosure*>(v.data.func_val); }
+inline const char* q_as_type_name(QValue::ValueType t) {
+    static const char* names[] = {
+        "int", "float", "str", "bool", "null",
+        "list", "vector", "dict", "fn", "result", "resource"
+    };
+    int idx = static_cast<int>(t);
+    if (idx >= 0 && idx <= 10) return names[idx];
+    return "unknown";
+}
+
+[[noreturn]] inline void q_as_type_panic(const char* expected, QValue::ValueType got) {
+    q_runtime_reportf("runtime error: expected %s, got %s\n", expected, q_as_type_name(got));
+    std::exit(1);
+}
+
+inline int64_t q_as_int(QValue v) {
+    if (v.type != QValue::VAL_INT) q_as_type_panic("int", v.type);
+    return v.data.int_val;
+}
+inline double q_as_float(QValue v) {
+    if (v.type != QValue::VAL_FLOAT) q_as_type_panic("float", v.type);
+    return v.data.float_val;
+}
+inline bool q_as_bool(QValue v) {
+    if (v.type != QValue::VAL_BOOL) q_as_type_panic("bool", v.type);
+    return v.data.bool_val;
+}
+inline const char* q_as_str(QValue v) {
+    if (v.type != QValue::VAL_STRING) q_as_type_panic("str", v.type);
+    return v.data.string_val;
+}
+inline QVector* q_as_vector(QValue v) {
+    if (v.type != QValue::VAL_VECTOR) q_as_type_panic("vector", v.type);
+    return v.data.vector_val;
+}
+inline QList* q_as_list(QValue v) {
+    if (v.type != QValue::VAL_LIST) q_as_type_panic("list", v.type);
+    return v.data.list_val;
+}
+inline QDict* q_as_dict(QValue v) {
+    if (v.type != QValue::VAL_DICT) q_as_type_panic("dict", v.type);
+    return v.data.dict_val;
+}
+inline QClosure* q_as_closure(QValue v) {
+    if (v.type != QValue::VAL_FUNC) q_as_type_panic("fn", v.type);
+    return static_cast<QClosure*>(v.data.func_val);
+}
 
 // Boxing wrappers for native return values back to QValue.
 // Used by wrapExternReturn() in codegen.

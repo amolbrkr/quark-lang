@@ -32,6 +32,7 @@ Quark currently supports:
 
 - Indentation-based blocks.
 - Functions, lambdas, and closures.
+- QEI extern declarations (`extern '...'`, `extern fn ... as 'symbol'`).
 - Conditionals, loops, ternary expressions, and pattern matching.
 - Explicit result values using ok/err pattern and related helpers.
 - Pipelined call style via the pipe operator.
@@ -84,11 +85,21 @@ Recent compiler/runtime work introduced several behavior and architecture change
     - Method dispatch is catalog-driven across `str`, `list`, `dict`, and `vector`.
     - Low-level file primitives are available via `_file_open`, `_file_read`, `_file_write`, `_file_close`, `_file_seek`, `_file_exists`.
 
-4. Call lowering is now metadata-driven.
+4. QEI (extern/native interop) is implemented end-to-end.
+    - `extern fn` call sites use `DispatchExtern` with native argument adaptation and return wrapping.
+    - Free extern functions can be used as first-class values via generated thunks.
+    - Runtime-checked extern unboxing now fails loudly on mismatched dynamic input.
+
+5. Scalar/range lowering expanded.
+    - Scalar `==` / `!=` lower to native C++ comparisons when operands are scalar-tiered.
+    - `if` / `elseif` / `while` conditions on scalar bools lower directly (skip `q_truthy(...)`).
+    - `for i in range(...)` lowers to raw C++ loops instead of list-allocation iteration.
+
+6. Call lowering is now metadata-driven.
     - Analyzer emits per-call CallPlans (dispatch mode, arity envelope, runtime symbol, default argument fill).
     - Codegen consumes CallPlans directly rather than re-deriving call semantics.
 
-5. Module/import behavior is stricter and clearer.
+7. Module/import behavior is stricter and clearer.
     - Module-qualified calls (`alias.fn(...)`) are resolved in analysis.
     - Loader enforces deterministic import resolution and cycle detection.
 
@@ -105,7 +116,7 @@ For canonical details, use:
 ### Prerequisites
 
 - Go 1.21+
-- clang++ or g++ in PATH
+- clang++ in PATH
 - CMake in PATH (for Boehm GC bootstrap)
 - Windows, Linux, or macOS
 
@@ -449,12 +460,14 @@ For a deeper narrative and behavior notes, see stdlib.md.
                                         v
                               +-------------------+
                               | Codegen (Go)      |
+                              | - extern includes |
+                              | - dispatch lowering|
                               | -> C++17 source   |
                               +-------------------+
                                         |
                                         v
                               +-------------------+
-                              | clang++ / g++     |
+                              | clang++           |
                               | -O3 + arch flags  |
                               +-------------------+
                                         |

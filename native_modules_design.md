@@ -71,10 +71,13 @@ Annotated user-defined functions now emit native C++ signatures (Phase 2e). Scal
 
 #### What is NOT yet implemented
 
-- **Thunk generation for `extern fn`** — `DispatchNative` (user-defined) functions have thunks; `DispatchExtern` (extern declarations) do not. Using an `extern fn` as a first-class value (assigning to a variable, passing as a callback) will not work correctly.
-- **`for i in range(n)` → raw C++ loop** (Section 5.3.3) — `range(n)` still allocates a `QList` of boxed integers
 - **Direct vector literal construction** (Section 5.3.5) — `vector [1, 2, 3]` still builds an intermediate list then calls `q_to_vector()`
 - **Phase 3** (stdlib migration: `std/io`, `std/fmt`, removal of `_`-prefixed catalog entries) — deferred
+
+#### Since this milestone
+
+- **Extern fn thunks are now implemented** for free functions used as first-class values (assignment/passing as callbacks).
+- **Range-loop lowering is now implemented**: `for i in range(...)` emits raw C++ loops in codegen.
 
 ---
 
@@ -158,7 +161,6 @@ All language prerequisites and core QEI machinery are implemented and building c
 
 - **Phase 2e** (annotated function parameters with native C++ types) — deferred
 - **Phase 3** (stdlib migration: `std/io`, `std/fmt`, removal of `_`-prefixed catalog entries) — deferred
-- **Thunk generation** for extern functions used as first-class values — the `DispatchExtern` machinery is in place but thunk emission is not yet implemented; using an extern fn as a value (assigning to a variable, passing as a callback) will not work correctly in v0.1
 
 ---
 
@@ -426,7 +428,7 @@ Each compiler stage has a specific, bounded responsibility for extern declaratio
    - For methods, computes `NativeReceiverType` from the type prefix (e.g. `vector` → `"QVector*"`, `str` → `"const char*"`)
    - Creates a `CallPlan` with `Dispatch: DispatchExtern`, the `RuntimeSymbol` from the `as` clause, and the native type fields
    - Call site validation (arity, type checking) works the same as for any other function
-   - **Thunk detection**: when an extern fn identifier appears in a non-call-site position (assigned to a variable, passed as an argument, stored in a collection), the analyzer sets a `NeedsThunk bool` flag on the extern fn's registration entry. Codegen reads this flag to decide whether to emit the thunk. This is done in the analyzer — not codegen — because the analyzer already knows the call/non-call context when resolving identifiers, and codegen is single-pass.
+    - **Thunk support**: free extern functions are emitted with QValue thunks in codegen so they can be used as first-class values. Method externs are not first-class callable in v0.1.
 
 **4. Codegen**: Two responsibilities:
    - **Preamble**: Emits `#include "resolved/path/to/impl.hpp"` for each `extern '<path>'`, before any generated code. This makes extension functions visible at all call sites.
@@ -435,7 +437,7 @@ Each compiler stage has a specific, bounded responsibility for extern declaratio
      - Argument is QValue but target is native → emit guarded unbox: `q_as_float(expr)`, `q_as_int(expr)`, etc.
      - Argument is QValue and target is QValue (unannotated param) → pass through unchanged
    - **Return**: Wraps the native return into whatever the caller needs — if caller expects QValue, emit `qv_float(result)`. If caller is also scalar-tiered, keep native.
-   - **Thunks**: For extern functions where the analyzer set `NeedsThunk`, emits the QValue thunk (Section 2.4.2) in the preamble and wraps it in a `QClosure` at the use site.
+    - **Thunks**: Emits QValue thunks for free extern functions in the preamble and wraps them in a `QClosure` at use sites.
 
 **5. clang++**: Compiles everything together — generated code + included extension headers + runtime — into one binary. No special flags needed for pure-C++ extensions. For external library extensions that wrap external libraries (DuckDB, Arrow, etc.), additional `-l` flags will be needed — the mechanism for specifying these (`extern link`) is deferred to post-v0.1.
 
@@ -688,28 +690,24 @@ Vectors store typed data in contiguous arrays (`std::vector<double>`, `std::vect
 
 ```cpp
 namespace qext {
-    // Read-only typed views — zero-copy, returns span into existing storage
-    std::span<const double>   as_f64(const QVector* v);
-    std::span<const int64_t>  as_i64(const QVector* v);
-    std::span<const uint8_t>  as_bool(const QVector* v);
+    // Read-only typed views — zero-copy, returns QSlice into existing storage
+    QSlice<const double>   as_f64(const QVector* v);
+    QSlice<const int64_t>  as_i64(const QVector* v);
+    QSlice<const uint8_t>  as_bool_vec(const QVector* v);
 
     // Mutable typed views — for filling newly-created vectors
-    std::span<double>   as_f64_mut(QVector* v);
-    std::span<int64_t>  as_i64_mut(QVector* v);
-    std::span<uint8_t>  as_bool_mut(QVector* v);
+    QSlice<double>   as_f64_mut(QVector* v);
+    QSlice<int64_t>  as_i64_mut(QVector* v);
+    QSlice<uint8_t>  as_bool_vec_mut(QVector* v);
 
     // Vector construction — GC-allocated, zeroed
     QVector* new_f64(size_t n);
     QVector* new_i64(size_t n);
-    QVector* new_bool(size_t n);
-
-    // Convenience: create from existing data (copies into GC memory)
-    QVector* new_f64(std::span<const double> data);
-    QVector* new_i64(std::span<const int64_t> data);
+    QVector* new_bool_vec(size_t n);
 
     // Null mask access
-    bool has_nulls(const QVector* v);
-    std::span<const uint8_t> null_mask(const QVector* v);  // 0 = valid, 1 = null
+    bool vec_has_nulls(const QVector* v);
+    QSlice<const uint8_t> null_mask(const QVector* v);  // 0 = valid, 1 = null
 
     // Metadata
     size_t vec_size(const QVector* v);
@@ -743,7 +741,7 @@ QVector* q_vec_scale(QVector* v, double factor) {
 
 **Dtype mismatch**: If the extension calls `as_f64()` on an I64 vector, the function panics with a clear error: "expected F64 vector, got I64". Extension authors should check `vec_dtype()` if they need to handle multiple dtypes.
 
-**GC lifetime warning**: A `std::span` is not a GC root — it is a raw pointer + size into the `QVector`'s internal storage. If a GC collection runs while you hold only a span (no live `QVector*`), the underlying vector can be collected and the span becomes dangling. This is most likely in callback-heavy code: you call `qext::as_f64(v)`, then call `qext::call(f, ...)` — the callback allocates, GC runs, and if `v` was the only reference it may be collected. The rule: **hold the `QVector*` alive for the entire lifetime of any span derived from it**. In practice: extract all data you need before calling back into Quark, or re-fetch the vector after the callback returns.
+**GC lifetime warning**: A `QSlice` is not a GC root — it is a raw pointer + size into the `QVector`'s internal storage. If a GC collection runs while you hold only a slice (no live `QVector*`), the underlying vector can be collected and the slice becomes dangling. This is most likely in callback-heavy code: you call `qext::as_f64(v)`, then call `qext::call(f, ...)` — the callback allocates, GC runs, and if `v` was the only reference it may be collected. The rule: **hold the `QVector*` alive for the entire lifetime of any slice derived from it**. In practice: extract all data you need before calling back into Quark, or re-fetch the vector after the callback returns.
 
 ```cpp
 // Unsafe — span held across a callback that can allocate:
@@ -814,7 +812,7 @@ Extensions should panic on unrecoverable errors (dtype mismatch, out-of-bounds, 
 QValue result = qv_ok(qv_int(42));
 
 // Return an error result
-QValue result = qv_err(qv_string_copy("file not found"));
+QValue result = qv_err(qv_string("file not found"));
 ```
 
 ### 4.5 Value Construction
@@ -824,8 +822,8 @@ The existing `qv_*` constructors are the API. Extension authors use these to cre
 ```cpp
 QValue qv_int(long long v);
 QValue qv_float(double v);
-QValue qv_string(const char* v);       // does NOT copy — pointer must be GC-managed
-QValue qv_string_copy(const char* v);  // copies via q_strdup — always safe, use this by default
+QValue qv_string(const char* v);       // copies via q_strdup
+QValue qv_string_own(char* v);         // no copy; pointer must already be GC-managed
 QValue qv_bool(bool v);
 QValue qv_null();
 QValue qv_list(int capacity);          // creates empty list with pre-allocated capacity
@@ -834,7 +832,7 @@ QValue qv_ok(QValue inner);
 QValue qv_err(QValue inner);
 ```
 
-**String construction**: Prefer `qv_string_copy()` — it calls `q_strdup()` internally and is always safe. Use `qv_string()` only when you already have a GC-managed `const char*` and want to avoid a redundant copy (e.g., a string you just allocated with `q_strdup()`). Passing a stack buffer, a `std::string::c_str()`, or any non-GC pointer to `qv_string()` is a dangling pointer bug — the GC doesn't know about the allocation and may collect it.
+**String construction**: Prefer `qv_string()` for normal use — it copies into GC-managed memory via `q_strdup()`. Use `qv_string_own()` only when you already hold a GC-managed mutable buffer and want to transfer ownership without a second copy.
 
 ### 4.6 Memory Management
 
@@ -930,9 +928,9 @@ while (quark_flag)                        // direct C++ bool
 
 **Fix**: Before emitting the `while`, check if the condition expression is a scalar bool (via `scalarExpr()`). If so, emit it directly. Same applies to `if` conditions.
 
-#### 5.3.3 `for i in range(n)` Without List Allocation (Priority: High, Effort: Medium)
+#### 5.3.3 `for i in range(n)` Without List Allocation (Implemented)
 
-**Current behavior** (`codegen.go:1370-1427`): `for i in range(n)` calls `q_range()` which allocates a `QList` of boxed integers, then iterates it with `q_len()` / `q_iter_get()`. For `range(1_000_000)`, that's a million QValue allocations just to count.
+`for i in range(n)` is now lowered to raw C++ loops in codegen (1/2/3-arg range forms), avoiding `q_range()` list allocation in the fast path.
 
 The loop variable `i` is already scalar-tiered to `long long` via `loopVarTier()` — so the individual iterations are fast. But the list allocation and element access are pure waste.
 
@@ -952,7 +950,7 @@ for (long long quark_i = 0; quark_i < _range_end; quark_i++) {
 }
 ```
 
-**Fix**: Codegen recognizes `for VAR in range(...)` as a special pattern. When `range` has 1-3 literal or scalar-tiered arguments, emit a raw C++ `for` loop directly. No list allocation, no `q_iter_get()`. This is the single highest-impact optimization for numeric loops.
+This optimization was implemented by adding explicit `range(...)` pattern recognition in `generateFor()` and emitting raw loop bounds/steps in `generateForRange()`.
 
 #### 5.3.4 Annotated Function Parameters (Priority: High, Effort: Medium — Deferred to Phase 2)
 
@@ -1171,7 +1169,7 @@ This is a breaking change for any code using `_` prefixed names directly. The fi
 **2e. Annotated Function Parameters (Section 5.3.4)**
 - Reuse `NativeParamTypes`/`NativeReturnType`/`NativeReceiverType` fields added in 2b
 - Analyzer: when a function has annotations on all params and return type, compute native type fields and set `Dispatch: DispatchNative` (or reuse `DispatchExtern` — TBD)
-- Thunk detection: same analyzer-side `NeedsThunk` mechanism as extern functions
+- Thunk support for first-class use should follow the same codegen-emitted thunk model used by native/extern free functions
 - Codegen: emit native-typed function signature; at call sites with QValue callers, inject unboxing; emit thunks for functions used as values
 - Tests: annotated functions called directly, called with QValue args, and passed as callbacks
 

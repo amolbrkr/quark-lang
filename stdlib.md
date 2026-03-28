@@ -1,6 +1,19 @@
 # Quark Standard Library
 
-This document describes the built-in functions and methods available in Quark. All standard library functions are implemented in C++ for performance and are automatically available without any imports.
+This document describes the built-in prelude functions and methods available in Quark.
+
+Prelude builtins are globally available without imports. Additional stdlib modules are imported via `use 'std/...'`, and extension modules may declare native bindings via QEI (`extern` / `extern fn`).
+
+## QEI and Lowering Notes
+
+- QEI extern declarations are part of the language surface:
+    - `extern 'path.hpp'`
+    - `extern fn name(...) Type as 'symbol'`
+    - `extern fn type.name(...) Type as 'symbol'`
+- Extern call sites are analyzer/codegen lowered through `DispatchExtern` and native type adaptation.
+- Free extern functions can be used as first-class values via generated thunks.
+- Scalar lowering is active for scalar-tiered arithmetic/comparisons (including `==`/`!=`) and scalar-bool `if`/`while` conditions.
+- `for i in range(...)` has a raw-loop lowering fast path in codegen.
 
 ## Invocation Model
 

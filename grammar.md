@@ -25,7 +25,7 @@ This document is the grammar and semantic reference for the Quark compiler in `s
 
 ### 3.1 Keywords (reserved)
 
-`use, as, module, fn, if, elseif, else, for, while, break, continue, when, in, and, or, true, false, null, ok, err, list, dict, vector, result`
+`use, as, module, extern, fn, if, elseif, else, for, while, break, continue, when, in, and, or, true, false, null, ok, err, list, dict, vector, result`
 
 ### 3.2 Operators and delimiters
 
@@ -70,6 +70,7 @@ Program         ::= { Statement NEWLINE } EOF
 Statement       ::= FunctionDef
                 |   ModuleDef
                 |   UseStatement
+                |   ExternStatement
                 |   IfStatement
                 |   WhenStatement
                 |   ForLoop
@@ -93,6 +94,15 @@ ModuleDef       ::= "module" ID ":" Block
 
 ```ebnf
 UseStatement    ::= "use" ( ID | STRING ) [ "as" ID ]
+
+ExternStatement ::= ExternSource
+                |   ExternFnDecl
+
+ExternSource    ::= "extern" STRING
+
+ExternFnDecl    ::= "extern" "fn" ExternName Parameters [ Type ] "as" STRING
+ExternName      ::= ID | BuiltinTypeName "." ID
+BuiltinTypeName ::= "int" | "float" | "str" | "bool" | "list" | "dict" | "vector"
 ```
 
 Semantics:
@@ -101,6 +111,12 @@ Semantics:
 - `use 'C:/path/to/file'` or `use '/path/to/file'`: absolute file import resolved by loader
 - `use 'std/name'`: stdlib import resolved from stdlib root (`QUARK_STDLIB_ROOT` or discovered `stdlib/` directory)
 - `use ... as alias`: binds `alias` as a module qualifier for `alias.symbol(...)` calls
+
+Extern/QEI semantics:
+- `extern 'path.hpp'` registers a C++ include path (resolved by loader).
+- `extern fn name(...) T as 'symbol'` declares a free extern function.
+- `extern fn type.name(...) T as 'symbol'` declares a receiver method extension.
+- Free extern functions can be used as first-class values via generated thunks.
 
 ## 6) Functions and Lambdas
 
@@ -377,6 +393,13 @@ Result construction and use:
 - The unary `!` operator accepts any type and always returns `bool`
 - `to_bool(expr)` is available for explicit conversion but is no longer required in conditions
 
+### 11.6 Lowering notes (implementation-synced)
+
+- Scalar arithmetic/comparison on scalar-tiered operands lowers to raw C++ operators.
+- Equality/inequality (`==`, `!=`) are included in scalar lowering when both operands are scalar-tiered.
+- `if`/`elseif`/`while` conditions lower directly to native bool expressions when statically scalar-bool.
+- `for i in range(...)` lowers to raw C++ range loops in codegen fast-paths.
+
 ## 12) Builtin Surface (Current)
 
 ### 12.1 Free functions
@@ -421,6 +444,8 @@ Result construction and use:
 | Dot data access on dict | Implemented | read/write |
 | Result values `ok` / `err` | Implemented | Analyzer has `ResultType` |
 | `when` result patterns | Implemented | `ok x`, `err e` |
+| `extern` source and fn declarations | Implemented | QEI parser/analyzer/codegen path |
+| Extern fn first-class value thunks | Implemented | Free extern fns emit QValue thunks |
 | Double-quoted strings | Implemented | Single and double-quoted strings are both valid |
 | String interpolation (`!{expr}`) | Not implemented | Deferred from v0.1 |
 | `unwrap_or`, `map_ok`, etc. | Future | Not implemented yet |

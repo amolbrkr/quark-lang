@@ -129,6 +129,9 @@ func (a *Analyzer) inferBuiltinReturnType(name string, argTypes []Type, callNode
 	if elem.Equals(TypeFloat) {
 		return &VectorType{ElementType: TypeFloat}
 	}
+	if elem.Equals(TypeBool) {
+		return &VectorType{ElementType: TypeBool}
+	}
 	if elem.Equals(TypeString) {
 		return &VectorType{ElementType: TypeString}
 	}
@@ -136,6 +139,7 @@ func (a *Analyzer) inferBuiltinReturnType(name string, argTypes []Type, callNode
 		onlyAllowed := true
 		hasInt := false
 		hasFloat := false
+		hasBool := false
 		hasString := false
 		for _, opt := range union.Options {
 			if opt.Equals(TypeInt) {
@@ -144,6 +148,10 @@ func (a *Analyzer) inferBuiltinReturnType(name string, argTypes []Type, callNode
 			}
 			if opt.Equals(TypeFloat) {
 				hasFloat = true
+				continue
+			}
+			if opt.Equals(TypeBool) {
+				hasBool = true
 				continue
 			}
 			if opt.Equals(TypeString) {
@@ -164,11 +172,14 @@ func (a *Analyzer) inferBuiltinReturnType(name string, argTypes []Type, callNode
 			if hasFloat {
 				kinds++
 			}
+			if hasBool {
+				kinds++
+			}
 			if hasString {
 				kinds++
 			}
 			if kinds > 1 {
-				a.errorAt(callNode, "to_vector requires homogeneous list elements (all int, all float, or all str)")
+				a.errorAt(callNode, "to_vector requires homogeneous list elements (all int, all float, all bool, or all str)")
 				return TypeAny
 			}
 			if hasInt && !hasFloat {
@@ -176,6 +187,9 @@ func (a *Analyzer) inferBuiltinReturnType(name string, argTypes []Type, callNode
 			}
 			if hasFloat && !hasInt {
 				return &VectorType{ElementType: TypeFloat}
+			}
+			if hasBool {
+				return &VectorType{ElementType: TypeBool}
 			}
 			if hasString {
 				return &VectorType{ElementType: TypeString}
@@ -188,7 +202,7 @@ func (a *Analyzer) inferBuiltinReturnType(name string, argTypes []Type, callNode
 		return TypeAny
 	}
 
-	a.errorAt(callNode, "to_vector requires list elements of type int, float, or str, got %s", elem.String())
+	a.errorAt(callNode, "to_vector requires list elements of type int, float, bool, or str, got %s", elem.String())
 	return TypeAny
 }
 

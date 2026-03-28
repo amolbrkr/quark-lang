@@ -353,8 +353,8 @@ func (a *Analyzer) analyzeVector(node *ast.TreeNode) Type {
 			elemType = MergeTypes(elemType, childType)
 			continue
 		}
-		if !childType.Equals(TypeInt) && !childType.Equals(TypeFloat) && !childType.Equals(TypeString) {
-			a.errorAt(child, "vector elements must be homogeneous int, float, or str, got %s", childType.String())
+		if !childType.Equals(TypeInt) && !childType.Equals(TypeFloat) && !childType.Equals(TypeBool) && !childType.Equals(TypeString) {
+			a.errorAt(child, "vector elements must be homogeneous int, float, bool, or str, got %s", childType.String())
 			elemType = MergeTypes(elemType, TypeAny)
 			continue
 		}

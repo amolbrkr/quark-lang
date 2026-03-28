@@ -2107,6 +2107,17 @@ func (g *Generator) generateFor(node *ast.TreeNode) string {
 
 	varName := varNode.TokenLiteral()
 	cVarName := sanitizeVarName(varName)
+	emitLoopBody := func() {
+		if bodyNode.NodeType == ast.BlockNode {
+			for _, stmt := range bodyNode.Children {
+				expr := g.generateExpr(stmt)
+				g.emitStmtExpr(stmt, expr)
+			}
+		} else {
+			expr := g.generateExpr(bodyNode)
+			g.emitStmtExpr(bodyNode, expr)
+		}
+	}
 
 	// Range lowering: emit raw C++ loop instead of list allocation.
 	if !g.isCaptured(varName) {
@@ -2115,51 +2126,102 @@ func (g *Generator) generateFor(node *ast.TreeNode) string {
 		}
 	}
 
-	// Handle list iteration (for item in mylist or for i in range(10))
+	// Handle iterable iteration (list/string/vector).
 	listExpr := g.generateExpr(rangeNode)
 	listTemp := g.newTemp()
-	lenTemp := g.newTemp()
-	idxTemp := g.newTemp()
-
 	g.emitLine("QValue %s = %s;", listTemp, listExpr)
-	g.emitLine("long long %s = q_len(%s).data.int_val;", lenTemp, listTemp)
-	g.emitLine("for (long long %s = 0; %s < %s; %s++) {", idxTemp, idxTemp, lenTemp, idxTemp)
-	g.indentLevel++
 
-	g.pushBlockScope()
-	g.declaredVars[varName] = true // Loop variable is declared
-	if g.isCaptured(varName) {
-		g.emitLine("QCell* %s = q_new_cell(q_iter_get(%s, qv_int(%s)));", cVarName, listTemp, idxTemp)
-		g.markCell(varName)
-	} else {
-		// Use scalar storage for loop variable if the iterable has a known element type.
-		loopVarTier := g.loopVarTier(rangeNode)
-		if loopVarTier != "" {
-			field := unboxFieldAccessor(loopVarTier)
-			g.emitLine("%s %s = q_iter_get(%s, qv_int(%s)).data.%s;",
-				loopVarTier, cVarName, listTemp, idxTemp, field)
-			g.markTier(varName, loopVarTier)
+	emitGenericLoop := func() {
+		lenTemp := g.newTemp()
+		idxTemp := g.newTemp()
+
+		g.emitLine("long long %s = q_len(%s).data.int_val;", lenTemp, listTemp)
+		g.emitLine("for (long long %s = 0; %s < %s; %s++) {", idxTemp, idxTemp, lenTemp, idxTemp)
+		g.indentLevel++
+
+		g.pushBlockScope()
+		g.declaredVars[varName] = true // Loop variable is declared
+		if g.isCaptured(varName) {
+			g.emitLine("QCell* %s = q_new_cell(q_iter_get(%s, qv_int(%s)));", cVarName, listTemp, idxTemp)
+			g.markCell(varName)
 		} else {
-			g.emitLine("QValue %s = q_iter_get(%s, qv_int(%s));", cVarName, listTemp, idxTemp)
-			delete(g.varTiers, varName) // clear any inherited scalar tier from outer scope
+			// Use scalar storage for loop variable if the iterable has a known element type.
+			loopVarTier := g.loopVarTier(rangeNode)
+			if loopVarTier != "" {
+				field := unboxFieldAccessor(loopVarTier)
+				g.emitLine("%s %s = q_iter_get(%s, qv_int(%s)).data.%s;",
+					loopVarTier, cVarName, listTemp, idxTemp, field)
+				g.markTier(varName, loopVarTier)
+			} else {
+				g.emitLine("QValue %s = q_iter_get(%s, qv_int(%s));", cVarName, listTemp, idxTemp)
+				delete(g.varTiers, varName) // clear any inherited scalar tier from outer scope
+			}
+		}
+
+		emitLoopBody()
+
+		g.popScope()
+		g.indentLevel--
+		g.emitLine("}")
+	}
+
+	// Fast path: avoid per-element q_iter_get boxing for scalar-tier loops over
+	// validated non-null vectors of the exact matching dtype.
+	if !g.isCaptured(varName) {
+		loopVarTier := g.loopVarTier(rangeNode)
+		dtype := ""
+		storageType := ""
+		elemExpr := ""
+		switch loopVarTier {
+		case "long long":
+			dtype = "QVector::Type::I64"
+			storageType = "QVecI64"
+		case "double":
+			dtype = "QVector::Type::F64"
+			storageType = "QVecF64"
+		case "bool":
+			dtype = "QVector::Type::BOOL"
+			storageType = "QVecU8"
+		}
+		if dtype != "" {
+			vecDataTemp := g.newTemp()
+			idxTemp := g.newTemp()
+			switch loopVarTier {
+			case "long long":
+				elemExpr = fmt.Sprintf("static_cast<long long>(%s[%s])", vecDataTemp, idxTemp)
+			case "double":
+				elemExpr = fmt.Sprintf("%s[%s]", vecDataTemp, idxTemp)
+			case "bool":
+				elemExpr = fmt.Sprintf("(%s[%s] != 0)", vecDataTemp, idxTemp)
+			}
+
+			g.emitLine("if (%s.type == QValue::VAL_VECTOR && q_vec_has_valid_handle(%s) && q_vec_validate(*%s.data.vector_val) && !%s.data.vector_val->has_nulls && %s.data.vector_val->type == %s) {",
+				listTemp, listTemp, listTemp, listTemp, listTemp, dtype)
+			g.indentLevel++
+			g.emitLine("const %s& %s = std::get<%s>(%s.data.vector_val->storage);", storageType, vecDataTemp, storageType, listTemp)
+			g.emitLine("for (long long %s = 0; %s < (long long)%s.size(); %s++) {", idxTemp, idxTemp, vecDataTemp, idxTemp)
+			g.indentLevel++
+
+			g.pushBlockScope()
+			g.declaredVars[varName] = true
+			g.emitLine("%s %s = %s;", loopVarTier, cVarName, elemExpr)
+			g.markTier(varName, loopVarTier)
+			emitLoopBody()
+			g.popScope()
+
+			g.indentLevel--
+			g.emitLine("}")
+			g.indentLevel--
+			g.emitLine("} else {")
+			g.indentLevel++
+			emitGenericLoop()
+			g.indentLevel--
+			g.emitLine("}")
+			return "qv_null()"
 		}
 	}
 
-	if bodyNode.NodeType == ast.BlockNode {
-		for _, stmt := range bodyNode.Children {
-			expr := g.generateExpr(stmt)
-			g.emitStmtExpr(stmt, expr)
-		}
-	} else {
-		expr := g.generateExpr(bodyNode)
-		g.emitStmtExpr(bodyNode, expr)
-	}
-
-	g.popScope()
-
-	g.indentLevel--
-	g.emitLine("}")
-
+	emitGenericLoop()
 	return "qv_null()"
 }
 

@@ -377,8 +377,24 @@ inline QValue q_vec_dtype(QValue vec) {
     return qv_string(q_vec_dtype_name(*vec.data.vector_val));
 }
 
-template <typename BinaryOp>
-inline QValue q_vec_binary_impl(QValue a, QValue b, BinaryOp op) {
+inline bool q_vec_is_numeric_dtype(const QVector& vec) {
+    return vec.type == QVector::Type::F64 || vec.type == QVector::Type::I64;
+}
+
+inline double q_vec_numeric_as_f64(const QVector& vec, size_t index) {
+    if (vec.type == QVector::Type::F64) {
+        return std::get<QVecF64>(vec.storage)[index];
+    }
+    return static_cast<double>(std::get<QVecI64>(vec.storage)[index]);
+}
+
+inline int64_t q_vec_numeric_as_i64(const QVector& vec, size_t index) {
+    return std::get<QVecI64>(vec.storage)[index];
+}
+
+enum class QVecArithOp { Add, Sub, Mul, Div };
+
+inline QValue q_vec_binary_numeric(QValue a, QValue b, QVecArithOp op) {
     const bool aVec = q_vec_has_valid_handle(a);
     const bool bVec = q_vec_has_valid_handle(b);
 
@@ -386,334 +402,299 @@ inline QValue q_vec_binary_impl(QValue a, QValue b, BinaryOp op) {
         return qv_null();
     }
 
-    if (aVec && bVec) {
-        const QVecF64* avp = q_vec_f64_const(a);
-        const QVecF64* bvp = q_vec_f64_const(b);
-        if (!avp || !bvp) {
-            return qv_null(); // not f64 → fallback signal
-        }
-        const QVecF64& av = *avp;
-        const QVecF64& bv = *bvp;
-        if (av.size() != bv.size()) {
-            q_runtime_reportf("runtime error: vector size mismatch in arithmetic: %zu vs %zu\n", av.size(), bv.size());
+    const QVector* av = nullptr;
+    const QVector* bv = nullptr;
+
+    if (aVec) {
+        if (!q_vec_validate(*a.data.vector_val)) {
+            q_runtime_reportf("runtime error: vector arithmetic expects valid vectors\n");
             std::exit(1);
         }
-        QValue out = qv_vector(static_cast<int>(av.size()));
-        QVecF64& outv = std::get<QVecF64>(out.data.vector_val->storage);
-        outv.resize(av.size());
-        out.data.vector_val->count = av.size();
-
-        for (size_t i = 0; i < av.size(); i++) {
-            outv[i] = op(av[i], bv[i]);
-        }
-        return out;
-    }
-
-    if (aVec && q_is_numeric_scalar(b)) {
-        const QVecF64* avp = q_vec_f64_const(a);
-        if (!avp) {
-            return qv_null(); // not f64 → fallback signal
-        }
-        const QVecF64& av = *avp;
-        double bs = q_to_double_scalar(b);
-        QValue out = qv_vector(static_cast<int>(av.size()));
-        QVecF64& outv = std::get<QVecF64>(out.data.vector_val->storage);
-        outv.resize(av.size());
-        out.data.vector_val->count = av.size();
-        for (size_t i = 0; i < av.size(); i++) {
-            outv[i] = op(av[i], bs);
-        }
-        return out;
-    }
-
-    if (bVec && q_is_numeric_scalar(a)) {
-        const QVecF64* bvp = q_vec_f64_const(b);
-        if (!bvp) {
-            return qv_null(); // not f64 → fallback signal
-        }
-        const QVecF64& bv = *bvp;
-        double as = q_to_double_scalar(a);
-        QValue out = qv_vector(static_cast<int>(bv.size()));
-        QVecF64& outv = std::get<QVecF64>(out.data.vector_val->storage);
-        outv.resize(bv.size());
-        out.data.vector_val->count = bv.size();
-        for (size_t i = 0; i < bv.size(); i++) {
-            outv[i] = op(as, bv[i]);
-        }
-        return out;
-    }
-
-    q_runtime_reportf("runtime error: vector arithmetic requires numeric vectors and scalars\n");
-    std::exit(1);
-}
-
-template <typename BinaryOp>
-inline QValue q_vec_binary_i64_impl(QValue a, QValue b, BinaryOp op) {
-    const bool aVec = q_vec_has_valid_handle(a);
-    const bool bVec = q_vec_has_valid_handle(b);
-
-    if (aVec && bVec) {
-        const QVecI64* avp = q_vec_i64_const(a);
-        const QVecI64* bvp = q_vec_i64_const(b);
-        if (!avp || !bvp) {
-            return qv_null(); // not i64 → let f64 path try
-        }
-        if (avp->size() != bvp->size()) {
-            q_runtime_reportf("runtime error: vector size mismatch in arithmetic: %zu vs %zu\n", avp->size(), bvp->size());
+        av = a.data.vector_val;
+        if (!q_vec_is_numeric_dtype(*av)) {
+            q_runtime_reportf("runtime error: vector arithmetic requires numeric vectors and scalars\n");
             std::exit(1);
         }
-        QValue out = qv_vector_i64(static_cast<int>(avp->size()));
-        QVecI64& outv = std::get<QVecI64>(out.data.vector_val->storage);
-        outv.resize(avp->size());
-        out.data.vector_val->count = avp->size();
-        for (size_t i = 0; i < avp->size(); i++) {
-            outv[i] = op((*avp)[i], (*bvp)[i]);
-        }
-        return out;
+    } else if (!q_is_numeric_scalar(a)) {
+        q_runtime_reportf("runtime error: vector arithmetic requires numeric vectors and scalars\n");
+        std::exit(1);
     }
 
-    if (aVec && q_is_integral_scalar(b)) {
-        const QVecI64* avp = q_vec_i64_const(a);
-        if (!avp) {
-            return qv_null();
-        }
-        const int64_t bs = q_to_i64_scalar(b);
-        QValue out = qv_vector_i64(static_cast<int>(avp->size()));
-        QVecI64& outv = std::get<QVecI64>(out.data.vector_val->storage);
-        outv.resize(avp->size());
-        out.data.vector_val->count = avp->size();
-        for (size_t i = 0; i < avp->size(); i++) {
-            outv[i] = op((*avp)[i], bs);
-        }
-        return out;
-    }
-
-    if (bVec && q_is_integral_scalar(a)) {
-        const QVecI64* bvp = q_vec_i64_const(b);
-        if (!bvp) {
-            return qv_null();
-        }
-        const int64_t as = q_to_i64_scalar(a);
-        QValue out = qv_vector_i64(static_cast<int>(bvp->size()));
-        QVecI64& outv = std::get<QVecI64>(out.data.vector_val->storage);
-        outv.resize(bvp->size());
-        out.data.vector_val->count = bvp->size();
-        for (size_t i = 0; i < bvp->size(); i++) {
-            outv[i] = op(as, (*bvp)[i]);
-        }
-        return out;
-    }
-
-    return qv_null();
-}
-
-inline QValue q_vec_div_i64(QValue a, QValue b) {
-    const bool aVec = q_vec_has_valid_handle(a);
-    const bool bVec = q_vec_has_valid_handle(b);
-
-    if (aVec && bVec) {
-        const QVecI64* avp = q_vec_i64_const(a);
-        const QVecI64* bvp = q_vec_i64_const(b);
-        if (!avp || !bvp) {
-            return qv_null(); // not i64 → let f64 path try
-        }
-        if (avp->size() != bvp->size()) {
-            q_runtime_reportf("runtime error: vector size mismatch in arithmetic: %zu vs %zu\n", avp->size(), bvp->size());
+    if (bVec) {
+        if (!q_vec_validate(*b.data.vector_val)) {
+            q_runtime_reportf("runtime error: vector arithmetic expects valid vectors\n");
             std::exit(1);
         }
-        QValue out = qv_vector(static_cast<int>(avp->size()));
+        bv = b.data.vector_val;
+        if (!q_vec_is_numeric_dtype(*bv)) {
+            q_runtime_reportf("runtime error: vector arithmetic requires numeric vectors and scalars\n");
+            std::exit(1);
+        }
+    } else if (!q_is_numeric_scalar(b)) {
+        q_runtime_reportf("runtime error: vector arithmetic requires numeric vectors and scalars\n");
+        std::exit(1);
+    }
+
+    if (aVec && bVec && av->count != bv->count) {
+        q_runtime_reportf("runtime error: vector size mismatch in arithmetic: %zu vs %zu\n", av->count, bv->count);
+        std::exit(1);
+    }
+
+    const size_t n = aVec ? av->count : bv->count;
+    bool wantF64 = (op == QVecArithOp::Div);
+    if (!wantF64) {
+        if ((aVec && av->type == QVector::Type::F64) ||
+            (bVec && bv->type == QVector::Type::F64) ||
+            (!aVec && a.type == QValue::VAL_FLOAT) ||
+            (!bVec && b.type == QValue::VAL_FLOAT)) {
+            wantF64 = true;
+        }
+    }
+
+    const bool hasNulls = (aVec && av->has_nulls) || (bVec && bv->has_nulls);
+
+    if (wantF64) {
+        QValue out = qv_vector(static_cast<int>(n));
         QVecF64& outv = std::get<QVecF64>(out.data.vector_val->storage);
-        outv.resize(avp->size());
-        out.data.vector_val->count = avp->size();
-        for (size_t i = 0; i < avp->size(); i++) {
-            if ((*bvp)[i] == 0) {
-                q_runtime_reportf("runtime error: division by zero in vector element %zu\n", i);
-                std::exit(1);
+        outv.resize(n, 0.0);
+        out.data.vector_val->count = n;
+        if (hasNulls) {
+            q_vec_ensure_null_mask(*out.data.vector_val);
+        }
+
+        for (size_t i = 0; i < n; i++) {
+            if (hasNulls && ((aVec && q_vec_is_null_at(*av, i)) || (bVec && q_vec_is_null_at(*bv, i)))) {
+                out.data.vector_val->nulls.is_null[i] = 1;
+                continue;
             }
-            outv[i] = static_cast<double>((*avp)[i]) / static_cast<double>((*bvp)[i]);
-        }
-        return out;
-    }
 
-    if (aVec && q_is_integral_scalar(b)) {
-        const QVecI64* avp = q_vec_i64_const(a);
-        if (!avp) {
-            return qv_null();
-        }
-        const double bs = static_cast<double>(q_to_i64_scalar(b));
-        if (bs == 0.0) {
-            q_runtime_reportf("runtime error: division by zero in vector / scalar\n");
-            std::exit(1);
-        }
-        QValue out = qv_vector(static_cast<int>(avp->size()));
-        QVecF64& outv = std::get<QVecF64>(out.data.vector_val->storage);
-        outv.resize(avp->size());
-        out.data.vector_val->count = avp->size();
-        for (size_t i = 0; i < avp->size(); i++) {
-            outv[i] = static_cast<double>((*avp)[i]) / bs;
-        }
-        return out;
-    }
+            const double x = aVec ? q_vec_numeric_as_f64(*av, i) : q_to_double_scalar(a);
+            const double y = bVec ? q_vec_numeric_as_f64(*bv, i) : q_to_double_scalar(b);
 
-    if (bVec && q_is_integral_scalar(a)) {
-        const QVecI64* bvp = q_vec_i64_const(b);
-        if (!bvp) {
-            return qv_null();
-        }
-        const double as = static_cast<double>(q_to_i64_scalar(a));
-        QValue out = qv_vector(static_cast<int>(bvp->size()));
-        QVecF64& outv = std::get<QVecF64>(out.data.vector_val->storage);
-        outv.resize(bvp->size());
-        out.data.vector_val->count = bvp->size();
-        for (size_t i = 0; i < bvp->size(); i++) {
-            if ((*bvp)[i] == 0) {
-                q_runtime_reportf("runtime error: division by zero in vector element %zu\n", i);
-                std::exit(1);
+            switch (op) {
+                case QVecArithOp::Add:
+                    outv[i] = x + y;
+                    break;
+                case QVecArithOp::Sub:
+                    outv[i] = x - y;
+                    break;
+                case QVecArithOp::Mul:
+                    outv[i] = x * y;
+                    break;
+                case QVecArithOp::Div:
+                    if (y == 0.0) {
+                        q_runtime_reportf("runtime error: vector division by zero (f64)\n");
+                        std::exit(1);
+                    }
+                    outv[i] = x / y;
+                    break;
             }
-            outv[i] = as / static_cast<double>((*bvp)[i]);
         }
         return out;
     }
 
-    return qv_null();
+    QValue out = qv_vector_i64(static_cast<int>(n));
+    QVecI64& outv = std::get<QVecI64>(out.data.vector_val->storage);
+    outv.resize(n, 0);
+    out.data.vector_val->count = n;
+    if (hasNulls) {
+        q_vec_ensure_null_mask(*out.data.vector_val);
+    }
+
+    for (size_t i = 0; i < n; i++) {
+        if (hasNulls && ((aVec && q_vec_is_null_at(*av, i)) || (bVec && q_vec_is_null_at(*bv, i)))) {
+            out.data.vector_val->nulls.is_null[i] = 1;
+            continue;
+        }
+
+        const int64_t x = aVec ? q_vec_numeric_as_i64(*av, i) : q_to_i64_scalar(a);
+        const int64_t y = bVec ? q_vec_numeric_as_i64(*bv, i) : q_to_i64_scalar(b);
+
+        switch (op) {
+            case QVecArithOp::Add:
+                outv[i] = x + y;
+                break;
+            case QVecArithOp::Sub:
+                outv[i] = x - y;
+                break;
+            case QVecArithOp::Mul:
+                outv[i] = x * y;
+                break;
+            case QVecArithOp::Div:
+                // Division always promotes to f64 and should have taken the branch above.
+                outv[i] = 0;
+                break;
+        }
+    }
+
+    return out;
 }
 
 inline QValue q_vec_add(QValue a, QValue b) {
-    if (q_vec_is_type(a, QVector::Type::I64) || q_vec_is_type(b, QVector::Type::I64)) {
-        QValue out = q_vec_binary_i64_impl(a, b, [](int64_t x, int64_t y) { return x + y; });
-        if (out.type != QValue::VAL_NULL) {
-            return out;
-        }
-    }
-    return q_vec_binary_impl(a, b, [](double x, double y) { return x + y; });
+    return q_vec_binary_numeric(a, b, QVecArithOp::Add);
 }
 
 inline QValue q_vec_sub(QValue a, QValue b) {
-    if (q_vec_is_type(a, QVector::Type::I64) || q_vec_is_type(b, QVector::Type::I64)) {
-        QValue out = q_vec_binary_i64_impl(a, b, [](int64_t x, int64_t y) { return x - y; });
-        if (out.type != QValue::VAL_NULL) {
-            return out;
-        }
-    }
-    return q_vec_binary_impl(a, b, [](double x, double y) { return x - y; });
+    return q_vec_binary_numeric(a, b, QVecArithOp::Sub);
 }
 
 inline QValue q_vec_mul(QValue a, QValue b) {
-    if (q_vec_is_type(a, QVector::Type::I64) || q_vec_is_type(b, QVector::Type::I64)) {
-        QValue out = q_vec_binary_i64_impl(a, b, [](int64_t x, int64_t y) { return x * y; });
-        if (out.type != QValue::VAL_NULL) {
-            return out;
-        }
-    }
-    return q_vec_binary_impl(a, b, [](double x, double y) { return x * y; });
+    return q_vec_binary_numeric(a, b, QVecArithOp::Mul);
 }
 
 inline QValue q_vec_div(QValue a, QValue b) {
-    if (q_vec_is_type(a, QVector::Type::I64) || q_vec_is_type(b, QVector::Type::I64)) {
-        QValue out = q_vec_div_i64(a, b);
-        if (out.type != QValue::VAL_NULL) {
-            return out;
-        }
-    }
-    return q_vec_binary_impl(a, b, [](double x, double y) -> double {
-        if (y == 0.0) {
-            q_runtime_reportf("runtime error: vector division by zero (f64)\n");
-            std::exit(1);
-        }
-        return x / y;
-    });
+    return q_vec_binary_numeric(a, b, QVecArithOp::Div);
 }
 
 inline QValue q_vec_sum(QValue vec) {
-    const QVecI64* vi = q_vec_i64_const(vec);
-    if (vi) {
-        double acc = 0.0;
-        for (size_t i = 0; i < vi->size(); i++) {
-            acc += static_cast<double>((*vi)[i]);
-        }
-        return qv_float(acc);
-    }
-
-    const QVecU8* vb = q_vec_bool_const(vec);
-    if (vb) {
-        double acc = 0.0;
-        for (size_t i = 0; i < vb->size(); i++) {
-            acc += ((*vb)[i] != 0) ? 1.0 : 0.0;
-        }
-        return qv_float(acc);
-    }
-
-    const QVecF64* vp = q_vec_f64_const(vec);
-    if (!vp) {
+    if (!q_vec_has_valid_handle(vec) || !q_vec_validate(*vec.data.vector_val)) {
         q_runtime_reportf("runtime error: sum() requires numeric or bool vector\n");
         std::exit(1);
     }
-    const QVecF64& v = *vp;
+
+    const QVector& v = *vec.data.vector_val;
     double acc = 0.0;
-    for (size_t i = 0; i < v.size(); i++) {
-        acc += v[i];
+    bool any = false;
+
+    switch (v.type) {
+        case QVector::Type::I64: {
+            const auto& vals = std::get<QVecI64>(v.storage);
+            for (size_t i = 0; i < vals.size(); i++) {
+                if (q_vec_is_null_at(v, i)) {
+                    continue;
+                }
+                any = true;
+                acc += static_cast<double>(vals[i]);
+            }
+            break;
+        }
+        case QVector::Type::F64: {
+            const auto& vals = std::get<QVecF64>(v.storage);
+            for (size_t i = 0; i < vals.size(); i++) {
+                if (q_vec_is_null_at(v, i)) {
+                    continue;
+                }
+                any = true;
+                acc += vals[i];
+            }
+            break;
+        }
+        case QVector::Type::BOOL: {
+            const auto& vals = std::get<QVecU8>(v.storage);
+            for (size_t i = 0; i < vals.size(); i++) {
+                if (q_vec_is_null_at(v, i)) {
+                    continue;
+                }
+                any = true;
+                acc += (vals[i] != 0) ? 1.0 : 0.0;
+            }
+            break;
+        }
+        default:
+            q_runtime_reportf("runtime error: sum() requires numeric or bool vector\n");
+            std::exit(1);
+    }
+
+    if (!any && v.count > 0) {
+        return qv_null();
     }
     return qv_float(acc);
 }
 
 inline QValue q_vec_min(QValue vec) {
-    const QVecI64* vi = q_vec_i64_const(vec);
-    if (vi) {
-        if (vi->empty()) {
-            q_runtime_reportf("runtime error: min() on empty vector\n");
-            std::exit(1);
-        }
-        int64_t cur = (*vi)[0];
-        for (size_t i = 1; i < vi->size(); i++) {
-            cur = std::min(cur, (*vi)[i]);
-        }
-        return qv_float(static_cast<double>(cur));
-    }
-
-    const QVecF64* vp = q_vec_f64_const(vec);
-    if (!vp) {
+    if (!q_vec_has_valid_handle(vec) || !q_vec_validate(*vec.data.vector_val)) {
         q_runtime_reportf("runtime error: min() requires numeric vector\n");
         std::exit(1);
     }
-    if (vp->empty()) {
+
+    const QVector& v = *vec.data.vector_val;
+    if (v.count == 0) {
         q_runtime_reportf("runtime error: min() on empty vector\n");
         std::exit(1);
     }
-    const QVecF64& v = *vp;
-    double cur = v[0];
-    for (size_t i = 1; i < v.size(); i++) {
-        cur = std::min(cur, v[i]);
+
+    bool hasValue = false;
+    double cur = 0.0;
+
+    if (v.type == QVector::Type::I64) {
+        const auto& vals = std::get<QVecI64>(v.storage);
+        for (size_t i = 0; i < vals.size(); i++) {
+            if (q_vec_is_null_at(v, i)) {
+                continue;
+            }
+            const double dv = static_cast<double>(vals[i]);
+            if (!hasValue || dv < cur) {
+                cur = dv;
+                hasValue = true;
+            }
+        }
+    } else if (v.type == QVector::Type::F64) {
+        const auto& vals = std::get<QVecF64>(v.storage);
+        for (size_t i = 0; i < vals.size(); i++) {
+            if (q_vec_is_null_at(v, i)) {
+                continue;
+            }
+            if (!hasValue || vals[i] < cur) {
+                cur = vals[i];
+                hasValue = true;
+            }
+        }
+    } else {
+        q_runtime_reportf("runtime error: min() requires numeric vector\n");
+        std::exit(1);
+    }
+
+    if (!hasValue) {
+        return qv_null();
     }
     return qv_float(cur);
 }
 
 inline QValue q_vec_max(QValue vec) {
-    const QVecI64* vi = q_vec_i64_const(vec);
-    if (vi) {
-        if (vi->empty()) {
-            q_runtime_reportf("runtime error: max() on empty vector\n");
-            std::exit(1);
-        }
-        int64_t cur = (*vi)[0];
-        for (size_t i = 1; i < vi->size(); i++) {
-            cur = std::max(cur, (*vi)[i]);
-        }
-        return qv_float(static_cast<double>(cur));
-    }
-
-    const QVecF64* vp = q_vec_f64_const(vec);
-    if (!vp) {
+    if (!q_vec_has_valid_handle(vec) || !q_vec_validate(*vec.data.vector_val)) {
         q_runtime_reportf("runtime error: max() requires numeric vector\n");
         std::exit(1);
     }
-    if (vp->empty()) {
+
+    const QVector& v = *vec.data.vector_val;
+    if (v.count == 0) {
         q_runtime_reportf("runtime error: max() on empty vector\n");
         std::exit(1);
     }
-    const QVecF64& v = *vp;
-    double cur = v[0];
-    for (size_t i = 1; i < v.size(); i++) {
-        cur = std::max(cur, v[i]);
+
+    bool hasValue = false;
+    double cur = 0.0;
+
+    if (v.type == QVector::Type::I64) {
+        const auto& vals = std::get<QVecI64>(v.storage);
+        for (size_t i = 0; i < vals.size(); i++) {
+            if (q_vec_is_null_at(v, i)) {
+                continue;
+            }
+            const double dv = static_cast<double>(vals[i]);
+            if (!hasValue || dv > cur) {
+                cur = dv;
+                hasValue = true;
+            }
+        }
+    } else if (v.type == QVector::Type::F64) {
+        const auto& vals = std::get<QVecF64>(v.storage);
+        for (size_t i = 0; i < vals.size(); i++) {
+            if (q_vec_is_null_at(v, i)) {
+                continue;
+            }
+            if (!hasValue || vals[i] > cur) {
+                cur = vals[i];
+                hasValue = true;
+            }
+        }
+    } else {
+        q_runtime_reportf("runtime error: max() requires numeric vector\n");
+        std::exit(1);
+    }
+
+    if (!hasValue) {
+        return qv_null();
     }
     return qv_float(cur);
 }
@@ -907,7 +888,7 @@ inline QValue q_to_vector(QValue input) {
     const QList& items = *input.data.list_val;
     const size_t n = items.size();
 
-    enum class Mode { UNKNOWN, I64, F64, STR, INVALID };
+    enum class Mode { UNKNOWN, I64, F64, BOOL, STR, INVALID };
     Mode mode = Mode::UNKNOWN;
 
     auto type_name = [](QValue::ValueType t) -> const char* {
@@ -942,21 +923,25 @@ inline QValue q_to_vector(QValue input) {
                 if (mode == Mode::UNKNOWN) mode = Mode::F64;
                 else if (mode != Mode::F64) mode = Mode::INVALID;
                 break;
-                case QValue::VAL_STRING:
-                    if (mode == Mode::UNKNOWN) mode = Mode::STR;
-                    else if (mode != Mode::STR) mode = Mode::INVALID;
-                    break;
+            case QValue::VAL_BOOL:
+                if (mode == Mode::UNKNOWN) mode = Mode::BOOL;
+                else if (mode != Mode::BOOL) mode = Mode::INVALID;
+                break;
+            case QValue::VAL_STRING:
+                if (mode == Mode::UNKNOWN) mode = Mode::STR;
+                else if (mode != Mode::STR) mode = Mode::INVALID;
+                break;
             default:
-                    q_runtime_reportf("runtime error: to_vector only supports int/float/str lists (null allowed), got %s at index %zu\n", type_name(item.type), i);
+                q_runtime_reportf("runtime error: to_vector only supports int/float/bool/str lists (null allowed), got %s at index %zu\n", type_name(item.type), i);
                 mode = Mode::INVALID;
                 break;
         }
 
         if (mode == Mode::INVALID) {
-                if (item.type == QValue::VAL_INT || item.type == QValue::VAL_FLOAT || item.type == QValue::VAL_STRING) {
-                    q_runtime_reportf("runtime error: to_vector requires homogeneous element types (all int, all float, or all str)\n");
+            if (item.type == QValue::VAL_INT || item.type == QValue::VAL_FLOAT || item.type == QValue::VAL_BOOL || item.type == QValue::VAL_STRING) {
+                q_runtime_reportf("runtime error: to_vector requires homogeneous element types (all int, all float, all bool, or all str)\n");
             }
-                    std::exit(1);
+            std::exit(1);
         }
     }
 
@@ -1018,6 +1003,33 @@ inline QValue q_to_vector(QValue input) {
         return out;
     }
 
+    if (mode == Mode::BOOL) {
+        QValue out = qv_vector_bool(static_cast<int>(n));
+        QVecU8& values = std::get<QVecU8>(out.data.vector_val->storage);
+        values.resize(n, 0);
+        out.data.vector_val->count = n;
+
+        bool hasNulls = false;
+        for (size_t i = 0; i < n; i++) {
+            const QValue& item = items[i];
+            if (item.type == QValue::VAL_NULL) {
+                hasNulls = true;
+                continue;
+            }
+            values[i] = static_cast<uint8_t>(item.data.bool_val ? 1 : 0);
+        }
+
+        if (hasNulls) {
+            q_vec_ensure_null_mask(*out.data.vector_val);
+            for (size_t i = 0; i < n; i++) {
+                if (items[i].type == QValue::VAL_NULL) {
+                    out.data.vector_val->nulls.is_null[i] = 1;
+                }
+            }
+        }
+        return out;
+    }
+
     if (mode == Mode::STR) {
         std::vector<std::string> values(n);
         bool hasNulls = false;
@@ -1028,7 +1040,7 @@ inline QValue q_to_vector(QValue input) {
                 continue;
             }
             if (item.type != QValue::VAL_STRING || item.data.string_val == nullptr) {
-                q_runtime_reportf("runtime error: to_vector requires homogeneous element types (all int, all float, or all str)\n");
+                q_runtime_reportf("runtime error: to_vector requires homogeneous element types (all int, all float, all bool, or all str)\n");
                 std::exit(1);
             }
             values[i] = item.data.string_val;

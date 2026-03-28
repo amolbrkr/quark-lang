@@ -124,6 +124,9 @@ func (a *Analyzer) resolveMethodCall(
 				if methodName == "to_vector" {
 					return methodCallResult{returnType: a.inferBuiltinReturnType("vfrom_list", []Type{receiverType}, errorNode), resolved: true}
 				}
+				if methodName == "astype" {
+					return methodCallResult{returnType: inferAstypeReturnType(receiverType, argNodes), resolved: true}
+				}
 				if methodName == "to_list" {
 					return methodCallResult{returnType: inferToListReturnType(receiverType), resolved: true}
 				}
@@ -355,6 +358,25 @@ func inferToListReturnType(receiverType Type) Type {
 		return &ListType{ElementType: TypeAny}
 	}
 	return &ListType{ElementType: vec.ElementType}
+}
+
+func inferAstypeReturnType(receiverType Type, argNodes []*ast.TreeNode) Type {
+	if _, ok := receiverType.(*VectorType); !ok {
+		return TypeAny
+	}
+	if len(argNodes) == 0 || argNodes[0] == nil || argNodes[0].Token == nil || argNodes[0].Token.Type != token.STRING {
+		return &VectorType{ElementType: TypeAny}
+	}
+	switch argNodes[0].Token.Literal {
+	case "f64":
+		return &VectorType{ElementType: TypeFloat}
+	case "i64":
+		return &VectorType{ElementType: TypeInt}
+	case "bool":
+		return &VectorType{ElementType: TypeBool}
+	default:
+		return &VectorType{ElementType: TypeAny}
+	}
 }
 
 func (a *Analyzer) analyzePipe(node *ast.TreeNode) Type {
@@ -592,8 +614,10 @@ func refineMethodReturnType(catalogReturn Type, receiverType Type, methodName st
 		switch methodName {
 		case "get":
 			return vecType.ElementType
-		case "fillna", "astype":
+		case "fillna":
 			return receiverType
+		case "astype":
+			return &VectorType{ElementType: TypeAny}
 		case "to_list":
 			return &ListType{ElementType: vecType.ElementType}
 		}

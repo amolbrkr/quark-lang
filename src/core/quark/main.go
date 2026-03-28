@@ -301,6 +301,40 @@ func printDiagnostics(diags []diagnostics.Diagnostic) {
 	}
 }
 
+// buildClangArgs returns the common clang++ compile flags used by both
+// `quark build` and `quark run`.
+//
+// Optimization policy:
+// - Always use -O3 for release-like codegen performance.
+// - Keep x86-64-v3 tuning on amd64 as currently intended by the project.
+//
+// Diagnostics policy:
+// - Force colored diagnostics for readability.
+// - Raise error limit so generated C++ failures don't truncate too early.
+// - Suppress deprecated-declaration noise only on Windows (MSVC CRT shims).
+func buildClangArgs(runtimeInclude string, lto bool) []string {
+	args := []string{"-std=c++17", "-O3", fmt.Sprintf("-I%s", runtimeInclude)}
+
+	if runtime.GOARCH == "amd64" {
+		args = append(args, "-march=x86-64-v3")
+	}
+
+	args = append(args,
+		"-fcolor-diagnostics",
+		"-ferror-limit=20",
+	)
+
+	if runtime.GOOS == "windows" {
+		args = append(args, "-Wno-deprecated-declarations")
+	}
+
+	if lto {
+		args = append(args, "-flto")
+	}
+
+	return args
+}
+
 // resolveImports runs the module loader on the parsed AST to splice in external file imports.
 // Returns true if successful, false if there were errors (printed to stderr).
 func resolveImports(tree *ast.TreeNode, filename string) bool {
@@ -542,23 +576,8 @@ func runBuild(filename string, output string, useGC bool, lto bool) {
 
 	// Get runtime include path
 	runtimeInclude := getRuntimeIncludePath()
-	includePath := fmt.Sprintf("-I%s", runtimeInclude)
-
 	// Build compilation arguments
-	args := []string{"-std=c++17", "-O3", includePath}
-	if runtime.GOARCH == "amd64" {
-		args = append(args, "-march=x86-64-v3")
-	}
-	if compiler == "clang++" {
-		args = append(args,
-			"-Rpass=loop-vectorize",
-			"-Rpass-missed=loop-vectorize",
-			"-Rpass-analysis=loop-vectorize",
-		)
-	}
-	if lto {
-		args = append(args, "-flto")
-	}
+	args := buildClangArgs(runtimeInclude, lto)
 	var gcLibPath string
 	// Add GC flags if enabled
 	if useGC {
@@ -689,23 +708,8 @@ func runRun(filename string, debug bool, useGC bool, lto bool) {
 
 	// Get runtime include path
 	runtimeInclude := getRuntimeIncludePath()
-	includePath := fmt.Sprintf("-I%s", runtimeInclude)
-
 	// Build compilation arguments
-	args := []string{"-std=c++17", "-O3", includePath}
-	if runtime.GOARCH == "amd64" {
-		args = append(args, "-march=x86-64-v3")
-	}
-	if compiler == "clang++" {
-		args = append(args,
-			"-Rpass=loop-vectorize",
-			"-Rpass-missed=loop-vectorize",
-			"-Rpass-analysis=loop-vectorize",
-		)
-	}
-	if lto {
-		args = append(args, "-flto")
-	}
+	args := buildClangArgs(runtimeInclude, lto)
 	var gcLibPath string
 	// Add GC flags if enabled
 	if useGC {

@@ -348,8 +348,11 @@ func (p *Parser) isConstantDefault(node *ast.TreeNode) bool {
 			return p.isConstantDefault(node.Children[0]) && p.isConstantDefault(node.Children[1])
 		}
 	}
-	// Empty list
+	// Empty list or empty dict
 	if node.NodeType == ast.ListNode && len(node.Children) == 0 {
+		return true
+	}
+	if node.NodeType == ast.DictNode && len(node.Children) == 0 {
 		return true
 	}
 	return false

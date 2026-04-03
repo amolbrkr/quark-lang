@@ -349,8 +349,10 @@ func CanAssign(dstType, srcType Type) bool {
 		_, isDict := dstType.(*DictType)
 		_, isFunc := dstType.(*FunctionType)
 		_, isResult := dstType.(*ResultType)
+		_, isStruct := dstType.(*StructType)
+		_, isVec := dstType.(*VectorType)
 		isResource := dstType.Equals(TypeResource) || dstType.Equals(TypeFileHandle)
-		return isList || isDict || isFunc || isResult || isResource
+		return isList || isDict || isFunc || isResult || isStruct || isVec || isResource
 	}
 	// Int can be promoted to float
 	if dstType.Equals(TypeFloat) && srcType.Equals(TypeInt) {

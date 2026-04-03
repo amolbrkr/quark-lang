@@ -8,46 +8,72 @@ import (
 // predeclareStructTypes scans top-level children for struct definitions and
 // registers them in the structTypes map so they can be referenced by type
 // annotations and struct literals before the definition is fully analyzed.
+//
+// Two sub-passes are used so that field type annotations can reference any
+// struct in the same compilation unit (including self-references and mutual
+// references between structs defined in any order):
+//
+//  1. Register every struct name with placeholder TypeAny fields.
+//  2. Resolve all field types now that the full structTypes map is populated.
 func (a *Analyzer) predeclareStructTypes(children []*ast.TreeNode) {
+	// Pass 1: register names and build field skeletons
 	for _, child := range children {
-		if child.NodeType == ast.StructDefNode {
-			name := child.TokenLiteral()
-			if _, exists := a.structTypes[name]; exists {
-				a.errorAt(child, "struct '%s' already defined", name)
+		if child.NodeType != ast.StructDefNode {
+			continue
+		}
+		name := child.TokenLiteral()
+		if _, exists := a.structTypes[name]; exists {
+			a.errorAt(child, "struct '%s' already defined", name)
+			continue
+		}
+		fields := make([]StructField, 0, len(child.Children))
+		seenFields := make(map[string]bool)
+		for _, fieldNode := range child.Children {
+			if fieldNode.NodeType != ast.StructFieldNode {
 				continue
 			}
-			// Build field list from children (StructFieldNode nodes)
-			fields := make([]StructField, 0, len(child.Children))
-			seenFields := make(map[string]bool)
-			for _, fieldNode := range child.Children {
-				if fieldNode.NodeType != ast.StructFieldNode {
-					continue
-				}
-				fieldName := fieldNode.TokenLiteral()
-				if seenFields[fieldName] {
-					a.errorAt(fieldNode, "duplicate field '%s' in struct '%s'", fieldName, name)
-					continue
-				}
-				seenFields[fieldName] = true
-
-				var fieldType Type = TypeAny
-				if len(fieldNode.Children) > 0 && fieldNode.Children[0].NodeType == ast.TypeNode {
-					fieldType = a.resolveTypeNode(fieldNode.Children[0])
-				}
-
-				sf := StructField{
-					Name:       fieldName,
-					Type:       fieldType,
-					HasDefault: fieldNode.DefaultValue != nil,
-				}
-				if fieldNode.DefaultValue != nil {
-					sf.DefaultNode = fieldNode.DefaultValue
-				}
-				fields = append(fields, sf)
+			fieldName := fieldNode.TokenLiteral()
+			if seenFields[fieldName] {
+				a.errorAt(fieldNode, "duplicate field '%s' in struct '%s'", fieldName, name)
+				continue
 			}
+			seenFields[fieldName] = true
+			sf := StructField{
+				Name:       fieldName,
+				Type:       TypeAny, // resolved in pass 2
+				HasDefault: fieldNode.DefaultValue != nil,
+			}
+			if fieldNode.DefaultValue != nil {
+				sf.DefaultNode = fieldNode.DefaultValue
+			}
+			fields = append(fields, sf)
+		}
+		st := &StructType{Name: name, Fields: fields}
+		a.structTypes[name] = st
+	}
 
-			st := &StructType{Name: name, Fields: fields}
-			a.structTypes[name] = st
+	// Pass 2: resolve field types now that all struct names are registered
+	for _, child := range children {
+		if child.NodeType != ast.StructDefNode {
+			continue
+		}
+		name := child.TokenLiteral()
+		st := a.structTypes[name]
+		if st == nil {
+			continue // was skipped above due to duplicate
+		}
+		fieldIdx := 0
+		for _, fieldNode := range child.Children {
+			if fieldNode.NodeType != ast.StructFieldNode {
+				continue
+			}
+			if fieldIdx >= len(st.Fields) {
+				break
+			}
+			if len(fieldNode.Children) > 0 && fieldNode.Children[0].NodeType == ast.TypeNode {
+				st.Fields[fieldIdx].Type = a.resolveTypeNode(fieldNode.Children[0])
+			}
+			fieldIdx++
 		}
 	}
 }
@@ -63,17 +89,20 @@ func (a *Analyzer) analyzeStructDef(node *ast.TreeNode) Type {
 		return TypeVoid
 	}
 
-	// Validate default expressions
-	for i, fieldNode := range node.Children {
+	// Validate default expressions.
+	// Use a separate fieldIdx so non-StructFieldNode children don't shift the index.
+	fieldIdx := 0
+	for _, fieldNode := range node.Children {
 		if fieldNode.NodeType != ast.StructFieldNode {
 			continue
 		}
-		if fieldNode.DefaultValue != nil && i < len(st.Fields) {
+		if fieldNode.DefaultValue != nil && fieldIdx < len(st.Fields) {
 			defaultType := a.Analyze(fieldNode.DefaultValue)
-			if !isUnknownType(defaultType) && !IsErrorType(defaultType) && !CanAssign(st.Fields[i].Type, defaultType) {
-				a.errorAt(fieldNode, "default value type '%s' is not compatible with field type '%s'", defaultType.String(), st.Fields[i].Type.String())
+			if !isUnknownType(defaultType) && !IsErrorType(defaultType) && !CanAssign(st.Fields[fieldIdx].Type, defaultType) {
+				a.errorAt(fieldNode, "default value type '%s' is not compatible with field type '%s'", defaultType.String(), st.Fields[fieldIdx].Type.String())
 			}
 		}
+		fieldIdx++
 	}
 
 	return TypeVoid

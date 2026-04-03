@@ -51,6 +51,13 @@ inline void print_qvalue(QValue v) {
                 printf("<struct>");
             }
             break;
+        case QValue::VAL_TABLE:
+            if (v.data.table_val && v.data.table_val->def) {
+                printf("table<%s>[%d rows]", v.data.table_val->def->name, v.data.table_val->nrows);
+            } else {
+                printf("<table>");
+            }
+            break;
         default:
             printf("<value>");
             break;

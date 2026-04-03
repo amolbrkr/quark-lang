@@ -265,75 +265,43 @@ inline const char* q_fmt_dict(QDict* dct, int64_t max_rows, bool show_index) {
 
 // ============================================================
 // q_fmt_table(df, n, show_index) -> str
+//   df must be a table value.
 // ============================================================
-inline const char* q_fmt_table(QDict* df, int64_t max_rows, bool show_index) {
-    if (!df) {
-        q_runtime_reportf("runtime error: fmt.table() expects dict (dataframe)\n");
+inline const char* q_fmt_table(QValue df, int64_t max_rows, bool show_index) {
+    if (df.type != QValue::VAL_TABLE || !df.data.table_val) {
+        q_runtime_reportf("runtime error: fmt.table() expects table\n");
         std::exit(1);
     }
 
-    std::vector<std::string> col_names;
-    for (const auto& kv : df->entries) {
-        col_names.push_back(std::string(kv.first.c_str()));
+    QTable* tbl   = df.data.table_val;
+    size_t nrows  = static_cast<size_t>(tbl->nrows);
+    size_t ncols  = static_cast<size_t>(tbl->ncols);
+
+    std::vector<std::string> col_names(ncols);
+    for (size_t c = 0; c < ncols; c++) {
+        col_names[c] = tbl->def->field_names[c];
     }
 
-    if (col_names.empty()) {
-        return q_strdup("[empty dataframe]");
-    }
-
-    std::sort(col_names.begin(), col_names.end());
-
-    size_t nrows = 0;
-    for (const auto& cname : col_names) {
-        QValue col = q_dict_get(qv_dict_ptr(df), qv_string(cname.c_str()));
-        size_t col_len = 0;
-        if (col.type == QValue::VAL_VECTOR && col.data.vector_val) {
-            col_len = col.data.vector_val->count;
-        } else if (col.type == QValue::VAL_LIST && col.data.list_val) {
-            col_len = col.data.list_val->size();
-        } else {
-            q_runtime_reportf("runtime error: fmt.table() column '%s' must be vector or list\n",
-                              cname.c_str());
-            std::exit(1);
-        }
-        if (nrows == 0) {
-            nrows = col_len;
-        } else if (col_len != nrows) {
-            q_runtime_reportf("runtime error: fmt.table() column '%s' has length %zu, expected %zu\n",
-                              cname.c_str(), col_len, nrows);
-            std::exit(1);
-        }
-    }
-
-    size_t ncols = col_names.size();
     std::vector<std::vector<std::string>> cells(ncols, std::vector<std::string>(nrows));
     std::vector<bool> col_numeric(ncols, false);
 
     for (size_t c = 0; c < ncols; c++) {
-        QValue col = q_dict_get(qv_dict_ptr(df), qv_string(col_names[c].c_str()));
-        bool numeric = false;
-
-        if (col.type == QValue::VAL_VECTOR && col.data.vector_val) {
-            const QVector& qv = *col.data.vector_val;
-            numeric = (qv.type == QVector::Type::F64 || qv.type == QVector::Type::I64);
+        QValue colval = tbl->cols[c];
+        if (colval.type == QValue::VAL_VECTOR && colval.data.vector_val) {
+            const QVector& qv = *colval.data.vector_val;
+            col_numeric[c] = (qv.type == QVector::Type::F64 || qv.type == QVector::Type::I64);
             for (size_t r = 0; r < nrows; r++) {
-                if (q_vec_is_null_at(qv, r)) {
-                    cells[c][r] = "NA";
-                    continue;
-                }
+                if (q_vec_is_null_at(qv, r)) { cells[c][r] = "NA"; continue; }
                 char buf[64];
                 switch (qv.type) {
                     case QVector::Type::F64:
                         std::snprintf(buf, sizeof(buf), "%g", std::get<QVecF64>(qv.storage)[r]);
-                        cells[c][r] = buf;
-                        break;
+                        cells[c][r] = buf; break;
                     case QVector::Type::I64:
                         std::snprintf(buf, sizeof(buf), "%lld", (long long)std::get<QVecI64>(qv.storage)[r]);
-                        cells[c][r] = buf;
-                        break;
+                        cells[c][r] = buf; break;
                     case QVector::Type::BOOL:
-                        cells[c][r] = std::get<QVecU8>(qv.storage)[r] ? "true" : "false";
-                        break;
+                        cells[c][r] = std::get<QVecU8>(qv.storage)[r] ? "true" : "false"; break;
                     case QVector::Type::STR: {
                         const auto& ss = std::get<QStringStorage>(qv.storage);
                         uint32_t s = ss.offsets[r], e = ss.offsets[r+1];
@@ -343,13 +311,8 @@ inline const char* q_fmt_table(QDict* df, int64_t max_rows, bool show_index) {
                 }
             }
         } else {
-            const QList& lst = *col.data.list_val;
-            for (size_t r = 0; r < nrows; r++) {
-                cells[c][r] = q_fmt_cell(lst[r]);
-                if (q_fmt_is_numeric(lst[r])) numeric = true;
-            }
+            for (size_t r = 0; r < nrows; r++) cells[c][r] = "?";
         }
-        col_numeric[c] = numeric;
     }
 
     std::vector<size_t> col_w(ncols);
@@ -376,20 +339,13 @@ inline const char* q_fmt_table(QDict* df, int64_t max_rows, bool show_index) {
     std::string out;
 
     auto hline = [&]() {
-        if (show_index) {
-            out += "+" + std::string(idx_w + 2, '-');
-        }
-        for (size_t c = 0; c < ncols; c++) {
-            out += "+" + std::string(col_w[c] + 2, '-');
-        }
+        if (show_index) out += "+" + std::string(idx_w + 2, '-');
+        for (size_t c = 0; c < ncols; c++) out += "+" + std::string(col_w[c] + 2, '-');
         out += "+\n";
     };
 
     auto print_data_row = [&](size_t r) {
-        if (show_index) {
-            std::string idx_str = std::to_string(r);
-            out += "| " + q_fmt_pad(idx_str, idx_w, true) + " ";
-        }
+        if (show_index) out += "| " + q_fmt_pad(std::to_string(r), idx_w, true) + " ";
         for (size_t c = 0; c < ncols; c++) {
             out += "| " + q_fmt_pad(cells[c][r], col_w[c], col_numeric[c]) + " ";
         }
@@ -397,27 +353,17 @@ inline const char* q_fmt_table(QDict* df, int64_t max_rows, bool show_index) {
     };
 
     hline();
-    if (show_index) {
-        out += "| " + q_fmt_pad("#", idx_w) + " ";
-    }
-    for (size_t c = 0; c < ncols; c++) {
-        out += "| " + q_fmt_pad(col_names[c], col_w[c]) + " ";
-    }
+    if (show_index) out += "| " + q_fmt_pad("#", idx_w) + " ";
+    for (size_t c = 0; c < ncols; c++) out += "| " + q_fmt_pad(col_names[c], col_w[c]) + " ";
     out += "|\n";
     hline();
 
     for (size_t r = 0; r < head_n; r++) print_data_row(r);
     if (truncated) {
-        size_t omitted = nrows - head_n - tail_n;
-        if (show_index) {
-            out += "| " + q_fmt_pad("...", idx_w) + " ";
-        }
-        for (size_t c = 0; c < ncols; c++) {
-            out += "| " + q_fmt_pad("...", col_w[c]) + " ";
-        }
+        if (show_index) out += "| " + q_fmt_pad("...", idx_w) + " ";
+        for (size_t c = 0; c < ncols; c++) out += "| " + q_fmt_pad("...", col_w[c]) + " ";
         out += "|\n";
         for (size_t r = nrows - tail_n; r < nrows; r++) print_data_row(r);
-        (void)omitted;
     }
     hline();
 

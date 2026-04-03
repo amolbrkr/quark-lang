@@ -2619,7 +2619,7 @@ func (g *Generator) generateStructLiteral(node *ast.TreeNode) string {
 				value := g.generateExpr(defaultNode)
 				g.emitLine("%s_raw->fields[%d] = %s;", temp, i, value)
 			} else {
-				g.emitLine("%s_raw->fields[%d] = qv_null();", temp, i)
+				panicICEf("INV-STRUCT-DEFAULT", nil, "struct '%s' field '%s' has non-nil HasDefault but DefaultNode is not *ast.TreeNode", structName, field.Name)
 			}
 		}
 	}

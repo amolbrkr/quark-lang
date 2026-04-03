@@ -3,7 +3,7 @@ extern 'fmt.hpp'
 extern fn fmt_list(lst: list, n: int, show_index: bool) str as 'q_fmt_list'
 extern fn fmt_vector(vec: vector, n: int, show_index: bool) str as 'q_fmt_vector'
 extern fn fmt_dict(dct: dict, n: int, show_index: bool) str as 'q_fmt_dict'
-extern fn fmt_table(df: dict, n: int, show_index: bool) str as 'q_fmt_table'
+extern fn fmt_table(df: any, n: int, show_index: bool) str as 'q_fmt_table'
 
 module fmt:
     fn show_list(lst: list, n: int = 10, show_index: bool = true) str ->
@@ -15,7 +15,7 @@ module fmt:
     fn show_dict(dct: dict, n: int = 10, show_index: bool = true) str ->
         fmt_dict(dct, n, show_index)
 
-    fn table(df: dict, n: int = 20, show_index: bool = true) str ->
+    fn table(df: any, n: int = 20, show_index: bool = true) str ->
         fmt_table(df, n, show_index)
 
     fn head(lst: list, n: int = 5) str ->

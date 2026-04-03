@@ -28,8 +28,8 @@ inline bool either_float(const QValue& a, const QValue& b) {
 } // namespace quark
 
 inline const char* q_type_name_arith(QValue::ValueType t) {
-    static const char* type_names[] = {"int", "float", "str", "bool", "null", "list", "vector", "dict", "fn", "result"};
-    return (t >= 0 && t <= 9) ? type_names[t] : "unknown";
+    static const char* type_names[] = {"int", "float", "str", "bool", "null", "list", "vector", "dict", "fn", "result", "resource", "struct", "table"};
+    return (t >= 0 && t <= 12) ? type_names[t] : "unknown";
 }
 
 inline void q_arith_type_error(const char* op, QValue a, QValue b) {

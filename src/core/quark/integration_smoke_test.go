@@ -358,6 +358,28 @@ func TestSmokePrograms_Run(t *testing.T) {
 			),
 		},
 		{
+			name: "vector_soundness",
+			file: filepath.Join(testfilesDir, "smoke_vector_soundness.qrk"),
+			expected: join(
+				"== smoke: vector soundness ==",
+				"vector[f64]",
+				"13.5",
+				"vector[f64]",
+				"10.5",
+				"vector[f64]",
+				"vector[f64]",
+				"12",
+				"vector[bool]",
+				"2",
+				"vector[bool]",
+				"2",
+				"4",
+				"1",
+				"3",
+				"15",
+			),
+		},
+		{
 			name: "modules_error_graph",
 			file: filepath.Join(testfilesDir, "smoke_modules_error_graph.qrk"),
 			expected: join(
@@ -662,13 +684,10 @@ func TestFileBuiltins_V0(t *testing.T) {
 // runtime values and verifies (via GC_base) that object and internal storage
 // buffers land on the Boehm GC heap.
 func TestGCManagedSelfCheck(t *testing.T) {
-	// Locate a C++ compiler.
+	// Quark requires clang++.
 	compiler := "clang++"
 	if _, err := exec.LookPath("clang++"); err != nil {
-		compiler = "g++"
-		if _, err := exec.LookPath("g++"); err != nil {
-			t.Skip("skipping: no C++ compiler in PATH")
-		}
+		t.Skip("skipping: clang++ not found in PATH")
 	}
 
 	// Resolve runtime include and GC paths (same helpers the compiler uses).
@@ -705,12 +724,9 @@ int main() {
     l.data.list_val->push_back(qv_int(1));
     CHECK("list_buffer", l.data.list_val->data());
 
-	/* --- dict (object + key storage via gc_allocator) --- */
+	/* --- dict (object via gc_allocator; keys are plain std::string, not GC-managed) --- */
     QValue d = qv_dict();
     CHECK("dict_object", d.data.dict_val);
-	d = q_dict_set(d, qv_string("long_dictionary_key_that_forces_heap_allocation_1234567890"), qv_int(1));
-	auto dit = d.data.dict_val->entries.begin();
-	CHECK("dict_key_cstr", dit->first.c_str());
 
 	/* --- vectors: object + per-type storage buffers --- */
 	QValue vf = qv_vector(4);

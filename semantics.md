@@ -6,7 +6,7 @@ This document covers the runtime semantics, error behaviour, and design decision
 
 ## 1) Value Model
 
-Every runtime value carries one of ten types:
+Every runtime value carries one of eleven types:
 
 | Type | Payload | Notes |
 |------|---------|-------|
@@ -20,6 +20,7 @@ Every runtime value carries one of ten types:
 | `dict` | String-keyed map | Unordered |
 | `fn` | Function value | All functions are closures (even non-capturing ones) |
 | `result` | Tagged ok/err wrapper | Holds an arbitrary payload |
+| `resource` | Opaque external handle | Generational slot-based; currently used for file I/O |
 
 ### 1.1 Pass-by-value vs reference semantics
 
@@ -32,6 +33,12 @@ Every string-producing operation allocates a **fresh copy**. Strings are never s
 ### 1.3 Null
 
 `null` is a distinct type, not a zero-value of another type. It is used as the return value for missing keys, out-of-bounds reads, and void-returning builtins.
+
+### 1.4 Resources
+
+Resources are opaque handles to external state managed outside the Quark value system. The runtime uses a generational slot-based registry: each resource handle carries a slot index, generation counter, and kind tag. Operations on a closed or stale handle produce a runtime error. The `type()` builtin returns the resource's kind name (e.g., `"file_handle"`) rather than a generic `"resource"` string.
+
+Resources are currently used exclusively by the `std/io` stdlib module for file handles. User code cannot construct resources directly — they are created by builtin functions (e.g., `io.open()`) and consumed by others (e.g., `io.read()`, `io.close()`).
 
 ---
 
@@ -63,6 +70,7 @@ Truthiness governs all condition positions (`if`, `while`, ternary), the `and`/`
 | `dict` | non-empty |
 | `fn` | always true (for valid closures) |
 | `result` | payload is `ok` (not `err`) |
+| `resource` | handle is alive (not closed or stale) |
 
 ---
 
@@ -92,7 +100,20 @@ Any other type combination → runtime error.
 | `<` `<=` `>` `>=` | numeric×numeric | bool (with int→float promotion) |
 | `==` `!=` | any×any | bool |
 
-**Equality rules**: Same-type comparisons use natural equality. Cross-type int/float uses double comparison. All other cross-type comparisons return `false` (not an error). Lists, dicts, vectors, and functions are compared by pointer identity, not structural equality.
+**Equality rules**: Same-type comparisons use natural equality. Cross-type int/float uses double comparison. All other cross-type comparisons return `false` (not an error).
+
+Type-specific equality:
+
+| Type | `==` semantics |
+|------|---------------|
+| `int` | Value equality |
+| `float` | IEEE 754 equality (`NaN != NaN`) |
+| `bool` | Value equality |
+| `str` | Character-by-character content equality |
+| `null` | Always equal to `null` |
+| `resource` | Same slot, generation, and kind |
+| `list`, `dict`, `fn` | Always `false` — no pointer identity or structural comparison |
+| `vector` | Element-wise comparison producing `vector[bool]` (see §9.3) |
 
 ### 4.3 Logical operators
 
@@ -217,33 +238,135 @@ The scrutinee is evaluated once. For result patterns, the analyzer checks that t
 
 ### 9.1 Lists
 
+Language semantics:
+
 - Created with `list [a, b, c]` (keyword required).
-- Mutable: `.push()`, `.pop()`, `.set()`, `.insert()`, `.remove()`, `.reverse()` modify in place.
-- **Safe reads**: `.get(idx)` returns `null` on out-of-bounds.
-- **Unsafe writes**: `.set(idx, val)` and `.remove(idx)` are fatal on out-of-bounds.
-- Negative indexing: `-1` is last element, `-2` is second-to-last, etc.
-- `.slice(start, end)` uses half-open `[start, end)` semantics; negative indices and out-of-range values are clamped.
-- `range()` produces lists of integers (1, 2, or 3 argument forms).
+- Lists are heterogeneous and mutable.
+- Assignment is shallow for list values (aliases share the same underlying list data).
+- Negative indexing is supported where index-based methods are accepted (`-1` last item, `-2` second last, ...).
+
+Method/index behavior:
+
+| Operation | Semantics |
+|-----------|-----------|
+| `xs.get(i)` | Safe read. Returns `null` when out of bounds. |
+| `xs.set(i, v)` | In-place write. Fatal on out of bounds. |
+| `xs.insert(i, v)` | In-place insert. Index is clamped to `[0, len]` after negative-index adjustment. |
+| `xs.remove(i)` | Removes and returns element at index. Fatal on out of bounds. |
+| `xs.pop()` | Removes and returns last element. Fatal on empty list. |
+| `xs.slice(start, end)` | Returns new list with half-open `[start, end)`. Negative indices supported; bounds clamped. |
+| `xs.reverse()` | In-place reversal; returns the mutated list value. |
+| `xs.concat(ys)` | Returns a new list containing shallow-copied element values from both operands. |
+| `xs.enumerate()` | Returns `list[dict{index: int, value: any}]`. |
+
+`range()` and lists:
+
+- `range(end)`, `range(start, end)`, `range(start, end, step)` return `list[int]`.
+- Start/end/step accept numeric values; float arguments are truncated toward zero before iteration.
+- `step = 0` is a runtime error.
+
+Implementation details:
+
+- Runtime storage is a boxed dynamic array (`QList`, backed by C++ vector-like storage of `QValue`).
+- Most list methods mutate the existing storage; `slice` and `concat` allocate new list storage.
 
 ### 9.2 Dicts
 
-- Created with `dict { key: value }`. Keys in literals are identifiers converted to strings.
-- **String keys only** — enforced at runtime.
-- Dot syntax on values serves two purposes:
-  - **Key access**: `d.key` reads/writes dict entries
-  - **Method dispatch**: `d.get('key')`, `d.set('key', val)`, `d.keys()`, `d.values()`, `d.items()`
+Language semantics:
+
+- Created with `dict { key: value }`.
+- In dict literals, keys are identifiers and are converted to string literals by the parser.
+- Dict keys are strings at runtime.
+- Assignment is shallow for dict values (aliases share the same underlying map).
 - Missing keys return `null` (not an error).
 - Dicts are unordered.
 
+Access forms:
+
+| Form | Semantics |
+|------|-----------|
+| `d.key` | Static member-key read (key is the literal string `"key"`). |
+| `d.key = v` | Static member-key write (key is literal). |
+| `d.get(k)` | Dynamic-key read. Non-string keys are converted with `to_str` semantics first. |
+| `d.set(k, v)` | Dynamic-key write. Non-string keys are converted with `to_str` semantics first. |
+| `d.keys()` / `d.values()` / `d.items()` | Snapshot lists in unspecified key iteration order. |
+
+Additional rules:
+
+- `d['key']`-style index syntax is rejected by the analyzer; use dot access or dict methods.
+- Duplicate keys in a dict literal are compile-time errors.
+- Dot member access on `null` or non-dict values is a runtime error.
+
+Implementation details:
+
+- Runtime storage is a hash map (`std::unordered_map<string, QValue>` with GC-aware allocator for entries).
+- Ordering is intentionally unspecified; do not rely on `keys()/values()/items()` order.
+
 ### 9.3 Vectors
 
-Typed columnar arrays with four dtype variants: `f64` (default), `i64`, `bool`, `str`.
+Vectors are typed, 1D, columnar arrays with dtype `f64`, `i64`, `bool`, or `str`.
 
-- Element-wise arithmetic: `vec + vec`, `vec * scalar`, etc. Operands must have matching lengths (or one is a scalar).
-- Division of i64 vectors always produces f64 (same rationale as scalar division).
-- Comparison operators produce bool vectors.
-- Null support via a per-element null mask; `.fillna(value)` replaces nulls.
-- `list.to_vector()` converts a homogeneous list; `vec.to_list()` converts back.
+Construction and conversion:
+
+- `vector [ ... ]` literal requires homogeneous elements of `int`, `float`, `bool`, or `str`.
+- `list.to_vector()` accepts homogeneous lists of `int`, `float`, `bool`, or `str`; `null` elements are allowed.
+- `to_vector(vector_value)` returns a clone, not the same handle.
+- `vec.to_list()` materializes a list copy; null-mask entries become `null` list elements.
+
+Default dtype edge-cases (implementation-visible behavior):
+
+- Empty vector literal defaults to `vector[f64]`.
+- Empty list converted via `to_vector()` defaults to `vector[i64]`.
+
+Indexing and masking:
+
+| Form | Semantics |
+|------|-----------|
+| `vec.get(i)` or `vec[i]` where `i: int` | Scalar index read with negative index support. Out-of-bounds is fatal (unlike list `.get`). |
+| `vec[mask]` where `mask: vector[bool]` | Boolean mask filter. Returns a new vector of same dtype containing selected rows. Mask-null entries act as "not selected". |
+
+Arithmetic and comparison:
+
+- Arithmetic is element-wise for numeric vectors: vector-vector or vector-scalar.
+- Arithmetic requires numeric dtypes (`f64`/`i64`) and compatible sizes for vector-vector operations.
+- `+`, `-`, `*` on pure `i64` operands produce `i64`; mixed numeric operands promote to `f64`.
+- `/` always produces `f64` and is fatal on division by zero.
+- Comparison operators produce `vector[bool]`.
+    - `<`, `<=`, `>`, `>=` apply to numeric vectors/scalars.
+    - `==`, `!=` support numeric, bool, and string vector comparisons.
+
+Null semantics:
+
+- Vectors use a sidecar null mask (typed buffers do not store boxed null sentinels).
+- Arithmetic/comparison propagate nulls element-wise: if any input element at index `i` is null, output index `i` is null.
+- `fillna(value)` mutates in place and clears the null mask after replacement.
+
+Reductions:
+
+- `sum(vec)` accepts numeric and bool vectors and returns a `float`.
+- `min(vec)` / `max(vec)` accept numeric vectors and return a `float`.
+- Reductions skip null-marked elements.
+- All-null, non-empty vectors return `null` for `sum/min/max`.
+- `min/max` on empty vectors are fatal runtime errors.
+- `sum` on empty vectors returns `0.0`.
+
+Method behavior:
+
+| Method | Semantics |
+|--------|-----------|
+| `vec.fillna(v)` | In-place null replacement. `v` must be dtype-compatible. |
+| `vec.astype(dtype)` | Returns new vector cast to `"f64"`, `"i64"`, or `"bool"`; null mask is preserved. |
+| `vec.to_list()` | Returns list materialization of current vector contents. |
+
+Implementation details:
+
+- Storage is dtype-specialized contiguous memory:
+    - `f64`: `double[]`
+    - `i64`: `int64_t[]`
+    - `bool`: byte-packed as `uint8_t[]` (0/1)
+    - `str`: offset table + byte blob (`QStringStorage`)
+- Vector arithmetic/comparison/filtering create new vectors; they do not mutate input vectors.
+- `fillna` is the primary in-place vector data mutation operation.
 
 ---
 
@@ -275,6 +398,29 @@ The loader maintains a set of files currently being resolved. If a file appears 
 
 Files are loaded at most once per compilation. Subsequent imports of the same absolute path reuse the previously loaded AST.
 
+### 10.6 Extern functions (native C++ interop)
+
+Quark programs can call native C++ functions via `extern fn` declarations:
+
+```quark
+extern './math_ext.hpp'
+extern fn fast_sqrt(x: float) float as 'my_sqrt'
+```
+
+The `extern` source directive specifies a C++ header to include. The `extern fn` declaration maps a Quark-visible name to a C++ symbol. Parameters and return types must be explicitly annotated — the compiler generates unboxing/boxing code at call sites.
+
+Extern functions can also be declared as methods on existing types:
+
+```quark
+extern fn list.shuffle(seed: int) list as 'q_list_shuffle'
+```
+
+This registers a new method on the `list` type, callable via `my_list.shuffle(42)`.
+
+Supported parameter types: `int`, `float`, `bool`, `str`, `list`, `dict`, `vector`, `fn`, `any`. The compiler maps these to C++ types (`int64_t`, `double`, `bool`, `const char*`, `QList*`, `QDict*`, `QVector*`, `QClosure*`, `QValue`). Return types use the same mapping; the result is automatically boxed back to `QValue`.
+
+See `runtime/include/quark/ext/api.hpp` for the `qext` namespace available to extension authors.
+
 ---
 
 ## 11) Error Model
@@ -289,7 +435,7 @@ Reported by the parser, analyzer, or invariant checker. Multiple errors can be a
 |----------|---------|
 | **Syntax** | Missing tokens, malformed expressions, invalid default values |
 | **Scope** | Undefined identifiers, duplicate definitions, break/continue outside loops |
-| **Type mismatch** | Wrong argument types, arithmetic on non-numeric, non-bool conditions |
+| **Type mismatch** | Wrong argument types, arithmetic on non-numeric, invalid collection/index usage |
 | **Arity** | Too few or too many arguments to functions or builtins |
 | **Module** | Undefined modules, missing symbols, circular imports, missing files |
 | **Annotation** | Return type vs inferred type mismatch, default value vs parameter type mismatch |
@@ -327,6 +473,9 @@ All runtime errors are **fatal** — they print to stderr and exit. There are no
 | Non-string dict key | Fatal |
 | Dot-key access on non-dict (static key read/write) | Fatal |
 | Member access on null | Fatal |
+| Operation on closed/stale resource handle | Fatal |
+| Resource kind mismatch (e.g., passing non-file to file op) | Fatal |
+| `for` loop over non-iterable (not list, string, or vector) | Fatal |
 
 ### 11.4 Safe operations (return null instead of crashing)
 
@@ -369,7 +518,7 @@ The analyzer prevents assigning a `result`-typed value to a variable with a non-
 
 ### 13.1 Available types
 
-`int`, `float`, `str`, `bool`, `list`, `dict`, `vector`, `result`, `any`, `void`
+`int`, `float`, `str`, `bool`, `list`, `dict`, `vector`, `result`, `resource`, `any`, `void`
 
 There are **no generic types**. You cannot write `list[int]` or `dict[str, int]`.
 
@@ -396,9 +545,19 @@ The annotated type is checked against the analyzer's inferred return type for th
 ```
 x: int = 42
 r: result = ok 1
+v: any = 1
 ```
 
 The annotated type constrains future assignments. Assigning a value of incompatible type is a compile-time error.
+
+The `any` annotation is significant: it forces the variable to use boxed `QValue` storage even when the initial value is a scalar. This allows the variable to hold values of different types over its lifetime:
+
+```
+v: any = 1       // stored as QValue, not as a raw long long
+v = 'changed'    // legal — v can be reassigned to any type
+```
+
+Without the `any` annotation, the compiler may choose scalar storage (e.g., `long long` for `int`), which prevents reassignment to a different type.
 
 ---
 
@@ -451,3 +610,6 @@ For method calls, the receiver's type determines which method is resolved. See s
 | No generic type annotations | Keeps the type system simple; runtime is dynamically typed |
 | Result assignment restrictions | Guides users toward explicit error handling |
 | Fatal runtime errors (no exceptions) | Simple, predictable failure mode; no hidden control flow |
+| Lists/dicts/fns not equality-comparable | No pointer identity semantics; avoids false expectations about structural equality |
+| `any` annotation forces boxed storage | Allows a variable to change type across assignments; scalar tiering is an optimization the annotation opts out of |
+| Resources use generational handles | Detects use-after-close without relying on GC finalization; stale handles fail deterministically |

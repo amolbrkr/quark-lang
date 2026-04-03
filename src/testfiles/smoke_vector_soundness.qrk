@@ -1,0 +1,32 @@
+println('== smoke: vector soundness ==')
+
+a = vector [1, 2, 3]
+b = vector [1.5, 2.5, 3.5]
+println(type(a + b))
+println(sum(a + b))
+println(type(a + 1.5))
+println(sum(a + 1.5))
+
+vi = vector [1, 2, 3]
+vf = vi.astype('f64')
+println(type(vf))
+println(type(vf + vi))
+println(sum(vf + vi))
+
+vb = vector [true, false, true]
+println(type(vb))
+println(sum(vb))
+
+vb2 = list [true, false, null, true].to_vector()
+println(type(vb2))
+println(sum(vb2))
+
+vn = list [1, null, 3].to_vector()
+println(sum(vn))
+println(min(vn))
+println(max(vn))
+
+acc = 0
+for x in vector [1, 2, 3, 4, 5]:
+    acc = acc + x
+println(acc)

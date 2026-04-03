@@ -2390,16 +2390,19 @@ func (g *Generator) generateVarDecl(node *ast.TreeNode) string {
 		g.markCell(name)
 		return fmt.Sprintf("%s->value", cName)
 	}
+	declType := g.nodeType(node)
 	rhsType := g.nodeType(valueNode)
-	if tier := nativeCType(rhsType); tier != "" {
-		rawValue, rawTier := g.scalarExpr(valueNode)
-		if rawTier == "" {
-			rawValue = unboxForTier(value, tier, nil)
+	if declType == nil || !declType.Equals(types.TypeAny) {
+		if tier := nativeCType(rhsType); tier != "" {
+			rawValue, rawTier := g.scalarExpr(valueNode)
+			if rawTier == "" {
+				rawValue = unboxForTier(value, tier, nil)
+			}
+			g.emitLine("%s %s = %s;", tier, cName, rawValue)
+			g.declaredVars[name] = true
+			g.markTier(name, tier)
+			return cName
 		}
-		g.emitLine("%s %s = %s;", tier, cName, rawValue)
-		g.declaredVars[name] = true
-		g.markTier(name, tier)
-		return cName
 	}
 	g.emitLine("QValue %s = %s;", cName, value)
 	g.declaredVars[name] = true

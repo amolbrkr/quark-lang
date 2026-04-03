@@ -247,7 +247,7 @@ println(type(v))  // vector[i64]
 - `.push` and `.insert` return the modified list; reassign to update the variable: `xs = xs.push(val)`
 - `.get` out-of-bounds returns `null`; `.set`, `.insert`, `.remove` with invalid args are runtime errors
 - `.join` coerces non-string elements via `to_str`
-- `.to_vector` requires all elements to be the same type (`int`, `float`, or `str`)
+- `.to_vector` requires all elements to be the same type (`int`, `float`, `bool`, or `str`)
 
 ---
 
@@ -358,10 +358,11 @@ println(back.get(0))          // 1
 ```
 
 **Notes:**
-- Vector literals must be homogeneous (`int`, `float`, or `str`)
+- Vector literals must be homogeneous (`int`, `float`, `bool`, or `str`)
 - `.to_vector()` on a list applies the same homogeneity rule
 - Numeric vector arithmetic (`+`, `-`, `*`, `/`) requires numeric vectors
 - `sum` supports `vector[bool]` (true=1, false=0)
+- `sum`, `min`, and `max` skip null entries in vectors; all-null reductions return `null`
 
 ---
 

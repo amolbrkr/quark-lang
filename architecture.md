@@ -85,10 +85,10 @@ Walks the annotated AST and emits C++17 code using the runtime headers.
 | Tier | C++ type | Condition |
 |------|----------|-----------|
 | `QCell*` | heap reference cell | captured by any nested lambda; `->value` for reads/writes |
-| `long long` | native int | not captured + static type `int` |
-| `double` | native float | not captured + static type `float` |
-| `bool` | native bool | not captured + static type `bool` |
-| `QValue` | tagged union | not captured + unknown/any/composite type |
+| `long long` | native int | not captured + static type `int` + no `any` annotation |
+| `double` | native float | not captured + static type `float` + no `any` annotation |
+| `bool` | native bool | not captured + static type `bool` + no `any` annotation |
+| `QValue` | tagged union | not captured + unknown/any/composite type, or `any`-annotated |
 
 Closure captures received from an enclosing scope (extracted from `_cl->captures[i]`) are always `QCell*` — the cell is shared with the outer scope regardless of type.
 
@@ -100,6 +100,8 @@ Codegen tracks storage choices in `cellVars` (names stored as `QCell*`) and `var
 - `DispatchBuiltin` → `q_print(arg)` (direct C++ call)
 - `DispatchDirect` → `quark_foo(nullptr, arg)` (known function, no closure)
 - `DispatchClosure` → `q_call1(val, arg)` (dynamic dispatch through QClosure)
+- `DispatchExtern` → `qei_sqrt(q_as_float(arg))` (unbox args, call native, box return)
+- `DispatchNative` → `quark_foo(raw_arg)` (native C++ types, with QValue thunk for first-class use)
 
 If codegen encounters an unexpected dispatch/runtime-symbol invariant break, it terminates with an internal compiler error (`INV-*`) rather than emitting fallback runtime behavior.
 
@@ -111,7 +113,7 @@ If codegen encounters an unexpected dispatch/runtime-symbol invariant break, it 
 - **Pipe**: `x | f(a)` → emits `f` call with `x` prepended to args
 - **Default injection**: Missing trailing args filled from DefaultNodes in the CallPlan
 - **Lambdas**: Emitted as top-level C++ functions with closure allocation at the capture site
-- **for loops**: Lowered to index-based iteration (`q_iter_get` with incrementing counter); loop variable uses scalar tier when the iterable's element type is statically known
+- **for loops**: Lowered to index-based iteration (`q_iter_get` with incrementing counter); loop variable uses scalar tier when the iterable's element type is statically known. `range()` calls are lowered to raw C++ loops. Vector iteration has a fast path (see §9).
 - **if/while**: Conditions wrapped in `q_condition_bool()` for strict-bool enforcement
 - **when**: Lowered to a chain of if/else with result payload extraction; pattern bindings use `isCaptured` to choose `QCell*` vs `QValue`
 
@@ -133,10 +135,11 @@ If codegen encounters an unexpected dispatch/runtime-symbol invariant break, it 
 
 ### 1.7 C++ Compiler → Binary
 
-The generated C++ is compiled with clang++ (preferred) or g++ using:
+The generated C++ is compiled with clang++ (g++ is not supported due to `gc_allocator` / `std::hash` incompatibilities):
 - `-std=c++17 -O3 -march=x86-64-v3` (on amd64)
 - `-DQUARK_USE_GC` + Boehm GC include/link flags
-- Optional `-flto` for link-time optimization
+- `-Wno-deprecated-declarations` on Windows
+- `-lm` on non-Windows
 
 ---
 
@@ -264,16 +267,19 @@ The `CallPlan` (`ir/call.go`) freezes call semantics after analysis so codegen d
 
 ```go
 type CallPlan struct {
-    Kind            CallKind       // CallBuiltin | CallFunctionValue
-    CalleeName      string
-    MinArity        int
-    MaxArity        int
-    Dispatch        DispatchMode   // DispatchBuiltin | DispatchDirect | DispatchClosure
-    RuntimeSymbol   string         // C++ symbol (e.g., "q_upper", "quark_myfunc")
-    DefaultNodes    []*TreeNode    // Trailing default args to inject
-    IsMethod        bool           // True for x.method(args)
-    ReceiverNode    *ast.TreeNode  // The receiver expression
-    ReceiverTypeKey string         // builtins.TypeKey of receiver
+    Kind              CallKind       // CallBuiltin | CallFunctionValue
+    CalleeName        string
+    MinArity          int
+    MaxArity          int
+    Dispatch          DispatchMode   // see below
+    RuntimeSymbol     string         // C++ symbol (e.g., "q_upper", "quark_myfunc", "qei_sqrt")
+    DefaultNodes      []*TreeNode    // Trailing default args to inject
+    IsMethod          bool           // True for x.method(args)
+    ReceiverNode      *ast.TreeNode  // The receiver expression
+    ReceiverTypeKey   string         // builtins.TypeKey of receiver
+    NativeParamTypes  []string       // C++ types per param (extern/native dispatch)
+    NativeReturnType  string         // C++ return type (extern/native dispatch)
+    NativeReceiverType string        // C++ receiver type for extern methods
 }
 ```
 
@@ -281,6 +287,8 @@ type CallPlan struct {
 - `DispatchBuiltin` — Direct call to `q_*` runtime function
 - `DispatchDirect` — Direct call to `quark_*` user function (nullptr closure)
 - `DispatchClosure` — Dynamic call through `q_call*` (dereferences QClosure)
+- `DispatchExtern` — Call to a native C++ function declared via `extern fn`. Args are unboxed from `QValue` to native C++ types (`int64_t`, `double`, `bool`, `const char*`, `QList*`, `QDict*`, `QVector*`, `QClosure*`) at the call site; the return value is boxed back. A QValue-convention thunk is also generated so extern functions can be stored as first-class values.
+- `DispatchNative` — Fully-typed user function (all params + return annotated with scalar types). Codegen emits both a native C++ signature (taking `int64_t`/`double`/`bool`/`const char*`) and a QValue-convention thunk for first-class use.
 
 ---
 
@@ -307,3 +315,140 @@ Methods are indexed by `(ReceiverType, methodName)` pair. Free functions are ind
 2. Implement the C++ function in `runtime/include/quark/builtins/*.hpp` with `q_` prefix
 3. Analyzer and codegen pick it up automatically via the catalog
 4. Add a smoke test in `src/testfiles/smoke_*.qrk`
+
+---
+
+## 7) Extern Function System
+
+The extern fn system allows Quark programs to call native C++ functions. See semantics.md §10.6 for the language-level syntax.
+
+### Pipeline flow
+
+1. **Parser**: Produces `ExternSourceNode` (header path) and `ExternFnNode` (function declaration with `ExternSymbol` and `ExternReceiver` fields).
+2. **Loader**: Rewrites `ExternSourceNode` paths to absolute paths so codegen can emit `#include "absolute/path.hpp"` directly.
+3. **Analyzer** (`analyzeExternFn`): Maps Quark type annotations to C++ types via `quarkTypeToNativeCType`. Registers free functions in `builtins` + `externFns[name]`. Registers methods in `methods[receiverKey][methodName]` + `externFns["type.method"]`. Produces a prototype `CallPlan` with `DispatchExtern`.
+4. **Codegen**: At call sites, unboxes each argument via `q_as_int`, `q_as_float`, etc. Boxes the return value back to `QValue`. Also emits a QValue-convention thunk so the function can be passed as a first-class value.
+
+### Extension author API (`ext/api.hpp`)
+
+The `qext` namespace provides safe helpers for C++ extension authors:
+
+| Category | Functions |
+|----------|----------|
+| Memory | `qext::malloc`, `qext::malloc_atomic`, `qext::strdup` |
+| Boxing | `qext::box(int64_t)`, `qext::box(double)`, `qext::box(bool)`, `qext::box(const char*)`, `qext::box(QVector*)`, `qext::box(QList*)`, `qext::box(QDict*)`, `qext::null_val()` |
+| Unboxing | `qext::as_int`, `qext::as_float`, `qext::as_bool`, `qext::as_str`, `qext::as_vector`, `qext::as_list`, `qext::as_dict`, `qext::as_closure` |
+| Vectors | `qext::as_f64`, `qext::as_i64`, `qext::as_bool_vec` (and `_mut` variants), `qext::null_mask`, `qext::vec_size`, `qext::vec_dtype`, `qext::new_f64`, `qext::new_i64`, `qext::new_bool_vec` |
+| Dict | `qext::dict_get`, `qext::dict_set`, `qext::dict_size`, `qext::dict_has` |
+| Calls | `qext::call(fn, ...)` overloaded for 0-3 QValue args |
+| Error | `qext::panic`, `qext::panicf` |
+
+---
+
+## 8) Resource System
+
+Opaque handles for external state (currently file I/O only). See `types/resource.hpp`.
+
+### Design
+
+Generational slot-based registry:
+
+- **`QResourceHandle`**: Opaque token `{slot, generation, kind}` stored in QValue's union. GC-allocated via `q_malloc_atomic`.
+- **`QResourceSlot`**: Registry entry `{generation, kind, flags, payload, occupied}`. The `payload` is an opaque `void*` (e.g., `FILE*` for file handles).
+- **`QResourceRegistry`**: Global singleton with a `slots` vector and a `free_list` for recycling closed slots.
+
+### Lifecycle
+
+1. **Create**: `q_resource_create(kind, payload, flags)` allocates a slot (reusing from free list if available), bumps the generation counter, and returns a `QResourceHandle*`.
+2. **Use**: `q_resource_resolve(value, expectedKind, &slot, &handle, &err)` validates the handle against the registry. Checks: slot in range, slot occupied, generation matches, kind matches. Returns a pointer to the slot's payload on success.
+3. **Close**: `q_resource_invalidate(handle)` marks the slot as unoccupied, nulls the payload, and pushes the slot index to the free list. The generation counter prevents stale handles from aliasing a recycled slot.
+
+### Error detection
+
+| Condition | Error |
+|-----------|-------|
+| Null or non-resource value | "invalid resource handle" |
+| Slot index out of range | "invalid resource handle" |
+| Slot not occupied | "resource is closed" |
+| Generation mismatch | "stale resource handle" |
+| Kind mismatch | "resource kind mismatch" |
+
+---
+
+## 9) Codegen Lowering Details
+
+### Range lowering
+
+`for i in range(n)` is detected at codegen time and emitted as a raw C++ `for` loop:
+```cpp
+for (long long quark_i = 0; quark_i < n; quark_i++) { ... }
+```
+Supports 1, 2, and 3-argument `range()` forms. Avoids allocating a list of integers.
+
+### Vector loop fast path
+
+When iterating a vector (`for x in vec`), codegen emits a runtime type check. If the vector's dtype matches the loop variable's scalar tier and has no null mask, iteration goes directly over the typed backing buffer:
+
+```cpp
+if (vec.type == VAL_VECTOR && valid && !has_nulls && dtype == I64) {
+    const QVecI64& data = std::get<QVecI64>(vec.data.vector_val->storage);
+    for (long long i = 0; i < (long long)data.size(); i++) {
+        long long quark_x = static_cast<long long>(data[i]);
+        // ... body ...
+    }
+} else {
+    // generic q_iter_get path
+}
+```
+
+Both branches are emitted; only one executes at runtime. Falls back to the generic path for: captured loop variables, nullable vectors, dtype mismatches, or unknown tiers.
+
+### Vector literal lowering
+
+When the analyzer knows the precise element type of a vector literal, codegen emits typed constructors directly (e.g., `qv_vector_i64` + `q_vec_push_i64`). Otherwise, it falls back to building a list then calling `q_to_vector` at runtime.
+
+### Scalar lowering
+
+For arithmetic and comparison operators, codegen first checks whether both operands are "scalar atoms" (literals or scalar-tiered local variables). If so, it emits raw C++ operators:
+
+```cpp
+// a + b where both are long long tier
+qv_int(((long long)quark_a) + ((long long)quark_b))
+```
+
+This bypasses the `q_add(QValue, QValue)` path and eliminates box/unbox overhead. Division between two `int` operands promotes to `double`. Falls back to boxed `q_add` etc. when either operand is `QValue` or unknown.
+
+---
+
+## 10) GC Bootstrap
+
+`ensureGC()` in `main.go` locates or builds Boehm GC:
+
+1. **Find source**: Searches for `deps/bdwgc/` by walking candidate paths relative to the compiler executable and the current working directory. Validates by checking for `CMakeLists.txt`.
+2. **Find library**: Looks for `libgc.a` (or platform equivalents like `gc.lib`, `Release/gc.lib`) in `deps/bdwgc/build/`.
+3. **Auto-build**: If the library is not found and `cmake` is available, builds automatically. On Windows, forces `clang` as the C compiler (not MinGW gcc) and static build (`BUILD_SHARED_LIBS=OFF`) to avoid `gc.dll`.
+4. **Return paths**: `(gcIncludePath, gcLibPath)` for `-I` and linker arguments.
+
+Prerequisites: Go 1.21+, clang++ in PATH, CMake (for first-time GC build only).
+
+---
+
+## 11) Testing Infrastructure
+
+### Integration tests (`integration_smoke_test.go`)
+
+`TestMain` compiles the full `quark` package into a test binary once. All tests call `runQuark(t, args...)` which executes the binary and captures stdout/stderr.
+
+### Smoke tests
+
+`TestSmokePrograms_Run` is table-driven. Each entry maps a `.qrk` file in `src/testfiles/smoke_*.qrk` to expected stdout. The test runs `quark run <file>`, normalizes line endings, and compares output exactly.
+
+`TestSmokePrograms_CompileError` verifies that certain programs produce expected error substrings and exit non-zero.
+
+### Inline source tests
+
+Several tests construct temporary `.qrk` files from Go strings for targeted verification: runtime contracts, default parameter edge cases, file I/O builtins, GC heap coverage, `any` type annotations, and extern fn type guards.
+
+### GC selfcheck
+
+Compiles a standalone C++ program (not a Quark program) that allocates runtime values and verifies via `GC_base()` that all object and buffer allocations land on the Boehm GC heap. Covers: strings, lists, dicts, all four vector dtypes, closures, cells, and ok/err results.

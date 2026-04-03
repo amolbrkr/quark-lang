@@ -1,0 +1,5 @@
+struct Foo:
+    x: int
+    y: int
+
+f = Foo { x: 1 }

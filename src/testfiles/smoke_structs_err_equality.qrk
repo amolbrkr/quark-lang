@@ -1,0 +1,6 @@
+struct Foo:
+    x: int
+
+a = Foo { x: 1 }
+b = Foo { x: 1 }
+res = a == b

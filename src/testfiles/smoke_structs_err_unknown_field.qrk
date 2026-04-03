@@ -1,0 +1,4 @@
+struct Foo:
+    x: int
+
+f = Foo { x: 1, z: 99 }

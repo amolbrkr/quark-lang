@@ -536,6 +536,29 @@ func TestSmokePrograms_Run(t *testing.T) {
 				"21",
 			),
 		},
+		{
+			name: "structs",
+			file: filepath.Join(testfilesDir, "smoke_structs.qrk"),
+			expected: join(
+				"10",
+				"20",
+				"1",
+				"Alice",
+				"0",
+				"NYC",
+				"30",
+				"Charlie",
+				"SF",
+				"Point",
+				"Customer",
+				"Boston",
+				"1",
+				"Bob",
+				"3",
+				"3600",
+				"3",
+			),
+		},
 	}
 
 	for _, tc := range cases {
@@ -579,6 +602,31 @@ func TestSmokePrograms_CompileError(t *testing.T) {
 			name:      "modules_error_resolve",
 			file:      filepath.Join(testfilesDir, "smoke_modules_error_resolve.qrk"),
 			errSubstr: "cannot find module",
+		},
+		{
+			name:      "struct_unknown_field",
+			file:      filepath.Join(testfilesDir, "smoke_structs_err_unknown_field.qrk"),
+			errSubstr: "unknown field 'z' in Foo literal",
+		},
+		{
+			name:      "struct_missing_field",
+			file:      filepath.Join(testfilesDir, "smoke_structs_err_missing_field.qrk"),
+			errSubstr: "missing required field 'y' in Foo literal",
+		},
+		{
+			name:      "struct_field_assignment",
+			file:      filepath.Join(testfilesDir, "smoke_structs_err_assign.qrk"),
+			errSubstr: "cannot assign to field 'x' of immutable struct Foo",
+		},
+		{
+			name:      "struct_equality",
+			file:      filepath.Join(testfilesDir, "smoke_structs_err_equality.qrk"),
+			errSubstr: "operator '==' is not defined for struct values",
+		},
+		{
+			name:      "struct_type_mismatch",
+			file:      filepath.Join(testfilesDir, "smoke_structs_err_type_mismatch.qrk"),
+			errSubstr: "cannot assign value of type 'str' to field 'x' of type 'int'",
 		},
 	}
 

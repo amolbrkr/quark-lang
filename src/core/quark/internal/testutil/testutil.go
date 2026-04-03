@@ -53,6 +53,8 @@ func GenerateCPP(source string) PipelineResult {
 		gen := codegen.New()
 		gen.SetCaptures(analyzer.GetCaptures())
 		gen.SetCallPlans(analyzer.GetCallPlans())
+		gen.SetNodeTypes(analyzer.GetNodeTypes())
+		gen.SetStructTypes(analyzer.GetStructTypes())
 		cpp = gen.Generate(node)
 	}
 	return PipelineResult{

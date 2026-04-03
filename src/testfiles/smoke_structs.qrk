@@ -1,0 +1,68 @@
+// Smoke test: structs v0.1
+
+struct Point:
+    x: int
+    y: int
+
+struct Customer:
+    id: int
+    name: str
+    age: int = 0
+    city: str
+
+// 1. Basic construction and field access
+p = Point { x: 10, y: 20 }
+print(p.x)
+print(p.y)
+
+// 2. Construction with defaults
+c1 = Customer { id: 1, name: 'Alice', city: 'NYC' }
+print(c1.id)
+print(c1.name)
+print(c1.age)
+print(c1.city)
+
+// 3. Construction with all fields (override default)
+c2 = Customer { id: 2, name: 'Bob', age: 30, city: 'LA' }
+print(c2.age)
+
+// 4. Multiline struct literal
+c3 = Customer {
+    id: 3
+    name: 'Charlie'
+    age: 25
+    city: 'SF'
+}
+print(c3.name)
+print(c3.city)
+
+// 5. type() returns struct name
+print(type(p))
+print(type(c1))
+
+// 6. Reconstruction (update by creating new)
+c4 = Customer {
+    id: c1.id
+    name: c1.name
+    age: c1.age + 1
+    city: 'Boston'
+}
+print(c4.city)
+print(c4.age)
+
+// 7. Struct as function parameter and return
+fn get_name(c: Customer) str -> c.name
+print(get_name(c2))
+
+// 8. Struct in list
+customers = list [c1, c2, c3]
+print(len(customers))
+
+// 9. Default expression (constant)
+struct Config:
+    timeout: int = 60 * 60
+    retries: int = 3
+
+cfg = Config {}
+print(cfg.timeout)
+print(cfg.retries)

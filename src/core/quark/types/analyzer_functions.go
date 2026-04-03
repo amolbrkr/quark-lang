@@ -6,6 +6,7 @@ import (
 )
 
 func (a *Analyzer) analyzeCompilationUnit(node *ast.TreeNode) Type {
+	a.predeclareStructTypes(node.Children)
 	a.predeclareFunctions(node.Children)
 	var lastType Type = TypeVoid
 	for _, child := range node.Children {

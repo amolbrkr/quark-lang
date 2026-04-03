@@ -162,8 +162,77 @@ func (p *Parser) infixParseFn(t token.TokenType) func(*ast.TreeNode) *ast.TreeNo
 
 func (p *Parser) parseIdentifier() *ast.TreeNode {
 	tok := p.curToken
+
+	// Check for struct literal: StructName { field: value, ... }
+	if p.structNames[tok.Literal] && p.peek(1).Type == token.LBRACE {
+		return p.parseStructLiteral()
+	}
+
 	node := ast.NewNode(ast.IdentifierNode, &tok)
 	p.nextToken()
+	return node
+}
+
+// parseStructLiteral parses: StructName { field: expr, ... }
+// Supports both inline (comma-separated) and multiline (newline-separated) forms.
+func (p *Parser) parseStructLiteral() *ast.TreeNode {
+	tok := p.curToken
+	node := ast.NewNode(ast.StructLiteralNode, &tok)
+	p.nextToken() // skip struct name
+
+	if !p.expect(token.LBRACE) {
+		return nil
+	}
+
+	p.skipNewlines()
+	if p.curToken.Type != token.RBRACE {
+		for {
+			p.skipNewlines()
+			if p.curToken.Type == token.RBRACE {
+				break // trailing comma or empty after newlines
+			}
+			if p.curToken.Type != token.ID {
+				p.addError("expected field name in struct literal")
+				return nil
+			}
+
+			fieldTok := p.curToken
+			fieldName := ast.NewNode(ast.IdentifierNode, &fieldTok)
+			p.nextToken()
+
+			if !p.expect(token.COLON) {
+				return nil
+			}
+
+			value := p.parseExpression(ast.PrecPipe)
+			if value == nil {
+				p.addError("expected value after ':' in struct literal")
+				return nil
+			}
+
+			// Store as a pair node: StructFieldNode with field name in Token, value as child
+			pair := ast.NewNode(ast.StructFieldNode, &fieldTok)
+			pair.AddChildren(fieldName, value)
+			node.AddChild(pair)
+
+			p.skipNewlines()
+			if p.curToken.Type == token.COMMA {
+				p.nextToken()
+			} else if p.curToken.Type == token.RBRACE {
+				break
+			} else if p.curToken.Type == token.ID {
+				// Newline-separated fields (no comma needed)
+				continue
+			} else {
+				break
+			}
+		}
+	}
+	p.skipNewlines()
+
+	if !p.expect(token.RBRACE) {
+		return nil
+	}
 	return node
 }
 

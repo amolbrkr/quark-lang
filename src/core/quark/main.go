@@ -488,6 +488,7 @@ func runEmit(filename string) {
 	gen.SetNodeTypes(analyzer.GetNodeTypes())
 	gen.SetNativeFns(analyzer.GetNativeFns())
 	gen.SetExternFns(analyzer.GetExternFns())
+	gen.SetStructTypes(analyzer.GetStructTypes())
 	cCode := gen.Generate(tree)
 	fmt.Println(cCode)
 }
@@ -552,6 +553,7 @@ func runBuild(filename string, output string, useGC bool, lto bool) {
 	gen.SetNodeTypes(analyzer.GetNodeTypes())
 	gen.SetNativeFns(analyzer.GetNativeFns())
 	gen.SetExternFns(analyzer.GetExternFns())
+	gen.SetStructTypes(analyzer.GetStructTypes())
 	cCode := gen.Generate(tree)
 
 	// Write C++ code to temp file
@@ -667,6 +669,7 @@ func runRun(filename string, debug bool, useGC bool, lto bool) {
 	gen.SetNodeTypes(analyzer.GetNodeTypes())
 	gen.SetNativeFns(analyzer.GetNativeFns())
 	gen.SetExternFns(analyzer.GetExternFns())
+	gen.SetStructTypes(analyzer.GetStructTypes())
 	cCode := gen.Generate(tree)
 
 	// Determine file paths

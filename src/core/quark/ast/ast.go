@@ -41,8 +41,11 @@ const (
 	UseNode
 	BreakNode
 	ContinueNode
-	ExternSourceNode // extern 'path/to/impl.hpp'
-	ExternFnNode     // extern fn name(...) type as 'symbol'
+	ExternSourceNode  // extern 'path/to/impl.hpp'
+	ExternFnNode      // extern fn name(...) type as 'symbol'
+	StructDefNode     // struct Name: fields...
+	StructFieldNode   // field: Type [= default]
+	StructLiteralNode // Name { field: expr, ... }
 )
 
 var nodeTypeNames = map[NodeType]string{
@@ -80,6 +83,9 @@ var nodeTypeNames = map[NodeType]string{
 	ContinueNode:        "Continue",
 	ExternSourceNode:    "ExternSource",
 	ExternFnNode:        "ExternFn",
+	StructDefNode:       "StructDef",
+	StructFieldNode:     "StructField",
+	StructLiteralNode:   "StructLiteral",
 }
 
 func (n NodeType) String() string {

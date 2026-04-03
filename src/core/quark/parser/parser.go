@@ -10,21 +10,36 @@ import (
 const maxParserErrors = 10
 
 type Parser struct {
-	tokens   []token.Token
-	pos      int
-	curToken token.Token
-	errors   []diagnostics.Diagnostic
+	tokens      []token.Token
+	pos         int
+	curToken    token.Token
+	errors      []diagnostics.Diagnostic
+	structNames map[string]bool // struct names collected in pre-pass for literal parsing
 }
 
 func New(tokens []token.Token) *Parser {
 	p := &Parser{
-		tokens: tokens,
-		errors: make([]diagnostics.Diagnostic, 0),
+		tokens:      tokens,
+		errors:      make([]diagnostics.Diagnostic, 0),
+		structNames: make(map[string]bool),
 	}
 	if len(tokens) > 0 {
 		p.curToken = tokens[0]
 	}
+	p.collectStructNames()
 	return p
+}
+
+// collectStructNames does a quick scan of the token stream to find all
+// `struct <ID> :` patterns so the expression parser can recognize struct literals.
+func (p *Parser) collectStructNames() {
+	for i := 0; i+2 < len(p.tokens); i++ {
+		if p.tokens[i].Type == token.STRUCT &&
+			p.tokens[i+1].Type == token.ID &&
+			p.tokens[i+2].Type == token.COLON {
+			p.structNames[p.tokens[i+1].Literal] = true
+		}
+	}
 }
 
 func (p *Parser) Errors() []string {
@@ -130,6 +145,8 @@ func (p *Parser) parseStatement() *ast.TreeNode {
 		return p.parseUse()
 	case token.EXTERN:
 		return p.parseExtern()
+	case token.STRUCT:
+		return p.parseStruct()
 	case token.IF:
 		return p.parseIfStatement()
 	case token.WHEN:
@@ -219,6 +236,125 @@ func (p *Parser) parseContinue() *ast.TreeNode {
 	return ast.NewNode(ast.ContinueNode, &tok)
 }
 
+// parseStruct parses:
+//
+//	struct Name:
+//	    field1: Type
+//	    field2: Type = default
+func (p *Parser) parseStruct() *ast.TreeNode {
+	tok := p.curToken
+	p.nextToken() // skip 'struct'
+
+	if p.curToken.Type != token.ID {
+		p.addError("expected struct name after 'struct'")
+		return nil
+	}
+
+	nameTok := p.curToken
+	node := ast.NewNode(ast.StructDefNode, &nameTok)
+	p.nextToken()
+
+	if !p.expect(token.COLON) {
+		return nil
+	}
+
+	// Expect indented block of field declarations
+	if !p.expect(token.NEWLINE) {
+		return nil
+	}
+	if !p.expect(token.INDENT) {
+		return nil
+	}
+
+	for p.curToken.Type != token.DEDENT && !p.isAtEnd() {
+		if p.curToken.Type == token.NEWLINE {
+			p.nextToken()
+			continue
+		}
+		field := p.parseStructField()
+		if field != nil {
+			node.AddChild(field)
+		} else {
+			p.synchronize()
+			if len(p.errors) >= maxParserErrors {
+				break
+			}
+			continue
+		}
+		if p.curToken.Type == token.NEWLINE {
+			p.nextToken()
+		}
+	}
+
+	p.expect(token.DEDENT)
+
+	_ = tok
+	return node
+}
+
+// parseStructField parses a single field declaration: name: Type [= default]
+func (p *Parser) parseStructField() *ast.TreeNode {
+	if p.curToken.Type != token.ID {
+		p.addError("expected field name in struct definition")
+		return nil
+	}
+
+	fieldTok := p.curToken
+	node := ast.NewNode(ast.StructFieldNode, &fieldTok)
+	p.nextToken()
+
+	if !p.expect(token.COLON) {
+		return nil
+	}
+
+	typeNode := p.parseTypeExpr()
+	if typeNode == nil {
+		return nil
+	}
+	node.AddChild(typeNode)
+
+	// Optional default value
+	if p.curToken.Type == token.EQUALS {
+		p.nextToken()
+		defaultExpr := p.parseExpression(ast.PrecTernary)
+		if defaultExpr != nil {
+			if !p.isConstantDefault(defaultExpr) {
+				p.addError("struct field default values must be constant expressions")
+			}
+			node.DefaultValue = defaultExpr
+		}
+	}
+
+	return node
+}
+
+// isConstantDefault checks if an expression is a valid constant default for struct fields.
+// Allows literals, unary minus on numeric literals, and simple binary ops on literals.
+func (p *Parser) isConstantDefault(node *ast.TreeNode) bool {
+	if node == nil {
+		return false
+	}
+	if node.NodeType == ast.LiteralNode {
+		return true
+	}
+	// Unary minus on numeric literal
+	if node.NodeType == ast.OperatorNode && node.Token != nil && node.Token.Type == token.MINUS && len(node.Children) == 1 {
+		return p.isConstantDefault(node.Children[0])
+	}
+	// Binary constant expression (e.g. 60 * 60)
+	if node.NodeType == ast.OperatorNode && len(node.Children) == 2 {
+		switch node.Token.Type {
+		case token.PLUS, token.MINUS, token.MULTIPLY, token.DIVIDE, token.MODULO:
+			return p.isConstantDefault(node.Children[0]) && p.isConstantDefault(node.Children[1])
+		}
+	}
+	// Empty list
+	if node.NodeType == ast.ListNode && len(node.Children) == 0 {
+		return true
+	}
+	return false
+}
+
 // isTypeToken checks if the current token can be a type name for annotations
 func (p *Parser) isTypeToken() bool {
 	switch p.curToken.Type {
@@ -227,6 +363,10 @@ func (p *Parser) isTypeToken() bool {
 	case token.ID:
 		switch p.curToken.Literal {
 		case "int", "float", "str", "bool", "any":
+			return true
+		}
+		// User-defined struct names are valid types
+		if p.structNames[p.curToken.Literal] {
 			return true
 		}
 	}
@@ -425,6 +565,7 @@ func (p *Parser) parseTypeExpr() *ast.TreeNode {
 
 	return node
 }
+
 
 func (p *Parser) parseVarDecl() *ast.TreeNode {
 	nameTok := p.curToken

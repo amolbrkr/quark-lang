@@ -106,6 +106,10 @@ func (a *Analyzer) resolveTypeNode(node *ast.TreeNode) Type {
 	case "file_handle":
 		return TypeFileHandle
 	default:
+		// Check user-defined struct types
+		if st, ok := a.structTypes[name]; ok {
+			return st
+		}
 		a.errorAt(node, "unknown type '%s'", name)
 		return TypeError
 	}

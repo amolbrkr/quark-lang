@@ -82,6 +82,8 @@ type Generator struct {
 	// Used to detect when an extern fn identifier is used as a first-class value
 	// and emit a thunk wrapping the native symbol.
 	externFns map[string]*ir.CallPlan
+	// structTypes maps struct name → StructType from the analyzer.
+	structTypes map[string]*types.StructType
 }
 
 func New() *Generator {
@@ -104,6 +106,7 @@ func New() *Generator {
 		tierStack:          make([]map[string]string, 0),
 		nativeFns:          make(map[string]*ir.CallPlan),
 		externFns:          make(map[string]*ir.CallPlan),
+		structTypes:        make(map[string]*types.StructType),
 	}
 }
 
@@ -111,6 +114,13 @@ func New() *Generator {
 func (g *Generator) SetNativeFns(m map[string]*ir.CallPlan) {
 	if m != nil {
 		g.nativeFns = m
+	}
+}
+
+// SetStructTypes passes the struct type definitions from the analyzer to the generator.
+func (g *Generator) SetStructTypes(m map[string]*types.StructType) {
+	if m != nil {
+		g.structTypes = m
 	}
 }
 
@@ -582,6 +592,9 @@ func (g *Generator) Generate(node *ast.TreeNode) string {
 	}
 	g.emit("\n")
 
+	// Emit struct definitions (QStructDef statics)
+	g.emitStructDefs()
+
 	// Generate function definitions
 	g.generateNode(node)
 
@@ -612,7 +625,7 @@ func (g *Generator) Generate(node *ast.TreeNode) string {
 	for _, child := range node.Children {
 		if child.NodeType == ast.FunctionNode || child.NodeType == ast.ModuleNode ||
 			child.NodeType == ast.UseNode || child.NodeType == ast.ExternSourceNode ||
-			child.NodeType == ast.ExternFnNode {
+			child.NodeType == ast.ExternFnNode || child.NodeType == ast.StructDefNode {
 			continue
 		}
 		// Skip `name = fn(...)` assignments for native functions — the function
@@ -775,6 +788,8 @@ func (g *Generator) generateNode(node *ast.TreeNode) {
 	case ast.ExternSourceNode, ast.ExternFnNode:
 		// No code emitted — extern sources are #included in preamble,
 		// extern fn declarations are registered in the analyzer.
+	case ast.StructDefNode:
+		// No code emitted — struct defs are emitted as static data by emitStructDefs().
 	}
 }
 
@@ -1122,6 +1137,11 @@ func (g *Generator) generateExpr(node *ast.TreeNode) string {
 	case ast.UseNode:
 		// Use statements are handled at compile time (imports are resolved by analyzer)
 		return "qv_null()"
+	case ast.StructDefNode:
+		// Struct definitions are emitted as static data by emitStructDefs(); no runtime code here
+		return "qv_null()"
+	case ast.StructLiteralNode:
+		return g.generateStructLiteral(node)
 	case ast.ExternSourceNode, ast.ExternFnNode:
 		// Extern declarations produce no runtime code
 		return "qv_null()"
@@ -1407,10 +1427,21 @@ func (g *Generator) generateOperator(node *ast.TreeNode) string {
 		return operand
 	}
 
-	// Dict member access: d.key → q_member_get(d, "key")
+	// Member access: struct field or dict key
 	if op == token.DOT && len(node.Children) >= 2 {
 		obj := g.generateExpr(node.Children[0])
 		memberName := node.Children[1].TokenLiteral()
+
+		// Check if target is a struct type — use field index access
+		if targetType := g.nodeType(node.Children[0]); targetType != nil {
+			if st, ok := targetType.(*types.StructType); ok {
+				_, idx := st.FieldByName(memberName)
+				if idx >= 0 {
+					return fmt.Sprintf("q_struct_get_field(%s, %d)", obj, idx)
+				}
+			}
+		}
+
 		return fmt.Sprintf("q_member_get(%s, \"%s\")", obj, memberName)
 	}
 
@@ -2518,4 +2549,74 @@ func (g *Generator) generateLambdaFunc(node *ast.TreeNode) {
 	g.popScope() // Restore previous scope
 	g.inFunction = false
 	g.currentFuncNode = nil
+}
+
+// emitStructDefs emits static QStructDef constants for each registered struct type.
+func (g *Generator) emitStructDefs() {
+	if len(g.structTypes) == 0 {
+		return
+	}
+	g.emit("// Struct type definitions\n")
+	for _, st := range g.structTypes {
+		safeName := sanitizeVarName(st.Name)
+
+		// Emit field name array
+		g.emitLine("static const char* _sfields_%s[] = {", safeName)
+		g.indentLevel++
+		for _, f := range st.Fields {
+			g.emitLine("\"%s\",", escapeCppString(f.Name))
+		}
+		g.indentLevel--
+		g.emitLine("};")
+
+		// Emit QStructDef
+		g.emitLine("static const QStructDef _sdef_%s = {\"%s\", _sfields_%s, %d};",
+			safeName, escapeCppString(st.Name), safeName, len(st.Fields))
+	}
+	g.emit("\n")
+}
+
+// generateStructLiteral emits code to construct a struct value.
+func (g *Generator) generateStructLiteral(node *ast.TreeNode) string {
+	structName := node.TokenLiteral()
+	st := g.structTypes[structName]
+	if st == nil {
+		panicICEf("INV-STRUCT-LITERAL", node, "unknown struct type '%s'", structName)
+		return "qv_null()"
+	}
+
+	safeName := sanitizeVarName(structName)
+	temp := g.newTemp()
+
+	// Create the struct instance
+	g.emitLine("QStruct* %s_raw = q_struct_create(&_sdef_%s);", temp, safeName)
+
+	// Build a map of provided field values from the literal
+	provided := make(map[string]*ast.TreeNode)
+	for _, pair := range node.Children {
+		if pair.NodeType == ast.StructFieldNode && len(pair.Children) >= 2 {
+			fieldName := pair.TokenLiteral()
+			provided[fieldName] = pair.Children[1] // value expression
+		}
+	}
+
+	// Emit field assignments in declaration order
+	for i, field := range st.Fields {
+		if valueNode, ok := provided[field.Name]; ok {
+			value := g.generateExpr(valueNode)
+			g.emitLine("%s_raw->fields[%d] = %s;", temp, i, value)
+		} else if field.HasDefault {
+			// Emit default value expression
+			if defaultNode, ok := field.DefaultNode.(*ast.TreeNode); ok {
+				value := g.generateExpr(defaultNode)
+				g.emitLine("%s_raw->fields[%d] = %s;", temp, i, value)
+			} else {
+				g.emitLine("%s_raw->fields[%d] = qv_null();", temp, i)
+			}
+		}
+	}
+
+	// Wrap in QValue
+	g.emitLine("QValue %s = qv_struct(%s_raw);", temp, temp)
+	return temp
 }

@@ -51,6 +51,8 @@ type Analyzer struct {
 	// nativeFns maps fully-annotated user-defined function names → prototype CallPlan
 	// with DispatchNative and populated NativeParamTypes/NativeReturnType.
 	nativeFns map[string]*ir.CallPlan
+	// structTypes maps struct name → StructType for user-defined struct types.
+	structTypes map[string]*StructType
 }
 
 func NewAnalyzer() *Analyzer {
@@ -99,6 +101,7 @@ func NewAnalyzer() *Analyzer {
 		externFns:       make(map[string]*ir.CallPlan),
 		externSources:   make([]string, 0),
 		nativeFns:       make(map[string]*ir.CallPlan),
+		structTypes:     make(map[string]*StructType),
 	}
 }
 
@@ -266,6 +269,10 @@ func (a *Analyzer) analyze(node *ast.TreeNode) Type {
 		return TypeVoid // Path recording is done by the loader; analyzer ignores content
 	case ast.ExternFnNode:
 		return a.analyzeExternFn(node)
+	case ast.StructDefNode:
+		return a.analyzeStructDef(node)
+	case ast.StructLiteralNode:
+		return a.analyzeStructLiteral(node)
 	default:
 		return TypeAny
 	}

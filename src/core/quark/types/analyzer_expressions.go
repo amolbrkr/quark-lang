@@ -71,6 +71,13 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 		switch t := targetType.(type) {
 		case *DictType:
 			return t.ValueType
+		case *StructType:
+			field, _ := t.FieldByName(member)
+			if field == nil {
+				a.errorAt(node, "struct %s has no field '%s'", t.Name, member)
+				return TypeError
+			}
+			return field.Type
 		default:
 			if isUnknownType(targetType) {
 				return TypeAny
@@ -105,6 +112,16 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 		if target == nil {
 			a.errorAt(node, "left side of assignment must be an identifier")
 			return TypeError
+		}
+		// Reject struct field assignment: obj.field = value
+		if target.NodeType == ast.OperatorNode && target.Token != nil && target.Token.Type == token.DOT && len(target.Children) >= 2 {
+			targetType := a.Analyze(target.Children[0])
+			if st, ok := targetType.(*StructType); ok {
+				fieldName := target.Children[1].TokenLiteral()
+				a.errorAt(target, "cannot assign to field '%s' of immutable struct %s", fieldName, st.Name)
+				a.Analyze(node.Children[1]) // still analyze RHS for completeness
+				return TypeError
+			}
 		}
 		if target.NodeType == ast.IdentifierNode && node.Children[1].NodeType == ast.LambdaNode {
 			varName := target.TokenLiteral()
@@ -315,6 +332,9 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 	case token.DEQ, token.NE:
 		if leftIsVec || rightIsVec {
 			return &VectorType{ElementType: TypeBool}
+		}
+		if a.checkStructEquality(node, leftType, rightType, op) {
+			return TypeError
 		}
 		return TypeBool
 	case token.AND, token.OR:

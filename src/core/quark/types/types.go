@@ -205,6 +205,42 @@ func (t *UnionType) Equals(other Type) bool {
 	return false
 }
 
+// StructField describes a single field in a struct type.
+type StructField struct {
+	Name         string
+	Type         Type
+	HasDefault   bool
+	DefaultNode  interface{} // *ast.TreeNode — codegen uses this to emit default values
+}
+
+// StructType represents a named struct type with ordered fields.
+// Identity is nominal: two structs with identical fields but different names are distinct.
+type StructType struct {
+	Name   string
+	Fields []StructField
+}
+
+func (t *StructType) String() string {
+	return t.Name
+}
+
+func (t *StructType) Equals(other Type) bool {
+	if o, ok := other.(*StructType); ok {
+		return t.Name == o.Name
+	}
+	return false
+}
+
+// FieldByName returns the field and its index, or nil/-1 if not found.
+func (t *StructType) FieldByName(name string) (*StructField, int) {
+	for i := range t.Fields {
+		if t.Fields[i].Name == name {
+			return &t.Fields[i], i
+		}
+	}
+	return nil, -1
+}
+
 // Symbol represents a variable or function in the symbol table
 type Symbol struct {
 	Name    string
@@ -354,6 +390,10 @@ func CanAssign(dstType, srcType Type) bool {
 			return okAssignable && errAssignable
 		}
 	}
+	// Struct types: nominal equality only
+	if _, ok := dstType.(*StructType); ok {
+		return dstType.Equals(srcType)
+	}
 	return dstType.Equals(srcType)
 }
 
@@ -452,6 +492,8 @@ func typeKey(t Type) string {
 		return "fn[" + strings.Join(params, "|") + ":" + typeKey(v.ReturnType) + "]"
 	case *ResultType:
 		return "result[" + typeKey(v.OkType) + "," + typeKey(v.ErrType) + "]"
+	case *StructType:
+		return "struct:" + v.Name
 	case *UnionType:
 		parts := make([]string, len(v.Options))
 		for i, opt := range v.Options {

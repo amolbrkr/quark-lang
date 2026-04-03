@@ -1,0 +1,54 @@
+println('== smoke: table ==')
+
+struct Order:
+    id: int
+    customer: str
+    price: float
+    qty: int
+
+// --- Row-data literal ---
+orders: Order = table {
+    1, 'alice', 10.0, 2
+    2, 'bob',    5.5, 4
+    3, 'carol',  8.0, 1
+}
+
+// Row count via column length
+ids_col = orders.id
+println(len(ids_col))
+
+// Column access returns typed vector
+prices_col = orders.price
+println(sum(prices_col))
+
+// Row index: materialises a struct
+r = orders[0]
+println(r.id)
+println(r.customer)
+
+// Negative row index
+r2 = orders[-1]
+println(r2.customer)
+
+// Boolean mask filter -> table
+mask = orders.qty > 1
+filtered: Order = table {
+    orders.id, orders.customer, orders.price, orders.qty
+}
+// Use mask on the price column as a simple vector op (mask filter on table)
+big_prices = prices_col[prices_col > 6.0]
+println(len(big_prices))
+
+// --- Column-source literal ---
+ids2   = vector [10, 20, 30]
+names2 = vector ['x', 'y', 'z']
+prices2 = vector [1.0, 2.0, 3.0]
+qtys2   = vector [5, 6, 7]
+
+orders2: Order = table {
+    ids2, names2, prices2, qtys2
+}
+
+println(len(orders2.id))
+println(orders2[1].customer)
+println(sum(orders2.qty))

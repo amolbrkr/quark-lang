@@ -126,7 +126,7 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 		if target.NodeType == ast.IdentifierNode && node.Children[1].NodeType == ast.LambdaNode {
 			varName := target.TokenLiteral()
 			if a.currentScope.LookupLocal(varName) == nil {
-				funcType := functionTypeFromLambdaNode(node.Children[1])
+				funcType := functionTypeFromLambdaNodeWithStructs(node.Children[1], a.structTypes)
 				a.currentScope.Define(varName, funcType, true)
 				a.functions[varName] = funcType
 			}

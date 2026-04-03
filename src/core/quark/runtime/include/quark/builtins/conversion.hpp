@@ -122,6 +122,13 @@ inline QValue q_str(QValue v) {
                 return qv_string(buffer);
             }
             return qv_string("<struct>");
+        case QValue::VAL_TABLE:
+            if (v.data.table_val && v.data.table_val->def) {
+                snprintf(buffer, sizeof(buffer), "[table<%s> rows=%d]",
+                         v.data.table_val->def->name, v.data.table_val->nrows);
+                return qv_string(buffer);
+            }
+            return qv_string("<table>");
         default:
             return qv_string("<value>");
     }
@@ -150,8 +157,8 @@ inline QValue q_int(QValue v) {
             return qv_int(result);
         }
         default: {
-            static const char* names[] = {"int","float","str","bool","null","list","vector","dict","fn","result","resource"};
-            const char* tname = (v.type >= 0 && v.type <= 10) ? names[v.type] : "unknown";
+            static const char* names[] = {"int","float","str","bool","null","list","vector","dict","fn","result","resource","struct","table"};
+            const char* tname = (v.type >= 0 && v.type <= 12) ? names[v.type] : "unknown";
             q_runtime_reportf("runtime error: to_int() cannot convert %s to int\n", tname);
             std::exit(1);
         }
@@ -181,8 +188,8 @@ inline QValue q_float(QValue v) {
             return qv_float(result);
         }
         default: {
-            static const char* names[] = {"int","float","str","bool","null","list","vector","dict","fn","result","resource"};
-            const char* tname = (v.type >= 0 && v.type <= 10) ? names[v.type] : "unknown";
+            static const char* names[] = {"int","float","str","bool","null","list","vector","dict","fn","result","resource","struct","table"};
+            const char* tname = (v.type >= 0 && v.type <= 12) ? names[v.type] : "unknown";
             q_runtime_reportf("runtime error: to_float() cannot convert %s to float\n", tname);
             std::exit(1);
         }
@@ -222,6 +229,11 @@ inline QValue q_type(QValue v) {
                 return qv_string(v.data.struct_val->def->name);
             }
             return qv_string("struct");
+        case QValue::VAL_TABLE:
+            if (v.data.table_val && v.data.table_val->def) {
+                return qv_string(v.data.table_val->def->name);
+            }
+            return qv_string("table");
         case QValue::VAL_VECTOR: {
             if (!q_vec_has_valid_handle(v) || !q_vec_validate(*v.data.vector_val)) {
                 return qv_string("vector[invalid]");

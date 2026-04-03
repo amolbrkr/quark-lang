@@ -7,6 +7,7 @@ import (
 	"quark/ir"
 	"quark/token"
 	"quark/types"
+	"sort"
 	"strings"
 )
 
@@ -2556,8 +2557,15 @@ func (g *Generator) emitStructDefs() {
 	if len(g.structTypes) == 0 {
 		return
 	}
+	// Sort names for deterministic output across compilations.
+	names := make([]string, 0, len(g.structTypes))
+	for name := range g.structTypes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
 	g.emit("// Struct type definitions\n")
-	for _, st := range g.structTypes {
+	for _, name := range names {
+		st := g.structTypes[name]
 		safeName := sanitizeVarName(st.Name)
 
 		// Emit field name array

@@ -206,10 +206,16 @@ inline const char* q_fmt_dict(QDict* dct, int64_t max_rows, bool show_index) {
         std::exit(1);
     }
 
+    std::vector<std::pair<std::string, QValue>> raw_rows;
+    for (const auto& kv : dct->entries) {
+        raw_rows.push_back({std::string(kv.first.c_str()), kv.second});
+    }
+    std::sort(raw_rows.begin(), raw_rows.end(),
+              [](const auto& a, const auto& b) { return a.first < b.first; });
     std::vector<std::pair<std::string, std::string>> rows;
     bool any_numeric_val = false;
-    for (const auto& kv : dct->entries) {
-        rows.push_back({std::string(kv.first.c_str()), q_fmt_cell(kv.second)});
+    for (const auto& kv : raw_rows) {
+        rows.push_back({kv.first, q_fmt_cell(kv.second)});
         if (q_fmt_is_numeric(kv.second)) any_numeric_val = true;
     }
 

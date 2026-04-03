@@ -36,6 +36,10 @@ func isFunctionBindingAssignment(node *ast.TreeNode) bool {
 }
 
 func functionTypeFromLambdaNode(lambdaNode *ast.TreeNode) *FunctionType {
+	return functionTypeFromLambdaNodeWithStructs(lambdaNode, nil)
+}
+
+func functionTypeFromLambdaNodeWithStructs(lambdaNode *ast.TreeNode, structTypes map[string]*StructType) *FunctionType {
 	if lambdaNode == nil || len(lambdaNode.Children) < 1 {
 		return &FunctionType{ParamTypes: []Type{}, ReturnType: TypeAny}
 	}
@@ -75,6 +79,12 @@ func functionTypeFromLambdaNode(lambdaNode *ast.TreeNode) *FunctionType {
 			case "file_handle":
 				paramTypes[i] = TypeFileHandle
 			default:
+				if structTypes != nil {
+					if st, ok := structTypes[typeName]; ok {
+						paramTypes[i] = st
+						break
+					}
+				}
 				paramTypes[i] = TypeAny
 			}
 		}
@@ -86,7 +96,7 @@ func functionTypeFromLambdaNode(lambdaNode *ast.TreeNode) *FunctionType {
 
 	var annotatedReturnType Type
 	if lambdaNode.ReturnType != nil {
-		annotatedReturnType = resolveTypeNodeStatic(lambdaNode.ReturnType)
+		annotatedReturnType = resolveTypeNodeStaticWithStructs(lambdaNode.ReturnType, structTypes)
 	}
 
 	var returnType Type = TypeAny
@@ -104,6 +114,10 @@ func functionTypeFromLambdaNode(lambdaNode *ast.TreeNode) *FunctionType {
 }
 
 func resolveTypeNodeStatic(node *ast.TreeNode) Type {
+	return resolveTypeNodeStaticWithStructs(node, nil)
+}
+
+func resolveTypeNodeStaticWithStructs(node *ast.TreeNode, structTypes map[string]*StructType) Type {
 	if node == nil || node.NodeType != ast.TypeNode {
 		return nil
 	}
@@ -134,6 +148,11 @@ func resolveTypeNodeStatic(node *ast.TreeNode) Type {
 	case "file_handle":
 		return TypeFileHandle
 	default:
+		if structTypes != nil {
+			if st, ok := structTypes[name]; ok {
+				return st
+			}
+		}
 		return TypeAny
 	}
 }
@@ -185,7 +204,7 @@ func (a *Analyzer) declareFunctionAssignmentSignature(node *ast.TreeNode) *Funct
 		return nil
 	}
 
-	funcType := functionTypeFromLambdaNode(lambdaNode)
+	funcType := functionTypeFromLambdaNodeWithStructs(lambdaNode, a.structTypes)
 	a.currentScope.Define(funcName, funcType, true)
 	a.functions[funcName] = funcType
 	return funcType

@@ -37,6 +37,7 @@
 #include "types/function.hpp"
 #include "types/resource.hpp"
 #include "types/struct.hpp"
+#include "types/table.hpp"
 
 // Core helpers depending on type definitions
 #include "core/truthy.hpp"

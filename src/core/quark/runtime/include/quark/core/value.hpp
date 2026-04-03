@@ -16,6 +16,7 @@ struct QVector;
 struct QResourceHandle;
 struct QStruct;
 struct QStructDef;
+struct QTable;
 
 // Type alias for list storage — uses q_allocator so the GC can scan
 // the vector's internal buffer for pointers to collectible objects.
@@ -35,7 +36,8 @@ struct QValue {
         VAL_FUNC,
         VAL_RESULT,
         VAL_RESOURCE,
-        VAL_STRUCT
+        VAL_STRUCT,
+        VAL_TABLE
     } type;
 
     union {
@@ -50,6 +52,7 @@ struct QValue {
         QResult* result_val;
         QResourceHandle* resource_val;
         QStruct* struct_val;
+        QTable* table_val;
     } data;
 };
 

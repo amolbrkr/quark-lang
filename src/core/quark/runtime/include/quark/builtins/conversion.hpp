@@ -116,6 +116,12 @@ inline QValue q_str(QValue v) {
             return qv_string("<function>");
         case QValue::VAL_RESOURCE:
             return qv_string(q_resource_kind_name(v.data.resource_val ? v.data.resource_val->kind : QRES_KIND_NONE));
+        case QValue::VAL_STRUCT:
+            if (v.data.struct_val && v.data.struct_val->def) {
+                snprintf(buffer, sizeof(buffer), "%s{...}", v.data.struct_val->def->name);
+                return qv_string(buffer);
+            }
+            return qv_string("<struct>");
         default:
             return qv_string("<value>");
     }
@@ -211,6 +217,11 @@ inline QValue q_type(QValue v) {
             return qv_string("result");
         case QValue::VAL_RESOURCE:
             return qv_string(q_resource_kind_name(v.data.resource_val ? v.data.resource_val->kind : QRES_KIND_NONE));
+        case QValue::VAL_STRUCT:
+            if (v.data.struct_val && v.data.struct_val->def) {
+                return qv_string(v.data.struct_val->def->name);
+            }
+            return qv_string("struct");
         case QValue::VAL_VECTOR: {
             if (!q_vec_has_valid_handle(v) || !q_vec_validate(*v.data.vector_val)) {
                 return qv_string("vector[invalid]");

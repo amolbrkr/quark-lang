@@ -44,6 +44,13 @@ inline void print_qvalue(QValue v) {
         case QValue::VAL_RESOURCE:
             printf("<%s>", q_resource_kind_name(v.data.resource_val ? v.data.resource_val->kind : QRES_KIND_NONE));
             break;
+        case QValue::VAL_STRUCT:
+            if (v.data.struct_val && v.data.struct_val->def) {
+                printf("%s{...}", v.data.struct_val->def->name);
+            } else {
+                printf("<struct>");
+            }
+            break;
         default:
             printf("<value>");
             break;

@@ -33,6 +33,8 @@ inline bool q_truthy(QValue v) {
             return v.data.result_val && v.data.result_val->is_ok;
         case QValue::VAL_RESOURCE:
             return q_resource_is_alive(v);
+        case QValue::VAL_STRUCT:
+            return v.data.struct_val != nullptr;
         default:
             return false;
     }

@@ -425,8 +425,8 @@ This bypasses the `q_add(QValue, QValue)` path and eliminates box/unbox overhead
 `ensureGC()` in `main.go` locates or builds Boehm GC:
 
 1. **Find source**: Searches for `deps/bdwgc/` by walking candidate paths relative to the compiler executable and the current working directory. Validates by checking for `CMakeLists.txt`.
-2. **Find library**: Looks for `libgc.a` (or platform equivalents like `gc.lib`, `Release/gc.lib`) in `deps/bdwgc/build/`.
-3. **Auto-build**: If the library is not found and `cmake` is available, builds automatically. On Windows, forces `clang` as the C compiler (not MinGW gcc) and static build (`BUILD_SHARED_LIBS=OFF`) to avoid `gc.dll`.
+2. **Find library**: Looks for a static `libgc.a` (or `gc.lib`, `Release/gc.lib` on Windows) in `deps/bdwgc/build-static/`. Shared libraries are never used, so generated executables run standalone without `libgc` on the loader path.
+3. **Auto-build**: If the library is not found and `cmake` is available, builds it automatically with `GC_BUILD_SHARED_LIBS=OFF` on every platform. Static `libgc` needs the threads library, so the link line adds `-pthread` on Unix and `-ldl` on Linux. On Windows, it also forces `clang` as the C compiler (not MinGW gcc) to match the MSVC ABI.
 4. **Return paths**: `(gcIncludePath, gcLibPath)` for `-I` and linker arguments.
 
 Prerequisites: Go 1.21+, clang++ in PATH, CMake (for first-time GC build only).

@@ -52,8 +52,13 @@ func GenerateCPP(source string) PipelineResult {
 	if len(parseErrs) == 0 && len(typeErrs) == 0 {
 		gen := codegen.New()
 		gen.SetCaptures(analyzer.GetCaptures())
+		// Mirror the setup in main.go so tests exercise the same codegen
+		// configuration as the real compiler.
 		gen.SetCallPlans(analyzer.GetCallPlans())
+		gen.SetCapturedByFunction(analyzer.GetCapturedByFunction(node))
 		gen.SetNodeTypes(analyzer.GetNodeTypes())
+		gen.SetNativeFns(analyzer.GetNativeFns())
+		gen.SetExternFns(analyzer.GetExternFns())
 		gen.SetStructTypes(analyzer.GetStructTypes())
 		cpp = gen.Generate(node)
 	}

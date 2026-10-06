@@ -89,15 +89,23 @@ func findGCSourceDir() (string, error) {
 	return "", errors.New("could not locate deps/bdwgc (expected vendored Boehm GC source in repository)")
 }
 
+// gcBuildDirName is the CMake build directory used for the vendored Boehm GC.
+// It is distinct from the conventional "build" directory so that an older
+// shared-library build there is never picked up: generated binaries must link
+// the GC statically so they run standalone, without needing libgc on the
+// dynamic loader path.
+const gcBuildDirName = "build-static"
+
+// findGCLibrary returns the static Boehm GC archive under buildDir.
+// Only static archives are accepted (see gcBuildDirName).
 func findGCLibrary(buildDir string) (string, error) {
 	candidates := []string{
 		filepath.Join(buildDir, "libgc.a"),
-		filepath.Join(buildDir, "libgc.so"),
-		filepath.Join(buildDir, "libgc.dylib"),
 		filepath.Join(buildDir, "gc.lib"),
 		filepath.Join(buildDir, "libgc.lib"),
 		filepath.Join(buildDir, "Release", "gc.lib"),
 		filepath.Join(buildDir, "Release", "libgc.lib"),
+		filepath.Join(buildDir, "Release", "libgc.a"),
 		filepath.Join(buildDir, "Debug", "gc.lib"),
 		filepath.Join(buildDir, "Debug", "libgc.lib"),
 	}
@@ -108,7 +116,21 @@ func findGCLibrary(buildDir string) (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("could not find built Boehm GC library under %s", buildDir)
+	return "", fmt.Errorf("could not find static Boehm GC library under %s", buildDir)
+}
+
+// gcLinkArgs returns the linker arguments needed to link the static GC archive.
+// A static libgc depends on the platform threads library, which a shared
+// libgc would otherwise have pulled in itself.
+func gcLinkArgs(libPath string) []string {
+	args := []string{libPath}
+	if runtime.GOOS != "windows" {
+		args = append(args, "-pthread")
+	}
+	if runtime.GOOS == "linux" {
+		args = append(args, "-ldl")
+	}
+	return args
 }
 
 func ensureGC() (includePath string, libPath string, err error) {
@@ -122,7 +144,7 @@ func ensureGC() (includePath string, libPath string, err error) {
 		return "", "", fmt.Errorf("Boehm GC headers not found at %s", includePath)
 	}
 
-	buildDir := filepath.Join(gcSourceDir, "build")
+	buildDir := filepath.Join(gcSourceDir, gcBuildDirName)
 	if libPath, err = findGCLibrary(buildDir); err == nil {
 		return includePath, libPath, nil
 	}
@@ -133,17 +155,26 @@ func ensureGC() (includePath string, libPath string, err error) {
 
 	fmt.Fprintln(os.Stderr, "Boehm GC library not found; bootstrapping deps/bdwgc/build with CMake...")
 
-	configureArgs := []string{"-S", gcSourceDir, "-B", buildDir}
+	// Always build a static GC library so generated executables are
+	// standalone on every platform.
+	configureArgs := []string{
+		"-S", gcSourceDir,
+		"-B", buildDir,
+		"-DCMAKE_BUILD_TYPE=Release",
+		// bdwgc reads GC_BUILD_SHARED_LIBS; BUILD_SHARED_LIBS covers
+		// older bdwgc releases that used the generic CMake option.
+		"-DGC_BUILD_SHARED_LIBS=OFF",
+		"-DBUILD_SHARED_LIBS=OFF",
+		"-DCMAKE_POSITION_INDEPENDENT_CODE=ON",
+		"-Denable_docs=OFF",
+		"-Dbuild_cord=OFF",
+		"-DBUILD_TESTING=OFF",
+	}
 	if runtime.GOOS == "windows" {
 		// Force clang so the GC library matches the MSVC ABI that
 		// clang++ targets. Without this, cmake may pick MinGW gcc
 		// which produces incompatible object files (longjmp ABI mismatch).
-		// Build static so we don't need to distribute gc.dll.
-		configureArgs = append(configureArgs,
-			"-DCMAKE_C_COMPILER=clang",
-			"-DCMAKE_BUILD_TYPE=Release",
-			"-DBUILD_SHARED_LIBS=OFF",
-		)
+		configureArgs = append(configureArgs, "-DCMAKE_C_COMPILER=clang")
 	}
 	configureCmd := exec.Command("cmake", configureArgs...)
 	configureCmd.Stdout = os.Stdout
@@ -152,10 +183,9 @@ func ensureGC() (includePath string, libPath string, err error) {
 		return "", "", fmt.Errorf("failed to configure Boehm GC with CMake: %w", runErr)
 	}
 
-	buildArgs := []string{"--build", buildDir}
-	if runtime.GOOS == "windows" {
-		buildArgs = append(buildArgs, "--config", "Release")
-	}
+	// --config only matters for multi-config generators (MSVC, Xcode);
+	// single-config generators ignore it.
+	buildArgs := []string{"--build", buildDir, "--config", "Release"}
 	buildCmd := exec.Command("cmake", buildArgs...)
 	buildCmd.Stdout = os.Stdout
 	buildCmd.Stderr = os.Stderr
@@ -596,7 +626,7 @@ func runBuild(filename string, output string, useGC bool, lto bool) {
 
 	// Add linker flags
 	if useGC {
-		args = append(args, gcLibPath)
+		args = append(args, gcLinkArgs(gcLibPath)...)
 	}
 	if runtime.GOOS != "windows" {
 		args = append(args, "-lm")
@@ -729,7 +759,7 @@ func runRun(filename string, debug bool, useGC bool, lto bool) {
 
 	// Add linker flags
 	if useGC {
-		args = append(args, gcLibPath)
+		args = append(args, gcLinkArgs(gcLibPath)...)
 	}
 	if runtime.GOOS != "windows" {
 		args = append(args, "-lm")

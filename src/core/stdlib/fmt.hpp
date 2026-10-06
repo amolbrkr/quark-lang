@@ -265,56 +265,115 @@ inline const char* q_fmt_dict(QDict* dct, int64_t max_rows, bool show_index) {
 
 // ============================================================
 // q_fmt_table(df, n, show_index) -> str
-//   df must be a table value.
+//   df is either a table value, or a dict whose values are equal-length
+//   list/vector columns (the dataframe form; columns sorted by name).
 // ============================================================
+
+// Formats the first nrows cells of a vector column into out.
+inline void q_fmt_vector_cells(const QVector& qv, size_t nrows,
+                               std::vector<std::string>& out, bool& numeric) {
+    numeric = (qv.type == QVector::Type::F64 || qv.type == QVector::Type::I64);
+    for (size_t r = 0; r < nrows; r++) {
+        if (q_vec_is_null_at(qv, r)) { out[r] = "NA"; continue; }
+        char buf[64];
+        switch (qv.type) {
+            case QVector::Type::F64:
+                std::snprintf(buf, sizeof(buf), "%g", std::get<QVecF64>(qv.storage)[r]);
+                out[r] = buf; break;
+            case QVector::Type::I64:
+                std::snprintf(buf, sizeof(buf), "%lld", (long long)std::get<QVecI64>(qv.storage)[r]);
+                out[r] = buf; break;
+            case QVector::Type::BOOL:
+                out[r] = std::get<QVecU8>(qv.storage)[r] ? "true" : "false"; break;
+            case QVector::Type::STR: {
+                const auto& ss = std::get<QStringStorage>(qv.storage);
+                uint32_t s = ss.offsets[r], e = ss.offsets[r+1];
+                out[r] = std::string(ss.bytes.data() + s, ss.bytes.data() + e);
+                break;
+            }
+        }
+    }
+}
+
 inline const char* q_fmt_table(QValue df, int64_t max_rows, bool show_index) {
-    if (df.type != QValue::VAL_TABLE || !df.data.table_val) {
-        q_runtime_reportf("runtime error: fmt.table() expects table\n");
+    std::vector<std::string> col_names;
+    std::vector<std::vector<std::string>> cells;
+    std::vector<bool> col_numeric;
+    size_t nrows = 0;
+
+    if (df.type == QValue::VAL_TABLE && df.data.table_val) {
+        QTable* tbl = df.data.table_val;
+        nrows = static_cast<size_t>(tbl->nrows);
+        size_t ncols = static_cast<size_t>(tbl->ncols);
+        col_names.resize(ncols);
+        cells.assign(ncols, std::vector<std::string>(nrows));
+        col_numeric.assign(ncols, false);
+        for (size_t c = 0; c < ncols; c++) {
+            col_names[c] = tbl->def->field_names[c];
+            QValue colval = tbl->cols[c];
+            if (colval.type == QValue::VAL_VECTOR && colval.data.vector_val) {
+                bool numeric = false;
+                q_fmt_vector_cells(*colval.data.vector_val, nrows, cells[c], numeric);
+                col_numeric[c] = numeric;
+            } else {
+                for (size_t r = 0; r < nrows; r++) cells[c][r] = "?";
+            }
+        }
+    } else if (df.type == QValue::VAL_DICT && df.data.dict_val) {
+        QDict* dct = df.data.dict_val;
+        for (const auto& kv : dct->entries) {
+            col_names.push_back(std::string(kv.first.c_str()));
+        }
+        if (col_names.empty()) {
+            return q_strdup("[empty dataframe]");
+        }
+        std::sort(col_names.begin(), col_names.end());
+
+        std::vector<QValue> cols;
+        for (const auto& cname : col_names) {
+            QValue col = q_dict_get(df, qv_string(cname.c_str()));
+            size_t col_len = 0;
+            if (col.type == QValue::VAL_VECTOR && col.data.vector_val) {
+                col_len = col.data.vector_val->count;
+            } else if (col.type == QValue::VAL_LIST && col.data.list_val) {
+                col_len = col.data.list_val->size();
+            } else {
+                q_runtime_reportf("runtime error: fmt.table() column '%s' must be vector or list\n",
+                                  cname.c_str());
+                std::exit(1);
+            }
+            if (cols.empty()) {
+                nrows = col_len;
+            } else if (col_len != nrows) {
+                q_runtime_reportf("runtime error: fmt.table() column '%s' has length %zu, expected %zu\n",
+                                  cname.c_str(), col_len, nrows);
+                std::exit(1);
+            }
+            cols.push_back(col);
+        }
+
+        size_t ncols = col_names.size();
+        cells.assign(ncols, std::vector<std::string>(nrows));
+        col_numeric.assign(ncols, false);
+        for (size_t c = 0; c < ncols; c++) {
+            bool numeric = false;
+            if (cols[c].type == QValue::VAL_VECTOR) {
+                q_fmt_vector_cells(*cols[c].data.vector_val, nrows, cells[c], numeric);
+            } else {
+                const QList& lst = *cols[c].data.list_val;
+                for (size_t r = 0; r < nrows; r++) {
+                    cells[c][r] = q_fmt_cell(lst[r]);
+                    if (q_fmt_is_numeric(lst[r])) numeric = true;
+                }
+            }
+            col_numeric[c] = numeric;
+        }
+    } else {
+        q_runtime_reportf("runtime error: fmt.table() expects table or dict of columns\n");
         std::exit(1);
     }
 
-    QTable* tbl   = df.data.table_val;
-    size_t nrows  = static_cast<size_t>(tbl->nrows);
-    size_t ncols  = static_cast<size_t>(tbl->ncols);
-
-    std::vector<std::string> col_names(ncols);
-    for (size_t c = 0; c < ncols; c++) {
-        col_names[c] = tbl->def->field_names[c];
-    }
-
-    std::vector<std::vector<std::string>> cells(ncols, std::vector<std::string>(nrows));
-    std::vector<bool> col_numeric(ncols, false);
-
-    for (size_t c = 0; c < ncols; c++) {
-        QValue colval = tbl->cols[c];
-        if (colval.type == QValue::VAL_VECTOR && colval.data.vector_val) {
-            const QVector& qv = *colval.data.vector_val;
-            col_numeric[c] = (qv.type == QVector::Type::F64 || qv.type == QVector::Type::I64);
-            for (size_t r = 0; r < nrows; r++) {
-                if (q_vec_is_null_at(qv, r)) { cells[c][r] = "NA"; continue; }
-                char buf[64];
-                switch (qv.type) {
-                    case QVector::Type::F64:
-                        std::snprintf(buf, sizeof(buf), "%g", std::get<QVecF64>(qv.storage)[r]);
-                        cells[c][r] = buf; break;
-                    case QVector::Type::I64:
-                        std::snprintf(buf, sizeof(buf), "%lld", (long long)std::get<QVecI64>(qv.storage)[r]);
-                        cells[c][r] = buf; break;
-                    case QVector::Type::BOOL:
-                        cells[c][r] = std::get<QVecU8>(qv.storage)[r] ? "true" : "false"; break;
-                    case QVector::Type::STR: {
-                        const auto& ss = std::get<QStringStorage>(qv.storage);
-                        uint32_t s = ss.offsets[r], e = ss.offsets[r+1];
-                        cells[c][r] = std::string(ss.bytes.data() + s, ss.bytes.data() + e);
-                        break;
-                    }
-                }
-            }
-        } else {
-            for (size_t r = 0; r < nrows; r++) cells[c][r] = "?";
-        }
-    }
-
+    size_t ncols = col_names.size();
     std::vector<size_t> col_w(ncols);
     for (size_t c = 0; c < ncols; c++) {
         col_w[c] = col_names[c].size();

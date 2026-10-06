@@ -92,6 +92,8 @@ func TestCodegen_SslicePipeChain(t *testing.T) {
 }
 
 func TestCodegen_EmitsVectorLiteral(t *testing.T) {
+	// Int vector literals build a typed vector directly, without an
+	// intermediate list.
 	res := testutil.GenerateCPP("v = vector [1, 2, 3]\n")
 	if len(res.ParserErrors) > 0 {
 		t.Fatalf("unexpected parse errors: %v", res.ParserErrors)
@@ -99,8 +101,11 @@ func TestCodegen_EmitsVectorLiteral(t *testing.T) {
 	if len(res.TypeErrors) > 0 {
 		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
 	}
-	if !strings.Contains(res.CPP, "qv_list") || !strings.Contains(res.CPP, "q_push") || !strings.Contains(res.CPP, "q_to_vector") {
-		t.Fatalf("expected codegen to lower vector literal through list + q_to_vector, cpp=\n%s", res.CPP)
+	if !strings.Contains(res.CPP, "qv_vector_i64(3)") || strings.Count(res.CPP, "q_vec_push_i64(") != 3 {
+		t.Fatalf("expected vector literal to build an i64 vector with 3 pushes, cpp=\n%s", res.CPP)
+	}
+	if strings.Contains(res.CPP, "q_to_vector") {
+		t.Fatalf("expected vector literal not to round-trip through a list, cpp=\n%s", res.CPP)
 	}
 }
 
@@ -175,7 +180,7 @@ func TestCodegen_WhenResultPatternBindingScopeRegression(t *testing.T) {
 		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
 	}
 
-	bindDecl := strings.Index(res.CPP, "QCell* quark_e = q_new_cell(q_result_error")
+	bindDecl := strings.Index(res.CPP, "QValue quark_e = q_result_error(")
 	bindUse := strings.Index(res.CPP, "q_dict_set")
 	if bindDecl == -1 || bindUse == -1 {
 		t.Fatalf("expected generated code to include err-binding and dict set usage, cpp=\n%s", res.CPP)
@@ -313,7 +318,9 @@ func TestCodegen_ModuleQualifiedCallLowersDirectly(t *testing.T) {
 	if len(res.TypeErrors) > 0 {
 		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
 	}
-	if !strings.Contains(res.CPP, "quark_myfloor->value") {
+	// The alias m.myfloor resolves to the module's function symbol, which is
+	// a plain (uncaptured) QValue at top level.
+	if !strings.Contains(res.CPP, "q_call1(quark_myfloor, qv_int(3))") {
 		t.Fatalf("expected module-qualified call to lower to resolved module symbol value, cpp=\n%s", res.CPP)
 	}
 	if strings.Contains(res.CPP, "dot-call syntax is not supported") {
@@ -324,18 +331,31 @@ func TestCodegen_ModuleQualifiedCallLowersDirectly(t *testing.T) {
 // --- Control flow codegen ---
 
 func TestCodegen_IfElseEmitsConditional(t *testing.T) {
-	res := testutil.GenerateCPP("x = 1\nif x == 1:\n    println('yes')\nelse:\n    println('no')\n")
+	// Dynamic condition: goes through q_truthy.
+	res := testutil.GenerateCPP("fn f(x) ->\n    if x:\n        println('yes')\n    else:\n        println('no')\n")
 	if len(res.ParserErrors) > 0 {
 		t.Fatalf("unexpected parse errors: %v", res.ParserErrors)
 	}
 	if len(res.TypeErrors) > 0 {
 		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
 	}
-	if !strings.Contains(res.CPP, "q_truthy(") {
-		t.Fatalf("expected if to emit q_truthy, cpp=\n%s", res.CPP)
+	if !strings.Contains(res.CPP, "if (q_truthy(quark_x))") {
+		t.Fatalf("expected dynamic if to emit q_truthy, cpp=\n%s", res.CPP)
 	}
 	if !strings.Contains(res.CPP, "} else {") {
 		t.Fatalf("expected else branch in output, cpp=\n%s", res.CPP)
+	}
+
+	// Scalar condition: lowered to a native C++ comparison.
+	res = testutil.GenerateCPP("x = 1\nif x == 1:\n    println('yes')\nelse:\n    println('no')\n")
+	if len(res.ParserErrors) > 0 {
+		t.Fatalf("unexpected parse errors: %v", res.ParserErrors)
+	}
+	if len(res.TypeErrors) > 0 {
+		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
+	}
+	if !strings.Contains(res.CPP, "if ((quark_x == 1))") || strings.Contains(res.CPP, "q_truthy(") {
+		t.Fatalf("expected scalar if to emit a native comparison, cpp=\n%s", res.CPP)
 	}
 }
 
@@ -373,7 +393,8 @@ func TestCodegen_ForLoopEmitsIteration(t *testing.T) {
 }
 
 func TestCodegen_WhileLoopEmitsWhile(t *testing.T) {
-	res := testutil.GenerateCPP("x = 10\nwhile x > 0:\n    x = x - 1\n")
+	// Dynamic condition: goes through q_truthy.
+	res := testutil.GenerateCPP("fn f(x) ->\n    while x:\n        x = x - 1\n")
 	if len(res.ParserErrors) > 0 {
 		t.Fatalf("unexpected parse errors: %v", res.ParserErrors)
 	}
@@ -381,7 +402,19 @@ func TestCodegen_WhileLoopEmitsWhile(t *testing.T) {
 		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
 	}
 	if !strings.Contains(res.CPP, "while (q_truthy(") {
-		t.Fatalf("expected while loop with q_truthy, cpp=\n%s", res.CPP)
+		t.Fatalf("expected dynamic while loop with q_truthy, cpp=\n%s", res.CPP)
+	}
+
+	// Scalar condition and body: lowered to native C++.
+	res = testutil.GenerateCPP("x = 10\nwhile x > 0:\n    x = x - 1\n")
+	if len(res.ParserErrors) > 0 {
+		t.Fatalf("unexpected parse errors: %v", res.ParserErrors)
+	}
+	if len(res.TypeErrors) > 0 {
+		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
+	}
+	if !strings.Contains(res.CPP, "while ((quark_x > 0))") {
+		t.Fatalf("expected scalar while loop with native comparison, cpp=\n%s", res.CPP)
 	}
 }
 
@@ -494,7 +527,7 @@ func TestCodegen_ClosureHiddenFirstParam(t *testing.T) {
 
 func TestCodegen_DirectCallViaClosureDispatch(t *testing.T) {
 	// Named functions desugar to assignment of lambda: add = fn(x, y) -> x + y
-	// Calls go through closure dispatch: q_call2(quark_add->value, ...)
+	// Calls go through closure dispatch on the function value.
 	src := "fn add(x, y) -> x + y\nprintln(add(1, 2))\n"
 	res := testutil.GenerateCPP(src)
 	if len(res.ParserErrors) > 0 {
@@ -503,7 +536,7 @@ func TestCodegen_DirectCallViaClosureDispatch(t *testing.T) {
 	if len(res.TypeErrors) > 0 {
 		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
 	}
-	if !strings.Contains(res.CPP, "q_call2(quark_add->value") {
+	if !strings.Contains(res.CPP, "q_call2(quark_add, qv_int(1), qv_int(2))") {
 		t.Fatalf("expected closure dispatch for named function call, cpp=\n%s", res.CPP)
 	}
 }
@@ -528,15 +561,28 @@ func TestCodegen_NestedClosureCapturesOuter(t *testing.T) {
 // --- Expression codegen ---
 
 func TestCodegen_UnaryNegation(t *testing.T) {
-	res := testutil.GenerateCPP("x = -5\nprintln(x)\n")
+	// Dynamic operand: q_neg.
+	res := testutil.GenerateCPP("fn neg(a) -> -a\n")
 	if len(res.ParserErrors) > 0 {
 		t.Fatalf("unexpected parse errors: %v", res.ParserErrors)
 	}
 	if len(res.TypeErrors) > 0 {
 		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
 	}
-	if !strings.Contains(res.CPP, "q_neg(") {
-		t.Fatalf("expected q_neg for unary minus, cpp=\n%s", res.CPP)
+	if !strings.Contains(res.CPP, "q_neg(quark_a)") {
+		t.Fatalf("expected q_neg for unary minus on a dynamic value, cpp=\n%s", res.CPP)
+	}
+
+	// Int literal: native negation into a long long local.
+	res = testutil.GenerateCPP("x = -5\nprintln(x)\n")
+	if len(res.ParserErrors) > 0 {
+		t.Fatalf("unexpected parse errors: %v", res.ParserErrors)
+	}
+	if len(res.TypeErrors) > 0 {
+		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
+	}
+	if !strings.Contains(res.CPP, "long long quark_x = (-5);") {
+		t.Fatalf("expected native negation for an int literal, cpp=\n%s", res.CPP)
 	}
 }
 
@@ -554,49 +600,63 @@ func TestCodegen_UnaryBang(t *testing.T) {
 }
 
 func TestCodegen_AllArithmeticOperators(t *testing.T) {
+	// Dynamic operands use runtime helpers; int literal operands are lowered
+	// to native C++ arithmetic through overflow-checked helpers.
 	tests := []struct {
-		expr     string
+		src      string
 		expected string
 	}{
-		{"x = 1 + 2\n", "q_add("},
-		{"x = 1 - 2\n", "q_sub("},
-		{"x = 1 * 2\n", "q_mul("},
-		{"x = 1 / 2\n", "q_div("},
-		{"x = 1 % 2\n", "q_mod("},
-		{"x = 2 ** 3\n", "q_pow("},
+		{"fn f(a, b) -> a + b\n", "q_add(quark_a, quark_b)"},
+		{"fn f(a, b) -> a - b\n", "q_sub(quark_a, quark_b)"},
+		{"fn f(a, b) -> a * b\n", "q_mul(quark_a, quark_b)"},
+		{"fn f(a, b) -> a / b\n", "q_div(quark_a, quark_b)"},
+		{"fn f(a, b) -> a % b\n", "q_mod(quark_a, quark_b)"},
+		{"fn f(a, b) -> a ** b\n", "q_pow(quark_a, quark_b)"},
+		{"x = 1 + 2\n", "q_checked_add(1, 2)"},
+		{"x = 1 - 2\n", "q_checked_sub(1, 2)"},
+		{"x = 1 * 2\n", "q_checked_mul(1, 2)"},
+		{"x = 2 ** 3\n", "q_pow(qv_int(2), qv_int(3))"},
 	}
 	for _, tt := range tests {
-		res := testutil.GenerateCPP(tt.expr)
-		if len(res.ParserErrors) > 0 {
-			t.Errorf("input %q: parse errors: %v", tt.expr, res.ParserErrors)
+		res := testutil.GenerateCPP(tt.src)
+		if len(res.ParserErrors) > 0 || len(res.TypeErrors) > 0 {
+			t.Errorf("input %q: errors: parse=%v type=%v", tt.src, res.ParserErrors, res.TypeErrors)
 			continue
 		}
 		if !strings.Contains(res.CPP, tt.expected) {
-			t.Errorf("input %q: expected %q in output", tt.expr, tt.expected)
+			t.Errorf("input %q: expected %q in output, cpp=\n%s", tt.src, tt.expected, res.CPP)
 		}
 	}
 }
 
 func TestCodegen_AllComparisonOperators(t *testing.T) {
+	// Dynamic operands use runtime helpers; int literal operands are lowered
+	// to a native comparison stored in a bool local.
 	tests := []struct {
-		expr     string
+		src      string
 		expected string
 	}{
-		{"x = 1 < 2\n", "q_lt("},
-		{"x = 1 <= 2\n", "q_lte("},
-		{"x = 1 > 2\n", "q_gt("},
-		{"x = 1 >= 2\n", "q_gte("},
-		{"x = 1 == 2\n", "q_eq("},
-		{"x = 1 != 2\n", "q_neq("},
+		{"fn f(a, b) -> a < b\n", "q_lt(quark_a, quark_b)"},
+		{"fn f(a, b) -> a <= b\n", "q_lte(quark_a, quark_b)"},
+		{"fn f(a, b) -> a > b\n", "q_gt(quark_a, quark_b)"},
+		{"fn f(a, b) -> a >= b\n", "q_gte(quark_a, quark_b)"},
+		{"fn f(a, b) -> a == b\n", "q_eq(quark_a, quark_b)"},
+		{"fn f(a, b) -> a != b\n", "q_neq(quark_a, quark_b)"},
+		{"x = 1 < 2\n", "bool quark_x = (1 < 2);"},
+		{"x = 1 <= 2\n", "bool quark_x = (1 <= 2);"},
+		{"x = 1 > 2\n", "bool quark_x = (1 > 2);"},
+		{"x = 1 >= 2\n", "bool quark_x = (1 >= 2);"},
+		{"x = 1 == 2\n", "bool quark_x = (1 == 2);"},
+		{"x = 1 != 2\n", "bool quark_x = (1 != 2);"},
 	}
 	for _, tt := range tests {
-		res := testutil.GenerateCPP(tt.expr)
-		if len(res.ParserErrors) > 0 {
-			t.Errorf("input %q: parse errors: %v", tt.expr, res.ParserErrors)
+		res := testutil.GenerateCPP(tt.src)
+		if len(res.ParserErrors) > 0 || len(res.TypeErrors) > 0 {
+			t.Errorf("input %q: errors: parse=%v type=%v", tt.src, res.ParserErrors, res.TypeErrors)
 			continue
 		}
 		if !strings.Contains(res.CPP, tt.expected) {
-			t.Errorf("input %q: expected %q in output", tt.expr, tt.expected)
+			t.Errorf("input %q: expected %q in output, cpp=\n%s", tt.src, tt.expected, res.CPP)
 		}
 	}
 }
@@ -667,21 +727,26 @@ func TestCodegen_DictEmitsQvDict(t *testing.T) {
 }
 
 func TestCodegen_LiteralsEmitCorrectConstructors(t *testing.T) {
+	// Uncaptured scalar literals use native locals; strings, null and
+	// captured scalars use QValue constructors.
 	tests := []struct {
 		src      string
 		expected string
 	}{
-		{"x = 42\n", "qv_int(42)"},
-		{"x = 3.14\n", "qv_float(3.14)"},
+		{"x = 42\n", "long long quark_x = 42;"},
+		{"x = 3.14\n", "double quark_x = 3.14;"},
+		{"x = true\n", "bool quark_x = true;"},
+		{"x = false\n", "bool quark_x = false;"},
 		{"x = 'hello'\n", "qv_string(\"hello\")"},
-		{"x = true\n", "qv_bool(true)"},
-		{"x = false\n", "qv_bool(false)"},
 		{"x = null\n", "qv_null()"},
+		{"x = 42\nf = fn() -> x\n", "qv_int(42)"},
+		{"x = 3.14\nf = fn() -> x\n", "qv_float(3.14)"},
+		{"x = true\nf = fn() -> x\n", "qv_bool(true)"},
 	}
 	for _, tt := range tests {
 		res := testutil.GenerateCPP(tt.src)
-		if len(res.ParserErrors) > 0 {
-			t.Errorf("input %q: parse errors: %v", tt.src, res.ParserErrors)
+		if len(res.ParserErrors) > 0 || len(res.TypeErrors) > 0 {
+			t.Errorf("input %q: errors: parse=%v type=%v", tt.src, res.ParserErrors, res.TypeErrors)
 			continue
 		}
 		if !strings.Contains(res.CPP, tt.expected) {
@@ -693,9 +758,13 @@ func TestCodegen_LiteralsEmitCorrectConstructors(t *testing.T) {
 // --- Variable handling ---
 
 func TestCodegen_VariableDeclUsesQCell(t *testing.T) {
-	res := testutil.GenerateCPP("x = 42\nprintln(x)\n")
+	// Only captured variables are stored in a QCell.
+	res := testutil.GenerateCPP("x = 42\nf = fn() -> x\nprintln(f())\n")
 	if len(res.ParserErrors) > 0 {
 		t.Fatalf("unexpected parse errors: %v", res.ParserErrors)
+	}
+	if len(res.TypeErrors) > 0 {
+		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
 	}
 	if !strings.Contains(res.CPP, "QCell* quark_x") {
 		t.Fatalf("expected QCell* quark_x declaration, cpp=\n%s", res.CPP)
@@ -703,22 +772,49 @@ func TestCodegen_VariableDeclUsesQCell(t *testing.T) {
 	if !strings.Contains(res.CPP, "quark_x->value") {
 		t.Fatalf("expected quark_x->value access, cpp=\n%s", res.CPP)
 	}
-}
 
-func TestCodegen_VariableReassignment(t *testing.T) {
-	res := testutil.GenerateCPP("x = 1\nx = 2\nprintln(x)\n")
+	res = testutil.GenerateCPP("x = 42\nprintln(x)\n")
 	if len(res.ParserErrors) > 0 {
 		t.Fatalf("unexpected parse errors: %v", res.ParserErrors)
 	}
+	if len(res.TypeErrors) > 0 {
+		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
+	}
+	if strings.Contains(res.CPP, "QCell* quark_x") {
+		t.Fatalf("expected uncaptured variable not to use a QCell, cpp=\n%s", res.CPP)
+	}
+}
+
+func TestCodegen_VariableReassignment(t *testing.T) {
+	// Captured: declare the QCell once, then reassign via ->value.
+	res := testutil.GenerateCPP("x = 1\nx = 2\nf = fn() -> x\nprintln(f())\n")
+	if len(res.ParserErrors) > 0 {
+		t.Fatalf("unexpected parse errors: %v", res.ParserErrors)
+	}
+	if len(res.TypeErrors) > 0 {
+		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
+	}
 	cpp := res.CPP
-	// Should declare QCell once, then reassign via ->value
-	declCount := strings.Count(cpp, "QCell* quark_x")
+	declCount := strings.Count(cpp, "QCell* quark_x = q_new_cell(")
 	if declCount != 1 {
 		t.Fatalf("expected exactly 1 QCell declaration for x, got %d, cpp=\n%s", declCount, cpp)
 	}
 	assignCount := strings.Count(cpp, "quark_x->value =")
 	if assignCount < 2 {
 		t.Fatalf("expected at least 2 assignments to quark_x->value, got %d, cpp=\n%s", assignCount, cpp)
+	}
+
+	// Uncaptured int: declare the native local once, then assign directly.
+	res = testutil.GenerateCPP("x = 1\nx = 2\nprintln(x)\n")
+	if len(res.ParserErrors) > 0 {
+		t.Fatalf("unexpected parse errors: %v", res.ParserErrors)
+	}
+	if len(res.TypeErrors) > 0 {
+		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
+	}
+	cpp = res.CPP
+	if strings.Count(cpp, "long long quark_x") != 1 || !strings.Contains(cpp, "quark_x = 2;") {
+		t.Fatalf("expected one long long declaration and a direct reassignment, cpp=\n%s", cpp)
 	}
 }
 
@@ -730,8 +826,8 @@ func TestCodegen_TypedVarDecl(t *testing.T) {
 	if len(res.TypeErrors) > 0 {
 		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
 	}
-	if !strings.Contains(res.CPP, "QCell* quark_x") {
-		t.Fatalf("expected typed var decl to emit QCell, cpp=\n%s", res.CPP)
+	if !strings.Contains(res.CPP, "long long quark_x = 42;") {
+		t.Fatalf("expected typed int var decl to emit a long long local, cpp=\n%s", res.CPP)
 	}
 }
 

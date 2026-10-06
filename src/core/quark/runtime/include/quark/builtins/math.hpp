@@ -85,6 +85,29 @@ inline QValue q_sum(QValue v) {
     std::exit(1);
 }
 
+// all(v) / any(v) for vector[bool]. Null entries are skipped, matching the
+// other vector reductions. all() of an empty vector is true; any() is false.
+inline QValue q_vec_bool_reduce(QValue v, bool want_all, const char* name) {
+    if (v.type != QValue::VAL_VECTOR || !v.data.vector_val ||
+        v.data.vector_val->type != QVector::Type::BOOL) {
+        q_runtime_reportf("runtime error: %s() expects vector[bool], got %s\n",
+                          name, q_type_name_math(v.type));
+        std::exit(1);
+    }
+    const QVector& vec = *v.data.vector_val;
+    const QVecU8& data = std::get<QVecU8>(vec.storage);
+    for (size_t i = 0; i < vec.count; i++) {
+        if (vec.has_nulls && q_vec_is_null_at(vec, i)) continue;
+        const bool bit = data[i] != 0;
+        if (want_all && !bit) return qv_bool(false);
+        if (!want_all && bit) return qv_bool(true);
+    }
+    return qv_bool(want_all);
+}
+
+inline QValue q_all(QValue v) { return q_vec_bool_reduce(v, true, "all"); }
+inline QValue q_any(QValue v) { return q_vec_bool_reduce(v, false, "any"); }
+
 // Square root (always returns float)
 inline QValue q_sqrt(QValue v) {
     if (v.type != QValue::VAL_INT && v.type != QValue::VAL_FLOAT) {

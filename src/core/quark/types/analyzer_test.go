@@ -614,3 +614,50 @@ func TestForLoop_AllowsStringIterable(t *testing.T) {
 		t.Fatalf("unexpected type errors: %v", typeErrs)
 	}
 }
+
+func TestWhen_ExhaustiveExpressionHasNoVoid(t *testing.T) {
+	cases := []string{
+		"x = 3\nlabel: str = when x:\n    3 -> 'a'\n    _ -> 'b'\n",
+		"r = ok 1\nlabel: str = when r:\n    ok v -> 'a'\n    err e -> 'b'\n",
+	}
+	for _, src := range cases {
+		_, _, parseErrs, typeErrs := testutil.Analyze(src)
+		if len(parseErrs) > 0 || len(typeErrs) > 0 {
+			t.Fatalf("source %q: unexpected errors: parse=%v type=%v", src, parseErrs, typeErrs)
+		}
+	}
+}
+
+func TestWhen_NonExhaustiveExpressionMayBeNull(t *testing.T) {
+	src := "x = 3\nlabel: str = when x:\n    3 -> 'a'\n"
+	_, _, parseErrs, typeErrs := testutil.Analyze(src)
+	if len(parseErrs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", parseErrs)
+	}
+	if len(typeErrs) == 0 {
+		t.Fatalf("expected non-exhaustive when to be rejected for a str variable")
+	}
+}
+
+func TestCaptures_ShadowingBindingsAreLocal(t *testing.T) {
+	cases := []struct {
+		src  string
+		name string
+	}{
+		{"e = 1\nfn f(r) ->\n    when r:\n        ok v -> 'ok'\n        err e -> e\n", "e"},
+		{"i = 1\nfn f(xs) ->\n    for i in xs:\n        println(i)\n", "i"},
+	}
+	for _, tc := range cases {
+		analyzer, _, parseErrs, typeErrs := testutil.Analyze(tc.src)
+		if len(parseErrs) > 0 || len(typeErrs) > 0 {
+			t.Fatalf("source %q: unexpected errors: parse=%v type=%v", tc.src, parseErrs, typeErrs)
+		}
+		for _, names := range analyzer.GetCaptures() {
+			for _, n := range names {
+				if n == tc.name {
+					t.Fatalf("source %q: %q is a local binding but was captured", tc.src, tc.name)
+				}
+			}
+		}
+	}
+}

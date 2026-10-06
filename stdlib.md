@@ -331,6 +331,8 @@ println(type(v2))              // vector[i64]
 | `sum` | `vector -> float` | Sum all elements |
 | `min` | `vector -> float` | Minimum element |
 | `max` | `vector -> float` | Maximum element |
+| `all` | `vector[bool] -> bool` | True if every non-null element is true (true for empty) |
+| `any` | `vector[bool] -> bool` | True if any non-null element is true (false for empty) |
 
 ```quark
 vi = vector [1, 2, 3, 4]

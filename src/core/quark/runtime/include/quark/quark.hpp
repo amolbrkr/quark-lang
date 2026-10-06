@@ -25,6 +25,7 @@
 #include "core/gc.hpp"
 #include "core/value.hpp"
 #include "core/diagnostics.hpp"
+#include "core/checked.hpp"
 #include "core/cell.hpp"
 #include "types/closure.hpp"
 #include "core/constructors.hpp"

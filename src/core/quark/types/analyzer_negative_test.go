@@ -602,3 +602,28 @@ func TestValid_SplitThenIndex(t *testing.T) {
 		t.Fatalf("unexpected type errors for split-then-index: %v", typeErrs)
 	}
 }
+
+// --- Conditions ---
+
+func TestNeg_ResultAndVectorConditions(t *testing.T) {
+	cases := []struct {
+		src  string
+		want string
+	}{
+		{"r = ok 1\nif r:\n    println(1)\n", "result cannot be used as a condition"},
+		{"r = ok 1\ny = 1 if r else 2\n", "result cannot be used as a condition"},
+		{"r = ok 1\nprintln(!r)\n", "result cannot be used as a condition"},
+		{"r = ok 1\nprintln(true or r)\n", "result cannot be used as a condition"},
+		{"v = vector [1]\nwhile v:\n    println(1)\n", "vector cannot be used as a condition"},
+		{"v = vector [1]\nif v > 0:\n    println(1)\n", "vector cannot be used as a condition"},
+	}
+	for _, tc := range cases {
+		_, _, parseErrs, typeErrs := testutil.Analyze(tc.src)
+		if len(parseErrs) > 0 {
+			t.Fatalf("source %q: unexpected parse errors: %v", tc.src, parseErrs)
+		}
+		if !strings.Contains(strings.Join(typeErrs, "\n"), tc.want) {
+			t.Fatalf("source %q: expected %q, got: %v", tc.src, tc.want, typeErrs)
+		}
+	}
+}

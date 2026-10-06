@@ -4,6 +4,7 @@
 
 #include "../core/value.hpp"
 #include "../core/constructors.hpp"
+#include "../core/checked.hpp"
 #include <cstdio>
 #include <cmath>
 #include <climits>
@@ -80,7 +81,7 @@ inline QValue q_add(QValue a, QValue b) {
     if (quark::detail::either_float(a, b)) {
         return qv_float(quark::detail::to_double(a) + quark::detail::to_double(b));
     }
-    return qv_int(a.data.int_val + b.data.int_val);
+    return qv_int(q_checked_add(a.data.int_val, b.data.int_val));
 }
 
 // Subtraction: int - int = int, otherwise float
@@ -96,7 +97,7 @@ inline QValue q_sub(QValue a, QValue b) {
     if (quark::detail::either_float(a, b)) {
         return qv_float(quark::detail::to_double(a) - quark::detail::to_double(b));
     }
-    return qv_int(a.data.int_val - b.data.int_val);
+    return qv_int(q_checked_sub(a.data.int_val, b.data.int_val));
 }
 
 // Multiplication: int * int = int, otherwise float
@@ -112,7 +113,7 @@ inline QValue q_mul(QValue a, QValue b) {
     if (quark::detail::either_float(a, b)) {
         return qv_float(quark::detail::to_double(a) * quark::detail::to_double(b));
     }
-    return qv_int(a.data.int_val * b.data.int_val);
+    return qv_int(q_checked_mul(a.data.int_val, b.data.int_val));
 }
 
 // Division: always returns float for precision
@@ -141,34 +142,21 @@ inline QValue q_mod(QValue a, QValue b) {
         q_runtime_reportf("runtime error: operator '%%' expects int operands, got %s and %s\n", q_type_name_arith(a.type), q_type_name_arith(b.type));
         std::exit(1);
     }
-    // Check for modulo by zero
-    if (b.data.int_val == 0) {
-        q_runtime_reportf("runtime error: modulo by zero\n");
-        std::exit(1);
-    }
-    return qv_int(a.data.int_val % b.data.int_val);
+    return qv_int(q_checked_mod(a.data.int_val, b.data.int_val));
 }
 
-// Power: preserves int type when possible
+// Power: int ** int is an exact int (overflow is fatal, like other int ops);
+// any float operand gives a float.
 inline QValue q_pow(QValue a, QValue b) {
     // Type guard: only INT and FLOAT are valid
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
         q_arith_type_error("**", a, b);
     }
-    double av = quark::detail::to_double(a);
-    double bv = quark::detail::to_double(b);
-    double result = std::pow(av, bv);
-
     if (quark::detail::either_float(a, b)) {
-        return qv_float(result);
+        return qv_float(std::pow(quark::detail::to_double(a), quark::detail::to_double(b)));
     }
-    // Overflow guard: if result exceeds long long range, return as float
-    if (result > static_cast<double>(LLONG_MAX) || result < static_cast<double>(LLONG_MIN) ||
-        std::isnan(result) || std::isinf(result)) {
-        return qv_float(result);
-    }
-    return qv_int(static_cast<long long>(result));
+    return qv_int(q_checked_ipow(a.data.int_val, b.data.int_val));
 }
 
 // Unary negation
@@ -180,7 +168,7 @@ inline QValue q_neg(QValue a) {
     if (a.type == QValue::VAL_FLOAT) {
         return qv_float(-a.data.float_val);
     }
-    return qv_int(-a.data.int_val);
+    return qv_int(q_checked_neg(a.data.int_val));
 }
 
 #endif // QUARK_OPS_ARITHMETIC_HPP

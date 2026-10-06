@@ -1,204 +1,295 @@
 # Quark
 
-Quark is a high-level, dynamically-typed language that compiles to optimized C++17.
+Quark is a small, dynamically-typed programming language that compiles to native
+binaries. You write code that reads like a scripting language; the Quark compiler
+translates it to C++17, hands it to `clang++`, and produces a fast standalone
+executable.
 
-It is designed to feel readable and expressive like a scripting language, while still producing native binaries that can run fast on data-heavy workloads.
+This README is a hands-on onboarding guide: install the compiler, run your first
+program, and learn the language feature by feature with examples you can paste and
+run. Every code sample here was run against the current compiler.
 
-This repository contains the active Go compiler implementation, C++ runtime headers, and smoke/benchmark programs.
+> **Maturity note.** Quark is an early, actively-developed project. The core
+> language (functions, closures, control flow, pattern matching, lists, dicts,
+> vectors, and structs) works today. Some advertised features are still in
+> progress — most notably `table` literals, which are specified but **do not yet
+> parse**. See [Current status and roadmap](#current-status-and-roadmap) for an
+> honest, verified breakdown.
 
-## 1) Introduction: What Quark Is and Language Goals
+## Table of contents
 
-### Language goals
+- [Quickstart](#quickstart)
+- [How a Quark program is built](#how-a-quark-program-is-built)
+- [Language tour](#language-tour)
+  - [Comments](#comments)
+  - [Values and variables](#values-and-variables)
+  - [Printing and input](#printing-and-input)
+  - [Operators and precedence](#operators-and-precedence)
+  - [Strings](#strings)
+  - [Booleans and truthiness](#booleans-and-truthiness)
+  - [Conditionals and the ternary](#conditionals-and-the-ternary)
+  - [Pattern matching with `when`](#pattern-matching-with-when)
+  - [Loops](#loops)
+  - [Functions](#functions)
+  - [Lambdas and closures](#lambdas-and-closures)
+  - [Pipes](#pipes)
+  - [Results: `ok` and `err`](#results-ok-and-err)
+  - [Lists](#lists)
+  - [Dicts](#dicts)
+  - [Vectors](#vectors)
+  - [Structs](#structs)
+  - [Modules and imports](#modules-and-imports)
+- [Standard library reference](#standard-library-reference)
+- [Command-line reference](#command-line-reference)
+- [Project layout](#project-layout)
+- [Current status and roadmap](#current-status-and-roadmap)
+- [Troubleshooting](#troubleshooting)
+- [Further reading](#further-reading)
+- [License](#license)
 
-Quark is built around five practical goals:
+## Quickstart
 
-1. Minimal readable syntax with low ceremony.
-2. Out of the box performance for data heavy operations.
-3. Good compile time guarantees and interop with C++.
+### 1. Prerequisites
 
-### Core philosophy
+You need three tools on your `PATH`:
 
-1. Language ergonomics and performance are equal, primary goals.
-2. Developer productivity and quality-of-life are first-class concerns.
-3. Performance should not come at the cost of user-facing complexity.
-4. Fail early and fail loudly with clear diagnostics.
-5. Less is more for language surface area and syntax.
-6. Explicit is better than implicit, especially at boundaries.
-7. Prefer boring, reliable defaults over cleverness.
+| Tool | Why | Check |
+|---|---|---|
+| Go 1.21+ | builds the compiler | `go version` |
+| `clang++` (C++17) | compiles generated C++ — **`g++` is not supported** | `clang++ --version` |
+| CMake | builds the vendored garbage collector on first run | `cmake --version` |
 
-### Current language shape
+Quark vendors the Boehm garbage collector under `deps/bdwgc`. The very first
+`build`/`run` bootstraps it with CMake automatically; this happens once.
 
-Quark currently supports:
+### 2. Build the compiler
 
-- Indentation-based blocks.
-- Functions, lambdas, and closures.
-- QEI extern declarations (`extern '...'`, `extern fn ... as 'symbol'`).
-- Conditionals, loops, ternary expressions, and pattern matching.
-- Explicit result values using ok/err pattern and related helpers.
-- Pipelined call style via the pipe operator.
-- Method dispatch on strings, lists, dicts, and vectors.
-- Multi-file imports and stdlib path imports.
-
-```quark
-nums = list [1, 2, 3]
-nums.push(4)
-len(nums)
-'hello'.upper()
-```
-
-Pipes chain free-function calls:
-
-```quark
-'hello'.upper() | println()
-```
-
-Dot syntax serves three purposes: dict key access, method calls, and module-qualified calls.
-
-```quark
-d = dict { name: 'quark' }
-println(d.name)
-
-'hello world'.split(' ') | println()
-
-use 'std/demo_math' as dm
-println(dm.add10(5))
-```
-
-### Where Quark sits today
-
-Quark is already usable for many small to medium programs and language experiments. It has strict analyzer/runtime checks and a full compile pipeline, but some features are still planned (for example structs/impl blocks and tensor support).
-
-### Changes Since v0.1
-
-Recent compiler/runtime work introduced several behavior and architecture changes worth calling out:
-
-1. Diagnostics are now severity-aware.
-    - Analyzer warnings are shown but non-fatal.
-    - Analyzer errors are fatal.
-    - Runtime diagnostics use a stable `QK-RUNTIME-001` code format with source location when available.
-
-2. Invariants are fail-loud.
-    - CallPlan and return-validation invariants are validated before codegen.
-    - Unexpected invariant breaches in codegen are treated as internal compiler errors (`INV-*`) instead of silently degrading behavior.
-
-3. Builtin surface expanded and normalized.
-    - Method dispatch is catalog-driven across `str`, `list`, `dict`, and `vector`.
-    - Low-level file primitives are available via `_file_open`, `_file_read`, `_file_write`, `_file_close`, `_file_seek`, `_file_exists`.
-
-4. QEI (extern/native interop) is implemented end-to-end.
-    - `extern fn` call sites use `DispatchExtern` with native argument adaptation and return wrapping.
-    - Free extern functions can be used as first-class values via generated thunks.
-    - Runtime-checked extern unboxing now fails loudly on mismatched dynamic input.
-
-5. Scalar/range lowering expanded.
-    - Scalar `==` / `!=` lower to native C++ comparisons when operands are scalar-tiered.
-    - `if` / `elseif` / `while` conditions on scalar bools lower directly (skip `q_truthy(...)`).
-    - `for i in range(...)` lowers to raw C++ loops instead of list-allocation iteration.
-
-6. Call lowering is now metadata-driven.
-    - Analyzer emits per-call CallPlans (dispatch mode, arity envelope, runtime symbol, default argument fill).
-    - Codegen consumes CallPlans directly rather than re-deriving call semantics.
-
-7. Module/import behavior is stricter and clearer.
-    - Module-qualified calls (`alias.fn(...)`) are resolved in analysis.
-    - Loader enforces deterministic import resolution and cycle detection.
-
-For canonical details, use:
-
-- Language behavior: [semantics.md](semantics.md)
-- Syntax and grammar: [grammar.md](grammar.md)
-- Builtins and method catalog surface: [stdlib.md](stdlib.md)
-- Compiler/runtime internals: [architecture.md](architecture.md)
-- Diagnostic and invariant code registry: [error_codes.md](error_codes.md)
-
-## 2) Install and Run the Compiler
-
-### Prerequisites
-
-- Go 1.21+
-- clang++ in PATH
-- CMake in PATH (for Boehm GC bootstrap)
-- Windows, Linux, or macOS
-
-### Build the compiler
-
-From the repository root:
+The compiler lives in `src/core/quark`. Build it there so it can find its runtime
+headers and standard library (both are resolved relative to the binary):
 
 ```bash
 cd src/core/quark
 go build -o quark .
 ```
 
-On Windows, if you want an explicit exe file name:
+You now have a `quark` executable in `src/core/quark`.
 
-```powershell
-cd src/core/quark
-go build -o quark.exe .
-```
+> Keep the binary in `src/core/quark`. It locates the C++ runtime headers at
+> `./runtime/include` next to itself and the standard library at `../stdlib`. If
+> you move it, see [Troubleshooting](#troubleshooting).
 
-### CLI commands
+### 3. Write and run "Hello, Quark!"
 
-```bash
-quark lex <file>
-quark parse <file>
-quark check <file>
-quark emit <file>
-quark build <file> [-o out]
-quark run <file> [--debug|-d]
-```
-
-Diagnostics behavior:
-
-- Parser/load/analyzer diagnostics are printed with stable codes.
-- Analyzer warnings are displayed but do not fail `check`, `emit`, `build`, or `run`.
-- Analyzer errors fail the command with non-zero exit.
-- Invariant failures (INV-* class) are treated as compiler-bug conditions and fail loudly.
-
-Shorthand:
-
-```bash
-quark program.qrk
-```
-
-This is equivalent to running `quark run program.qrk`.
-
-### First run example
-
-```bash
-cd src/core/quark
-./quark run ../../../src/testfiles/smoke_syntax.qrk
-```
-
-### Boehm GC behavior
-
-Quark vendors Boehm GC under deps/bdwgc. During build/run, the compiler will try to find a built GC library and, if missing, bootstrap it via CMake.
-
-### Stdlib import resolution
-
-Quoted stdlib imports use the `std/...` prefix:
+Create a file `hello.qrk`:
 
 ```quark
-use 'std/demo_math' as dm
+println('Hello, Quark!')
 ```
 
-Stdlib root is resolved in this order:
+Compile and run it:
 
-1. QUARK_STDLIB_ROOT environment variable.
-2. Upward search for a directory named stdlib from the source file location.
-3. Executable-relative fallbacks (stdlib near the compiler binary).
+```bash
+./quark run hello.qrk
+```
 
-If you package Quark for production, setting QUARK_STDLIB_ROOT explicitly is the most robust approach.
+```text
+Hello, Quark!
+```
 
-## 3) Common Language Patterns (with Examples)
+`quark run` compiles to a temporary native binary and executes it. The first run
+also bootstraps the GC (a one-time CMake step), so expect it to take a little
+longer; subsequent runs are fast.
 
-### Functions and expression bodies
+To run one of the bundled example programs:
+
+```bash
+./quark run ../../testfiles/smoke_syntax.qrk
+```
+
+The bare form `./quark hello.qrk` is shorthand for `./quark run hello.qrk`.
+
+## How a Quark program is built
+
+Quark is a compiler, not an interpreter. A `.qrk` file flows through seven Go
+stages, is emitted as a single C++17 translation unit, and is compiled by
+`clang++` into a native executable:
+
+```mermaid
+flowchart LR
+    A[".qrk source"] --> B[Lexer]
+    B --> C[Parser]
+    C --> D[Loader<br/>imports]
+    D --> E[Analyzer<br/>types & scopes]
+    E --> F[Invariants]
+    F --> G[Codegen]
+    G --> H["C++17 source"]
+    H --> I["clang++ -O3"]
+    I --> J["native binary"]
+```
+
+Two consequences worth knowing as a beginner:
+
+- **Errors are reported early and loudly.** The lexer, parser, and analyzer catch
+  many mistakes before any C++ is generated. Diagnostics carry stable codes such
+  as `QK-PARSE-001` (syntax) and `QK-CHECK-001` (semantics/types).
+- **You need a working `clang++` toolchain**, because the final step is real C++
+  compilation. Generated code is built with `-O3`.
+
+You can inspect any stage with the CLI — `quark lex`, `quark parse`, `quark check`,
+and `quark emit` (see [Command-line reference](#command-line-reference)).
+
+## Language tour
+
+The examples below are self-contained. Put any snippet in a `.qrk` file and run it
+with `quark run`.
+
+### Comments
+
+Only line comments exist:
 
 ```quark
-fn add(x, y) -> x + y
-println(add(2, 3))
+// This is a comment.
+x = 1   // trailing comments are fine too
 ```
 
-### Multi-line function bodies
+### Values and variables
+
+Quark is dynamically typed. Assign with `=`; no declaration keyword is needed:
+
+```quark
+count = 3
+name  = 'Ada'
+pi    = 3.14159
+ok_flag = true
+nothing = null
+```
+
+The built-in value types are integers, floats, strings, booleans, `null`, lists,
+dicts, vectors, results, structs, and functions.
+
+Type annotations are **optional** and serve as compile-time checks; all runtime
+values are dynamic. A typed declaration uses `name: Type = expr`:
+
+```quark
+age: int = 36
+label: str = 'hello'
+```
+
+If the right-hand side does not match the annotation, you get a compile-time
+error. The available annotation names are `int`, `float`, `str`, `bool`, `any`,
+`result`, `list`, `dict`, `vector`, and any `struct` type you define. Generic
+forms like `list[int]` are **not** supported.
+
+### Printing and input
+
+```quark
+println('hello')              // value followed by a newline
+print('no newline by default?') // print also writes a trailing newline by default
+name = input('Your name: ')   // read a line from stdin (prompt is optional)
+```
+
+- `println(value)` writes `value` followed by a newline.
+- `print(value, end, width, align, pad)` writes `value` with up to four optional
+  formatting arguments (custom line terminator, minimum field width, alignment,
+  and pad character).
+- `input()` / `input(prompt)` reads a line of text and returns a string.
+
+> **Heads up:** printing a list, vector, or dict shows a compact summary, not the
+> elements:
+>
+> ```quark
+> println(list [1, 2, 3])   // [list len=3]
+> println(vector [1, 2, 3]) // [vector len=3]
+> ```
+>
+> To see the contents, join them into a string or use the `std/fmt` module:
+>
+> ```quark
+> println(list [1, 2, 3].join(', '))   // 1, 2, 3
+> ```
+
+### Operators and precedence
+
+Arithmetic: `+ - * / % **` (where `**` is exponentiation and is right-associative).
+Comparison: `< <= > >= == !=`. Logical: `and`, `or`, `!`. Dataflow: `|` (pipe).
+
+From lowest to highest binding:
+
+| Level | Operators |
+|---|---|
+| 1 (lowest) | `=` (assignment) |
+| 2 | `\|` (pipe) |
+| 3 | `a if cond else b` (ternary) |
+| 4 | `or` |
+| 5 | `and` |
+| 6 | `== !=` |
+| 7 | `< <= > >=` |
+| 8 | `+ -` |
+| 9 | `* / %` |
+| 10 | `**` (right-associative) |
+| 11 | unary `! -` |
+| 12 (highest) | postfix `.` `[]` `()` |
+
+```quark
+println(1 + 2 * 3)      // 7
+println(2 ** 3 ** 2)    // 512  (right-associative: 2 ** (3 ** 2))
+println(-5)             // -5
+println(!false)         // true
+```
+
+Ints are 64-bit, and overflow is a runtime error rather than a silent wrap.
+`==` compares lists, dicts and results by value, so `list [1, 2] == list [1, 2]`
+is `true`. Vectors compare element-wise and produce a `vector[bool]`.
+
+### Strings
+
+String literals use single or double quotes. Supported escapes are `\\`, `\'`,
+`\"`, `\n`, `\t`, `\r`, and `\0`. (String interpolation is planned but not yet
+available.)
+
+Strings carry methods, called with dot syntax, and they chain:
+
+```quark
+println('  Quark  '.trim().upper())   // QUARK
+println('hello world'.split(' ').join('-'))  // hello-world
+println('abcdef'.slice(1, 4))         // bcd
+println('hello'.contains('ell'))      // true
+```
+
+See the [string methods table](#string-methods-str) for the full set.
+
+### Booleans and truthiness
+
+Conditions accept most types and are coerced via truthiness — you do not need to
+convert to `bool` explicitly:
+
+```quark
+if 'non-empty':       // truthy
+    println('yes')
+
+if 0:                 // falsy
+    println('never')
+```
+
+`and` / `or` short-circuit and return one of their operands (Python-style), while
+unary `!` always returns a `bool`. Use `to_bool(x)` for an explicit conversion.
+
+Results and vectors have no truthiness, and using one as a condition is an error.
+Check results with `is_ok(r)`, `is_err(r)` or `when`. Reduce a vector comparison
+with `all(mask)` or `any(mask)`:
+
+```quark
+a = vector [1, 2, 3]
+b = vector [1, 0, 3]
+if all(a == b):
+    println('same')
+else:
+    println('different')   // different
+```
+
+### Conditionals and the ternary
+
+`if` / `elseif` / `else` use indentation blocks introduced by `:`:
 
 ```quark
 fn classify(n) ->
@@ -209,327 +300,577 @@ fn classify(n) ->
     else:
         'positive'
 
-println(classify(10))
+println(classify(10))   // positive
 ```
 
-### Pattern matching with when
+The ternary is an expression:
 
 ```quark
-fn fib(n) ->
-    when n:
-        0 -> 0
-        1 -> 1
-        _ -> fib(n - 1) + fib(n - 2)
-
-println(fib(8))
+x = 7
+label = 'big' if x > 5 else 'small'
+println(label)          // big
 ```
 
-### Error-aware flows with ok/err
+### Pattern matching with `when`
+
+`when` matches a value against patterns in order. Patterns may be literals,
+or-patterns with `or`, the wildcard `_`, or result patterns (`ok x` / `err e`):
+
+```quark
+fn describe(n) ->
+    when n:
+        0 -> 'zero'
+        1 or 2 or 3 -> 'small'
+        _ -> 'many'
+
+println(describe(2))    // small
+```
+
+`when` is an expression, so its value can be assigned directly:
+
+```quark
+n = 2
+size = when n:
+    0 -> 'none'
+    1 or 2 -> 'few'
+    _ -> 'many'
+println(size)           // few
+```
+
+### Loops
+
+`for` iterates over a `list`, `vector`, or `str`. `range` produces a list of
+integers — `range(end)`, `range(start, end)`, or `range(start, end, step)`:
+
+```quark
+total = 0
+for i in range(1, 6):   // 1, 2, 3, 4, 5
+    total = total + i
+println(total)          // 15
+```
+
+`while` repeats while its condition is truthy. `break` and `continue` work inside
+either loop (using them outside a loop is a compile-time error):
+
+```quark
+count = 3
+while count > 0:
+    println(count)
+    count = count - 1
+```
+
+### Functions
+
+Define a named function with `fn`. Parentheses around parameters are always
+required. The body may be a single expression after `->`:
+
+```quark
+fn add(x, y) -> x + y
+println(add(2, 3))      // 5
+```
+
+…or an indented block (the last expression is the result):
+
+```quark
+fn abs_diff(a, b) ->
+    if a > b:
+        a - b
+    else:
+        b - a
+
+println(abs_diff(3, 8)) // 5
+```
+
+**Return type annotations** go between the `)` and the `->`. They are checked at
+compile time:
+
+```quark
+fn greet(name: str) str -> 'Hello, '.concat(name)
+```
+
+**Default parameters** use `= literal`. Only literal defaults are allowed for
+functions (numbers, strings, booleans, `null`, a negated number, or an empty
+list), and required parameters must come before defaulted ones:
+
+```quark
+fn add_n(x, n = 1) -> x + n
+println(add_n(5))       // 6
+println(add_n(5, 10))   // 15
+```
+
+### Lambdas and closures
+
+A lambda is `fn(params) -> expression`. Assign it to a variable to name it:
+
+```quark
+inc = fn(x) -> x + 1
+println(inc(41))        // 42
+```
+
+Lambdas capture variables from the enclosing scope (this is what makes them
+closures):
+
+```quark
+base = 100
+bump = fn(x) -> x + base   // captures `base`
+println(bump(5))           // 105
+```
+
+You can build higher-order functions, but note a current parser limitation: you
+cannot write a lambda *inline* immediately after `->`. Assign it to a variable
+first, then return that variable:
+
+```quark
+fn make_adder(n) ->
+    f = fn(x) -> x + n     // OK: lambda on the right-hand side of `=`
+    f                       // return the closure
+
+add5 = make_adder(5)
+println(add5(10))          // 15
+
+// fn make_adder(n) -> fn(x) -> x + n   // does NOT parse yet
+```
+
+### Pipes
+
+The pipe operator `|` feeds the left value in as the first argument of the call on
+the right. It makes left-to-right data transformations read naturally:
+
+```quark
+'hello'.upper() | println()        // HELLO
+
+inc = fn(x) -> x + 1
+5 | inc() | println()              // 6
+```
+
+Pipes cooperate with default parameters — `5 | add_n()` fills `n` with its
+default.
+
+### Results: `ok` and `err`
+
+Quark models recoverable failure with explicit result values rather than
+exceptions. Construct them with `ok expr` and `err expr`, and unpack them with
+`when`:
 
 ```quark
 fn safe_div(a, b) ->
     if b == 0:
         err 'division by zero'
     else:
-        ok a / b
+        ok (a / b)
 
 when safe_div(10, 2):
+    ok value -> println(value)     // 5
+    err msg  -> println(msg)
+
+when safe_div(10, 0):
     ok value -> println(value)
-    err msg -> println(msg)
+    err msg  -> println(msg)       // division by zero
 ```
 
-### Pipes for readable transformations
+Helper builtins: `is_ok(r)`, `is_err(r)`, and `unwrap(r)` (which aborts loudly if
+`r` is an `err`). Richer combinators like `unwrap_or` and `map_ok` are planned but
+not yet available.
+
+### Lists
+
+Lists are general-purpose, ordered, growable collections. The `list` keyword is
+required in the literal:
 
 ```quark
-'  quark  '.trim().upper() | println()
+nums = list [3, 1, 2]
+nums.push(4)                 // append (mutates in place)
+println(len(nums))           // 4
+println(nums.get(0))         // 3
+println(nums.reverse().join('-'))  // 4-2-1-3
 ```
 
-### Lists for general-purpose dynamic collections
+Index with `[]` (negative indices count from the end); assign to an index to
+replace an element:
 
 ```quark
-nums = list [1, 2, 3]
-nums.push(4)
-nums.get(0) | println()
-len(nums) | println()
+xs = list [10, 20, 30]
+println(xs[-1])              // 30
+xs[0] = 99
+println(xs[0])               // 99
 ```
 
-### Vectors for typed, data-oriented operations
+See the [list methods table](#list-methods-list) for the full set.
+
+### Dicts
+
+Dicts map identifier keys to values. The `dict` keyword is required, and keys in a
+literal are written as bare identifiers:
+
+```quark
+user = dict { name: 'ada', age: 36 }
+
+println(user.name)           // ada — dot read
+user.age = 37                // dot write
+println(user.age)            // 37
+
+user = user.set('city', 'london')   // .set returns the updated dict
+println(user.city)           // london
+println(user.get('missing')) // null — missing keys read as null
+```
+
+Dicts support `.get`, `.set`, `.keys`, `.values`, and `.items`. Bracket indexing
+(`user['name']`) is **not** supported — use dot access or `.get` / `.set`.
+
+### Vectors
+
+Vectors are typed, columnar, data-oriented arrays. Unlike lists, arithmetic and
+comparisons apply element-wise across the whole vector, which is convenient for
+numeric work:
 
 ```quark
 v = vector [1, 2, 3, 4]
-w = v + 10
-println(sum(w))
-println(sum(v > 2))
+println(type(v))             // vector[i64]
+
+w = v + 10                   // element-wise add -> vector [11, 12, 13, 14]
+println(sum(w))              // 50
+
+mask = v > 2                 // element-wise compare -> bool vector
+println(sum(mask))           // 2   (true counts as 1)
 ```
 
-### Dict access patterns
+Vectors support `.get`, `.fillna` (replace nulls), `.astype` (cast dtype), and
+`.to_list`. Convert a list with `.to_vector()`. You can also index a vector with a
+boolean mask vector to filter it: `v[v > 2]`.
+
+### Structs
+
+Structs are fixed-shape records with named, typed fields — the right tool when a
+`dict` is too loose. Declare one with `struct`:
 
 ```quark
-user = dict { name: 'alex', age: 30 }
-println(user.name)
-
-k = 'name'
-user.get(k) | println()
-user = user.set('city', 'dublin')
-println(user.city)
+struct Customer:
+    id: int
+    name: str
+    age: int = 0      // optional field with a default
+    city: str
 ```
 
-### Module usage patterns
-
-Same-file module:
+Construct with named fields. Missing required fields, unknown fields, duplicate
+fields, and type mismatches are all compile-time errors. Both inline and
+multi-line literals are allowed:
 
 ```quark
-module math:
+c = Customer { id: 1, name: 'Alice', city: 'NYC' }
+println(c.age)        // 0   (used the default)
+println(type(c))      // Customer
+
+c3 = Customer {
+    id: 3
+    name: 'Charlie'
+    age: 25
+    city: 'SF'
+}
+```
+
+Field defaults may be constant expressions:
+
+```quark
+struct Config:
+    timeout: int = 60 * 60   // 3600
+    retries: int = 3
+```
+
+Struct values are **immutable**: there is no `c.field = ...` assignment. To
+"update" a struct, reconstruct it (this is the canonical pattern in v0.1):
+
+```quark
+older = Customer { id: c.id, name: c.name, age: c.age + 1, city: c.city }
+println(older.age)    // 1
+```
+
+Structs may be passed to and returned from functions and stored in lists. In v0.1
+there are no methods, `impl` blocks, inheritance, or whole-struct `==` (compare
+fields explicitly).
+
+### Modules and imports
+
+A module groups functions under a name. Import it with `use`, and the recommended
+form binds an alias you then qualify calls with.
+
+**Same-file module:**
+
+```quark
+module mathx:
     fn square(x) -> x * x
+    fn cube(x) -> x * x * x
 
-use math as m
-println(m.square(9))
+use mathx as m
+println(m.square(9))   // 81
+println(m.cube(3))     // 27
 ```
 
-File import:
+**File import** (relative or absolute path, no extension):
 
 ```quark
 use './lib/helpers' as h
 println(h.format_name('Ada'))
 ```
 
-Stdlib path import:
+**Standard library import** (the `std/` prefix; see
+[stdlib modules](#standard-library-modules)):
 
 ```quark
-use 'std/demo_math' as dm
-println(dm.add10(32))
+use 'std/io' as io
+use 'std/fmt' as fmt
+
+println(io.exists('hello.qrk'))         // true / false
+println(fmt.show_list(list [3, 1, 2]))  // formatted, readable list
 ```
 
-## 4) Stdlib: Complete Builtins Reference
+> **Prefer the `as alias` form.** Importing without an alias injects the module's
+> names into the current scope, which can collide with your own definitions and
+> produce `QK-CHECK-001` symbol-conflict errors. Aliased imports keep names tidy
+> and unambiguous.
 
-All builtins are globally available; no import is required.
+## Standard library reference
 
-### Free Functions
+All free functions and methods below are globally available — **no import is
+required** for them. (The `std/io` and `std/fmt` modules are separate; see
+[Standard library modules](#standard-library-modules).)
 
-#### I/O
-
-| Function | Arity | Returns | Notes |
-|---|---:|---|---|
-| print | 1..5 | void | Configurable end, width, alignment, pad |
-| println | 1 | void | Prints with newline |
-| input | 0..1 | str | Optional prompt must be string |
-
-#### Conversions, Introspection, Result Helpers
+### Free functions
 
 | Function | Arity | Returns | Notes |
 |---|---:|---|---|
-| len | 1 | int | Works on str/list/dict/vector |
-| to_str | 1 | str | General conversion |
-| to_int | 1 | int | Runtime error on invalid parse |
-| to_float | 1 | float | Runtime error on invalid parse |
-| to_bool | 1 | bool | Truthiness conversion |
-| type | 1 | str | Runtime type name |
-| is_ok | 1 | bool | Expects result value |
-| is_err | 1 | bool | Expects result value |
-| unwrap | 1 | any | Panics on err |
+| `print` | 1–5 | — | value plus optional end, width, align, pad |
+| `println` | 1 | — | value followed by a newline |
+| `input` | 0–1 | str | optional string prompt |
+| `len` | 1 | int | length of str / list / dict / vector |
+| `to_str` | 1 | str | convert to string |
+| `to_int` | 1 | int | parse/convert; runtime error if invalid |
+| `to_float` | 1 | float | parse/convert; runtime error if invalid |
+| `to_bool` | 1 | bool | truthiness conversion |
+| `type` | 1 | str | runtime type name (e.g. `vector[i64]`, `Customer`) |
+| `is_ok` | 1 | bool | true if a result is `ok` |
+| `is_err` | 1 | bool | true if a result is `err` |
+| `unwrap` | 1 | any | value of an `ok`; aborts on `err` |
+| `range` | 1–3 | list | `range(end)`, `range(start, end)`, `range(start, end, step)` |
+| `abs` | 1 | any | absolute value (preserves int/float) |
+| `min` | 1–2 | any | the smaller of two scalars, or the minimum of a single numeric vector |
+| `max` | 1–2 | any | the larger of two scalars, or the maximum of a single numeric vector |
+| `sum` | 1 | any | sum of a numeric or bool vector (not a list) |
+| `sqrt` | 1 | float | error on negative input |
+| `floor` | 1 | int | round toward −∞ |
+| `ceil` | 1 | int | round toward +∞ |
+| `round` | 1 | int | round to nearest int |
+| `enumerate` | 1 | list | list of `{ index, value }` records |
 
-#### Range
-
-| Function | Arity | Returns | Notes |
-|---|---:|---|---|
-| range | 1..3 | list | range(end), range(start,end), range(start,end,step) |
-
-#### Math
-
-| Function | Arity | Returns | Notes |
-|---|---:|---|---|
-| abs | 1 | any | Preserves type |
-| min | 1..2 | any | Scalar or vector |
-| max | 1..2 | any | Scalar or vector |
-| sum | 1 | any | Vector/list reduction |
-| sqrt | 1 | float | Domain error on negative |
-| floor | 1 | int | Float to int |
-| ceil | 1 | int | Float to int |
-| round | 1 | int | Float to nearest int |
-
-#### Other
-
-| Function | Arity | Returns | Notes |
-|---|---:|---|---|
-| enumerate | 1 | list | Build list of `{ index, value }` records |
-
-### Methods (by receiver type)
+### Methods by receiver type
 
 #### String methods (`str`)
 
 | Method | Description |
-|--------|-------------|
-| `.upper()` | Uppercase copy |
-| `.lower()` | Lowercase copy |
-| `.trim()` | Strip leading/trailing whitespace |
-| `.contains(sub)` | Substring test |
-| `.startswith(prefix)` | Prefix test |
-| `.endswith(suffix)` | Suffix test |
-| `.replace(old, new)` | Replace all occurrences |
-| `.concat(other)` | Concatenate strings |
-| `.split(sep)` | Split by separator |
-| `.slice(start, end)` | Substring `[start:end)` |
+|---|---|
+| `.upper()` | uppercase copy |
+| `.lower()` | lowercase copy |
+| `.trim()` | strip leading/trailing whitespace |
+| `.contains(sub)` | substring test |
+| `.startswith(prefix)` | prefix test |
+| `.endswith(suffix)` | suffix test |
+| `.replace(old, new)` | replace all occurrences |
+| `.concat(other)` | concatenate two strings |
+| `.split(sep)` | split into a list of strings |
+| `.slice(start, end)` | substring `[start, end)` |
 
 #### List methods (`list`)
 
 | Method | Description |
-|--------|-------------|
-| `.push(item)` | Append item; returns updated list |
-| `.pop()` | Remove and return last item |
-| `.get(idx)` | Get at index (out-of-bounds → null) |
-| `.set(idx, val)` | Set at index; returns value |
-| `.insert(idx, val)` | Insert at index; returns list |
-| `.remove(idx)` | Remove at index; returns removed item |
-| `.slice(start, end)` | Sublist `[start:end)` |
-| `.reverse()` | Reverse in place; returns list |
-| `.concat(other)` | Concatenate two lists |
-| `.join(sep)` | Join elements with separator |
-| `.enumerate()` | Build `{ index, value }` records |
-| `.to_vector()` | Convert to typed vector |
+|---|---|
+| `.push(item)` | append (mutates); returns the list |
+| `.pop()` | remove and return the last item |
+| `.get(idx)` | item at index, or `null` if out of bounds |
+| `.set(idx, val)` | set the item at index |
+| `.insert(idx, val)` | insert at index |
+| `.remove(idx)` | remove and return the item at index |
+| `.slice(start, end)` | sublist `[start, end)` |
+| `.reverse()` | reverse in place |
+| `.concat(other)` | concatenate two lists |
+| `.join(sep)` | join into a string |
+| `.enumerate()` | list of `{ index, value }` records |
+| `.to_vector()` | convert to a typed vector |
 
 #### Dict methods (`dict`)
 
 | Method | Description |
-|--------|-------------|
-| `.get(key)` | Get value by key (missing → null) |
-| `.set(key, val)` | Set key/value; returns updated dict |
-| `.keys()` | Return list of keys |
-| `.values()` | Return list of values |
-| `.items()` | Return list of `{ key, value }` records |
+|---|---|
+| `.get(key)` | value for key, or `null` if missing |
+| `.set(key, val)` | returns the updated dict |
+| `.keys()` | list of keys |
+| `.values()` | list of values |
+| `.items()` | list of `{ key, value }` records |
 
 #### Vector methods (`vector`)
 
 | Method | Description |
-|--------|-------------|
-| `.get(idx)` | Get scalar value at index |
-| `.fillna(val)` | Replace null entries |
-| `.astype(dtype)` | Cast vector dtype |
-| `.to_list()` | Convert back to list |
+|---|---|
+| `.get(idx)` | scalar value at index |
+| `.fillna(val)` | replace null entries |
+| `.astype(dtype)` | cast to a different dtype |
+| `.to_list()` | convert back to a list |
 
-### Quick stdlib snippets
+### Standard library modules
 
-```quark
-println(to_int('42'))
-println(range(1, 5))
-'quark'.upper() | println()
+These ship under `src/core/stdlib` and are imported with the `std/` prefix:
 
-vals = list [1, 2, 3]
-vals.push(4)
-println(sum(vals.to_vector()))
-```
+| Module | Import | Highlights |
+|---|---|---|
+| `io` | `use 'std/io' as io` | `io.open`, `io.read`, `io.write`, `io.close`, `io.seek`, `io.exists`, and `io.seek_set` / `io.seek_cur` / `io.seek_end` |
+| `fmt` | `use 'std/fmt' as fmt` | `fmt.show_list`, `fmt.show_vec`, `fmt.show_dict`, `fmt.table`, `fmt.head`, `fmt.tail` for readable rendering |
 
-For a deeper narrative and behavior notes, see stdlib.md.
+For deeper behavior notes, see [stdlib.md](stdlib.md). The code-level source of
+truth for builtin names and arities is
+`src/core/quark/builtins/catalog.go`.
 
-## 5) Architecture and Compiler Setup
-
-### High-level pipeline
+## Command-line reference
 
 ```text
-                 Quark Source (.qrk)
-                         |
-                         v
-+-------------------+  tokens  +-------------------+
-| Lexer (Go)        | -------> | Parser (Go)       |
-| - indentation     |          | - AST             |
-| - token stream    |          | - module/use nodes|
-+-------------------+          +-------------------+
-                                        |
-                                        v
-                              +-------------------+
-                              | Import Loader     |
-                              | - file imports    |
-                              | - std/ imports    |
-                              | - cycle checks    |
-                              +-------------------+
-                                        |
-                                        v
-                              +-------------------+
-                              | Analyzer (Go)     |
-                              | - scopes/types    |
-                              | - call plans      |
-                              | - diagnostics     |
-                              +-------------------+
-                                        |
-                                        v
-                              +-------------------+
-                              | Invariants        |
-                              | - call plan checks|
-                              | - return checks   |
-                              +-------------------+
-                                        |
-                                        v
-                              +-------------------+
-                              | Codegen (Go)      |
-                              | - extern includes |
-                              | - dispatch lowering|
-                              | -> C++17 source   |
-                              +-------------------+
-                                        |
-                                        v
-                              +-------------------+
-                              | clang++           |
-                              | -O3 + arch flags  |
-                              +-------------------+
-                                        |
-                                        v
-                                 Native Executable
+quark <command> [arguments]
 ```
 
-### Repository layout (important parts)
+| Command | Purpose |
+|---|---|
+| `quark lex <file>` | tokenize and print the token stream |
+| `quark parse <file>` | parse and print the AST |
+| `quark check <file>` | run the analyzer (types, scopes); report diagnostics only |
+| `quark emit <file>` | print the generated C++ to stdout |
+| `quark build <file> [-o out] [--lto]` | compile to a native executable |
+| `quark run <file> [--debug] [--lto]` | compile and run |
+| `quark <file>` | shorthand for `quark run <file>` |
+| `quark help` | show usage |
 
-- src/core/quark: active Go compiler implementation.
-- src/core/quark/runtime/include/quark: header-only runtime.
-- deps/bdwgc: vendored Boehm GC source.
-- src/testfiles: smoke programs.
-- stdlib: repository stdlib modules (used by `use 'std/...'`).
+Flags:
 
-### Build/link details
+| Flag | Applies to | Effect |
+|---|---|---|
+| `-o <name>` | `build` | output executable name |
+| `--debug`, `-d` | `run` | keep the generated `.cpp` next to the source and print the compile command |
+| `--lto` | `build`, `run` | enable link-time optimization |
 
-Compiler invocations generated by Quark use:
+Diagnostics behavior:
 
-- C++17 mode.
-- O3 optimization.
-- Architecture flag on amd64 builds.
-- Runtime include path for Quark headers.
-- Boehm GC include/lib when GC is enabled.
+- Parser, loader, and analyzer messages print with stable codes (`QK-PARSE-001`,
+  `QK-CHECK-001`, …).
+- Analyzer **warnings** are shown but do not fail the command.
+- Analyzer **errors** fail the command with a non-zero exit code.
+- Internal invariant failures (`INV-*`) are treated as compiler bugs and fail
+  loudly.
 
-### Error model
+Examples:
 
-Quark favors explicit failure:
+```bash
+quark run hello.qrk            # compile and run
+quark build hello.qrk -o hello # produce ./hello
+quark emit hello.qrk           # see the generated C++
+quark check hello.qrk          # type-check only
+```
 
-- Analyzer catches concrete type and arity errors when knowable.
-- Runtime checks guard dynamic paths.
-- Type/domain violations fail loudly rather than silently returning neutral values.
+## Project layout
 
-Documented exceptions:
+| Path | Contents |
+|---|---|
+| `src/core/quark` | the Go compiler; build the `quark` binary here |
+| `src/core/quark/lexer`, `parser`, `loader`, `types`, `invariants`, `codegen`, `builtins` | the seven compiler stages |
+| `src/core/quark/runtime/include/quark` | header-only C++17 runtime (resolved relative to the binary) |
+| `src/core/stdlib` | standard library modules (`io.qrk`, `fmt.qrk`, `fmt.hpp`) |
+| `src/testfiles` | runnable example/smoke programs (`smoke_*.qrk`) |
+| `deps/bdwgc` | vendored Boehm garbage collector (built on first run) |
+| `grammar.md`, `semantics.md`, `stdlib.md`, `architecture.md`, `error_codes.md` | reference docs |
 
-- `.get(idx)` on list returns null for out-of-bounds.
-- `.get(key)` on dict returns null for missing keys.
+## Current status and roadmap
 
-### Status summary
+Quark is pre-1.0. The following reflects what the **current build actually does**,
+verified by compiling and running the bundled examples.
 
-Implemented:
+**Working today**
 
-- Full lexer/parser/analyzer/codegen pipeline.
-- Closures and function values.
-- Pipes, control-flow, pattern matching.
-- Lists, dicts, vectors, results.
-- Method dispatch on str, list, dict, vector.
-- Multi-file imports and stdlib imports.
+- Indentation-based blocks; line comments.
+- Integers, floats, strings (single/double quoted), booleans, `null`.
+- `if` / `elseif` / `else`, the ternary, and `when` pattern matching (literals,
+  or-patterns, `_`, and `ok` / `err` patterns).
+- `for` (over list / vector / str) with `range`, `while`, `break`, `continue`.
+- Functions with optional return-type annotations and literal default parameters.
+- Lambdas and closures (with the inline-after-`->` caveat noted above).
+- The pipe operator `|`.
+- `ok` / `err` results with `is_ok`, `is_err`, `unwrap`.
+- Lists, dicts, and typed vectors with element-wise operations.
+- **Structs**: typed fields, constant-expression defaults, named-field
+  construction, field access, immutability, reconstruction updates.
+- Same-file modules, file imports, and `std/` imports (use the `as alias` form).
+- Extern / FFI declarations for calling into C++ (see
+  [ffi_v0_1_spec.md](ffi_v0_1_spec.md)).
 
-Planned:
+**In progress / not yet usable**
 
-- Structs and impl blocks.
-- Tensor type.
-- Additional optimizer passes beyond current architecture.
+- **`table` literals.** A columnar `table` type is specified in
+  [tables_v0_1_spec.md](tables_v0_1_spec.md) and partially scaffolded (there is a
+  `fmt.table` rendering stub), but `table { ... }` **does not parse in the current
+  build** — it reports `QK-PARSE-001`. Treat tables as not yet available.
+- **Un-aliased multi-file imports.** Importing several files without `as` can
+  raise symbol-conflict errors; use aliases.
 
-For detailed implementation internals, see architecture.md.
+**Planned**
+
+- String interpolation (`!{ expr }` inside string literals).
+- Generic type expressions (e.g. `list[int]`).
+- Struct methods / `impl` blocks, and whole-struct equality.
+- Schemas over structs and tables.
+- A tensor type and additional optimizer passes.
+- Result combinators such as `unwrap_or` and `map_ok`.
+
+## Troubleshooting
+
+**`Error: clang++ not found in PATH`** — Quark requires `clang++` (not `g++`).
+Install it: `sudo apt install clang` (Debian/Ubuntu) or `brew install llvm`
+(macOS), then re-run.
+
+**`Boehm GC is not built and cmake is not available`** — install CMake so the
+first build can compile the vendored GC under `deps/bdwgc`. This bootstrap runs
+once.
+
+**`error while loading shared libraries: libgc.so.1`** — the program was built
+by an older compiler that linked the GC as a shared library. Rebuild the
+compiler and the program. Current builds link a static GC from
+`deps/bdwgc/build-static`, so executables do not depend on `libgc` at runtime.
+
+**Imports or runtime headers not found** — the `quark` binary resolves its runtime
+headers at `./runtime/include` next to itself and the standard library at
+`../stdlib`. Keep the binary in `src/core/quark`. If you must run it from
+elsewhere, set the stdlib root explicitly:
+
+```bash
+export QUARK_STDLIB_ROOT=/abs/path/to/src/core/stdlib
+```
+
+**A list/vector prints as `[list len=N]`** — that is the intended compact
+representation. Use `.join(sep)` or the `std/fmt` module to render contents.
+
+**A `table { ... }` literal fails with `QK-PARSE-001`** — tables are not yet
+implemented; see [Current status and roadmap](#current-status-and-roadmap).
+
+## Further reading
+
+These canonical docs go deeper than this guide:
+
+- [grammar.md](grammar.md) — syntax and the formal grammar.
+- [semantics.md](semantics.md) — runtime behavior, truthiness, and the error model.
+- [stdlib.md](stdlib.md) — builtin and method behavior contracts.
+- [architecture.md](architecture.md) — compiler pipeline and runtime internals.
+- [error_codes.md](error_codes.md) — the diagnostic and invariant code registry.
+- [structs_v0_1_spec.md](structs_v0_1_spec.md),
+  [tables_v0_1_spec.md](tables_v0_1_spec.md),
+  [ffi_v0_1_spec.md](ffi_v0_1_spec.md) — feature design specs.
+
+> If a doc disagrees with the compiler, trust the compiler — and please file the
+> drift. Several specs currently describe features ahead of the implementation.
 
 ## License
 
-This repository is licensed under the GNU General Public License v3.0.
-
-See LICENSE for the full text.
-
-Third-party dependencies may use different licenses; see their respective
-license files (for example, deps/bdwgc/LICENSE).
+This repository is licensed under the GNU General Public License v3.0. See
+`LICENSE` for the full text. Third-party dependencies may use different licenses;
+see their respective license files (for example, `deps/bdwgc/LICENSE`).

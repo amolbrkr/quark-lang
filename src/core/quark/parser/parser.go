@@ -15,6 +15,11 @@ type Parser struct {
 	curToken    token.Token
 	errors      []diagnostics.Diagnostic
 	structNames map[string]bool // struct names collected in pre-pass for literal parsing
+	// blockExprEnded is set when an expression ended with an indented block
+	// (a `when` used as an expression). The block's DEDENT has already been
+	// consumed, so the current token starts the next statement and must not
+	// be parsed as an infix continuation (for example a leading '-' or '(').
+	blockExprEnded bool
 }
 
 func New(tokens []token.Token) *Parser {
@@ -138,6 +143,7 @@ func (p *Parser) Parse() *ast.TreeNode {
 }
 
 func (p *Parser) parseStatement() *ast.TreeNode {
+	p.blockExprEnded = false
 	switch p.curToken.Type {
 	case token.MODULE:
 		return p.parseModule()

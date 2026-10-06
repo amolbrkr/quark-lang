@@ -45,3 +45,7 @@ thoughts.md
 # Benchmark-generated large literals
 benchmarks/generated/
 
+
+# Compiler binaries built in place (go build / integration tests)
+src/core/quark/quark
+src/core/quark/quark_test

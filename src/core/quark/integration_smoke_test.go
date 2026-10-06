@@ -461,6 +461,24 @@ func TestSmokePrograms_Run(t *testing.T) {
 			),
 		},
 		{
+			name: "semantics_safety",
+			file: filepath.Join(testfilesDir, "smoke_semantics_safety.qrk"),
+			expected: join(
+				"== smoke: semantics safety ==",
+				// structural equality
+				"true", "true", "false", "false", "true", "true", "false",
+				"true", "false", "true", "false",
+				// all / any
+				"false", "true", "true", "false",
+				// explicit result checks
+				"true",
+				// int boundaries
+				"9223372036854775807", "4611686018427387904", "4052555153018976267", "-1",
+				// when as an expression
+				"three", "typed", "ok 5", "err boom",
+			),
+		},
+		{
 			name: "truthiness",
 			file: filepath.Join(testfilesDir, "smoke_truthiness.qrk"),
 			expected: join(
@@ -640,6 +658,58 @@ func TestSmokePrograms_CompileError(t *testing.T) {
 			err := cmd.Run()
 			if err == nil {
 				t.Fatalf("expected compile error for %s, but it succeeded with output:\n%s", tc.name, out.String())
+			}
+			combined := out.String() + errBuf.String()
+			if !strings.Contains(combined, tc.errSubstr) {
+				t.Fatalf("expected error containing %q, got:\nstdout: %s\nstderr: %s", tc.errSubstr, out.String(), errBuf.String())
+			}
+		})
+	}
+}
+
+// TestSemanticsSafety_Rejected covers programs that must fail, either at
+// compile time (statically known types) or at runtime (dynamic values), with
+// a clear message instead of silently producing a wrong result.
+func TestSemanticsSafety_Rejected(t *testing.T) {
+	cases := []struct {
+		name      string
+		source    string
+		errSubstr string
+	}{
+		// Results and vectors have no truthiness.
+		{"result_if", "r = err 'x'\nif r:\n    println(1)\n", "result cannot be used as a condition"},
+		{"result_while", "r = ok 1\nwhile r:\n    println(1)\n", "result cannot be used as a condition"},
+		{"result_not", "r = ok 1\nprintln(!r)\n", "result cannot be used as a condition"},
+		{"result_and", "r = ok 1\nprintln(r and true)\n", "result cannot be used as a condition"},
+		{"vector_if", "v = vector [1, 2]\nif v == v:\n    println(1)\n", "vector cannot be used as a condition"},
+		{"vector_ternary", "v = vector [1, 2]\nprintln(1 if v else 2)\n", "vector cannot be used as a condition"},
+		{"result_if_dynamic", "fn f(x) ->\n    if x:\n        1\n    else:\n        2\nprintln(f(ok 1))\n", "result used as a condition"},
+		{"vector_if_dynamic", "fn f(x) ->\n    if x:\n        1\n    else:\n        2\nprintln(f(vector [1]))\n", "vector used as a condition"},
+		// Integer overflow is fatal on every path.
+		{"overflow_add_scalar", "x = 9223372036854775807\nprintln(x + 1)\n", "integer overflow in '+'"},
+		{"overflow_sub_scalar", "x = -9223372036854775807\nprintln(x - 2)\n", "integer overflow in '-'"},
+		{"overflow_neg_scalar", "x = -9223372036854775807 - 1\nprintln(-x)\n", "integer overflow in '-'"},
+		{"overflow_mul_boxed", "fn f(a, b) -> a * b\nprintln(f(4611686018427387904, 2))\n", "integer overflow in '*'"},
+		{"overflow_pow", "println(2 ** 63)\n", "integer overflow in '**'"},
+		{"overflow_vector", "v = vector [9223372036854775807]\nprintln(sum(v + 1))\n", "integer overflow in '+'"},
+		// Scalar-lowered division and modulo match the boxed operators.
+		{"mod_zero_scalar", "x = 7\ny = 0\nprintln(x % y)\n", "modulo by zero"},
+		{"fdiv_zero_scalar", "x = 1.0\ny = 0.0\nprintln(x / y)\n", "division by zero"},
+	}
+
+	tmp := t.TempDir()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			program := filepath.Join(tmp, tc.name+".qrk")
+			if err := os.WriteFile(program, []byte(tc.source), 0o644); err != nil {
+				t.Fatalf("write %s: %v", program, err)
+			}
+			cmd := exec.Command(quarkExePath, "run", program)
+			var out, errBuf bytes.Buffer
+			cmd.Stdout = &out
+			cmd.Stderr = &errBuf
+			if err := cmd.Run(); err == nil {
+				t.Fatalf("expected failure, but it succeeded with output:\n%s", out.String())
 			}
 			combined := out.String() + errBuf.String()
 			if !strings.Contains(combined, tc.errSubstr) {

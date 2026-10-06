@@ -6,9 +6,16 @@
 #include "../types/vector.hpp"
 #include "../types/dict.hpp"
 #include "../types/resource.hpp"
+#include "diagnostics.hpp"
 #include <cstring>
 
-// Check if a value is truthy (used for conditions)
+// Check if a value is truthy (used for conditions, !, and/or, to_bool).
+//
+// Results and vectors have no truthiness. Treating an err result as false
+// silently discards the error, and a vector comparison such as `v == w`
+// yields a vector[bool] whose emptiness says nothing about its elements.
+// Both are fatal here; the analyzer rejects them at compile time when the
+// type is known.
 inline bool q_truthy(QValue v) {
     switch (v.type) {
         case QValue::VAL_BOOL:
@@ -24,13 +31,17 @@ inline bool q_truthy(QValue v) {
         case QValue::VAL_LIST:
             return v.data.list_val && !v.data.list_val->empty();
         case QValue::VAL_VECTOR:
-            return q_vec_size(v) > 0;
+            q_runtime_reportf("runtime error: vector used as a condition; "
+                              "use all(v), any(v) or len(v) > 0\n");
+            std::exit(1);
         case QValue::VAL_DICT:
             return v.data.dict_val && !v.data.dict_val->entries.empty();
         case QValue::VAL_FUNC:
             return v.data.func_val != nullptr;
         case QValue::VAL_RESULT:
-            return v.data.result_val && v.data.result_val->is_ok;
+            q_runtime_reportf("runtime error: result used as a condition; "
+                              "use is_ok(r), is_err(r) or when\n");
+            std::exit(1);
         case QValue::VAL_RESOURCE:
             return q_resource_is_alive(v);
         case QValue::VAL_STRUCT:

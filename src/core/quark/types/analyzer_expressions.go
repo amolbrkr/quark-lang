@@ -102,7 +102,8 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 			a.errorAt(node, "unary '-' expects numeric operand, got %s", operandType.String())
 			return TypeError
 		case token.BANG:
-			// Accepts any type — uses truthiness (§4.3). Always returns bool.
+			// Uses truthiness (§4.3). Always returns bool.
+			a.checkCondition(node.Children[0], operandType)
 			return TypeBool
 		}
 		return operandType
@@ -338,7 +339,9 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 		}
 		return TypeBool
 	case token.AND, token.OR:
-		// Short-circuit, accepts any type via truthiness (Python semantics).
+		// Short-circuit via truthiness (Python semantics).
+		a.checkCondition(node.Children[0], leftType)
+		a.checkCondition(node.Children[1], rightType)
 		// Return type is the union of both operand types since the result
 		// is one of the two operands (not necessarily bool).
 		if isBoolLike(leftType) && isBoolLike(rightType) {

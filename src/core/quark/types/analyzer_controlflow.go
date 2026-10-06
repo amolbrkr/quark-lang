@@ -5,11 +5,24 @@ import (
 	"quark/token"
 )
 
+// checkCondition reports an error when a value with no truthiness is used
+// where a condition is expected (if, elseif, while, ternary, !, and, or).
+// Results would silently discard errors, and vector comparisons yield a
+// vector[bool] whose emptiness says nothing about its elements.
+func (a *Analyzer) checkCondition(node *ast.TreeNode, t Type) {
+	switch t.(type) {
+	case *ResultType:
+		a.errorAt(node, "result cannot be used as a condition; use is_ok(r), is_err(r) or when")
+	case *VectorType:
+		a.errorAt(node, "vector cannot be used as a condition; use all(v), any(v) or len(v) > 0")
+	}
+}
+
 func (a *Analyzer) analyzeIfStatement(node *ast.TreeNode) Type {
 	if len(node.Children) < 2 {
 		return TypeVoid
 	}
-	a.Analyze(node.Children[0])
+	a.checkCondition(node.Children[0], a.Analyze(node.Children[0]))
 	resultType := a.Analyze(node.Children[1])
 	for i := 2; i < len(node.Children); i++ {
 		branchType := a.Analyze(node.Children[i])
@@ -24,14 +37,37 @@ func (a *Analyzer) analyzeWhenStatement(node *ast.TreeNode) Type {
 	}
 	matchType := a.Analyze(node.Children[0])
 	resultMatchType, isResultMatch := matchType.(*ResultType)
-	var resultType Type = TypeVoid
+	// The when evaluates to the matched arm's value. It is exhaustive when it
+	// has a wildcard arm or both ok and err arms; otherwise no arm may match
+	// and the value is null, so void joins the result type.
+	var resultType Type
+	merge := func(t Type) {
+		if resultType == nil {
+			resultType = t
+			return
+		}
+		resultType = MergeTypes(resultType, t)
+	}
+	hasWildcard, hasOk, hasErr := false, false, false
 	for i := 1; i < len(node.Children); i++ {
 		pattern := node.Children[i]
 		if pattern.NodeType != ast.PatternNode || len(pattern.Children) == 0 {
 			continue
 		}
 		resultExpr := pattern.Children[len(pattern.Children)-1]
+		for _, pc := range pattern.Children[:len(pattern.Children)-1] {
+			if pc.NodeType == ast.IdentifierNode && pc.TokenLiteral() == "_" {
+				hasWildcard = true
+			}
+		}
 		bindName, hasBinding, bindingIsErr, resultPatternNode := extractResultPatternBinding(pattern)
+		if hasBinding {
+			if bindingIsErr {
+				hasErr = true
+			} else {
+				hasOk = true
+			}
+		}
 		if hasBinding && !isResultMatch && !isUnknownType(matchType) {
 			a.errorAt(resultPatternNode, "result pattern requires result value, got %s", matchType.String())
 		}
@@ -48,11 +84,17 @@ func (a *Analyzer) analyzeWhenStatement(node *ast.TreeNode) Type {
 			a.currentScope.Define(bindName, bindingType, true)
 			branchType := a.Analyze(resultExpr)
 			a.popScope()
-			resultType = MergeTypes(resultType, branchType)
+			merge(branchType)
 			continue
 		}
 		branchType := a.Analyze(resultExpr)
-		resultType = MergeTypes(resultType, branchType)
+		merge(branchType)
+	}
+	if resultType == nil {
+		return TypeVoid
+	}
+	if !hasWildcard && !(hasOk && hasErr) {
+		resultType = MergeTypes(resultType, TypeVoid)
 	}
 	return resultType
 }
@@ -136,7 +178,7 @@ func (a *Analyzer) analyzeWhileLoop(node *ast.TreeNode) Type {
 	if len(node.Children) < 2 {
 		return TypeVoid
 	}
-	a.Analyze(node.Children[0])
+	a.checkCondition(node.Children[0], a.Analyze(node.Children[0]))
 	a.loopDepth++
 	a.pushScope()
 	a.Analyze(node.Children[1])
@@ -149,7 +191,7 @@ func (a *Analyzer) analyzeTernary(node *ast.TreeNode) Type {
 	if len(node.Children) < 3 {
 		return TypeAny
 	}
-	a.Analyze(node.Children[0])
+	a.checkCondition(node.Children[0], a.Analyze(node.Children[0]))
 	trueType := a.Analyze(node.Children[1])
 	falseType := a.Analyze(node.Children[2])
 	if !isUnknownType(trueType) && !isUnknownType(falseType) && !CanAssign(trueType, falseType) && !CanAssign(falseType, trueType) {

@@ -237,6 +237,10 @@ println(-5)             // -5
 println(!false)         // true
 ```
 
+Ints are 64-bit, and overflow is a runtime error rather than a silent wrap.
+`==` compares lists, dicts and results by value, so `list [1, 2] == list [1, 2]`
+is `true`. Vectors compare element-wise and produce a `vector[bool]`.
+
 ### Strings
 
 String literals use single or double quotes. Supported escapes are `\\`, `\'`,
@@ -256,7 +260,7 @@ See the [string methods table](#string-methods-str) for the full set.
 
 ### Booleans and truthiness
 
-Conditions accept any type and are coerced via truthiness — you do not need to
+Conditions accept most types and are coerced via truthiness — you do not need to
 convert to `bool` explicitly:
 
 ```quark
@@ -269,6 +273,19 @@ if 0:                 // falsy
 
 `and` / `or` short-circuit and return one of their operands (Python-style), while
 unary `!` always returns a `bool`. Use `to_bool(x)` for an explicit conversion.
+
+Results and vectors have no truthiness, and using one as a condition is an error.
+Check results with `is_ok(r)`, `is_err(r)` or `when`. Reduce a vector comparison
+with `all(mask)` or `any(mask)`:
+
+```quark
+a = vector [1, 2, 3]
+b = vector [1, 0, 3]
+if all(a == b):
+    println('same')
+else:
+    println('different')   // different
+```
 
 ### Conditionals and the ternary
 
@@ -307,6 +324,17 @@ fn describe(n) ->
         _ -> 'many'
 
 println(describe(2))    // small
+```
+
+`when` is an expression, so its value can be assigned directly:
+
+```quark
+n = 2
+size = when n:
+    0 -> 'none'
+    1 or 2 -> 'few'
+    _ -> 'many'
+println(size)           // few
 ```
 
 ### Loops

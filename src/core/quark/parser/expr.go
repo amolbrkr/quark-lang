@@ -89,6 +89,9 @@ func (p *Parser) parseExpression(precedence ast.Precedence) *ast.TreeNode {
 }
 
 func (p *Parser) isEndOfExpression() bool {
+	if p.blockExprEnded {
+		return true
+	}
 	// If at NEWLINE, check if next token continues the expression (PIPE)
 	if p.curToken.Type == token.NEWLINE {
 		next := p.peek(1)
@@ -134,8 +137,20 @@ func (p *Parser) prefixParseFn(t token.TokenType) func() *ast.TreeNode {
 		return p.parseVectorLiteral
 	case token.DICT:
 		return p.parseDictLiteral
+	case token.WHEN:
+		return p.parseWhenExpression
 	}
 	return nil
+}
+
+// parseWhenExpression parses `when` in expression position, for example
+// `y = when x:` followed by an indented block of arms.
+func (p *Parser) parseWhenExpression() *ast.TreeNode {
+	node := p.parseWhenStatement()
+	if node != nil {
+		p.blockExprEnded = true
+	}
+	return node
 }
 
 // Infix parse functions

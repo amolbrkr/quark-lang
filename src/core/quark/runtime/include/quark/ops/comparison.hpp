@@ -79,45 +79,135 @@ inline QValue q_gte(QValue a, QValue b) {
     return qv_bool(a.data.int_val >= b.data.int_val);
 }
 
-// Equality (type-sensitive)
+namespace quark { namespace detail {
+
+// Nesting limit for structural equality; guards against cyclic containers
+// (a list pushed into itself, for example) recursing forever.
+constexpr int kMaxEqualityDepth = 512;
+
+// Whole-vector equality: same dtype, length, null positions and values.
+// Used when vectors are compared as elements of a list, dict or result;
+// top-level `v == w` stays element-wise.
+inline bool vectors_identical(const QVector& a, const QVector& b) {
+    if (a.type != b.type || a.count != b.count) return false;
+    for (size_t i = 0; i < a.count; i++) {
+        const bool an = a.has_nulls && q_vec_is_null_at(a, i);
+        const bool bn = b.has_nulls && q_vec_is_null_at(b, i);
+        if (an != bn) return false;
+        if (an) continue;
+        switch (a.type) {
+            case QVector::Type::F64:
+                if (std::get<QVecF64>(a.storage)[i] != std::get<QVecF64>(b.storage)[i]) return false;
+                break;
+            case QVector::Type::I64:
+                if (std::get<QVecI64>(a.storage)[i] != std::get<QVecI64>(b.storage)[i]) return false;
+                break;
+            case QVector::Type::BOOL:
+                if (std::get<QVecU8>(a.storage)[i] != std::get<QVecU8>(b.storage)[i]) return false;
+                break;
+            case QVector::Type::STR: {
+                const auto& sa = std::get<QStringStorage>(a.storage);
+                const auto& sb = std::get<QStringStorage>(b.storage);
+                const uint32_t la = sa.offsets[i + 1] - sa.offsets[i];
+                const uint32_t lb = sb.offsets[i + 1] - sb.offsets[i];
+                if (la != lb ||
+                    std::memcmp(sa.bytes.data() + sa.offsets[i], sb.bytes.data() + sb.offsets[i], la) != 0) {
+                    return false;
+                }
+                break;
+            }
+        }
+    }
+    return true;
+}
+
+// Structural equality. Lists compare element-wise in order, dicts compare
+// key sets and values, results compare tag and payload. Functions compare
+// by identity. Struct equality is rejected at compile time.
+inline bool values_equal(const QValue& a, const QValue& b, int depth) {
+    if (depth > kMaxEqualityDepth) {
+        q_runtime_reportf("runtime error: '==' nesting too deep (cyclic list or dict?)\n");
+        std::exit(1);
+    }
+    if (a.type != b.type) {
+        if ((a.type == QValue::VAL_INT || a.type == QValue::VAL_FLOAT) &&
+            (b.type == QValue::VAL_INT || b.type == QValue::VAL_FLOAT)) {
+            return to_double(a) == to_double(b);
+        }
+        return false;
+    }
+    switch (a.type) {
+        case QValue::VAL_INT:
+            return a.data.int_val == b.data.int_val;
+        case QValue::VAL_FLOAT:
+            return a.data.float_val == b.data.float_val;
+        case QValue::VAL_BOOL:
+            return a.data.bool_val == b.data.bool_val;
+        case QValue::VAL_STRING:
+            if (!a.data.string_val || !b.data.string_val) {
+                return a.data.string_val == b.data.string_val;
+            }
+            return strcmp(a.data.string_val, b.data.string_val) == 0;
+        case QValue::VAL_NULL:
+            return true;
+        case QValue::VAL_RESOURCE:
+            if (!a.data.resource_val || !b.data.resource_val) {
+                return a.data.resource_val == b.data.resource_val;
+            }
+            return a.data.resource_val->slot == b.data.resource_val->slot &&
+                   a.data.resource_val->generation == b.data.resource_val->generation &&
+                   a.data.resource_val->kind == b.data.resource_val->kind;
+        case QValue::VAL_LIST: {
+            const QList* la = a.data.list_val;
+            const QList* lb = b.data.list_val;
+            if (la == lb) return true;
+            if (!la || !lb || la->size() != lb->size()) return false;
+            for (size_t i = 0; i < la->size(); i++) {
+                if (!values_equal((*la)[i], (*lb)[i], depth + 1)) return false;
+            }
+            return true;
+        }
+        case QValue::VAL_DICT: {
+            const QDict* da = a.data.dict_val;
+            const QDict* db = b.data.dict_val;
+            if (da == db) return true;
+            if (!da || !db || da->entries.size() != db->entries.size()) return false;
+            for (const auto& kv : da->entries) {
+                auto it = db->entries.find(kv.first);
+                if (it == db->entries.end()) return false;
+                if (!values_equal(kv.second, it->second, depth + 1)) return false;
+            }
+            return true;
+        }
+        case QValue::VAL_RESULT: {
+            const QResult* ra = a.data.result_val;
+            const QResult* rb = b.data.result_val;
+            if (ra == rb) return true;
+            if (!ra || !rb || ra->is_ok != rb->is_ok) return false;
+            return values_equal(ra->payload, rb->payload, depth + 1);
+        }
+        case QValue::VAL_VECTOR: {
+            const QVector* va = a.data.vector_val;
+            const QVector* vb = b.data.vector_val;
+            if (va == vb) return true;
+            if (!va || !vb) return false;
+            return vectors_identical(*va, *vb);
+        }
+        case QValue::VAL_FUNC:
+            return a.data.func_val == b.data.func_val;
+        default:
+            return false;
+    }
+}
+
+}} // namespace quark::detail
+
+// Equality (type-sensitive, structural for containers)
 inline QValue q_eq(QValue a, QValue b) {
     if (a.type == QValue::VAL_VECTOR || b.type == QValue::VAL_VECTOR) {
         return q_vec_eq(a, b);
     }
-    if (a.type != b.type) {
-        // Allow int/float comparison
-        if ((a.type == QValue::VAL_INT || a.type == QValue::VAL_FLOAT) &&
-            (b.type == QValue::VAL_INT || b.type == QValue::VAL_FLOAT)) {
-            return qv_bool(quark::detail::to_double(a) == quark::detail::to_double(b));
-        }
-        return qv_bool(false);
-    }
-
-    switch (a.type) {
-        case QValue::VAL_INT:
-            return qv_bool(a.data.int_val == b.data.int_val);
-        case QValue::VAL_FLOAT:
-            return qv_bool(a.data.float_val == b.data.float_val);
-        case QValue::VAL_BOOL:
-            return qv_bool(a.data.bool_val == b.data.bool_val);
-        case QValue::VAL_STRING:
-            if (!a.data.string_val || !b.data.string_val) {
-                return qv_bool(a.data.string_val == b.data.string_val);
-            }
-            return qv_bool(strcmp(a.data.string_val, b.data.string_val) == 0);
-        case QValue::VAL_NULL:
-            return qv_bool(true);
-        case QValue::VAL_RESOURCE:
-            if (!a.data.resource_val || !b.data.resource_val) {
-                return qv_bool(a.data.resource_val == b.data.resource_val);
-            }
-            return qv_bool(
-                a.data.resource_val->slot == b.data.resource_val->slot &&
-                a.data.resource_val->generation == b.data.resource_val->generation &&
-                a.data.resource_val->kind == b.data.resource_val->kind);
-        default:
-            return qv_bool(false);
-    }
+    return qv_bool(quark::detail::values_equal(a, b, 0));
 }
 
 // Not equal

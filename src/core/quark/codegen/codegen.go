@@ -1282,7 +1282,14 @@ func (g *Generator) scalarExpr(node *ast.TreeNode) (string, string) {
 		// Unary minus: -x where x is scalar
 		if len(node.Children) == 1 && op == token.MINUS {
 			operand, tier := g.scalarExpr(node.Children[0])
-			if tier != "" && tier != "bool" {
+			if tier == "long long" {
+				// Literal negation cannot overflow; anything else is checked.
+				if child := node.Children[0]; child.NodeType == ast.LiteralNode {
+					return fmt.Sprintf("(-%s)", operand), tier
+				}
+				return fmt.Sprintf("q_checked_neg(%s)", operand), tier
+			}
+			if tier == "double" {
 				return fmt.Sprintf("(-%s)", operand), tier
 			}
 			return "", ""
@@ -1296,8 +1303,7 @@ func (g *Generator) scalarExpr(node *ast.TreeNode) (string, string) {
 				if lTier != "" && rTier != "" {
 					resTier := promotedTier(lTier, rTier, op)
 					if resTier != "" {
-						expr := fmt.Sprintf("((%s)%s %s (%s)%s)", resTier, lRaw, cppOp, resTier, rRaw)
-						return expr, resTier
+						return checkedScalarArith(op, cppOp, resTier, lRaw, rRaw), resTier
 					}
 				}
 			}
@@ -1317,6 +1323,28 @@ func (g *Generator) scalarExpr(node *ast.TreeNode) (string, string) {
 		}
 	}
 	return "", ""
+}
+
+// checkedScalarArith emits a scalar-lowered binary arithmetic expression with
+// the same failure semantics as the boxed runtime operators: int overflow,
+// modulo by zero and division by zero are fatal, never undefined behavior.
+func checkedScalarArith(op token.TokenType, cppOp, resTier, lRaw, rRaw string) string {
+	if resTier == "long long" {
+		switch op {
+		case token.PLUS:
+			return fmt.Sprintf("q_checked_add(%s, %s)", lRaw, rRaw)
+		case token.MINUS:
+			return fmt.Sprintf("q_checked_sub(%s, %s)", lRaw, rRaw)
+		case token.MULTIPLY:
+			return fmt.Sprintf("q_checked_mul(%s, %s)", lRaw, rRaw)
+		case token.MODULO:
+			return fmt.Sprintf("q_checked_mod(%s, %s)", lRaw, rRaw)
+		}
+	}
+	if resTier == "double" && op == token.DIVIDE {
+		return fmt.Sprintf("q_checked_fdiv((double)%s, (double)%s)", lRaw, rRaw)
+	}
+	return fmt.Sprintf("((%s)%s %s (%s)%s)", resTier, lRaw, cppOp, resTier, rRaw)
 }
 
 // nativeArithOp returns the C++ infix operator string for a token type, or "".
@@ -1414,8 +1442,9 @@ func (g *Generator) generateOperator(node *ast.TreeNode) string {
 	if len(node.Children) == 1 {
 		// Try scalar path for unary minus before falling back to q_neg.
 		if op == token.MINUS {
-			if raw, tier := g.scalarExpr(node.Children[0]); tier != "" && tier != "bool" {
-				return boxExpr(fmt.Sprintf("(-%s)", raw), tier)
+			// scalarExpr on the whole node applies checked int negation.
+			if raw, tier := g.scalarExpr(node); tier != "" && tier != "bool" {
+				return boxExpr(raw, tier)
 			}
 		}
 		operand := g.generateExpr(node.Children[0])
@@ -1462,7 +1491,7 @@ func (g *Generator) generateOperator(node *ast.TreeNode) string {
 				// Cast operands to result tier to avoid C++ integer promotion surprises.
 				lCast := fmt.Sprintf("((%s)%s)", resTier, lRaw)
 				rCast := fmt.Sprintf("((%s)%s)", resTier, rRaw)
-				rawResult := fmt.Sprintf("(%s %s %s)", lCast, cppArith, rCast)
+				rawResult := checkedScalarArith(op, cppArith, resTier, lCast, rCast)
 				return boxExpr(rawResult, resTier)
 			}
 		}

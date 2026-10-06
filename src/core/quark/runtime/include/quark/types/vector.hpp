@@ -2,6 +2,7 @@
 #ifndef QUARK_TYPES_VECTOR_HPP
 #define QUARK_TYPES_VECTOR_HPP
 
+#include "../core/checked.hpp"
 #include "../core/value.hpp"
 #include "../core/constructors.hpp"
 
@@ -512,13 +513,13 @@ inline QValue q_vec_binary_numeric(QValue a, QValue b, QVecArithOp op) {
 
         switch (op) {
             case QVecArithOp::Add:
-                outv[i] = x + y;
+                outv[i] = q_checked_add(x, y);
                 break;
             case QVecArithOp::Sub:
-                outv[i] = x - y;
+                outv[i] = q_checked_sub(x, y);
                 break;
             case QVecArithOp::Mul:
-                outv[i] = x * y;
+                outv[i] = q_checked_mul(x, y);
                 break;
             case QVecArithOp::Div:
                 // Division always promotes to f64 and should have taken the branch above.

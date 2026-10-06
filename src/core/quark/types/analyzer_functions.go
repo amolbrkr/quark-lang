@@ -133,9 +133,44 @@ func (a *Analyzer) collectFreeVars(node *ast.TreeNode, lambdaScope *Scope, param
 		}
 		return
 	}
+	// Names bound by a nested construct are local to that construct, even
+	// when an outer variable has the same name. Their scopes are already
+	// popped when this walk runs, so they must be tracked here explicitly.
+	if node.NodeType == ast.ForLoopNode && len(node.Children) >= 3 {
+		a.collectFreeVars(node.Children[1], lambdaScope, params, seen, result)
+		loopParams := withParam(params, node.Children[0].TokenLiteral())
+		a.collectFreeVars(node.Children[2], lambdaScope, loopParams, seen, result)
+		return
+	}
+	if node.NodeType == ast.PatternNode && len(node.Children) > 0 {
+		armParams := params
+		if bindName, hasBinding, _, _ := extractResultPatternBinding(node); hasBinding && bindName != "" {
+			armParams = withParam(params, bindName)
+		}
+		for _, child := range node.Children {
+			if child.NodeType == ast.ResultPatternNode {
+				continue // the binding identifier itself is not a use
+			}
+			a.collectFreeVars(child, lambdaScope, armParams, seen, result)
+		}
+		return
+	}
 	for _, child := range node.Children {
 		a.collectFreeVars(child, lambdaScope, params, seen, result)
 	}
+}
+
+// withParam returns a copy of params with name added.
+func withParam(params map[string]bool, name string) map[string]bool {
+	if name == "" || params[name] {
+		return params
+	}
+	merged := make(map[string]bool, len(params)+1)
+	for k, v := range params {
+		merged[k] = v
+	}
+	merged[name] = true
+	return merged
 }
 
 func (a *Analyzer) analyzeLambda(node *ast.TreeNode) Type {

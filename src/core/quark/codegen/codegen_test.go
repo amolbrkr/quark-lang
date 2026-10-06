@@ -601,7 +601,7 @@ func TestCodegen_UnaryBang(t *testing.T) {
 
 func TestCodegen_AllArithmeticOperators(t *testing.T) {
 	// Dynamic operands use runtime helpers; int literal operands are lowered
-	// to native C++ arithmetic.
+	// to native C++ arithmetic through overflow-checked helpers.
 	tests := []struct {
 		src      string
 		expected string
@@ -612,9 +612,9 @@ func TestCodegen_AllArithmeticOperators(t *testing.T) {
 		{"fn f(a, b) -> a / b\n", "q_div(quark_a, quark_b)"},
 		{"fn f(a, b) -> a % b\n", "q_mod(quark_a, quark_b)"},
 		{"fn f(a, b) -> a ** b\n", "q_pow(quark_a, quark_b)"},
-		{"x = 1 + 2\n", "((long long)1 + (long long)2)"},
-		{"x = 1 - 2\n", "((long long)1 - (long long)2)"},
-		{"x = 1 * 2\n", "((long long)1 * (long long)2)"},
+		{"x = 1 + 2\n", "q_checked_add(1, 2)"},
+		{"x = 1 - 2\n", "q_checked_sub(1, 2)"},
+		{"x = 1 * 2\n", "q_checked_mul(1, 2)"},
 		{"x = 2 ** 3\n", "q_pow(qv_int(2), qv_int(3))"},
 	}
 	for _, tt := range tests {

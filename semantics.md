@@ -56,7 +56,7 @@ All other type mismatches are errors (compile-time when type info is available, 
 
 ## 3) Truthiness
 
-Truthiness governs all condition positions (`if`, `while`, ternary), the `and`/`or`/`!` operators, and the `to_bool()` builtin. Any value can be used where a boolean is expected — it will be implicitly converted using these rules.
+Truthiness governs all condition positions (`if`, `while`, ternary), the `and`/`or`/`!` operators, and the `to_bool()` builtin. Most values can be used where a boolean is expected and are converted using these rules. Results and vectors are the exception: they have no truthiness (see below).
 
 | Type | Truthy when |
 |------|------------|
@@ -66,11 +66,13 @@ Truthiness governs all condition positions (`if`, `while`, ternary), the `and`/`
 | `str` | non-empty |
 | `null` | never |
 | `list` | non-empty |
-| `vector` | size > 0 |
+| `vector` | **error** — use `all(v)`, `any(v)` or `len(v) > 0` |
 | `dict` | non-empty |
 | `fn` | always true (for valid closures) |
-| `result` | payload is `ok` (not `err`) |
+| `result` | **error** — use `is_ok(r)`, `is_err(r)` or `when` |
 | `resource` | handle is alive (not closed or stale) |
+
+**Results and vectors are rejected as conditions.** Treating an `err` result as false would silently discard the error. A vector comparison such as `v == w` yields a `vector[bool]`, so its emptiness says nothing about whether the elements matched. Using either in a condition, with `!`, or as an `and`/`or` operand is a compile-time error when the type is known and a runtime error otherwise.
 
 ---
 
@@ -80,18 +82,20 @@ Truthiness governs all condition positions (`if`, `while`, ternary), the `and`/`
 
 | Operator | Accepted types | Result type | Notes |
 |----------|---------------|-------------|-------|
-| `+` | int×int | int | |
+| `+` | int×int | int | Overflow → fatal |
 | `+` | int×float / float×float | float | Promotion |
 | `+` | str×str | str | Concatenation |
 | `+` | vector×vector / vector×scalar | vector | Element-wise |
-| `-` | numeric×numeric | int or float | Same promotion rules as `+` |
-| `*` | numeric×numeric | int or float | |
+| `-` | numeric×numeric | int or float | Same promotion rules as `+`; int overflow → fatal |
+| `*` | numeric×numeric | int or float | int overflow → fatal |
 | `/` | numeric×numeric | **always float** | Division by zero → fatal |
 | `%` | **int×int only** | int | Modulo by zero → fatal |
-| `**` | numeric×numeric | int if both int and result fits; float otherwise | Overflow → float fallback |
-| unary `-` | numeric | same type | |
+| `**` | numeric×numeric | int if both int; float otherwise | Exact for ints; int overflow → fatal; negative int exponent truncates (`2 ** -1` = `0`) |
+| unary `-` | numeric | same type | Negating the minimum int → fatal |
 
 Any other type combination → runtime error.
+
+**Integer overflow is always fatal.** Ints are 64-bit and never wrap silently. This holds on every execution path: boxed values, compiler-lowered native locals, and `vector[i64]` arithmetic. `LLONG_MIN % -1` is `0`.
 
 ### 4.2 Comparison
 
@@ -112,12 +116,15 @@ Type-specific equality:
 | `str` | Character-by-character content equality |
 | `null` | Always equal to `null` |
 | `resource` | Same slot, generation, and kind |
-| `list`, `dict`, `fn` | Always `false` — no pointer identity or structural comparison |
-| `vector` | Element-wise comparison producing `vector[bool]` (see §9.3) |
+| `list` | Structural: same length and pairwise-equal elements |
+| `dict` | Structural: same key set and equal values |
+| `result` | Same tag (`ok`/`err`) and equal payloads |
+| `fn` | Identity: the same function value |
+| `vector` | Element-wise comparison producing `vector[bool]` (see §9.3). A vector nested inside a list, dict or result compares as a whole: same dtype, length, null positions and values |
 
 ### 4.3 Logical operators
 
-`and`, `or`, and `!` accept **any type** and use truthiness (§3) to evaluate operands.
+`and`, `or`, and `!` accept any type except results and vectors, and use truthiness (§3) to evaluate operands.
 
 **`and`/`or` are short-circuit** (Python semantics):
 - `x and y` — evaluates `x`; if falsy, returns `x` without evaluating `y`. Otherwise evaluates and returns `y`.
@@ -128,7 +135,7 @@ This enables guard patterns: `if len(lst) > 0 and lst.get(0) == 5:` is safe beca
 
 ### 4.4 Conditions (if, while, ternary)
 
-All condition positions (`if`, `elseif`, `while`, ternary `if`) accept **any type** and use truthiness (§3) to determine the branch. No explicit conversion is needed:
+All condition positions (`if`, `elseif`, `while`, ternary `if`) accept any type except results and vectors, and use truthiness (§3) to determine the branch. No explicit conversion is needed:
 
 ```quark
 if my_list:          // truthy if non-empty
@@ -228,7 +235,16 @@ when expr:
 - **Value patterns**: literal values separated by `or` — matches if the scrutinee equals any listed value.
 - **Wildcard**: `_` matches anything.
 
-Each arm's `->` body is a single expression. The entire `when` expression evaluates to the matched arm's result.
+Each arm's `->` body is a single expression. The entire `when` expression evaluates to the matched arm's result, so it can be used anywhere an expression ends a line, including the right side of an assignment:
+
+```
+size = when n:
+    0 -> 'none'
+    1 or 2 -> 'few'
+    _ -> 'many'
+```
+
+A `when` is **exhaustive** when it has a `_` arm, or both an `ok` and an `err` arm. A non-exhaustive `when` evaluates to `null` when no arm matches, so its type includes `void` and it cannot initialize a variable annotated with a concrete type such as `str`.
 
 The scrutinee is evaluated once. For result patterns, the analyzer checks that the scrutinee is actually a result type (compile-time error otherwise).
 
@@ -348,6 +364,7 @@ Reductions:
 - Reductions skip null-marked elements.
 - All-null, non-empty vectors return `null` for `sum/min/max`.
 - `min/max` on empty vectors are fatal runtime errors.
+- `all(mask)` / `any(mask)` reduce a `vector[bool]` to `bool`, skipping nulls. Use them to test vector comparisons in conditions.
 - `sum` on empty vectors returns `0.0`.
 
 Method behavior:
@@ -461,6 +478,9 @@ All runtime errors are **fatal** — they print to stderr and exit. There are no
 |-----------|-----------|
 | Type mismatch in operator | Fatal with type names in message |
 | Division/modulo by zero | Fatal |
+| Integer overflow in `+`, `-`, `*`, `**`, unary `-` | Fatal |
+| Result or vector used as a condition (dynamic) | Fatal |
+| `==` nesting deeper than 512 levels (cyclic containers) | Fatal |
 | `.pop()` on empty list | Fatal |
 | `.set()`/`.remove()` out of bounds | Fatal |
 | `sqrt()` of negative number | Fatal |
@@ -601,7 +621,8 @@ For method calls, the receiver's type determines which method is resolved. See s
 |----------|-----------|
 | Division always returns float | Prevents silent truncation (`5/2` = `2.5`, not `2`) |
 | Modulo is int-only | Avoids floating-point modulo surprises |
-| Truthiness in conditions and logical ops | Familiar Python-like behaviour; any value works in `if`/`while`/`and`/`or` |
+| Truthiness in conditions and logical ops | Familiar Python-like behaviour for scalars and collections in `if`/`while`/`and`/`or` |
+| Results and vectors have no truthiness | `if r:` would silently discard errors; `if v == w:` would test emptiness, not equality |
 | Short-circuit and/or (Python semantics) | Enables guard patterns (`if x and x.foo:`); returns operand values, not bool |
 | Safe reads, fatal writes | `.get()` returning null is convenient; bad `.set()` is always a bug |
 | Named functions desugar to assignments | One representation for all function values |
@@ -610,6 +631,7 @@ For method calls, the receiver's type determines which method is resolved. See s
 | No generic type annotations | Keeps the type system simple; runtime is dynamically typed |
 | Result assignment restrictions | Guides users toward explicit error handling |
 | Fatal runtime errors (no exceptions) | Simple, predictable failure mode; no hidden control flow |
-| Lists/dicts/fns not equality-comparable | No pointer identity semantics; avoids false expectations about structural equality |
+| Lists, dicts and results compare structurally | `a == a` and value-equal containers are equal, as users expect; functions compare by identity |
+| Integer overflow is fatal | Signed overflow is undefined in C++; a fatal error is deterministic and keeps data pipelines from silently producing wrong numbers |
 | `any` annotation forces boxed storage | Allows a variable to change type across assignments; scalar tiering is an optimization the annotation opts out of |
 | Resources use generational handles | Detects use-after-close without relying on GC finalization; stale handles fail deterministically |

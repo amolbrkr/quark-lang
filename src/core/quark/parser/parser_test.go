@@ -902,3 +902,15 @@ func findNodeType(node *ast.TreeNode, nt ast.NodeType) *ast.TreeNode {
 	}
 	return nil
 }
+
+func TestParser_WhenAsExpression(t *testing.T) {
+	src := "x = 3\ny = when x:\n    3 -> 'a'\n    _ -> 'b'\n-y\nprintln(y)\n"
+	node, errs := testutil.Parse(src)
+	if len(errs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", errs)
+	}
+	// The `-y` line must be its own statement, not `when ... - y`.
+	if got := len(node.Children); got != 4 {
+		t.Fatalf("expected 4 top-level statements, got %d", got)
+	}
+}

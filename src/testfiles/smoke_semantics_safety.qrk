@@ -1,0 +1,60 @@
+println('== smoke: semantics safety ==')
+
+// --- structural equality for lists, dicts and results ---
+a = list [1, 2, list [3, 4]]
+b = list [1, 2, list [3, 4]]
+println(a == a)
+println(a == b)
+println(a != b)
+println(list [1, 2] == list [1, 3])
+println(list [1] == list [1.0])
+d = dict { x: 1, y: list ['p'] }
+e = dict { y: list ['p'], x: 1 }
+println(d == e)
+println(d == dict { x: 1 })
+r1 = ok 1
+r2 = ok 1
+r3 = err 1
+println(r1 == r2)
+println(r1 == r3)
+println(list [vector [1, 2]] == list [vector [1, 2]])
+println(list [vector [1, 2]] == list [vector [1, 3]])
+
+// --- vector conditions go through all() / any() ---
+v = vector [1, 2, 3]
+w = vector [1, 0, 3]
+println(all(v == w))
+println(any(v == w))
+println(all(v == v))
+println(any(v != v))
+
+// --- results are checked explicitly, not by truthiness ---
+println(is_ok(r1) and is_err(r3))
+
+// --- int boundaries that do not overflow ---
+big = 9223372036854775806
+println(big + 1)
+println(2 ** 62)
+println(3 ** 39)
+println(-7 % 2)
+
+// --- when as an expression ---
+x = 3
+size = when x:
+    1 or 2 -> 'low'
+    3 -> 'three'
+    _ -> 'other'
+println(size)
+label: str = when x:
+    3 -> 'typed'
+    _ -> 'no'
+println(label)
+
+fn describe(r) ->
+    msg = when r:
+        ok val -> 'ok ' + to_str(val)
+        err e -> 'err ' + e
+    msg
+
+println(describe(ok 5))
+println(describe(err 'boom'))

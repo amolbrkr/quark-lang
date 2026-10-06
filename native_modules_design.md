@@ -147,9 +147,9 @@ All language prerequisites and core QEI machinery are implemented and building c
 **`src/core/quark/runtime/include/quark/ext/api.hpp`** (new file)
 - `qext::` namespace: `box()` overloads for all types, `null_val()`, unboxing with runtime checks (`as_int()`, `as_float()`, `as_bool()`, `as_str()`, `as_vector()`, `as_list()`, `as_dict()`, `as_closure()`), memory helpers (`malloc`, `malloc_atomic`, `strdup`), error reporting (`panic()`, `panicf()`)
 - `QSlice<T>` — C++17-compatible pointer+size view (replaces `std::span` which is C++20)
-- Vector accessors: `as_f64()`, `as_f64_mut()`, `as_i64()`, `as_i64_mut()`, `as_bool_vec()`, `as_bool_vec_mut()` returning `QSlice<T>` views into internal storage
+- Vector accessors: `as_f64()`, `as_f64_mut()`, `as_i64()`, `as_i64_mut()` returning `QSlice<T>` views into internal storage; `bool_at()`, `set_bool()`, `str_at()` for bit-packed bools and strings (vectors use the Arrow layout, see semantics.md §9.3)
 - Vector constructors: `new_f64(n)`, `new_i64(n)`, `new_bool_vec(n)` — GC-allocated, zeroed
-- Vector metadata: `vec_size()`, `vec_has_nulls()`, `vec_dtype()`, `vec_dtype_name()`, `is_null_at()`, `null_mask()`
+- Vector metadata: `vec_size()`, `vec_has_nulls()`, `vec_null_count()`, `vec_dtype()`, `vec_dtype_name()`, `is_null_at()`, `set_null()`, `validity_bitmap()`
 - Dict helpers: `dict_get()`, `dict_set()`, `dict_size()`, `dict_has()`
 - Closure call helpers: `call(fn)` through `call(fn, a0, a1, a2)` overloads
 - Codegen-facing helpers outside namespace: `q_as_int()`, `q_as_float()`, `q_as_bool()`, `q_as_str()`, `q_as_vector()`, `q_as_list()`, `q_as_dict()`, `q_as_closure()`, `qv_vector_ptr()`, `qv_list_ptr()`, `qv_dict_ptr()`, `qv_closure_ptr()`
@@ -693,12 +693,12 @@ namespace qext {
     // Read-only typed views — zero-copy, returns QSlice into existing storage
     QSlice<const double>   as_f64(const QVector* v);
     QSlice<const int64_t>  as_i64(const QVector* v);
-    QSlice<const uint8_t>  as_bool_vec(const QVector* v);
+    bool                   bool_at(const QVector* v, size_t i);
 
     // Mutable typed views — for filling newly-created vectors
     QSlice<double>   as_f64_mut(QVector* v);
     QSlice<int64_t>  as_i64_mut(QVector* v);
-    QSlice<uint8_t>  as_bool_vec_mut(QVector* v);
+    void             set_bool(QVector* v, size_t i, bool b);
 
     // Vector construction — GC-allocated, zeroed
     QVector* new_f64(size_t n);
@@ -707,7 +707,7 @@ namespace qext {
 
     // Null mask access
     bool vec_has_nulls(const QVector* v);
-    QSlice<const uint8_t> null_mask(const QVector* v);  // 0 = valid, 1 = null
+    QSlice<const uint8_t> validity_bitmap(const QVector* v);  // Arrow bitmap: bit set = valid
 
     // Metadata
     size_t vec_size(const QVector* v);

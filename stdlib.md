@@ -320,7 +320,7 @@ println(type(v2))              // vector[i64]
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `.get(idx)` | `int -> any` | Get scalar value at index |
-| `.fillna(val)` | `any -> vector` | Replace null entries |
+| `.fillna(val)` | `any -> vector` | New vector with null entries replaced |
 | `.astype(dtype)` | `str -> vector` | Cast vector dtype (`f64`, `i64`, `bool`) |
 | `.to_list()` | `-> list` | Convert vector back to list |
 

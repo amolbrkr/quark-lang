@@ -140,20 +140,19 @@ inline const char* q_fmt_vector(QVector* vec, int64_t max_rows, bool show_index)
         char buf[64];
         switch (qvec.type) {
             case QVector::Type::F64:
-                std::snprintf(buf, sizeof(buf), "%g", std::get<QVecF64>(qvec.storage)[i]);
+                std::snprintf(buf, sizeof(buf), "%g", q_vec_f64_data(qvec)[i]);
                 cells[i] = buf;
                 break;
             case QVector::Type::I64:
-                std::snprintf(buf, sizeof(buf), "%lld", (long long)std::get<QVecI64>(qvec.storage)[i]);
+                std::snprintf(buf, sizeof(buf), "%lld", (long long)q_vec_i64_data(qvec)[i]);
                 cells[i] = buf;
                 break;
             case QVector::Type::BOOL:
-                cells[i] = std::get<QVecU8>(qvec.storage)[i] ? "true" : "false";
+                cells[i] = q_vec_bool_at(qvec, i) ? "true" : "false";
                 break;
             case QVector::Type::STR: {
-                const auto& ss = std::get<QStringStorage>(qvec.storage);
-                uint32_t s = ss.offsets[i], e = ss.offsets[i+1];
-                cells[i] = std::string(ss.bytes.data() + s, ss.bytes.data() + e);
+                const std::string_view sv = q_vec_str_at(qvec, i);
+                cells[i] = std::string(sv);
                 break;
             }
         }
@@ -278,17 +277,16 @@ inline void q_fmt_vector_cells(const QVector& qv, size_t nrows,
         char buf[64];
         switch (qv.type) {
             case QVector::Type::F64:
-                std::snprintf(buf, sizeof(buf), "%g", std::get<QVecF64>(qv.storage)[r]);
+                std::snprintf(buf, sizeof(buf), "%g", q_vec_f64_data(qv)[r]);
                 out[r] = buf; break;
             case QVector::Type::I64:
-                std::snprintf(buf, sizeof(buf), "%lld", (long long)std::get<QVecI64>(qv.storage)[r]);
+                std::snprintf(buf, sizeof(buf), "%lld", (long long)q_vec_i64_data(qv)[r]);
                 out[r] = buf; break;
             case QVector::Type::BOOL:
-                out[r] = std::get<QVecU8>(qv.storage)[r] ? "true" : "false"; break;
+                out[r] = q_vec_bool_at(qv, r) ? "true" : "false"; break;
             case QVector::Type::STR: {
-                const auto& ss = std::get<QStringStorage>(qv.storage);
-                uint32_t s = ss.offsets[r], e = ss.offsets[r+1];
-                out[r] = std::string(ss.bytes.data() + s, ss.bytes.data() + e);
+                const std::string_view sv = q_vec_str_at(qv, r);
+                out[r] = std::string(sv);
                 break;
             }
         }

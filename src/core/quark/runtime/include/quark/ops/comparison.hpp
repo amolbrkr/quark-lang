@@ -91,31 +91,23 @@ constexpr int kMaxEqualityDepth = 512;
 inline bool vectors_identical(const QVector& a, const QVector& b) {
     if (a.type != b.type || a.count != b.count) return false;
     for (size_t i = 0; i < a.count; i++) {
-        const bool an = a.has_nulls && q_vec_is_null_at(a, i);
-        const bool bn = b.has_nulls && q_vec_is_null_at(b, i);
+        const bool an = q_vec_is_null_at(a, i);
+        const bool bn = q_vec_is_null_at(b, i);
         if (an != bn) return false;
         if (an) continue;
         switch (a.type) {
             case QVector::Type::F64:
-                if (std::get<QVecF64>(a.storage)[i] != std::get<QVecF64>(b.storage)[i]) return false;
+                if (q_vec_f64_data(a)[i] != q_vec_f64_data(b)[i]) return false;
                 break;
             case QVector::Type::I64:
-                if (std::get<QVecI64>(a.storage)[i] != std::get<QVecI64>(b.storage)[i]) return false;
+                if (q_vec_i64_data(a)[i] != q_vec_i64_data(b)[i]) return false;
                 break;
             case QVector::Type::BOOL:
-                if (std::get<QVecU8>(a.storage)[i] != std::get<QVecU8>(b.storage)[i]) return false;
+                if (q_vec_bool_at(a, i) != q_vec_bool_at(b, i)) return false;
                 break;
-            case QVector::Type::STR: {
-                const auto& sa = std::get<QStringStorage>(a.storage);
-                const auto& sb = std::get<QStringStorage>(b.storage);
-                const uint32_t la = sa.offsets[i + 1] - sa.offsets[i];
-                const uint32_t lb = sb.offsets[i + 1] - sb.offsets[i];
-                if (la != lb ||
-                    std::memcmp(sa.bytes.data() + sa.offsets[i], sb.bytes.data() + sb.offsets[i], la) != 0) {
-                    return false;
-                }
+            case QVector::Type::STR:
+                if (q_vec_str_at(a, i) != q_vec_str_at(b, i)) return false;
                 break;
-            }
         }
     }
     return true;

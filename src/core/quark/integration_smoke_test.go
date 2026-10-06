@@ -461,6 +461,20 @@ func TestSmokePrograms_Run(t *testing.T) {
 			),
 		},
 		{
+			name: "vector_layout",
+			file: filepath.Join(testfilesDir, "smoke_vector_layout.qrk"),
+			expected: join(
+				"== smoke: vector layout ==",
+				"10", "false", "true", "true", "10", "155",
+				"2", "null", "null", "78", "null", "true",
+				"2", "40",
+				"0", "null", "39",
+				"ab", "null", "cde", "0", "[vector len=4]", "true", "zz", "cde",
+				"null", "3", "true", "true",
+				"null", "5",
+			),
+		},
+		{
 			name: "semantics_safety",
 			file: filepath.Join(testfilesDir, "smoke_semantics_safety.qrk"),
 			expected: join(
@@ -802,19 +816,6 @@ func TestFileBuiltins_V0(t *testing.T) {
 // runtime values and verifies (via GC_base) that object and internal storage
 // buffers land on the Boehm GC heap.
 func TestGCManagedSelfCheck(t *testing.T) {
-	// Quark requires clang++.
-	compiler := "clang++"
-	if _, err := exec.LookPath("clang++"); err != nil {
-		t.Skip("skipping: clang++ not found in PATH")
-	}
-
-	// Resolve runtime include and GC paths (same helpers the compiler uses).
-	runtimeInclude := getRuntimeIncludePath()
-	gcInclude, gcLib, err := ensureGC()
-	if err != nil {
-		t.Fatalf("ensureGC: %v", err)
-	}
-
 	tmp := t.TempDir()
 	cppFile := filepath.Join(tmp, "gc_selfcheck.cpp")
 	source := `
@@ -846,27 +847,35 @@ int main() {
     QValue d = qv_dict();
     CHECK("dict_object", d.data.dict_val);
 
-	/* --- vectors: object + per-type storage buffers --- */
+	/* --- vectors: object + Arrow-layout buffers (64-byte aligned) --- */
+    #define CHECK_ALIGNED(label, ptr) do {                                \
+        if ((reinterpret_cast<uintptr_t>(ptr) % 64) == 0) { pass++; }   \
+        else { fail++; std::fprintf(stderr, "FAIL: %s not 64-byte aligned\n", label); } \
+    } while(0)
+
 	QValue vf = qv_vector(4);
 	CHECK("vector_f64_object", vf.data.vector_val);
 	vf = q_vec_push(vf, qv_float(1.25));
-	CHECK("vector_f64_buffer", std::get<QVecF64>(vf.data.vector_val->storage).data());
+	CHECK("vector_f64_values", vf.data.vector_val->values);
+	CHECK_ALIGNED("vector_f64_values", vf.data.vector_val->values);
 
 	QValue vi = qv_vector_i64(4);
 	CHECK("vector_i64_object", vi.data.vector_val);
 	vi = q_vec_push_i64(vi, qv_int(7));
-	CHECK("vector_i64_buffer", std::get<QVecI64>(vi.data.vector_val->storage).data());
+	CHECK("vector_i64_values", vi.data.vector_val->values);
 
 	QValue vb = qv_vector_bool(4);
 	CHECK("vector_bool_object", vb.data.vector_val);
 	vb = q_vec_push_bool(vb, qv_bool(true));
-	CHECK("vector_bool_buffer", std::get<QVecU8>(vb.data.vector_val->storage).data());
+	CHECK("vector_bool_values", vb.data.vector_val->values);
 
-	QValue vs = q_to_vector(qv_list_from(1, qv_string("hello")));
+	QValue vs = q_to_vector(qv_list_from(2, qv_string("hello"), qv_null()));
 	CHECK("vector_str_object", vs.data.vector_val);
-	const auto& sstorage = std::get<QStringStorage>(vs.data.vector_val->storage);
-	CHECK("vector_str_offsets", sstorage.offsets.data());
-	CHECK("vector_str_bytes", sstorage.bytes.data());
+	CHECK("vector_str_offsets", vs.data.vector_val->offsets);
+	CHECK("vector_str_values", vs.data.vector_val->values);
+	CHECK("vector_str_validity", vs.data.vector_val->validity);
+	CHECK_ALIGNED("vector_str_offsets", vs.data.vector_val->offsets);
+	CHECK_ALIGNED("vector_str_validity", vs.data.vector_val->validity);
 
     /* --- closure --- */
     QClosure* cl = q_alloc_closure(nullptr, 0);
@@ -888,52 +897,133 @@ int main() {
     return fail > 0 ? 1 : 0;
 }
 `
+	got := compileAndRunRuntimeCheck(t, cppFile, source)
+	if !strings.Contains(got, "0 failed") {
+		t.Fatalf("gc_selfcheck reported failures:\n%s", got)
+	}
+	t.Logf("gc_selfcheck: %s", got)
+}
+
+// compileAndRunRuntimeCheck compiles a standalone C++ program against the
+// runtime headers and the static GC, runs it, and returns its stdout.
+func compileAndRunRuntimeCheck(t *testing.T, cppFile, source string) string {
+	t.Helper()
+	compiler := "clang++"
+	if _, err := exec.LookPath(compiler); err != nil {
+		t.Skip("skipping: clang++ not found in PATH")
+	}
+	gcInclude, gcLib, err := ensureGC()
+	if err != nil {
+		t.Fatalf("ensureGC: %v", err)
+	}
 	if err := os.WriteFile(cppFile, []byte(source), 0o644); err != nil {
 		t.Fatalf("write %s: %v", cppFile, err)
 	}
-
-	outName := "gc_selfcheck"
+	outBin := strings.TrimSuffix(cppFile, ".cpp")
 	if runtime.GOOS == "windows" {
-		outName += ".exe"
+		outBin += ".exe"
 	}
-	outBin := filepath.Join(tmp, outName)
-
 	args := []string{
-		"-std=c++17", "-O0",
+		"-std=c++17", "-O0", "-Wall", "-Wextra",
 		"-DQUARK_USE_GC",
-		"-I" + runtimeInclude,
+		"-I" + getRuntimeIncludePath(),
 		"-I" + gcInclude,
 		"-o", outBin,
 		cppFile,
-		gcLib,
 	}
+	args = append(args, gcLinkArgs(gcLib)...)
 	if runtime.GOOS != "windows" {
 		args = append(args, "-lm")
 	}
-
 	compileCmd := exec.Command(compiler, args...)
 	var compileBuf bytes.Buffer
 	compileCmd.Stdout = &compileBuf
 	compileCmd.Stderr = &compileBuf
 	if err := compileCmd.Run(); err != nil {
-		t.Fatalf("compile gc_selfcheck failed:\n%s\n%v", compileBuf.String(), err)
+		t.Fatalf("compile %s failed:\n%s\n%v", filepath.Base(cppFile), compileBuf.String(), err)
 	}
-
 	runCmd := exec.Command(outBin)
 	var runOut, runErr bytes.Buffer
 	runCmd.Stdout = &runOut
 	runCmd.Stderr = &runErr
 	if err := runCmd.Run(); err != nil {
-		t.Fatalf("gc_selfcheck failed:\nstdout: %s\nstderr: %s\n%v",
-			runOut.String(), runErr.String(), err)
+		t.Fatalf("%s failed:\nstdout: %s\nstderr: %s\n%v", filepath.Base(cppFile), runOut.String(), runErr.String(), err)
 	}
+	return strings.TrimSpace(runOut.String() + runErr.String())
+}
 
-	got := strings.TrimSpace(runOut.String())
-	if !strings.Contains(got, "0 failed") {
-		t.Fatalf("gc_selfcheck reported failures:\nstdout: %s\nstderr: %s",
-			got, runErr.String())
+// TestVectorArrowLayout checks that vector buffers match the Apache Arrow
+// columnar format bit for bit: bit-packed bools, LSB-first validity bitmaps,
+// int32 string offsets, null counts, and that operations never mutate their
+// inputs.
+func TestVectorArrowLayout(t *testing.T) {
+	cppFile := filepath.Join(t.TempDir(), "vector_layout.cpp")
+	source := `
+#include "quark/quark.hpp"
+#include <cstdio>
+
+static int pass = 0, fail = 0;
+#define EXPECT(label, cond) do { if (cond) { pass++; } else { fail++; std::fprintf(stderr, "FAIL: %s\n", label); } } while (0)
+
+int main() {
+    q_gc_init();
+
+    // Bools are bit-packed, LSB first: [T,F,T,T,F,F,F,F,T] -> 0x0D, 0x01.
+    QValue b = q_to_vector(qv_list_from(9, qv_bool(true), qv_bool(false), qv_bool(true), qv_bool(true),
+        qv_bool(false), qv_bool(false), qv_bool(false), qv_bool(false), qv_bool(true)));
+    const QVector& bv = *b.data.vector_val;
+    EXPECT("bool byte 0", bv.values[0] == 0x0D);
+    EXPECT("bool byte 1", (bv.values[1] & 0x01) == 0x01);
+    EXPECT("bool no validity", bv.validity == nullptr && bv.null_count == 0);
+
+    // Validity bitmap: [1, null, 3] -> bits 1,0,1 -> 0x05, null_count 1.
+    QValue i = q_to_vector(qv_list_from(3, qv_int(1), qv_null(), qv_int(3)));
+    const QVector& iv = *i.data.vector_val;
+    EXPECT("i64 validity byte", iv.validity && (iv.validity[0] & 0x07) == 0x05);
+    EXPECT("i64 null_count", iv.null_count == 1);
+    EXPECT("i64 values", q_vec_i64_data(iv)[0] == 1 && q_vec_i64_data(iv)[2] == 3);
+
+    // Strings: ['ab', null, 'cde', ''] -> offsets 0,2,2,5,5 and bytes "abcde".
+    QValue s = q_to_vector(qv_list_from(4, qv_string("ab"), qv_null(), qv_string("cde"), qv_string("")));
+    const QVector& sv = *s.data.vector_val;
+    EXPECT("str offsets", sv.offsets[0] == 0 && sv.offsets[1] == 2 && sv.offsets[2] == 2 &&
+                          sv.offsets[3] == 5 && sv.offsets[4] == 5);
+    EXPECT("str bytes", std::memcmp(sv.values, "abcde", 5) == 0);
+    EXPECT("str null_count", sv.null_count == 1 && q_vec_is_null_at(sv, 1));
+
+    // Builders grow across byte and capacity boundaries.
+    QValue grown = qv_vector_bool(0);
+    for (int k = 0; k < 100; k++) grown = q_vec_push_bool(grown, qv_bool(k % 3 == 0));
+    size_t trues = 0;
+    for (size_t k = 0; k < 100; k++) trues += q_vec_bool_at(*grown.data.vector_val, k) ? 1 : 0;
+    EXPECT("bool builder count", grown.data.vector_val->count == 100 && trues == 34);
+
+    // Operations return new vectors and leave inputs untouched.
+    QValue filled = q_fillna(i, qv_int(0));
+    EXPECT("fillna new vector", filled.data.vector_val != i.data.vector_val);
+    EXPECT("fillna input unchanged", iv.null_count == 1 && q_vec_is_null_at(iv, 1));
+    EXPECT("fillna output dense", filled.data.vector_val->null_count == 0 &&
+                                  filled.data.vector_val->validity == nullptr);
+    QValue sum = q_add(i, qv_int(1));
+    EXPECT("add propagates nulls", sum.data.vector_val->null_count == 1 && q_vec_is_null_at(*sum.data.vector_val, 1));
+    EXPECT("add input unchanged", q_vec_i64_data(iv)[0] == 1);
+
+    // Comparison results are bit-packed with AND-ed validity.
+    QValue cmp = q_vec_gt(i, qv_int(1));
+    const QVector& cv = *cmp.data.vector_val;
+    EXPECT("cmp type", cv.type == QVector::Type::BOOL);
+    EXPECT("cmp bits", !q_vec_bool_at(cv, 0) && q_vec_bool_at(cv, 2));
+    EXPECT("cmp null", q_vec_is_null_at(cv, 1) && cv.null_count == 1);
+
+    std::printf("vector_layout: %d passed, %d failed\n", pass, fail);
+    return fail > 0 ? 1 : 0;
+}
+`
+	got := compileAndRunRuntimeCheck(t, cppFile, source)
+	if !strings.Contains(got, " 0 failed") {
+		t.Fatalf("vector layout check reported failures:\n%s", got)
 	}
-	t.Logf("gc_selfcheck: %s", got)
+	t.Logf("%s", got)
 }
 
 func TestAnyTypeAnnotations_Runtime(t *testing.T) {

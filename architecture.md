@@ -338,7 +338,7 @@ The `qext` namespace provides safe helpers for C++ extension authors:
 | Memory | `qext::malloc`, `qext::malloc_atomic`, `qext::strdup` |
 | Boxing | `qext::box(int64_t)`, `qext::box(double)`, `qext::box(bool)`, `qext::box(const char*)`, `qext::box(QVector*)`, `qext::box(QList*)`, `qext::box(QDict*)`, `qext::null_val()` |
 | Unboxing | `qext::as_int`, `qext::as_float`, `qext::as_bool`, `qext::as_str`, `qext::as_vector`, `qext::as_list`, `qext::as_dict`, `qext::as_closure` |
-| Vectors | `qext::as_f64`, `qext::as_i64`, `qext::as_bool_vec` (and `_mut` variants), `qext::null_mask`, `qext::vec_size`, `qext::vec_dtype`, `qext::new_f64`, `qext::new_i64`, `qext::new_bool_vec` |
+| Vectors | `qext::as_f64`, `qext::as_i64` (and `_mut` variants for freshly created vectors), `qext::bool_at`, `qext::set_bool`, `qext::str_at`, `qext::is_null_at`, `qext::set_null`, `qext::validity_bitmap`, `qext::vec_size`, `qext::vec_null_count`, `qext::vec_dtype`, `qext::new_f64`, `qext::new_i64`, `qext::new_bool_vec` |
 | Dict | `qext::dict_get`, `qext::dict_set`, `qext::dict_size`, `qext::dict_has` |
 | Calls | `qext::call(fn, ...)` overloaded for 0-3 QValue args |
 | Error | `qext::panic`, `qext::panicf` |

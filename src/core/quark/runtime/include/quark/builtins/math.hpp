@@ -95,10 +95,9 @@ inline QValue q_vec_bool_reduce(QValue v, bool want_all, const char* name) {
         std::exit(1);
     }
     const QVector& vec = *v.data.vector_val;
-    const QVecU8& data = std::get<QVecU8>(vec.storage);
     for (size_t i = 0; i < vec.count; i++) {
-        if (vec.has_nulls && q_vec_is_null_at(vec, i)) continue;
-        const bool bit = data[i] != 0;
+        if (q_vec_is_null_at(vec, i)) continue;
+        const bool bit = q_vec_bool_at(vec, i);
         if (want_all && !bit) return qv_bool(false);
         if (!want_all && bit) return qv_bool(true);
     }

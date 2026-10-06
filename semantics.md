@@ -281,109 +281,19 @@ Method/index behavior:
 - Start/end/step accept numeric values; float arguments are truncated toward zero before iteration.
 - `step = 0` is a runtime error.
 
-Implementation details:
+**Vectors are immutable.** Every vector operation, including `fillna` and `astype`, returns a new vector and never changes its inputs.
 
-- Runtime storage is a boxed dynamic array (`QList`, backed by C++ vector-like storage of `QValue`).
-- Most list methods mutate the existing storage; `slice` and `concat` allocate new list storage.
-
-### 9.2 Dicts
-
-Language semantics:
-
-- Created with `dict { key: value }`.
-- In dict literals, keys are identifiers and are converted to string literals by the parser.
-- Dict keys are strings at runtime.
-- Assignment is shallow for dict values (aliases share the same underlying map).
-- Missing keys return `null` (not an error).
-- Dicts are unordered.
-
-Access forms:
-
-| Form | Semantics |
-|------|-----------|
-| `d.key` | Static member-key read (key is the literal string `"key"`). |
-| `d.key = v` | Static member-key write (key is literal). |
-| `d.get(k)` | Dynamic-key read. Non-string keys are converted with `to_str` semantics first. |
-| `d.set(k, v)` | Dynamic-key write. Non-string keys are converted with `to_str` semantics first. |
-| `d.keys()` / `d.values()` / `d.items()` | Snapshot lists in unspecified key iteration order. |
-
-Additional rules:
-
-- `d['key']`-style index syntax is rejected by the analyzer; use dot access or dict methods.
-- Duplicate keys in a dict literal are compile-time errors.
-- Dot member access on `null` or non-dict values is a runtime error.
+Comparisons between `vector[i64]` and floats, or between `vector[i64]` and `vector[f64]`, promote to float. `astype('i64')` on a float that is NaN or outside the i64 range is a runtime error.
 
 Implementation details:
 
-- Runtime storage is a hash map (`std::unordered_map<string, QValue>` with GC-aware allocator for entries).
-- Ordering is intentionally unspecified; do not rely on `keys()/values()/items()` order.
-
-### 9.3 Vectors
-
-Vectors are typed, 1D, columnar arrays with dtype `f64`, `i64`, `bool`, or `str`.
-
-Construction and conversion:
-
-- `vector [ ... ]` literal requires homogeneous elements of `int`, `float`, `bool`, or `str`.
-- `list.to_vector()` accepts homogeneous lists of `int`, `float`, `bool`, or `str`; `null` elements are allowed.
-- `to_vector(vector_value)` returns a clone, not the same handle.
-- `vec.to_list()` materializes a list copy; null-mask entries become `null` list elements.
-
-Default dtype edge-cases (implementation-visible behavior):
-
-- Empty vector literal defaults to `vector[f64]`.
-- Empty list converted via `to_vector()` defaults to `vector[i64]`.
-
-Indexing and masking:
-
-| Form | Semantics |
-|------|-----------|
-| `vec.get(i)` or `vec[i]` where `i: int` | Scalar index read with negative index support. Out-of-bounds is fatal (unlike list `.get`). |
-| `vec[mask]` where `mask: vector[bool]` | Boolean mask filter. Returns a new vector of same dtype containing selected rows. Mask-null entries act as "not selected". |
-
-Arithmetic and comparison:
-
-- Arithmetic is element-wise for numeric vectors: vector-vector or vector-scalar.
-- Arithmetic requires numeric dtypes (`f64`/`i64`) and compatible sizes for vector-vector operations.
-- `+`, `-`, `*` on pure `i64` operands produce `i64`; mixed numeric operands promote to `f64`.
-- `/` always produces `f64` and is fatal on division by zero.
-- Comparison operators produce `vector[bool]`.
-    - `<`, `<=`, `>`, `>=` apply to numeric vectors/scalars.
-    - `==`, `!=` support numeric, bool, and string vector comparisons.
-
-Null semantics:
-
-- Vectors use a sidecar null mask (typed buffers do not store boxed null sentinels).
-- Arithmetic/comparison propagate nulls element-wise: if any input element at index `i` is null, output index `i` is null.
-- `fillna(value)` mutates in place and clears the null mask after replacement.
-
-Reductions:
-
-- `sum(vec)` accepts numeric and bool vectors and returns a `float`.
-- `min(vec)` / `max(vec)` accept numeric vectors and return a `float`.
-- Reductions skip null-marked elements.
-- All-null, non-empty vectors return `null` for `sum/min/max`.
-- `min/max` on empty vectors are fatal runtime errors.
-- `all(mask)` / `any(mask)` reduce a `vector[bool]` to `bool`, skipping nulls. Use them to test vector comparisons in conditions.
-- `sum` on empty vectors returns `0.0`.
-
-Method behavior:
-
-| Method | Semantics |
-|--------|-----------|
-| `vec.fillna(v)` | In-place null replacement. `v` must be dtype-compatible. |
-| `vec.astype(dtype)` | Returns new vector cast to `"f64"`, `"i64"`, or `"bool"`; null mask is preserved. |
-| `vec.to_list()` | Returns list materialization of current vector contents. |
-
-Implementation details:
-
-- Storage is dtype-specialized contiguous memory:
-    - `f64`: `double[]`
-    - `i64`: `int64_t[]`
-    - `bool`: byte-packed as `uint8_t[]` (0/1)
-    - `str`: offset table + byte blob (`QStringStorage`)
-- Vector arithmetic/comparison/filtering create new vectors; they do not mutate input vectors.
-- `fillna` is the primary in-place vector data mutation operation.
+- Storage follows the Apache Arrow columnar format, so buffers can be shared with Arrow-compatible libraries without copying:
+    - `f64`: contiguous `double` values
+    - `i64`: contiguous `int64_t` values
+    - `bool`: bit-packed, least significant bit first
+    - `str`: `int32` offsets plus UTF-8 bytes (at most 2 GiB of string data per vector)
+- Nulls are an Arrow validity bitmap: a set bit means the element is valid. Vectors without nulls have no bitmap.
+- All buffers are 64-byte aligned and allocated on the garbage-collected heap.
 
 ---
 

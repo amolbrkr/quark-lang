@@ -1,0 +1,57 @@
+println('== smoke: vector layout ==')
+
+// --- bool bit-packing across byte boundaries (20 elements) ---
+xs = vector [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+big = xs > 10
+println(sum(big))
+println(big.get(9))
+println(big.get(10))
+println(big.get(19))
+println(len(xs[big]))
+println(sum(xs[big]))
+
+// --- nulls propagate through arithmetic and comparison ---
+n = list [1, null, 3, null, 5, 6, 7, 8, 9, null].to_vector()
+m = n * 2
+println(m.get(0))
+println(m.get(1))
+println(m.get(9))
+println(sum(m))
+c = n > 4
+println(c.get(1))
+println(c.get(4))
+
+// --- a null mask entry does not select ---
+keep = list [true, null, true].to_vector()
+picked = vector [10, 20, 30][keep]
+println(len(picked))
+println(sum(picked))
+
+// --- fillna returns a new vector and leaves the original alone ---
+filled = n.fillna(0)
+println(filled.get(1))
+println(n.get(1))
+println(sum(filled))
+
+// --- string vectors with nulls ---
+s = list ['ab', null, 'cde', ''].to_vector()
+println(s.get(0))
+println(s.get(1))
+println(s.get(2))
+println(len(s.get(3)))
+println(s == 'cde')
+println((s == 'cde').get(2))
+t = s.fillna('zz')
+println(t.get(1))
+println(s[vector [true, false, true, true]].get(1))
+
+// --- astype keeps nulls; i64 and f64 compare with promotion ---
+f = n.astype('f64')
+println(f.get(1))
+println(f.get(2))
+println(all((vector [1, 2, 3] < 2.5) == vector [true, true, false]))
+println(any(vector [1, 2, 3] == vector [1.0, 5.0, 6.0]))
+
+// --- to_list round trip ---
+println(n.to_list().get(3))
+println(n.to_list().get(4))

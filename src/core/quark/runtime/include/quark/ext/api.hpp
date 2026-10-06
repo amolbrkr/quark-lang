@@ -32,6 +32,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
+#include <string_view>
 
 // ============================================================
 // qext namespace — public API for extension authors
@@ -170,82 +171,95 @@ struct QSlice {
 };
 
 // ------------------------------------------------------------
-// Vector accessors — QSlice views over internal buffers
+// Vector accessors
 // ------------------------------------------------------------
+// Vectors use the Apache Arrow columnar layout (see types/vector.hpp):
+// f64/i64 values are contiguous arrays, bools are bit-packed, strings are
+// int32 offsets plus UTF-8 bytes, and nulls live in an Arrow validity bitmap.
+//
+// Vectors are immutable once Quark code can see them. The *_mut accessors,
+// set_bool and set_null are for filling a vector you just created with one
+// of the new_* constructors, before returning it to Quark.
 
-// Returns a read-only view over the f64 data. Panics if dtype != F64.
+// Read-only view over f64 values. Panics if dtype != F64.
 inline QSlice<const double> as_f64(const QVector* v) {
     if (!v || v->type != QVector::Type::F64) {
         panic("as_f64: vector dtype is not f64");
     }
-    const auto& buf = std::get<QVecF64>(v->storage);
-    return QSlice<const double>{buf.data(), buf.size()};
+    return QSlice<const double>{q_vec_f64_data(*v), v->count};
 }
 
-// Returns a mutable view over the f64 data. Panics if dtype != F64.
+// Mutable view over f64 values of a vector you just created.
 inline QSlice<double> as_f64_mut(QVector* v) {
     if (!v || v->type != QVector::Type::F64) {
         panic("as_f64_mut: vector dtype is not f64");
     }
-    auto& buf = std::get<QVecF64>(v->storage);
-    return QSlice<double>{buf.data(), buf.size()};
+    return QSlice<double>{q_vec_f64_data_mut(*v), v->count};
 }
 
-// Returns a read-only view over the i64 data. Panics if dtype != I64.
+// Read-only view over i64 values. Panics if dtype != I64.
 inline QSlice<const int64_t> as_i64(const QVector* v) {
     if (!v || v->type != QVector::Type::I64) {
         panic("as_i64: vector dtype is not i64");
     }
-    const auto& buf = std::get<QVecI64>(v->storage);
-    return QSlice<const int64_t>{buf.data(), buf.size()};
+    return QSlice<const int64_t>{q_vec_i64_data(*v), v->count};
 }
 
-// Returns a mutable view over the i64 data. Panics if dtype != I64.
+// Mutable view over i64 values of a vector you just created.
 inline QSlice<int64_t> as_i64_mut(QVector* v) {
     if (!v || v->type != QVector::Type::I64) {
         panic("as_i64_mut: vector dtype is not i64");
     }
-    auto& buf = std::get<QVecI64>(v->storage);
-    return QSlice<int64_t>{buf.data(), buf.size()};
+    return QSlice<int64_t>{q_vec_i64_data_mut(*v), v->count};
 }
 
-// Returns a read-only view over the bool data (packed as uint8_t, 0/1).
-// Panics if dtype != BOOL.
-inline QSlice<const uint8_t> as_bool_vec(const QVector* v) {
+// Element i of a bool vector. Panics if dtype != BOOL.
+inline bool bool_at(const QVector* v, size_t i) {
     if (!v || v->type != QVector::Type::BOOL) {
-        panic("as_bool_vec: vector dtype is not bool");
+        panic("bool_at: vector dtype is not bool");
     }
-    const auto& buf = std::get<QVecU8>(v->storage);
-    return QSlice<const uint8_t>{buf.data(), buf.size()};
+    return q_vec_bool_at(*v, i);
 }
 
-// Returns a mutable view over the bool data. Panics if dtype != BOOL.
-inline QSlice<uint8_t> as_bool_vec_mut(QVector* v) {
+// Sets element i of a bool vector you just created.
+inline void set_bool(QVector* v, size_t i, bool b) {
     if (!v || v->type != QVector::Type::BOOL) {
-        panic("as_bool_vec_mut: vector dtype is not bool");
+        panic("set_bool: vector dtype is not bool");
     }
-    auto& buf = std::get<QVecU8>(v->storage);
-    return QSlice<uint8_t>{buf.data(), buf.size()};
+    q_vec_bool_put(*v, i, b);
+}
+
+// Element i of a str vector as a view into the vector's bytes.
+inline std::string_view str_at(const QVector* v, size_t i) {
+    if (!v || v->type != QVector::Type::STR) {
+        panic("str_at: vector dtype is not str");
+    }
+    return q_vec_str_at(*v, i);
 }
 
 // ------------------------------------------------------------
-// Vector null mask access
+// Vector null access
 // ------------------------------------------------------------
 
-// Returns true if element i is null. Safe for vectors without null masks.
+// Returns true if element i is null.
 inline bool is_null_at(const QVector* v, size_t i) {
     if (!v) return false;
     return q_vec_is_null_at(*v, i);
 }
 
-// Returns a read-only view over the null mask bytes (0=valid, 1=null).
-// Returns an empty slice (data=nullptr, size=0) if the vector has no null mask.
-inline QSlice<const uint8_t> null_mask(const QVector* v) {
-    if (!v || !v->has_nulls) {
+// Marks element i null in a vector you just created.
+inline void set_null(QVector* v, size_t i) {
+    if (!v || i >= v->count) panic("set_null: index out of range");
+    q_vec_mark_null(*v, i);
+}
+
+// Read-only view over the Arrow validity bitmap (bit set = valid, LSB first).
+// Returns an empty slice when the vector has no nulls.
+inline QSlice<const uint8_t> validity_bitmap(const QVector* v) {
+    if (!v || v->null_count == 0 || !v->validity) {
         return QSlice<const uint8_t>{nullptr, 0};
     }
-    const auto& mask = v->nulls.is_null;
-    return QSlice<const uint8_t>{mask.data(), mask.size()};
+    return QSlice<const uint8_t>{v->validity, quark::vec::bitmap_bytes(v->count)};
 }
 
 // ------------------------------------------------------------
@@ -257,7 +271,11 @@ inline size_t vec_size(const QVector* v) {
 }
 
 inline bool vec_has_nulls(const QVector* v) {
-    return v && v->has_nulls;
+    return v && v->null_count > 0;
+}
+
+inline size_t vec_null_count(const QVector* v) {
+    return v ? v->null_count : 0;
 }
 
 inline QVector::Type vec_dtype(const QVector* v) {
@@ -271,38 +289,12 @@ inline const char* vec_dtype_name(const QVector* v) {
 }
 
 // ------------------------------------------------------------
-// Vector constructors — GC-allocated, ready-to-use
+// Vector constructors — GC-allocated, zeroed, ready to fill
 // ------------------------------------------------------------
 
-// Create an f64 vector with n elements initialized to 0.0.
-inline QVector* new_f64(size_t n) {
-    QValue qv = qv_vector(static_cast<int>(n));
-    QVector* v = qv.data.vector_val;
-    auto& buf = std::get<QVecF64>(v->storage);
-    buf.resize(n, 0.0);
-    v->count = n;
-    return v;
-}
-
-// Create an i64 vector with n elements initialized to 0.
-inline QVector* new_i64(size_t n) {
-    QValue qv = qv_vector_i64(static_cast<int>(n));
-    QVector* v = qv.data.vector_val;
-    auto& buf = std::get<QVecI64>(v->storage);
-    buf.resize(n, static_cast<int64_t>(0));
-    v->count = n;
-    return v;
-}
-
-// Create a bool vector with n elements initialized to false.
-inline QVector* new_bool_vec(size_t n) {
-    QValue qv = qv_vector_bool(static_cast<int>(n));
-    QVector* v = qv.data.vector_val;
-    auto& buf = std::get<QVecU8>(v->storage);
-    buf.resize(n, static_cast<uint8_t>(0));
-    v->count = n;
-    return v;
-}
+inline QVector* new_f64(size_t n)      { return q_vec_alloc(QVector::Type::F64, n); }
+inline QVector* new_i64(size_t n)      { return q_vec_alloc(QVector::Type::I64, n); }
+inline QVector* new_bool_vec(size_t n) { return q_vec_alloc(QVector::Type::BOOL, n); }
 
 // ------------------------------------------------------------
 // Dict accessors

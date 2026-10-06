@@ -2227,40 +2227,36 @@ func (g *Generator) generateFor(node *ast.TreeNode) string {
 	}
 
 	// Fast path: avoid per-element q_iter_get boxing for scalar-tier loops over
-	// validated non-null vectors of the exact matching dtype.
+	// valid null-free vectors of the exact matching dtype. Reads the vector's
+	// Arrow-layout buffers directly.
 	if !g.isCaptured(varName) {
 		loopVarTier := g.loopVarTier(rangeNode)
 		dtype := ""
-		storageType := ""
 		elemExpr := ""
 		switch loopVarTier {
 		case "long long":
 			dtype = "QVector::Type::I64"
-			storageType = "QVecI64"
 		case "double":
 			dtype = "QVector::Type::F64"
-			storageType = "QVecF64"
 		case "bool":
 			dtype = "QVector::Type::BOOL"
-			storageType = "QVecU8"
 		}
 		if dtype != "" {
-			vecDataTemp := g.newTemp()
+			vecRef := g.newTemp()
 			idxTemp := g.newTemp()
 			switch loopVarTier {
 			case "long long":
-				elemExpr = fmt.Sprintf("static_cast<long long>(%s[%s])", vecDataTemp, idxTemp)
+				elemExpr = fmt.Sprintf("static_cast<long long>(q_vec_i64_data(%s)[%s])", vecRef, idxTemp)
 			case "double":
-				elemExpr = fmt.Sprintf("%s[%s]", vecDataTemp, idxTemp)
+				elemExpr = fmt.Sprintf("q_vec_f64_data(%s)[%s]", vecRef, idxTemp)
 			case "bool":
-				elemExpr = fmt.Sprintf("(%s[%s] != 0)", vecDataTemp, idxTemp)
+				elemExpr = fmt.Sprintf("q_vec_bool_at(%s, %s)", vecRef, idxTemp)
 			}
 
-			g.emitLine("if (%s.type == QValue::VAL_VECTOR && q_vec_has_valid_handle(%s) && q_vec_validate(*%s.data.vector_val) && !%s.data.vector_val->has_nulls && %s.data.vector_val->type == %s) {",
-				listTemp, listTemp, listTemp, listTemp, listTemp, dtype)
+			g.emitLine("if (q_vec_is_dense_of(%s, %s)) {", listTemp, dtype)
 			g.indentLevel++
-			g.emitLine("const %s& %s = std::get<%s>(%s.data.vector_val->storage);", storageType, vecDataTemp, storageType, listTemp)
-			g.emitLine("for (long long %s = 0; %s < (long long)%s.size(); %s++) {", idxTemp, idxTemp, vecDataTemp, idxTemp)
+			g.emitLine("const QVector& %s = *%s.data.vector_val;", vecRef, listTemp)
+			g.emitLine("for (long long %s = 0; %s < (long long)%s.count; %s++) {", idxTemp, idxTemp, vecRef, idxTemp)
 			g.indentLevel++
 
 			g.pushBlockScope()

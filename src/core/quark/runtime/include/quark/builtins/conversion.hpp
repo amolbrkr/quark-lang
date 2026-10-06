@@ -53,36 +53,7 @@ inline QValue q_iter_get(QValue iterable, QValue index) {
         return qv_null();
     }
 
-    size_t pos = static_cast<size_t>(idx);
-    const QVector& vec = *iterable.data.vector_val;
-    if (q_vec_is_null_at(vec, pos)) {
-        return qv_null();
-    }
-
-    switch (vec.type) {
-        case QVector::Type::F64: {
-            const auto& values = std::get<QVecF64>(vec.storage);
-            return qv_float(values[pos]);
-        }
-        case QVector::Type::I64: {
-            const auto& values = std::get<QVecI64>(vec.storage);
-            return qv_int(static_cast<long long>(values[pos]));
-        }
-        case QVector::Type::BOOL: {
-            const auto& values = std::get<QVecU8>(vec.storage);
-            return qv_bool(values[pos] != 0);
-        }
-        case QVector::Type::STR: {
-            const auto& values = std::get<QStringStorage>(vec.storage);
-            uint32_t start = values.offsets[pos];
-            uint32_t end = values.offsets[pos + 1];
-            std::string s(values.bytes.data() + start, values.bytes.data() + end);
-            return qv_string(s.c_str());
-        }
-        default:
-            q_runtime_reportf("runtime error: unsupported vector dtype in iteration\n");
-            std::exit(1);
-    }
+    return q_vec_box_at(*iterable.data.vector_val, static_cast<size_t>(idx));
 }
 
 // Convert value to string

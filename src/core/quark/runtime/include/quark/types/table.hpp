@@ -129,12 +129,7 @@ inline QValue q_table_mask_filter(QValue tbl, QValue mask) {
     // Build filtered column vectors
     QTable* dst = q_table_create(src->def, 0);
     // Count selected rows first
-    const auto& bools = std::get<QVecU8>(mv->storage);
-    int selected = 0;
-    for (int i = 0; i < src->nrows; i++) {
-        if (i < static_cast<int>(bools.size()) && bools[i]) selected++;
-    }
-    dst->nrows = selected;
+    dst->nrows = static_cast<int>(q_vec_mask_count(*mv));
     // For each column, build a filtered vector
     for (int c = 0; c < src->ncols; c++) {
         dst->cols[c] = q_vec_mask_filter(src->cols[c], mask);

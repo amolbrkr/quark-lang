@@ -8,14 +8,16 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"quark/toolchain"
 )
 
 var quarkExePath string
 
 func TestMain(m *testing.M) {
 	// Build quark once for all integration tests.
-	// IMPORTANT: build into src/core/quark (same as normal usage) so
-	// getRuntimeIncludePath/getGCPaths can resolve runtime/ and deps/.
+	// IMPORTANT: build into src/core/quark (same as normal usage) so the
+	// toolchain package can resolve runtime/ and deps/ next to the binary.
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
 		os.Exit(1)
@@ -27,7 +29,6 @@ func TestMain(m *testing.M) {
 	}
 	quarkExePath = filepath.Join(pkgDir, exeName)
 	_ = os.Remove(quarkExePath)
-	defer os.Remove(quarkExePath)
 
 	buildCmd := exec.Command("go", "build", "-o", quarkExePath, ".")
 	buildCmd.Stdout = os.Stdout
@@ -37,7 +38,9 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	os.Exit(m.Run())
+	code := m.Run()
+	_ = os.Remove(quarkExePath)
+	os.Exit(code)
 }
 
 func repoRootFromThisFile(t *testing.T) string {
@@ -912,9 +915,9 @@ func compileAndRunRuntimeCheck(t *testing.T, cppFile, source string) string {
 	if _, err := exec.LookPath(compiler); err != nil {
 		t.Skip("skipping: clang++ not found in PATH")
 	}
-	gcInclude, gcLib, err := ensureGC()
+	gcInclude, gcLib, err := toolchain.EnsureGC()
 	if err != nil {
-		t.Fatalf("ensureGC: %v", err)
+		t.Fatalf("EnsureGC: %v", err)
 	}
 	if err := os.WriteFile(cppFile, []byte(source), 0o644); err != nil {
 		t.Fatalf("write %s: %v", cppFile, err)
@@ -926,12 +929,12 @@ func compileAndRunRuntimeCheck(t *testing.T, cppFile, source string) string {
 	args := []string{
 		"-std=c++17", "-O0", "-Wall", "-Wextra",
 		"-DQUARK_USE_GC",
-		"-I" + getRuntimeIncludePath(),
+		"-I" + toolchain.RuntimeIncludePath(),
 		"-I" + gcInclude,
 		"-o", outBin,
 		cppFile,
 	}
-	args = append(args, gcLinkArgs(gcLib)...)
+	args = append(args, toolchain.GCLinkArgs(gcLib)...)
 	if runtime.GOOS != "windows" {
 		args = append(args, "-lm")
 	}

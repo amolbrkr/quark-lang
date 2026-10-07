@@ -55,7 +55,9 @@ All stages live under `src/core/quark/`:
 | Analyzer | `types/` | Semantic analysis, scope/symbol tables, closure capture computation, generates `CallPlan` IR |
 | Invariants | `invariants/` | Pre-codegen validation (call plans, return types) |
 | Codegen | `codegen/` | AST → C++17 source generation |
-| Entry | `main.go` | CLI dispatch, C++ compilation, GC library discovery |
+| Driver | `driver/` | Runs the stages above in order (`CompileFile(path, stage)`); used by every CLI command and by `internal/testutil` |
+| Toolchain | `toolchain/` | clang++/runtime/GC discovery, compile and link steps, precompiled runtime header cache |
+| Entry | `main.go` | CLI dispatch and flag parsing |
 
 ## Runtime System
 
@@ -87,6 +89,7 @@ Runtime tests use Catch2: `src/core/quark/runtime/tests/`
 - **Variable storage is type-and-capture-driven**: five tiers selected at first declaration — `QCell*` (captured), `long long` (static `int`, not captured), `double` (static `float`, not captured), `bool` (static `bool`, not captured), `QValue` (everything else). The analyzer's `GetCapturedByFunction` and `GetNodeTypes` outputs drive this. Codegen tracks cells in `cellVars` and scalar tiers in `varTiers`. `generateIdentifier` boxes scalars back to `QValue` at read sites so all downstream codegen works uniformly with `QValue` expressions.
 - **Operator lowering**: arithmetic/comparison ops on two scalar atoms (literals or scalar-tiered locals) emit raw C++ operators instead of `q_add` etc. Codegen's `scalarExpr()` detects scalar atoms; result is boxed to `QValue` for the caller.
 - **Memory** — Boehm GC vendored at `deps/bdwgc/`. Use `q_malloc_atomic()` for data without pointers (strings, numeric buffers).
+- **Analyzer → codegen handoff** — the analyzer returns one `types.Analysis` struct (captures, call plans, node types, native/extern fns, struct types, ...), passed to codegen with `SetAnalysis`. New analyzer outputs go in that struct, not new setters.
 - **CallPlan** (`ir/call.go`) — IR metadata attached to each call site by the analyzer. Tracks call kind (builtin vs user), arity, default arg filling. Codegen reads these instead of re-analyzing.
 - **Builtin catalog** (`builtins/`) — shared metadata (name, arity, signatures) used by both analyzer and codegen. Methods are indexed by `(ReceiverType, methodName)` pair, separate from free functions.
 - **Method dispatch** — When codegen sees `IsMethod=true` on a CallPlan, the receiver expression is injected as the first runtime argument (e.g., `"hello".upper()` becomes `q_upper(receiver_val)`).

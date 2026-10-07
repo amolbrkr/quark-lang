@@ -105,6 +105,34 @@ func (a *Analyzer) GetNativeFns() map[string]*ir.CallPlan {
 	return a.nativeFns
 }
 
+// Analysis is everything the analyzer hands to the invariant checks and to
+// codegen. New analyzer outputs belong here so every consumer picks them up.
+type Analysis struct {
+	Captures           map[*ast.TreeNode][]string
+	CallPlans          map[*ast.TreeNode]*ir.CallPlan
+	ReturnValidation   map[*ast.TreeNode]bool
+	CapturedByFunction map[*ast.TreeNode]map[string]bool
+	NodeTypes          map[*ast.TreeNode]Type
+	NativeFns          map[string]*ir.CallPlan
+	ExternFns          map[string]*ir.CallPlan
+	StructTypes        map[string]*StructType
+}
+
+// Analysis returns the analyzer outputs for root, which must be the tree
+// passed to Analyze.
+func (a *Analyzer) Analysis(root *ast.TreeNode) *Analysis {
+	return &Analysis{
+		Captures:           a.captures,
+		CallPlans:          a.callPlans,
+		ReturnValidation:   a.returnValidated,
+		CapturedByFunction: a.GetCapturedByFunction(root),
+		NodeTypes:          a.nodeTypes,
+		NativeFns:          a.nativeFns,
+		ExternFns:          a.externFns,
+		StructTypes:        a.structTypes,
+	}
+}
+
 // isFullyAnnotated reports whether a FunctionType has explicit type annotations on
 // all parameters and the return type, and all those types map to scalar C++ types.
 // Functions with default-value parameters are excluded (defaults are passed as QValue).

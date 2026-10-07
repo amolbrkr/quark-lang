@@ -111,40 +111,32 @@ func New() *Generator {
 	}
 }
 
-// SetNativeFns passes the fully-annotated function map from the analyzer to the generator.
-func (g *Generator) SetNativeFns(m map[string]*ir.CallPlan) {
-	if m != nil {
-		g.nativeFns = m
+// SetAnalysis passes the analyzer outputs to the generator. Nil maps keep the
+// generator's empty defaults.
+func (g *Generator) SetAnalysis(an *types.Analysis) {
+	if an == nil {
+		return
 	}
-}
-
-// SetStructTypes passes the struct type definitions from the analyzer to the generator.
-func (g *Generator) SetStructTypes(m map[string]*types.StructType) {
-	if m != nil {
-		g.structTypes = m
+	if an.Captures != nil {
+		g.captures = an.Captures
 	}
-}
-
-// SetExternFns passes the extern fn registration map from the analyzer to the generator.
-// Used to detect when an extern fn name appears as a first-class value and emit a thunk.
-func (g *Generator) SetExternFns(m map[string]*ir.CallPlan) {
-	if m != nil {
-		g.externFns = m
+	if an.CallPlans != nil {
+		g.callPlans = an.CallPlans
 	}
-}
-
-// SetCapturedByFunction passes the per-function captured-variable sets from the
-// analyzer so codegen can elide QCell* for variables that are never captured.
-func (g *Generator) SetCapturedByFunction(m map[*ast.TreeNode]map[string]bool) {
-	if m != nil {
-		g.capturedByFunction = m
+	if an.CapturedByFunction != nil {
+		g.capturedByFunction = an.CapturedByFunction
 	}
-}
-
-// SetNodeTypes passes the per-node inferred types from the analyzer to the generator.
-func (g *Generator) SetNodeTypes(m map[*ast.TreeNode]types.Type) {
-	if m != nil {
-		g.nodeTypes = m
+	if an.NodeTypes != nil {
+		g.nodeTypes = an.NodeTypes
+	}
+	if an.NativeFns != nil {
+		g.nativeFns = an.NativeFns
+	}
+	if an.ExternFns != nil {
+		g.externFns = an.ExternFns
+	}
+	if an.StructTypes != nil {
+		g.structTypes = an.StructTypes
 	}
 }
 
@@ -309,20 +301,6 @@ func (g *Generator) emitSourceLoc(node *ast.TreeNode) {
 		return
 	}
 	g.emitLine("q_set_source_loc(\"%s\", %d, %d);", escapeCppString(g.sourceName), node.Token.Line, node.Token.Column)
-}
-
-// SetCaptures passes the captured variable info from the analyzer to the generator
-func (g *Generator) SetCaptures(captures map[*ast.TreeNode][]string) {
-	if captures != nil {
-		g.captures = captures
-	}
-}
-
-// SetCallPlans passes call-focused IR metadata from the analyzer to the generator.
-func (g *Generator) SetCallPlans(plans map[*ast.TreeNode]*ir.CallPlan) {
-	if plans != nil {
-		g.callPlans = plans
-	}
 }
 
 // sanitizeVarName prefixes all user variable names with quark_ to avoid

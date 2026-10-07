@@ -1,14 +1,20 @@
 package testutil
 
 import (
+	"path/filepath"
+
 	"quark/ast"
-	"quark/codegen"
-	"quark/invariants"
+	"quark/driver"
 	"quark/lexer"
 	"quark/parser"
 	"quark/token"
 	"quark/types"
 )
+
+// sourceFile is the virtual path inline test sources are compiled as. It
+// sits in the test's working directory so relative and std/ imports resolve
+// the same way they would for a real file there.
+const sourceFile = "test_input.qrk"
 
 type PipelineResult struct {
 	Tokens       []token.Token
@@ -31,36 +37,45 @@ func Parse(source string) (*ast.TreeNode, []string) {
 	return node, p.Errors()
 }
 
+// resolveImports runs the loader on a parsed test source, as the driver
+// does, and returns its errors.
+func resolveImports(node *ast.TreeNode) []string {
+	absPath, err := filepath.Abs(sourceFile)
+	if err != nil {
+		return []string{err.Error()}
+	}
+	var errs []string
+	for _, d := range driver.ResolveImports(node, absPath) {
+		errs = append(errs, d.Message)
+	}
+	return errs
+}
+
+// Analyze parses, resolves imports and analyzes source. Unlike the driver it
+// analyzes even when parsing failed, so tests can inspect both sets of
+// errors. Loader errors are reported with the parse errors.
 func Analyze(source string) (*types.Analyzer, *ast.TreeNode, []string, []string) {
 	node, parseErrs := Parse(source)
+	if len(parseErrs) == 0 {
+		parseErrs = resolveImports(node)
+	}
 	analyzer := types.NewAnalyzer()
 	analyzer.Analyze(node)
 	return analyzer, node, parseErrs, analyzer.Errors()
 }
 
+// GenerateCPP runs the full front end on source with the same invariant
+// checks and codegen setup as the compiler.
 func GenerateCPP(source string) PipelineResult {
 	analyzer, node, parseErrs, typeErrs := Analyze(source)
-	if len(parseErrs) == 0 && len(typeErrs) == 0 {
-		if err := invariants.ValidateCallPlans(node, analyzer.GetCallPlans()); err != nil {
-			typeErrs = append(typeErrs, err.Error())
-		}
-		if err := invariants.ValidateReturnAnnotations(node, analyzer.GetReturnValidation()); err != nil {
-			typeErrs = append(typeErrs, err.Error())
-		}
-	}
 	cpp := ""
 	if len(parseErrs) == 0 && len(typeErrs) == 0 {
-		gen := codegen.New()
-		gen.SetCaptures(analyzer.GetCaptures())
-		// Mirror the setup in main.go so tests exercise the same codegen
-		// configuration as the real compiler.
-		gen.SetCallPlans(analyzer.GetCallPlans())
-		gen.SetCapturedByFunction(analyzer.GetCapturedByFunction(node))
-		gen.SetNodeTypes(analyzer.GetNodeTypes())
-		gen.SetNativeFns(analyzer.GetNativeFns())
-		gen.SetExternFns(analyzer.GetExternFns())
-		gen.SetStructTypes(analyzer.GetStructTypes())
-		cpp = gen.Generate(node)
+		an := analyzer.Analysis(node)
+		if err := driver.Validate(node, an); err != nil {
+			typeErrs = append(typeErrs, err.Error())
+		} else {
+			cpp = driver.Generate(node, an, sourceFile)
+		}
 	}
 	return PipelineResult{
 		Tokens:       nil,

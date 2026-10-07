@@ -2,204 +2,18 @@ package main
 
 import (
 	"errors"
+	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 
-	"quark/ast"
-	"quark/codegen"
-	"quark/diagnostics"
-	"quark/invariants"
+	"quark/driver"
 	"quark/lexer"
-	"quark/loader"
-	"quark/parser"
-	"quark/types"
+	"quark/toolchain"
 )
-
-// getRuntimeIncludePath returns the path to the runtime include directory
-// relative to the quark executable
-func getRuntimeIncludePath() string {
-	// Get the executable path
-	exePath, err := os.Executable()
-	if err != nil {
-		// Fallback to current directory
-		return filepath.Join("runtime", "include")
-	}
-
-	// Get the directory containing the executable
-	exeDir := filepath.Dir(exePath)
-
-	// Runtime headers are in ../runtime/include relative to the executable
-	// (exe is in src/core/quark, runtime is in src/core/quark/runtime)
-	runtimePath := filepath.Join(exeDir, "runtime", "include")
-
-	// Check if the path exists
-	if _, err := os.Stat(runtimePath); err == nil {
-		return runtimePath
-	}
-
-	// Fallback: try relative to current directory
-	return filepath.Join("runtime", "include")
-}
-
-func findGCSourceDir() (string, error) {
-	candidates := []string{}
-
-	if exePath, err := os.Executable(); err == nil {
-		exeDir := filepath.Dir(exePath)
-		candidates = append(candidates,
-			filepath.Join(exeDir, "..", "..", "..", "deps", "bdwgc"),
-			filepath.Join(exeDir, "deps", "bdwgc"),
-		)
-	}
-
-	if wd, err := os.Getwd(); err == nil {
-		candidates = append(candidates, filepath.Join(wd, "deps", "bdwgc"))
-		for cur := wd; ; {
-			parent := filepath.Dir(cur)
-			if parent == cur {
-				break
-			}
-			candidates = append(candidates, filepath.Join(parent, "deps", "bdwgc"))
-			cur = parent
-		}
-	}
-
-	seen := map[string]struct{}{}
-	for _, candidate := range candidates {
-		if candidate == "" {
-			continue
-		}
-		abs, err := filepath.Abs(candidate)
-		if err != nil {
-			continue
-		}
-		if _, ok := seen[abs]; ok {
-			continue
-		}
-		seen[abs] = struct{}{}
-		if _, err := os.Stat(filepath.Join(abs, "CMakeLists.txt")); err == nil {
-			return abs, nil
-		}
-	}
-
-	return "", errors.New("could not locate deps/bdwgc (expected vendored Boehm GC source in repository)")
-}
-
-// gcBuildDirName is the CMake build directory used for the vendored Boehm GC.
-// It is distinct from the conventional "build" directory so that an older
-// shared-library build there is never picked up: generated binaries must link
-// the GC statically so they run standalone, without needing libgc on the
-// dynamic loader path.
-const gcBuildDirName = "build-static"
-
-// findGCLibrary returns the static Boehm GC archive under buildDir.
-// Only static archives are accepted (see gcBuildDirName).
-func findGCLibrary(buildDir string) (string, error) {
-	candidates := []string{
-		filepath.Join(buildDir, "libgc.a"),
-		filepath.Join(buildDir, "gc.lib"),
-		filepath.Join(buildDir, "libgc.lib"),
-		filepath.Join(buildDir, "Release", "gc.lib"),
-		filepath.Join(buildDir, "Release", "libgc.lib"),
-		filepath.Join(buildDir, "Release", "libgc.a"),
-		filepath.Join(buildDir, "Debug", "gc.lib"),
-		filepath.Join(buildDir, "Debug", "libgc.lib"),
-	}
-
-	for _, candidate := range candidates {
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate, nil
-		}
-	}
-
-	return "", fmt.Errorf("could not find static Boehm GC library under %s", buildDir)
-}
-
-// gcLinkArgs returns the linker arguments needed to link the static GC archive.
-// A static libgc depends on the platform threads library, which a shared
-// libgc would otherwise have pulled in itself.
-func gcLinkArgs(libPath string) []string {
-	args := []string{libPath}
-	if runtime.GOOS != "windows" {
-		args = append(args, "-pthread")
-	}
-	if runtime.GOOS == "linux" {
-		args = append(args, "-ldl")
-	}
-	return args
-}
-
-func ensureGC() (includePath string, libPath string, err error) {
-	gcSourceDir, err := findGCSourceDir()
-	if err != nil {
-		return "", "", err
-	}
-
-	includePath = filepath.Join(gcSourceDir, "include")
-	if _, statErr := os.Stat(filepath.Join(includePath, "gc", "gc.h")); statErr != nil {
-		return "", "", fmt.Errorf("Boehm GC headers not found at %s", includePath)
-	}
-
-	buildDir := filepath.Join(gcSourceDir, gcBuildDirName)
-	if libPath, err = findGCLibrary(buildDir); err == nil {
-		return includePath, libPath, nil
-	}
-
-	if _, lookErr := exec.LookPath("cmake"); lookErr != nil {
-		return "", "", fmt.Errorf("Boehm GC is not built and cmake is not available in PATH; install cmake or build deps/bdwgc manually")
-	}
-
-	fmt.Fprintln(os.Stderr, "Boehm GC library not found; bootstrapping deps/bdwgc/build with CMake...")
-
-	// Always build a static GC library so generated executables are
-	// standalone on every platform.
-	configureArgs := []string{
-		"-S", gcSourceDir,
-		"-B", buildDir,
-		"-DCMAKE_BUILD_TYPE=Release",
-		// bdwgc reads GC_BUILD_SHARED_LIBS; BUILD_SHARED_LIBS covers
-		// older bdwgc releases that used the generic CMake option.
-		"-DGC_BUILD_SHARED_LIBS=OFF",
-		"-DBUILD_SHARED_LIBS=OFF",
-		"-DCMAKE_POSITION_INDEPENDENT_CODE=ON",
-		"-Denable_docs=OFF",
-		"-Dbuild_cord=OFF",
-		"-DBUILD_TESTING=OFF",
-	}
-	if runtime.GOOS == "windows" {
-		// Force clang so the GC library matches the MSVC ABI that
-		// clang++ targets. Without this, cmake may pick MinGW gcc
-		// which produces incompatible object files (longjmp ABI mismatch).
-		configureArgs = append(configureArgs, "-DCMAKE_C_COMPILER=clang")
-	}
-	configureCmd := exec.Command("cmake", configureArgs...)
-	configureCmd.Stdout = os.Stdout
-	configureCmd.Stderr = os.Stderr
-	if runErr := configureCmd.Run(); runErr != nil {
-		return "", "", fmt.Errorf("failed to configure Boehm GC with CMake: %w", runErr)
-	}
-
-	// --config only matters for multi-config generators (MSVC, Xcode);
-	// single-config generators ignore it.
-	buildArgs := []string{"--build", buildDir, "--config", "Release"}
-	buildCmd := exec.Command("cmake", buildArgs...)
-	buildCmd.Stdout = os.Stdout
-	buildCmd.Stderr = os.Stderr
-	if runErr := buildCmd.Run(); runErr != nil {
-		return "", "", fmt.Errorf("failed to build Boehm GC with CMake: %w", runErr)
-	}
-
-	libPath, err = findGCLibrary(buildDir)
-	if err != nil {
-		return "", "", err
-	}
-
-	return includePath, libPath, nil
-}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -207,97 +21,30 @@ func main() {
 		os.Exit(1)
 	}
 
-	command := os.Args[1]
-
+	command, args := os.Args[1], os.Args[2:]
 	switch command {
 	case "lex":
-		if len(os.Args) < 3 {
-			fmt.Println("Usage: quark lex <file.qrk>")
-			os.Exit(1)
-		}
-		runLexer(os.Args[2])
-
+		os.Exit(cmdLex(args))
 	case "parse":
-		if len(os.Args) < 3 {
-			fmt.Println("Usage: quark parse <file.qrk>")
-			os.Exit(1)
-		}
-		runParser(os.Args[2])
-
+		os.Exit(cmdParse(args))
 	case "check":
-		if len(os.Args) < 3 {
-			fmt.Println("Usage: quark check <file.qrk>")
-			os.Exit(1)
-		}
-		runCheck(os.Args[2])
-
+		os.Exit(cmdCheck(args))
 	case "emit":
-		if len(os.Args) < 3 {
-			fmt.Println("Usage: quark emit <file.qrk>")
-			os.Exit(1)
-		}
-		runEmit(os.Args[2])
-
+		os.Exit(cmdEmit(args))
 	case "build":
-		if len(os.Args) < 3 {
-			fmt.Println("Usage: quark build <file.qrk> [-o output] [--lto]")
-			os.Exit(1)
-		}
-		output := ""
-		useGC := true
-		lto := false
-		for i := 3; i < len(os.Args); i++ {
-			if os.Args[i] == "-o" && i+1 < len(os.Args) {
-				output = os.Args[i+1]
-				i++ // Skip next arg
-			}
-			if os.Args[i] == "--lto" {
-				lto = true
-			}
-		}
-		runBuild(os.Args[2], output, useGC, lto)
-
+		os.Exit(cmdBuild(args))
 	case "run":
-		if len(os.Args) < 3 {
-			fmt.Println("Usage: quark run <file.qrk> [--debug] [--lto]")
-			os.Exit(1)
-		}
-		debug := false
-		useGC := true
-		lto := false
-		for _, arg := range os.Args[3:] {
-			if arg == "--debug" || arg == "-d" {
-				debug = true
-			}
-			if arg == "--lto" {
-				lto = true
-			}
-		}
-		runRun(os.Args[2], debug, useGC, lto)
-
+		os.Exit(cmdRun(args))
 	case "help", "-h", "--help":
 		printUsage()
-
 	default:
-		// Check if it's a .qrk file - if so, run it
-		if strings.HasSuffix(os.Args[1], ".qrk") {
-			debug := false
-			useGC := true
-			lto := false
-			for _, arg := range os.Args[2:] {
-				if arg == "--debug" || arg == "-d" {
-					debug = true
-				}
-				if arg == "--lto" {
-					lto = true
-				}
-			}
-			runRun(os.Args[1], debug, useGC, lto)
-		} else {
-			fmt.Printf("Unknown command: %s\n", command)
-			printUsage()
-			os.Exit(1)
+		// `quark file.qrk [flags]` is shorthand for `quark run`.
+		if strings.HasSuffix(command, ".qrk") {
+			os.Exit(cmdRun(os.Args[1:]))
 		}
+		fmt.Printf("Unknown command: %s\n", command)
+		printUsage()
+		os.Exit(1)
 	}
 }
 
@@ -310,91 +57,88 @@ func printUsage() {
 	fmt.Println("  lex <file>                    Tokenize a file and print tokens")
 	fmt.Println("  parse <file>                  Parse a file and print the AST")
 	fmt.Println("  check <file>                  Type check a file")
-	fmt.Println("  emit <file>                   Emit C code to stdout")
+	fmt.Println("  emit <file>                   Emit C++ code to stdout")
 	fmt.Println("  build <file> [-o out]         Compile to executable")
 	fmt.Println("  run <file> [--debug]          Compile and run")
 	fmt.Println("  help                          Show this help message")
 	fmt.Println()
-	fmt.Println("Flags:")
-	fmt.Println("  --debug, -d    Save generated C++ file (for run/build)")
-	fmt.Println("  --lto          Enable link-time optimization (for run/build)")
+	fmt.Println("Flags (run/build):")
+	fmt.Println("  --debug, -d    Keep the generated C++ file and print compiler commands")
+	fmt.Println("  --lto          Enable link-time optimization")
+	fmt.Println("  --no-pch       Do not use the cached precompiled runtime header")
 	fmt.Println()
 	fmt.Println("Examples:")
-	fmt.Println("  quark run test.qrk                # Compile and run with GC")
-	fmt.Println("  quark build test.qrk -o app      # Build with GC")
+	fmt.Println("  quark run test.qrk                # Compile and run")
+	fmt.Println("  quark build test.qrk -o app       # Build an executable")
 	fmt.Println("  quark test.qrk                    # Shorthand for run")
 }
 
-func printDiagnostics(diags []diagnostics.Diagnostic) {
-	for _, d := range diags {
-		fmt.Fprintln(os.Stderr, d.String())
+// parseCommand parses flags for a subcommand and returns its single file
+// argument. Flags may appear before or after the file.
+func parseCommand(fs *flag.FlagSet, usage string, args []string) (string, bool) {
+	fs.SetOutput(io.Discard)
+	var positional []string
+	for {
+		if err := fs.Parse(args); err != nil {
+			fmt.Fprintf(os.Stderr, "%s\nUsage: %s\n", err, usage)
+			return "", false
+		}
+		args = fs.Args()
+		if len(args) == 0 {
+			break
+		}
+		positional = append(positional, args[0])
+		args = args[1:]
 	}
+	if len(positional) != 1 {
+		fmt.Printf("Usage: %s\n", usage)
+		return "", false
+	}
+	return positional[0], true
 }
 
-// buildClangArgs returns the common clang++ compile flags used by both
-// `quark build` and `quark run`.
-//
-// Optimization policy:
-// - Always use -O3 for release-like codegen performance.
-// - Keep x86-64-v3 tuning on amd64 as currently intended by the project.
-//
-// Diagnostics policy:
-// - Force colored diagnostics for readability.
-// - Raise error limit so generated C++ failures don't truncate too early.
-// - Suppress deprecated-declaration noise only on Windows (MSVC CRT shims).
-func buildClangArgs(runtimeInclude string, lto bool) []string {
-	args := []string{"-std=c++17", "-O3", fmt.Sprintf("-I%s", runtimeInclude)}
-
-	if runtime.GOARCH == "amd64" {
-		args = append(args, "-march=x86-64-v3")
-	}
-
-	args = append(args,
-		"-fcolor-diagnostics",
-		"-ferror-limit=20",
-	)
-
-	if runtime.GOOS == "windows" {
-		args = append(args, "-Wno-deprecated-declarations")
-	}
-
-	if lto {
-		args = append(args, "-flto")
-	}
-
-	return args
+// buildFlags are the flags shared by run and build.
+type buildFlags struct {
+	debug bool
+	lto   bool
+	noPCH bool
 }
 
-// resolveImports runs the module loader on the parsed AST to splice in external file imports.
-// Returns true if successful, false if there were errors (printed to stderr).
-func resolveImports(tree *ast.TreeNode, filename string) bool {
-	absPath, err := filepath.Abs(filename)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error resolving path: %s\n", err)
-		return false
-	}
-
-	ml := loader.NewModuleLoader()
-	ml.ResolveImports(tree, absPath)
-
-	if len(ml.Errors()) > 0 {
-		printDiagnostics(diagnostics.WithDefaultFile(ml.Diagnostics(), absPath))
-		return false
-	}
-	return true
+func (f *buildFlags) register(fs *flag.FlagSet) {
+	fs.BoolVar(&f.debug, "debug", false, "")
+	fs.BoolVar(&f.debug, "d", false, "")
+	fs.BoolVar(&f.lto, "lto", false, "")
+	fs.BoolVar(&f.noPCH, "no-pch", false, "")
 }
 
-func runLexer(filename string) {
-	content, err := os.ReadFile(filename)
+func (f *buildFlags) options() toolchain.Options {
+	return toolchain.Options{LTO: f.lto, PCH: !f.noPCH, Verbose: f.debug}
+}
+
+// frontEnd runs the compiler front end through upTo and prints diagnostics.
+// It returns nil when compilation failed.
+func frontEnd(file string, upTo driver.Stage) *driver.Unit {
+	u := driver.CompileFile(file, upTo)
+	u.PrintDiagnostics()
+	if u.Failed() {
+		return nil
+	}
+	return u
+}
+
+func cmdLex(args []string) int {
+	file, ok := parseCommand(flag.NewFlagSet("lex", flag.ContinueOnError), "quark lex <file.qrk>", args)
+	if !ok {
+		return 1
+	}
+	content, err := os.ReadFile(file)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading file: %s\n", err)
-		os.Exit(1)
+		return 1
 	}
 
-	l := lexer.New(string(content))
-	tokens := l.Tokenize()
-
-	fmt.Printf("Tokens from %s:\n", filename)
+	tokens := lexer.New(string(content)).Tokenize()
+	fmt.Printf("Tokens from %s:\n", file)
 	fmt.Println("----------------------------------------")
 	for i, tok := range tokens {
 		fmt.Printf("%3d: %-12s %q (line %d, col %d)\n",
@@ -402,404 +146,171 @@ func runLexer(filename string) {
 	}
 	fmt.Println("----------------------------------------")
 	fmt.Printf("Total: %d tokens\n", len(tokens))
+	return 0
 }
 
-func runParser(filename string) {
-	content, err := os.ReadFile(filename)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading file: %s\n", err)
-		os.Exit(1)
+func cmdParse(args []string) int {
+	file, ok := parseCommand(flag.NewFlagSet("parse", flag.ContinueOnError), "quark parse <file.qrk>", args)
+	if !ok {
+		return 1
 	}
-
-	l := lexer.New(string(content))
-	tokens := l.Tokenize()
-
-	p := parser.New(tokens)
-	tree := p.Parse()
-
-	if len(p.Errors()) > 0 {
-		printDiagnostics(diagnostics.WithDefaultFile(p.Diagnostics(), filename))
-		os.Exit(1)
+	u := frontEnd(file, driver.StageParse)
+	if u == nil {
+		return 1
 	}
-
-	if !resolveImports(tree, filename) {
-		os.Exit(1)
-	}
-
-	fmt.Printf("AST for %s:\n", filename)
+	fmt.Printf("AST for %s:\n", file)
 	fmt.Println("========================================")
-	tree.PrintTree()
+	u.AST.PrintTree()
 	fmt.Println("========================================")
+	return 0
 }
 
-func runCheck(filename string) {
-	content, err := os.ReadFile(filename)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading file: %s\n", err)
-		os.Exit(1)
+func cmdCheck(args []string) int {
+	file, ok := parseCommand(flag.NewFlagSet("check", flag.ContinueOnError), "quark check <file.qrk>", args)
+	if !ok {
+		return 1
 	}
-
-	l := lexer.New(string(content))
-	tokens := l.Tokenize()
-
-	p := parser.New(tokens)
-	tree := p.Parse()
-
-	if len(p.Errors()) > 0 {
-		printDiagnostics(diagnostics.WithDefaultFile(p.Diagnostics(), filename))
-		os.Exit(1)
+	if frontEnd(file, driver.StageCheck) == nil {
+		return 1
 	}
-
-	if !resolveImports(tree, filename) {
-		os.Exit(1)
-	}
-
-	analyzer := types.NewAnalyzer()
-	analyzer.Analyze(tree)
-	analyzerDiags := diagnostics.WithDefaultFile(analyzer.Diagnostics(), filename)
-	if len(analyzerDiags) > 0 {
-		printDiagnostics(analyzerDiags)
-	}
-
-	if analyzer.HasErrors() {
-		os.Exit(1)
-	}
-
 	fmt.Println("No errors found.")
+	return 0
 }
 
-func runEmit(filename string) {
-	content, err := os.ReadFile(filename)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading file: %s\n", err)
-		os.Exit(1)
+func cmdEmit(args []string) int {
+	file, ok := parseCommand(flag.NewFlagSet("emit", flag.ContinueOnError), "quark emit <file.qrk>", args)
+	if !ok {
+		return 1
 	}
-
-	l := lexer.New(string(content))
-	tokens := l.Tokenize()
-
-	p := parser.New(tokens)
-	tree := p.Parse()
-
-	if len(p.Errors()) > 0 {
-		printDiagnostics(diagnostics.WithDefaultFile(p.Diagnostics(), filename))
-		os.Exit(1)
+	u := frontEnd(file, driver.StageEmit)
+	if u == nil {
+		return 1
 	}
-
-	if !resolveImports(tree, filename) {
-		os.Exit(1)
-	}
-
-	// Run analyzer to compute closure captures
-	analyzer := types.NewAnalyzer()
-	analyzer.Analyze(tree)
-	analyzerDiags := diagnostics.WithDefaultFile(analyzer.Diagnostics(), filename)
-	if len(analyzerDiags) > 0 {
-		printDiagnostics(analyzerDiags)
-	}
-
-	if analyzer.HasErrors() {
-		os.Exit(1)
-	}
-
-	gen := codegen.New()
-	gen.SetSourceName(filename)
-	if err := invariants.ValidateCallPlans(tree, analyzer.GetCallPlans()); err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		os.Exit(1)
-	}
-	if err := invariants.ValidateReturnAnnotations(tree, analyzer.GetReturnValidation()); err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		os.Exit(1)
-	}
-	gen.SetCaptures(analyzer.GetCaptures())
-	gen.SetCallPlans(analyzer.GetCallPlans())
-	gen.SetCapturedByFunction(analyzer.GetCapturedByFunction(tree))
-	gen.SetNodeTypes(analyzer.GetNodeTypes())
-	gen.SetNativeFns(analyzer.GetNativeFns())
-	gen.SetExternFns(analyzer.GetExternFns())
-	gen.SetStructTypes(analyzer.GetStructTypes())
-	cCode := gen.Generate(tree)
-	fmt.Println(cCode)
+	fmt.Println(u.CPP)
+	return 0
 }
 
-func runBuild(filename string, output string, useGC bool, lto bool) {
-	content, err := os.ReadFile(filename)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading file: %s\n", err)
-		os.Exit(1)
+func cmdBuild(args []string) int {
+	var flags buildFlags
+	var output string
+	fs := flag.NewFlagSet("build", flag.ContinueOnError)
+	flags.register(fs)
+	fs.StringVar(&output, "o", "", "")
+	file, ok := parseCommand(fs, "quark build <file.qrk> [-o output] [--debug] [--lto] [--no-pch]", args)
+	if !ok {
+		return 1
 	}
-
-	// Determine output filename
 	if output == "" {
-		base := filepath.Base(filename)
+		base := filepath.Base(file)
 		output = strings.TrimSuffix(base, filepath.Ext(base))
 	}
-	if runtime.GOOS == "windows" && !strings.HasSuffix(output, ".exe") {
-		output += ".exe"
+	output = toolchain.ExeName(output)
+
+	u := frontEnd(file, driver.StageEmit)
+	if u == nil {
+		return 1
 	}
 
-	// Compile
-	l := lexer.New(string(content))
-	tokens := l.Tokenize()
-
-	p := parser.New(tokens)
-	tree := p.Parse()
-
-	if len(p.Errors()) > 0 {
-		printDiagnostics(diagnostics.WithDefaultFile(p.Diagnostics(), filename))
-		os.Exit(1)
-	}
-
-	if !resolveImports(tree, filename) {
-		os.Exit(1)
-	}
-
-	// Type checking phase
-	analyzer := types.NewAnalyzer()
-	analyzer.Analyze(tree)
-	analyzerDiags := diagnostics.WithDefaultFile(analyzer.Diagnostics(), filename)
-	if len(analyzerDiags) > 0 {
-		printDiagnostics(analyzerDiags)
-	}
-
-	if analyzer.HasErrors() {
-		os.Exit(1)
-	}
-
-	gen := codegen.New()
-	gen.SetSourceName(filename)
-	if err := invariants.ValidateCallPlans(tree, analyzer.GetCallPlans()); err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		os.Exit(1)
-	}
-	if err := invariants.ValidateReturnAnnotations(tree, analyzer.GetReturnValidation()); err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		os.Exit(1)
-	}
-	gen.SetCaptures(analyzer.GetCaptures())
-	gen.SetCallPlans(analyzer.GetCallPlans())
-	gen.SetCapturedByFunction(analyzer.GetCapturedByFunction(tree))
-	gen.SetNodeTypes(analyzer.GetNodeTypes())
-	gen.SetNativeFns(analyzer.GetNativeFns())
-	gen.SetExternFns(analyzer.GetExternFns())
-	gen.SetStructTypes(analyzer.GetStructTypes())
-	cCode := gen.Generate(tree)
-
-	// Write C++ code to temp file
-	tmpDir := os.TempDir()
-	cFile := filepath.Join(tmpDir, "quark_temp.cpp")
-	err = os.WriteFile(cFile, []byte(cCode), 0644)
+	workDir, err := os.MkdirTemp("", "quark-build-")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error writing C++ file: %s\n", err)
-		os.Exit(1)
+		fmt.Fprintf(os.Stderr, "Error creating build directory: %s\n", err)
+		return 1
 	}
+	defer os.RemoveAll(workDir)
 
-	// Quark requires clang++ — g++ is not supported due to gc_allocator
-	// incompatibilities with custom-allocator string keys in unordered_map.
-	if _, err := exec.LookPath("clang++"); err != nil {
-		fmt.Fprintln(os.Stderr, "Error: clang++ not found in PATH")
-		fmt.Fprintln(os.Stderr, "Quark requires clang++ to compile. Install it with:")
-		fmt.Fprintln(os.Stderr, "  Ubuntu/Debian: sudo apt install clang")
-		fmt.Fprintln(os.Stderr, "  macOS:         brew install llvm")
-		os.Exit(1)
+	cppFile := filepath.Join(workDir, "main.cpp")
+	if flags.debug {
+		cppFile = output + ".cpp"
 	}
-	compiler := "clang++"
-
-	// Get runtime include path
-	runtimeInclude := getRuntimeIncludePath()
-	// Build compilation arguments
-	args := buildClangArgs(runtimeInclude, lto)
-	var gcLibPath string
-	// Add GC flags if enabled
-	if useGC {
-		gcInclude, resolvedLibPath, gcErr := ensureGC()
-		if gcErr != nil {
-			fmt.Fprintf(os.Stderr, "Error preparing Boehm GC: %s\n", gcErr)
-			os.Exit(1)
-		}
-		gcLibPath = resolvedLibPath
-		args = append(args, "-DQUARK_USE_GC", fmt.Sprintf("-I%s", gcInclude))
-	}
-
-	args = append(args, "-o", output, cFile)
-
-	// Add linker flags
-	if useGC {
-		args = append(args, gcLinkArgs(gcLibPath)...)
-	}
-	if runtime.GOOS != "windows" {
-		args = append(args, "-lm")
-	}
-
-	cmd := exec.Command(compiler, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	err = cmd.Run()
+	tc, err := toolchain.Find()
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+		return 1
+	}
+	if err := compileProgram(tc, u.CPP, cppFile, workDir, output, flags); err != nil {
 		fmt.Fprintf(os.Stderr, "Compilation failed: %s\n", err)
-		os.Exit(1)
+		return 1
 	}
-
-	// Clean up
-	os.Remove(cFile)
-
 	fmt.Printf("Built: %s\n", output)
+	return 0
 }
 
-func runRun(filename string, debug bool, useGC bool, lto bool) {
-	content, err := os.ReadFile(filename)
+func cmdRun(args []string) int {
+	var flags buildFlags
+	fs := flag.NewFlagSet("run", flag.ContinueOnError)
+	flags.register(fs)
+	file, ok := parseCommand(fs, "quark run <file.qrk> [--debug] [--lto] [--no-pch]", args)
+	if !ok {
+		return 1
+	}
+
+	u := frontEnd(file, driver.StageEmit)
+	if u == nil {
+		return 1
+	}
+
+	workDir, err := os.MkdirTemp("", "quark-run-")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading file: %s\n", err)
-		os.Exit(1)
+		fmt.Fprintf(os.Stderr, "Error creating build directory: %s\n", err)
+		return 1
+	}
+	defer os.RemoveAll(workDir)
+
+	cppFile := filepath.Join(workDir, "main.cpp")
+	exeFile := toolchain.ExeName(filepath.Join(workDir, "main"))
+	if flags.debug {
+		// Keep the C++ and the executable next to the source.
+		base := strings.TrimSuffix(file, filepath.Ext(file))
+		cppFile = base + ".cpp"
+		exeFile = toolchain.ExeName(base)
 	}
 
-	// Compile
-	l := lexer.New(string(content))
-	tokens := l.Tokenize()
-
-	p := parser.New(tokens)
-	tree := p.Parse()
-
-	if len(p.Errors()) > 0 {
-		printDiagnostics(diagnostics.WithDefaultFile(p.Diagnostics(), filename))
-		os.Exit(1)
-	}
-
-	if !resolveImports(tree, filename) {
-		os.Exit(1)
-	}
-
-	// Type checking phase
-	analyzer := types.NewAnalyzer()
-	analyzer.Analyze(tree)
-	analyzerDiags := diagnostics.WithDefaultFile(analyzer.Diagnostics(), filename)
-	if len(analyzerDiags) > 0 {
-		printDiagnostics(analyzerDiags)
-	}
-
-	if analyzer.HasErrors() {
-		os.Exit(1)
-	}
-
-	gen := codegen.New()
-	gen.SetSourceName(filename)
-	if err := invariants.ValidateCallPlans(tree, analyzer.GetCallPlans()); err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		os.Exit(1)
-	}
-	if err := invariants.ValidateReturnAnnotations(tree, analyzer.GetReturnValidation()); err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		os.Exit(1)
-	}
-	gen.SetCaptures(analyzer.GetCaptures())
-	gen.SetCallPlans(analyzer.GetCallPlans())
-	gen.SetCapturedByFunction(analyzer.GetCapturedByFunction(tree))
-	gen.SetNodeTypes(analyzer.GetNodeTypes())
-	gen.SetNativeFns(analyzer.GetNativeFns())
-	gen.SetExternFns(analyzer.GetExternFns())
-	gen.SetStructTypes(analyzer.GetStructTypes())
-	cCode := gen.Generate(tree)
-
-	// Determine file paths
-	var cFile, exeFile string
-	if debug {
-		// Save C++ file next to the source file
-		base := strings.TrimSuffix(filename, filepath.Ext(filename))
-		cFile = base + ".cpp"
-		exeFile = base
-	} else {
-		tmpDir := os.TempDir()
-		cFile = filepath.Join(tmpDir, "quark_temp.cpp")
-		exeFile = filepath.Join(tmpDir, "quark_temp")
-	}
-	if runtime.GOOS == "windows" && !strings.HasSuffix(exeFile, ".exe") {
-		exeFile += ".exe"
-	}
-
-	err = os.WriteFile(cFile, []byte(cCode), 0644)
+	tc, err := toolchain.Find()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error writing C++ file: %s\n", err)
-		os.Exit(1)
+		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+		return 1
 	}
-
-	if debug {
-		fmt.Fprintf(os.Stderr, "Debug: Generated C++ file: %s\n", cFile)
-	}
-
-	// Quark requires clang++ — g++ is not supported due to gc_allocator
-	// incompatibilities with custom-allocator string keys in unordered_map.
-	if _, err := exec.LookPath("clang++"); err != nil {
-		fmt.Fprintln(os.Stderr, "Error: clang++ not found in PATH")
-		fmt.Fprintln(os.Stderr, "Quark requires clang++ to compile. Install it with:")
-		fmt.Fprintln(os.Stderr, "  Ubuntu/Debian: sudo apt install clang")
-		fmt.Fprintln(os.Stderr, "  macOS:         brew install llvm")
-		os.Exit(1)
-	}
-	compiler := "clang++"
-
-	// Get runtime include path
-	runtimeInclude := getRuntimeIncludePath()
-	// Build compilation arguments
-	args := buildClangArgs(runtimeInclude, lto)
-	var gcLibPath string
-	// Add GC flags if enabled
-	if useGC {
-		gcInclude, resolvedLibPath, gcErr := ensureGC()
-		if gcErr != nil {
-			fmt.Fprintf(os.Stderr, "Error preparing Boehm GC: %s\n", gcErr)
-			os.Exit(1)
-		}
-		gcLibPath = resolvedLibPath
-		args = append(args, "-DQUARK_USE_GC", fmt.Sprintf("-I%s", gcInclude))
-	}
-
-	args = append(args, "-o", exeFile, cFile)
-
-	// Add linker flags
-	if useGC {
-		args = append(args, gcLinkArgs(gcLibPath)...)
-	}
-	if runtime.GOOS != "windows" {
-		args = append(args, "-lm")
-	}
-
-	if debug {
-		fmt.Fprintf(os.Stderr, "Debug: Runtime include path: %s\n", runtimeInclude)
-		fmt.Fprintf(os.Stderr, "Debug: Compile command: %s %s\n", compiler, strings.Join(args, " "))
-	}
-
-	compileCmd := exec.Command(compiler, args...)
-	compileCmd.Stderr = os.Stderr
-
-	err = compileCmd.Run()
-	if err != nil {
+	if err := compileProgram(tc, u.CPP, cppFile, workDir, exeFile, flags); err != nil {
 		fmt.Fprintf(os.Stderr, "Compilation failed: %s\n", err)
-		// Print the C++ code for debugging
 		fmt.Fprintln(os.Stderr, "\nGenerated C++ code:")
-		fmt.Fprintln(os.Stderr, cCode)
-		os.Exit(1)
+		fmt.Fprintln(os.Stderr, u.CPP)
+		return 1
 	}
 
-	// Run the executable
+	// A bare name like "hello" would be looked up on PATH.
+	if abs, err := filepath.Abs(exeFile); err == nil {
+		exeFile = abs
+	}
 	runCmd := exec.Command(exeFile)
 	runCmd.Stdout = os.Stdout
 	runCmd.Stderr = os.Stderr
 	runCmd.Stdin = os.Stdin
-
-	err = runCmd.Run()
-
-	// Clean up (only if not debug mode)
-	if !debug {
-		os.Remove(cFile)
-		os.Remove(exeFile)
-	}
-
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			os.Exit(exitErr.ExitCode())
+	if err := runCmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return exitErr.ExitCode()
 		}
-		os.Exit(1)
+		fmt.Fprintf(os.Stderr, "Error running %s: %s\n", exeFile, err)
+		return 1
 	}
+	return 0
+}
+
+// compileProgram writes cpp to cppFile, then compiles it (object file in
+// workDir) and links it into exe.
+func compileProgram(tc *toolchain.Toolchain, cpp, cppFile, workDir, exe string, flags buildFlags) error {
+	if err := os.WriteFile(cppFile, []byte(cpp), 0o644); err != nil {
+		return fmt.Errorf("writing C++ file: %w", err)
+	}
+	if flags.debug {
+		fmt.Fprintf(os.Stderr, "Debug: Generated C++ file: %s\n", cppFile)
+		fmt.Fprintf(os.Stderr, "Debug: Runtime include path: %s\n", tc.RuntimeInclude)
+	}
+
+	opts := flags.options()
+	objFile := filepath.Join(workDir, "main.o")
+	if err := tc.Compile(cppFile, objFile, opts); err != nil {
+		return err
+	}
+	return tc.Link([]string{objFile}, exe, opts)
 }

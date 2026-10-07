@@ -12,6 +12,8 @@ The pipeline has seven stages. Each stage's output feeds the next.
 .qrk source → Lexer → Parser → Loader → Analyzer → Invariants → Codegen → C++ → clang++ → binary
 ```
 
+The front end (lexer through codegen) runs in `driver/`: `driver.CompileFile(path, stage)` runs every stage up to a cutoff (`StageParse`, `StageCheck`, `StageEmit`) and returns a `Unit` with the AST, the analyzer's `types.Analysis`, the C++ and all diagnostics. Every CLI command and `internal/testutil` go through it. The native back end (clang++, runtime headers, GC) lives in `toolchain/`.
+
 ### 1.1 Lexer → Token Stream
 
 Three-pass tokenization:
@@ -135,11 +137,18 @@ If codegen encounters an unexpected dispatch/runtime-symbol invariant break, it 
 
 ### 1.7 C++ Compiler → Binary
 
-The generated C++ is compiled with clang++ (g++ is not supported due to `gc_allocator` / `std::hash` incompatibilities):
-- `-std=c++17 -O3 -march=x86-64-v3` (on amd64)
-- `-DQUARK_USE_GC` + Boehm GC include/link flags
-- `-Wno-deprecated-declarations` on Windows
-- `-lm` on non-Windows
+`toolchain.Find()` locates clang++, the runtime headers and the GC once. The build then runs in two steps, so additional native objects and libraries can join the link:
+
+1. **Compile** (`Toolchain.Compile`): C++ → object file with clang++ (g++ is not supported due to `gc_allocator` / `std::hash` incompatibilities):
+    - `-std=c++17 -O3 -march=x86-64-v3` (on amd64)
+    - `-DQUARK_USE_GC` + Boehm GC include flags
+    - `-Wno-deprecated-declarations` on Windows
+    - `-include-pch <cached quark.hpp PCH>` unless `--no-pch` (see below)
+2. **Link** (`Toolchain.Link`): objects + static `libgc` (`-pthread`, `-ldl` on Linux) + `-lm` on non-Windows. With `--lto`, links with `lld` when `ld.lld` is on PATH, since the system linker needs LLVM's gold plugin for LTO.
+
+Intermediate files go in a fresh `os.MkdirTemp` directory per build, so concurrent builds never collide.
+
+**Precompiled runtime header.** The runtime is header-only, so every compile parses ~70k lines of runtime headers before reaching user code. `toolchain/pch.go` precompiles `quark/quark.hpp` into `$XDG_CACHE_HOME/quark/pch/<key>.pch` (`os.UserCacheDir()`), where the key hashes the compiler binary, the compile flags, and the path, size and mtime of every runtime and GC header. A PCH clang rejects (for example after a system header update) is deleted and the compile retried without it. This roughly halves compile time for small programs.
 
 ---
 
@@ -422,7 +431,7 @@ This bypasses the `q_add(QValue, QValue)` path and eliminates box/unbox overhead
 
 ## 10) GC Bootstrap
 
-`ensureGC()` in `main.go` locates or builds Boehm GC:
+`toolchain.EnsureGC()` locates or builds Boehm GC:
 
 1. **Find source**: Searches for `deps/bdwgc/` by walking candidate paths relative to the compiler executable and the current working directory. Validates by checking for `CMakeLists.txt`.
 2. **Find library**: Looks for a static `libgc.a` (or `gc.lib`, `Release/gc.lib` on Windows) in `deps/bdwgc/build-static/`. Shared libraries are never used, so generated executables run standalone without `libgc` on the loader path.

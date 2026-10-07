@@ -199,9 +199,10 @@ func TestCodegen_PanicsOnMissingCallPlan(t *testing.T) {
 		t.Fatalf("unexpected type errors: %v", typeErrs)
 	}
 
+	an := analyzer.Analysis(node)
+	an.CallPlans = map[*ast.TreeNode]*ir.CallPlan{}
 	gen := codegen.New()
-	gen.SetCaptures(analyzer.GetCaptures())
-	gen.SetCallPlans(map[*ast.TreeNode]*ir.CallPlan{})
+	gen.SetAnalysis(an)
 
 	defer func() {
 		r := recover()

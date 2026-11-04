@@ -41,51 +41,55 @@ const (
 	UseNode
 	BreakNode
 	ContinueNode
-	ExternSourceNode  // extern 'path/to/impl.hpp'
-	ExternFnNode      // extern fn name(...) type as 'symbol'
-	StructDefNode     // struct Name: fields...
-	StructFieldNode   // field: Type [= default]
-	StructLiteralNode // Name { field: expr, ... }
+	ExternHeaderNode      // extern 'path/to/glue.hpp'
+	ExternFnNode          // extern fn name(...) type as 'symbol'
+	StructDefNode         // struct Name: fields...
+	StructFieldNode       // field: Type [= default]
+	StructLiteralNode     // Name { field: expr, ... }
+	ExternLinkNode        // extern link 'name' (link a native library)
+	ExternIncludePathNode // extern include_path 'dir' (C++ include search path)
 )
 
 var nodeTypeNames = map[NodeType]string{
-	CompilationUnitNode: "CompilationUnit",
-	BlockNode:           "Block",
-	StatementNode:       "Statement",
-	ExpressionNode:      "Expression",
-	ConditionNode:       "Condition",
-	FunctionNode:        "Function",
-	FunctionCallNode:    "FunctionCall",
-	ArgumentsNode:       "Arguments",
-	IdentifierNode:      "Identifier",
-	LiteralNode:         "Literal",
-	OperatorNode:        "Operator",
-	IfStatementNode:     "IfStatement",
-	WhenStatementNode:   "WhenStatement",
-	PatternNode:         "Pattern",
-	ForLoopNode:         "ForLoop",
-	WhileLoopNode:       "WhileLoop",
-	LambdaNode:          "Lambda",
-	TernaryNode:         "Ternary",
-	PipeNode:            "Pipe",
-	ListNode:            "List",
-	VectorNode:          "Vector",
-	DictNode:            "Dict",
-	IndexNode:           "Index",
-	ResultNode:          "Result",
-	ResultPatternNode:   "ResultPattern",
-	ParameterNode:       "Parameter",
-	TypeNode:            "Type",
-	VarDeclNode:         "VarDecl",
-	ModuleNode:          "Module",
-	UseNode:             "Use",
-	BreakNode:           "Break",
-	ContinueNode:        "Continue",
-	ExternSourceNode:    "ExternSource",
-	ExternFnNode:        "ExternFn",
-	StructDefNode:       "StructDef",
-	StructFieldNode:     "StructField",
-	StructLiteralNode:   "StructLiteral",
+	CompilationUnitNode:   "CompilationUnit",
+	BlockNode:             "Block",
+	StatementNode:         "Statement",
+	ExpressionNode:        "Expression",
+	ConditionNode:         "Condition",
+	FunctionNode:          "Function",
+	FunctionCallNode:      "FunctionCall",
+	ArgumentsNode:         "Arguments",
+	IdentifierNode:        "Identifier",
+	LiteralNode:           "Literal",
+	OperatorNode:          "Operator",
+	IfStatementNode:       "IfStatement",
+	WhenStatementNode:     "WhenStatement",
+	PatternNode:           "Pattern",
+	ForLoopNode:           "ForLoop",
+	WhileLoopNode:         "WhileLoop",
+	LambdaNode:            "Lambda",
+	TernaryNode:           "Ternary",
+	PipeNode:              "Pipe",
+	ListNode:              "List",
+	VectorNode:            "Vector",
+	DictNode:              "Dict",
+	IndexNode:             "Index",
+	ResultNode:            "Result",
+	ResultPatternNode:     "ResultPattern",
+	ParameterNode:         "Parameter",
+	TypeNode:              "Type",
+	VarDeclNode:           "VarDecl",
+	ModuleNode:            "Module",
+	UseNode:               "Use",
+	BreakNode:             "Break",
+	ContinueNode:          "Continue",
+	ExternHeaderNode:      "ExternHeader",
+	ExternFnNode:          "ExternFn",
+	StructDefNode:         "StructDef",
+	StructFieldNode:       "StructField",
+	StructLiteralNode:     "StructLiteral",
+	ExternLinkNode:        "ExternLink",
+	ExternIncludePathNode: "ExternIncludePath",
 }
 
 func (n NodeType) String() string {

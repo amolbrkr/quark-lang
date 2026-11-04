@@ -722,6 +722,7 @@ These ship under `src/core/stdlib` and are imported with the `std/` prefix:
 |---|---|---|
 | `io` | `use 'std/io' as io` | `io.open`, `io.read`, `io.write`, `io.close`, `io.seek`, `io.exists`, and `io.seek_set` / `io.seek_cur` / `io.seek_end` |
 | `fmt` | `use 'std/fmt' as fmt` | `fmt.show_list`, `fmt.show_vec`, `fmt.show_dict`, `fmt.table`, `fmt.head`, `fmt.tail` for readable rendering |
+| `blas` | `use 'std/blas' as blas` | `blas.dot`, `blas.axpy`, `blas.scal`, `blas.nrm2`, `blas.asum`, `blas.gemv` over f64 vectors via OpenBLAS (needs `libopenblas-dev` or `brew install openblas`) |
 
 For deeper behavior notes, see [stdlib.md](stdlib.md). The code-level source of
 truth for builtin names and arities is
@@ -751,6 +752,13 @@ Flags:
 | `-o <name>` | `build` | output executable name |
 | `--debug`, `-d` | `run` | keep the generated `.cpp` next to the source and print the compile command |
 | `--lto` | `build`, `run` | enable link-time optimization |
+| `--no-pch` | `build`, `run` | don't use the cached precompiled runtime header |
+| `--lib-path <dir>` | `build`, `run` | search `<dir>` for `extern link` libraries; also sets an rpath so the binary finds shared libraries there (repeatable) |
+| `--include-path <dir>` | `build`, `run` | add `<dir>` to the C++ include path (repeatable) |
+| `--link-arg <arg>` | `build`, `run` | pass `<arg>` to the linker as-is (repeatable) |
+
+`QUARK_LIB_PATH` and `QUARK_INCLUDE_PATH` (path lists) work like `--lib-path`
+and `--include-path`, after the flags.
 
 Diagnostics behavior:
 
@@ -802,8 +810,9 @@ verified by compiling and running the bundled examples.
 - **Structs**: typed fields, constant-expression defaults, named-field
   construction, field access, immutability, reconstruction updates.
 - Same-file modules, file imports, and `std/` imports (use the `as alias` form).
-- Extern / FFI declarations for calling into C++ (see
-  [ffi_v0_1_spec.md](ffi_v0_1_spec.md)).
+- Extern / FFI declarations for calling into C++, and linking native libraries
+  with `extern link` / `extern include_path` (see semantics.md §10.6 and
+  [ffi_v0_1_spec.md](ffi_v0_1_spec.md)). `std/blas` wraps OpenBLAS.
 
 **In progress / not yet usable**
 
@@ -846,6 +855,15 @@ elsewhere, set the stdlib root explicitly:
 ```bash
 export QUARK_STDLIB_ROOT=/abs/path/to/src/core/stdlib
 ```
+
+**`QK-FFI-002`: native library not found** — a module asked for a library with
+`extern link` (for example `std/blas` needs OpenBLAS) and it isn't in any
+directory the linker searches. Install it, or pass its directory with
+`--lib-path <dir>` or `QUARK_LIB_PATH`. The error lists every directory searched.
+
+**`QK-FFI-003`: C++ error in extern glue code** — clang's message above it shows
+the problem. A `'foo.h' file not found` error usually means the library's
+headers are installed somewhere else; pass `--include-path <dir>`.
 
 **A list/vector prints as `[list len=N]`** — that is the intended compact
 representation. Use `.join(sep)` or the `std/fmt` module to render contents.

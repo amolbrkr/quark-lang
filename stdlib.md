@@ -8,6 +8,7 @@ Prelude builtins are globally available without imports. Additional stdlib modul
 
 - QEI extern declarations are part of the language surface:
     - `extern 'path.hpp'`
+    - `extern link 'name'` and `extern include_path 'dir'` (native libraries; see semantics.md §10.6)
     - `extern fn name(...) Type as 'symbol'`
     - `extern fn type.name(...) Type as 'symbol'`
 - Extern call sites are analyzer/codegen lowered through `DispatchExtern` and native type adaptation.
@@ -417,6 +418,39 @@ chunk = unwrap(_file_read(f, 4096))
 println(chunk)
 unwrap(_file_close(f))
 ```
+
+---
+
+## `std/blas` (OpenBLAS)
+
+BLAS routines over f64 vectors, through the system OpenBLAS. The module links it with `extern link 'openblas'`, so it needs the library and `cblas.h`:
+
+- Debian/Ubuntu: `sudo apt install libopenblas-dev`
+- macOS: `brew install openblas`, then pass `--lib-path "$(brew --prefix openblas)/lib"` and `--include-path "$(brew --prefix openblas)/include"` (or set `QUARK_LIB_PATH` / `QUARK_INCLUDE_PATH`).
+
+Without OpenBLAS, `use 'std/blas'` fails at build time with `QK-FFI-002`.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `dot` | `x: vector, y: vector -> float` | Dot product |
+| `axpy` | `a: float, x: vector, y: vector -> vector` | `a*x + y`, as a new vector |
+| `scal` | `a: float, x: vector -> vector` | `a*x`, as a new vector |
+| `nrm2` | `x: vector -> float` | Euclidean norm |
+| `asum` | `x: vector -> float` | Sum of absolute values |
+| `gemv` | `a: vector, rows: int, cols: int, x: vector -> vector` | Matrix-vector product; `a` is `rows x cols`, row-major, flattened |
+
+```quark
+use 'std/blas' as blas
+
+x = vector [1.0, 2.0, 3.0]
+y = vector [4.0, 5.0, 6.0]
+println(blas.dot(x, y))         // 32
+z = blas.axpy(2, x, y)          // [6, 9, 12]; y is unchanged
+```
+
+- BLAS reads the vectors' buffers in place; inputs are never modified.
+- Inputs must be f64 vectors without nulls (convert with `.astype('f64')`, fill with `.fillna(...)`). Length mismatches, other dtypes, nulls and wrong `gemv` dimensions stop the program with a runtime error.
+- Vectors are limited to `INT_MAX` elements, the CBLAS integer size.
 
 ---
 

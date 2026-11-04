@@ -1,0 +1,5 @@
+// mod_b links libqffi_b (static), which libqffi_a needs.
+extern link 'qffi_b'
+
+module mod_b:
+    fn name() str -> 'mod_b'

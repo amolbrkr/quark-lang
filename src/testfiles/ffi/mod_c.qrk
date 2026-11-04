@@ -1,0 +1,9 @@
+// mod_c links libqffi_test, which ffi_modules.qrk links too.
+extern include_path 'include'
+extern link 'qffi_test'
+extern 'qffi_glue.hpp'
+
+extern fn c_add(a: int, b: int) int as 'qffi_add'
+
+module mod_c:
+    fn add3(x: int) int -> c_add(x, 3)

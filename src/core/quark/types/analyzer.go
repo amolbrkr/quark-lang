@@ -265,8 +265,8 @@ func (a *Analyzer) analyze(node *ast.TreeNode) Type {
 		return TypeVoid
 	case ast.LambdaNode:
 		return a.analyzeLambda(node)
-	case ast.ExternSourceNode:
-		return TypeVoid // Path recording is done by the loader; analyzer ignores content
+	case ast.ExternHeaderNode, ast.ExternLinkNode, ast.ExternIncludePathNode:
+		return TypeVoid // Recorded by the loader; nothing to analyze
 	case ast.ExternFnNode:
 		return a.analyzeExternFn(node)
 	case ast.StructDefNode:

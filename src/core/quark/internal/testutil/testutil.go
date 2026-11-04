@@ -45,7 +45,8 @@ func resolveImports(node *ast.TreeNode) []string {
 		return []string{err.Error()}
 	}
 	var errs []string
-	for _, d := range driver.ResolveImports(node, absPath) {
+	_, diags := driver.ResolveImports(node, absPath)
+	for _, d := range diags {
 		errs = append(errs, d.Message)
 	}
 	return errs

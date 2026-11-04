@@ -428,7 +428,7 @@ func (g *Generator) popScope() {
 }
 
 // collectExternSources gathers all resolved extern source paths from the AST
-// (ExternSourceNode children with their absolute path in the token literal).
+// (ExternHeaderNode children with their absolute path in the token literal).
 func collectExternSources(node *ast.TreeNode) []string {
 	var paths []string
 	seen := make(map[string]bool)
@@ -437,7 +437,7 @@ func collectExternSources(node *ast.TreeNode) []string {
 		if n == nil {
 			return
 		}
-		if n.NodeType == ast.ExternSourceNode && len(n.Children) > 0 {
+		if n.NodeType == ast.ExternHeaderNode && len(n.Children) > 0 {
 			pathNode := n.Children[0]
 			if pathNode != nil && pathNode.Token != nil && pathNode.Token.Literal != "" {
 				p := pathNode.Token.Literal
@@ -603,7 +603,8 @@ func (g *Generator) Generate(node *ast.TreeNode) string {
 	// Generate top-level statements that aren't function/module/extern definitions
 	for _, child := range node.Children {
 		if child.NodeType == ast.FunctionNode || child.NodeType == ast.ModuleNode ||
-			child.NodeType == ast.UseNode || child.NodeType == ast.ExternSourceNode ||
+			child.NodeType == ast.UseNode || child.NodeType == ast.ExternHeaderNode ||
+			child.NodeType == ast.ExternLinkNode || child.NodeType == ast.ExternIncludePathNode ||
 			child.NodeType == ast.ExternFnNode || child.NodeType == ast.StructDefNode {
 			continue
 		}
@@ -764,9 +765,10 @@ func (g *Generator) generateNode(node *ast.TreeNode) {
 		g.generateFunction(node)
 	case ast.ModuleNode:
 		g.generateModule(node)
-	case ast.ExternSourceNode, ast.ExternFnNode:
-		// No code emitted — extern sources are #included in preamble,
-		// extern fn declarations are registered in the analyzer.
+	case ast.ExternHeaderNode, ast.ExternFnNode, ast.ExternLinkNode, ast.ExternIncludePathNode:
+		// No code emitted — extern headers are #included in the preamble,
+		// extern fn declarations are registered in the analyzer, and link /
+		// include_path directives are handled by the toolchain.
 	case ast.StructDefNode:
 		// No code emitted — struct defs are emitted as static data by emitStructDefs().
 	}
@@ -1121,7 +1123,7 @@ func (g *Generator) generateExpr(node *ast.TreeNode) string {
 		return "qv_null()"
 	case ast.StructLiteralNode:
 		return g.generateStructLiteral(node)
-	case ast.ExternSourceNode, ast.ExternFnNode:
+	case ast.ExternHeaderNode, ast.ExternFnNode, ast.ExternLinkNode, ast.ExternIncludePathNode:
 		// Extern declarations produce no runtime code
 		return "qv_null()"
 	case ast.BreakNode:

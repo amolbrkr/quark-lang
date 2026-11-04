@@ -92,6 +92,7 @@ Runtime tests use Catch2: `src/core/quark/runtime/tests/`
 - **Analyzer → codegen handoff** — the analyzer returns one `types.Analysis` struct (captures, call plans, node types, native/extern fns, struct types, ...), passed to codegen with `SetAnalysis`. New analyzer outputs go in that struct, not new setters.
 - **CallPlan** (`ir/call.go`) — IR metadata attached to each call site by the analyzer. Tracks call kind (builtin vs user), arity, default arg filling. Codegen reads these instead of re-analyzing.
 - **Builtin catalog** (`builtins/`) — shared metadata (name, arity, signatures) used by both analyzer and codegen. Methods are indexed by `(ReceiverType, methodName)` pair, separate from free functions.
+- **Native libraries (FFI)** — `extern link 'name'` / `extern include_path 'dir'` are collected by the loader into `driver.Unit.Native` (link order follows the import graph); `toolchain/native.go` resolves libraries before linking (`QK-FFI-002`), adds `-L`/rpath/`-l` args, and maps C++ errors in glue headers to `QK-FFI-003`. `integration_ffi_test.go` builds the C test libraries in `src/testfiles/ffi/` at test time; `TestStdBlas` skips when OpenBLAS isn't installed. Spec: `ffi_v0_1_spec.md`.
 - **Method dispatch** — When codegen sees `IsMethod=true` on a CallPlan, the receiver expression is injected as the first runtime argument (e.g., `"hello".upper()` becomes `q_upper(receiver_val)`).
 
 ## Adding a New Builtin

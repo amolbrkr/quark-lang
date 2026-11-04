@@ -11,6 +11,7 @@ const (
 	StageCheck     Stage = "check"
 	StageInvariant Stage = "invariant"
 	StageCodegen   Stage = "codegen"
+	StageBuild     Stage = "build" // native compile and link (clang++)
 	StageRuntime   Stage = "runtime"
 )
 
@@ -67,7 +68,11 @@ func (d Diagnostic) String() string {
 		}
 	}
 
-	return fmt.Sprintf("%s%s%s: %s%s", severity, codePart, stagePart, d.Message, locPart)
+	out := fmt.Sprintf("%s%s%s: %s%s", severity, codePart, stagePart, d.Message, locPart)
+	for _, note := range d.Notes {
+		out += "\n  note: " + note
+	}
+	return out
 }
 
 func WithDefaultFile(diags []Diagnostic, file string) []Diagnostic {

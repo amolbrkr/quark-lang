@@ -1,0 +1,8 @@
+// ffi_modules.qrk - link order across modules, and duplicate extern link.
+extern link 'qffi_test'
+
+use './mod_a'
+use './mod_c'
+
+println(mod_a.compute(4))   // 13
+println(mod_c.add3(4))      // 7

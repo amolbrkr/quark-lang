@@ -35,6 +35,7 @@ type Unit struct {
 	AST         *ast.TreeNode
 	Analysis    *types.Analysis
 	CPP         string
+	Native      loader.NativeDeps        // libraries and include paths from extern directives
 	Diagnostics []diagnostics.Diagnostic // errors and warnings, in stage order
 	Err         error                    // I/O or invariant failure
 	failed      bool
@@ -72,7 +73,9 @@ func CompileSource(src, file string, upTo Stage) *Unit {
 		u.Err = fmt.Errorf("Error resolving path: %s", err)
 		return u
 	}
-	if loadDiags := ResolveImports(u.AST, absPath); len(loadDiags) > 0 {
+	native, loadDiags := ResolveImports(u.AST, absPath)
+	u.Native = native
+	if len(loadDiags) > 0 {
 		u.addDiags(diagnostics.WithDefaultFile(loadDiags, absPath), true)
 		return u
 	}
@@ -99,15 +102,17 @@ func CompileSource(src, file string, upTo Stage) *Unit {
 	return u
 }
 
-// ResolveImports splices `use` imports into tree and resolves `extern`
-// header paths. absPath is the absolute path of the file tree came from.
-func ResolveImports(tree *ast.TreeNode, absPath string) []diagnostics.Diagnostic {
+// ResolveImports splices `use` imports into tree, resolves `extern` header
+// paths, and collects the native dependencies requested by `extern link` and
+// `extern include_path`. absPath is the absolute path of the file tree came
+// from.
+func ResolveImports(tree *ast.TreeNode, absPath string) (loader.NativeDeps, []diagnostics.Diagnostic) {
 	ml := loader.NewModuleLoader()
 	ml.ResolveImports(tree, absPath)
 	if len(ml.Errors()) > 0 {
-		return ml.Diagnostics()
+		return loader.NativeDeps{}, ml.Diagnostics()
 	}
-	return nil
+	return ml.NativeDeps(), nil
 }
 
 // Validate checks the pre-codegen invariants on an analyzed tree.

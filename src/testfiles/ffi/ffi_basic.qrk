@@ -1,0 +1,20 @@
+// ffi_basic.qrk - links libqffi_test (built by the FFI integration test).
+extern include_path 'include'
+extern link 'qffi_test'
+extern 'qffi_glue.hpp'
+
+extern fn add(a: int, b: int) int as 'qffi_add'
+extern fn scale(x: float, factor: float) float as 'qffi_scale'
+extern fn strlen_c(s: str) int as 'qffi_strlen'
+extern fn version() str as 'qffi_version'
+extern fn is_even(n: int) bool as 'qffi_is_even'
+
+println(add(40, 2))         // 42
+println(scale(1.5, 4.0))    // 6
+println(strlen_c('quark'))  // 5
+println(version())          // qffi 1.0
+println(is_even(10))        // true
+println(is_even(7))         // false
+
+// int arguments widen to float parameters (P7)
+println(scale(3, 2))        // 6

@@ -44,11 +44,13 @@ Resources are currently used exclusively by the `std/io` stdlib module for file 
 
 ## 2) Type Coercion and Promotion
 
-Quark has **no implicit coercion** except in two narrow cases:
+Quark has **no implicit coercion** except in three narrow cases:
 
 1. **int → float promotion in mixed arithmetic**: When one operand is `int` and the other is `float`, the int is promoted before the operation. The result is `float`.
 
 2. **int → float promotion in mixed comparison**: `<`, `<=`, `>`, `>=`, `==`, `!=` promote the int operand when comparing int to float.
+
+3. **int → float widening at `float` parameters**: an `int` argument passed to a parameter annotated `float` (on a Quark function or an `extern fn`) is converted to `float`. The reverse is not done: a `float` passed to an `int` parameter is a runtime error.
 
 All other type mismatches are errors (compile-time when type info is available, runtime otherwise).
 
@@ -347,6 +349,23 @@ This registers a new method on the `list` type, callable via `my_list.shuffle(42
 Supported parameter types: `int`, `float`, `bool`, `str`, `list`, `dict`, `vector`, `fn`, `any`. The compiler maps these to C++ types (`int64_t`, `double`, `bool`, `const char*`, `QList*`, `QDict*`, `QVector*`, `QClosure*`, `QValue`). Return types use the same mapping; the result is automatically boxed back to `QValue`.
 
 See `runtime/include/quark/ext/api.hpp` for the `qext` namespace available to extension authors.
+
+#### Native libraries
+
+A file can link a native library and add a C++ include search path with one-line directives (see `ffi_v0_1_spec.md` P1):
+
+```quark
+extern include_path 'include'   // -I, relative to this file
+extern link 'openblas'          // -lopenblas
+extern 'blas_glue.hpp'          // the glue header, #included
+```
+
+- `link` and `include_path` are contextual words after `extern`, not reserved keywords.
+- Directives must be at the top level of a file. They apply to the whole program, including directives in imported modules and the stdlib. Duplicates are removed.
+- Paths are relative to the declaring file and should point at files shipped with the module. Where a library is installed on a given machine is passed on the command line (`--lib-path`, `--include-path`) or through `QUARK_LIB_PATH` / `QUARK_INCLUDE_PATH`.
+- Link order: a module's libraries come before those of the modules it imports; a library requested more than once keeps its last position.
+- Nothing may follow the directive's string; words there are reserved for future per-library options.
+- A library that can't be found is reported before linking (`QK-FFI-002`), naming the requesting file and the directories searched. A missing `include_path` directory is `QK-FFI-001`, and a C++ error inside a glue header is `QK-FFI-003`.
 
 ---
 

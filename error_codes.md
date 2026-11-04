@@ -20,6 +20,9 @@ This file is the canonical registry of error codes currently emitted by the comp
 | `QK-CHECK-001` | `check` | Semantic/type analysis error. | `src/core/quark/types/analyzer.go` |
 | `QK-CHECK-002` | `check` | Semantic analysis warning (non-fatal). | `src/core/quark/types/analyzer.go` |
 | `QK-RUNTIME-001` | `runtime` | Runtime failure emitted by runtime diagnostics reporter. | `src/core/quark/runtime/include/quark/core/diagnostics.hpp` |
+| `QK-FFI-001` | `load` | `extern include_path` directory not found. | `src/core/quark/loader/loader.go` |
+| `QK-FFI-002` | `build` | `extern link` library not found; notes list the file names and directories searched. | `src/core/quark/toolchain/native.go` |
+| `QK-FFI-003` | `build` | C++ compile error inside an extern glue header (or a file it includes); names the glue file. | `src/core/quark/toolchain/native.go` |
 
 Notes:
 - `QK-RUNTIME-001` currently covers multiple runtime failure causes and is intentionally coarse for now.

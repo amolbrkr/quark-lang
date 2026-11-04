@@ -21,6 +21,37 @@ type ModuleLoader struct {
 	resolving     map[string]int    // absolute paths currently in DFS stack (for cycle detection)
 	stack         []string          // current import chain
 	errors        []diagnostics.Diagnostic
+
+	// Native dependencies from extern link / extern include_path, recorded
+	// per file so NativeDeps can order libraries by the import graph.
+	root         string // absolute path of the root file
+	fileLibs     map[string][]NativeLib
+	fileImports  map[string][]string // file -> files it imports, in source order
+	includeDirs  []string            // absolute, first-seen order
+	seenIncludes map[string]bool
+	headers      []string // absolute extern header paths, first-seen order
+	seenHeaders  map[string]bool
+}
+
+// NativeLib is one `extern link 'name'` request.
+type NativeLib struct {
+	Name   string // library name as passed to -l
+	File   string // absolute path of the .qrk file that requested it
+	Line   int
+	Column int
+}
+
+// Origin returns "file:line" for diagnostics.
+func (l NativeLib) Origin() string {
+	return fmt.Sprintf("%s:%d", l.File, l.Line)
+}
+
+// NativeDeps are the native build inputs requested by extern directives in a
+// program and everything it imports.
+type NativeDeps struct {
+	IncludeDirs []string    // absolute directories, deduplicated, first-seen order
+	Libs        []NativeLib // deduplicated, in link order
+	Headers     []string    // absolute paths of extern glue headers
 }
 
 // NewModuleLoader creates a new module loader.
@@ -31,6 +62,143 @@ func NewModuleLoader() *ModuleLoader {
 		resolving:     make(map[string]int),
 		stack:         make([]string, 0),
 		errors:        make([]diagnostics.Diagnostic, 0),
+		fileLibs:      make(map[string][]NativeLib),
+		fileImports:   make(map[string][]string),
+		seenIncludes:  make(map[string]bool),
+		seenHeaders:   make(map[string]bool),
+	}
+}
+
+// NativeDeps returns the libraries and include directories requested by
+// extern directives across all loaded files.
+//
+// Link order: a file's libraries come before those of the files it imports,
+// so each library appears after everything that needs it (static libraries
+// depend on this). Files are visited in a topological order of the import
+// graph; when a library is requested more than once, its last position wins.
+func (ml *ModuleLoader) NativeDeps() NativeDeps {
+	var postorder []string
+	visited := make(map[string]bool)
+	var visit func(string)
+	visit = func(file string) {
+		if visited[file] {
+			return
+		}
+		visited[file] = true
+		for _, dep := range ml.fileImports[file] {
+			visit(dep)
+		}
+		postorder = append(postorder, file)
+	}
+	if ml.root != "" {
+		visit(ml.root)
+	}
+
+	var all []NativeLib
+	for i := len(postorder) - 1; i >= 0; i-- {
+		all = append(all, ml.fileLibs[postorder[i]]...)
+	}
+	lastIndex := make(map[string]int)
+	for i, lib := range all {
+		lastIndex[lib.Name] = i
+	}
+	var libs []NativeLib
+	for i, lib := range all {
+		if lastIndex[lib.Name] == i {
+			libs = append(libs, lib)
+		}
+	}
+	return NativeDeps{
+		IncludeDirs: append([]string(nil), ml.includeDirs...),
+		Libs:        libs,
+		Headers:     append([]string(nil), ml.headers...),
+	}
+}
+
+// addFFIError records an extern-directive error located in file.
+func (ml *ModuleLoader) addFFIError(code, file string, tok *token.Token, format string, args ...interface{}) {
+	loc := &diagnostics.Location{File: file}
+	if tok != nil {
+		loc.Line, loc.Column = tok.Line, tok.Column
+	}
+	ml.errors = append(ml.errors, diagnostics.Diagnostic{
+		Code:     code,
+		Stage:    diagnostics.StageLoad,
+		Severity: diagnostics.SeverityError,
+		Message:  fmt.Sprintf(format, args...),
+		Location: loc,
+	})
+}
+
+// recordExternDirective handles a top-level extern link / extern
+// include_path node from currentFilePath.
+func (ml *ModuleLoader) recordExternDirective(node *ast.TreeNode, currentFilePath string) {
+	if len(node.Children) == 0 || node.Children[0].Token == nil {
+		return
+	}
+	arg := node.Children[0].Token.Literal
+	switch node.NodeType {
+	case ast.ExternLinkNode:
+		lib := NativeLib{Name: arg, File: currentFilePath}
+		if node.Token != nil {
+			lib.Line, lib.Column = node.Token.Line, node.Token.Column
+		}
+		ml.fileLibs[currentFilePath] = append(ml.fileLibs[currentFilePath], lib)
+	case ast.ExternIncludePathNode:
+		var dir string
+		if isStdlibImportPath(arg) {
+			root, ok := findStdlibRoot(currentFilePath)
+			if !ok {
+				ml.addFFIError("QK-FFI-001", currentFilePath, node.Token, "cannot resolve extern include_path '%s': no stdlib root found (set QUARK_STDLIB_ROOT)", arg)
+				return
+			}
+			dir = filepath.Join(root, strings.TrimPrefix(arg, "std/"))
+		} else {
+			dir = normalizeExternPath(filepath.Dir(currentFilePath), arg)
+		}
+		abs, err := filepath.Abs(dir)
+		if err == nil {
+			var st os.FileInfo
+			if st, err = os.Stat(abs); err == nil && !st.IsDir() {
+				err = fmt.Errorf("not a directory")
+			}
+		}
+		if err != nil {
+			ml.addFFIError("QK-FFI-001", currentFilePath, node.Token, "extern include_path directory '%s' not found (resolved to %s)", arg, abs)
+			return
+		}
+		if !ml.seenIncludes[abs] {
+			ml.seenIncludes[abs] = true
+			ml.includeDirs = append(ml.includeDirs, abs)
+		}
+	}
+}
+
+// checkNestedDirectives reports extern link / include_path directives that
+// are not at the top level of a file; they would otherwise be ignored.
+func (ml *ModuleLoader) checkNestedDirectives(node *ast.TreeNode, currentFilePath string) {
+	var walk func(*ast.TreeNode)
+	walk = func(n *ast.TreeNode) {
+		if n == nil {
+			return
+		}
+		if n.NodeType == ast.ExternLinkNode || n.NodeType == ast.ExternIncludePathNode {
+			word := "link"
+			if n.NodeType == ast.ExternIncludePathNode {
+				word = "include_path"
+			}
+			ml.addFFIError("QK-LOAD-001", currentFilePath, n.Token, "extern %s must be at the top level of a file, not inside a block or module", word)
+			return
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	for _, c := range node.Children {
+		if c.NodeType == ast.ExternLinkNode || c.NodeType == ast.ExternIncludePathNode {
+			continue // top level: allowed
+		}
+		walk(c)
 	}
 }
 
@@ -222,6 +390,9 @@ func (ml *ModuleLoader) ResolveImports(root *ast.TreeNode, currentFilePath strin
 		ml.addErrorAt(0, 0, "cannot resolve path for '%s': %s", currentFilePath, err)
 		return
 	}
+	if ml.root == "" {
+		ml.root = absPath
+	}
 	ml.beginResolve(absPath)
 	ml.resolveImportsInNode(root, absPath)
 	ml.endResolve(absPath)
@@ -236,10 +407,17 @@ func (ml *ModuleLoader) resolveImportsInNode(node *ast.TreeNode, currentFilePath
 	// We need to iterate carefully since we're modifying the children slice.
 	// Process from the end to preserve indices, or rebuild the slice.
 	newChildren := make([]*ast.TreeNode, 0, len(node.Children))
+	ml.checkNestedDirectives(node, currentFilePath)
 
 	for _, child := range node.Children {
+		if child.NodeType == ast.ExternLinkNode || child.NodeType == ast.ExternIncludePathNode {
+			ml.recordExternDirective(child, currentFilePath)
+			newChildren = append(newChildren, child)
+			continue
+		}
+
 		// Resolve extern 'path' source includes — rewrite token literal to absolute path.
-		if child.NodeType == ast.ExternSourceNode && len(child.Children) > 0 {
+		if child.NodeType == ast.ExternHeaderNode && len(child.Children) > 0 {
 			pathNode := child.Children[0]
 			if pathNode != nil && pathNode.Token != nil && pathNode.Token.Type == token.STRING {
 				importPath := pathNode.Token.Literal
@@ -268,6 +446,10 @@ func (ml *ModuleLoader) resolveImportsInNode(node *ast.TreeNode, currentFilePath
 					ml.addErrorAt(useLine, 0, "cannot resolve extern path '%s': %s", importPath, err)
 					newChildren = append(newChildren, child)
 					continue
+				}
+				if !ml.seenHeaders[absResolved] {
+					ml.seenHeaders[absResolved] = true
+					ml.headers = append(ml.headers, absResolved)
 				}
 				// Rewrite the literal to the resolved absolute path
 				newTok := *pathNode.Token
@@ -330,6 +512,9 @@ func (ml *ModuleLoader) resolveImportsInNode(node *ast.TreeNode, currentFilePath
 			ml.addErrorAt(useLine, 0, "circular import detected: %s", formatImportChain(chain))
 			continue
 		}
+
+		// Record the import edge so NativeDeps can order libraries.
+		ml.fileImports[currentFilePath] = append(ml.fileImports[currentFilePath], absResolved)
 
 		// Check for duplicate import (dedup after successful load)
 		if ml.loaded[absResolved] {

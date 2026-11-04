@@ -23,3 +23,8 @@ println(4 | add1())         // 5
 // First-class use via thunk
 fn apply(f, x: int) int -> f(x)
 println(apply(add1, 20))    // 21
+
+// int arguments widen to float parameters, for extern and Quark functions
+println(halve(7))           // 3.5
+fn twice(x: float) float -> x * 2.0
+println(twice(4))           // 8

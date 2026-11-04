@@ -1,0 +1,35 @@
+// smoke_blas.qrk - std/blas over OpenBLAS (needs libopenblas).
+use 'std/blas' as blas
+
+println('== smoke: blas ==')
+
+x = vector [1.0, 2.0, 3.0]
+y = vector [4.0, 5.0, 6.0]
+
+println(blas.dot(x, y))         // 32
+println(blas.nrm2(vector [3.0, 4.0]))   // 5
+println(blas.asum(vector [-1.0, 2.0, -3.5]))   // 6.5
+
+// axpy: 2*x + y; P7 lets the int 2 stand for 2.0
+z = blas.axpy(2, x, y)
+println(z[0])                   // 6
+println(z[1])                   // 9
+println(z[2])                   // 12
+
+// scal: 0.5*x
+s = blas.scal(0.5, x)
+println(s[2])                   // 1.5
+
+// inputs are never modified
+println(y[0])                   // 4
+println(x[2])                   // 3
+
+// gemv: [[1, 2, 3], [4, 5, 6]] * [1, 1, 1]
+m = vector [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+r = blas.gemv(m, 2, 3, vector [1.0, 1.0, 1.0])
+println(len(r))                 // 2
+println(r[0])                   // 6
+println(r[1])                   // 15
+
+// empty vectors
+println(blas.dot(vector [], vector []))  // 0

@@ -1,0 +1,40 @@
+// std/blas - BLAS routines over f64 vectors, via OpenBLAS (CBLAS).
+//
+// Requires OpenBLAS:
+//   Debian/Ubuntu: sudo apt install libopenblas-dev
+//   macOS:         brew install openblas, then pass
+//                  --lib-path "$(brew --prefix openblas)/lib"
+//                  --include-path "$(brew --prefix openblas)/include"
+//
+// Inputs must be f64 vectors without nulls. Results are new vectors; inputs
+// are never modified.
+
+extern link 'openblas'
+extern 'blas_glue.hpp'
+
+extern fn blas_dot(x: vector, y: vector) float as 'qblas_dot'
+extern fn blas_axpy(a: float, x: vector, y: vector) vector as 'qblas_axpy'
+extern fn blas_scal(a: float, x: vector) vector as 'qblas_scal'
+extern fn blas_nrm2(x: vector) float as 'qblas_nrm2'
+extern fn blas_asum(x: vector) float as 'qblas_asum'
+extern fn blas_gemv(a: vector, rows: int, cols: int, x: vector) vector as 'qblas_gemv'
+
+module blas:
+    // Dot product of x and y.
+    fn dot(x: vector, y: vector) float -> blas_dot(x, y)
+
+    // a*x + y.
+    fn axpy(a: float, x: vector, y: vector) vector -> blas_axpy(a, x, y)
+
+    // a*x.
+    fn scal(a: float, x: vector) vector -> blas_scal(a, x)
+
+    // Euclidean norm of x.
+    fn nrm2(x: vector) float -> blas_nrm2(x)
+
+    // Sum of absolute values of x.
+    fn asum(x: vector) float -> blas_asum(x)
+
+    // Matrix-vector product. a is a rows x cols matrix stored row-major as a
+    // flat vector of length rows * cols; x has length cols.
+    fn gemv(a: vector, rows: int, cols: int, x: vector) vector -> blas_gemv(a, rows, cols, x)

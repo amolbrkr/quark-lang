@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"quark/diagnostics"
 )
 
 // Toolchain holds the discovered tools and runtime paths.
@@ -20,6 +22,8 @@ type Toolchain struct {
 	RuntimeInclude string // runtime/include
 	GCInclude      string // deps/bdwgc/include
 	GCLib          string // static libgc archive
+
+	defaultDirs []string // linker's default library directories, computed on first use
 }
 
 // Options control a single build.
@@ -27,6 +31,13 @@ type Options struct {
 	LTO     bool // link-time optimization
 	PCH     bool // use the cached precompiled runtime header
 	Verbose bool // print every command to stderr
+
+	// Native dependencies (extern directives, CLI flags, environment).
+	IncludeDirs []string // extra -I directories, searched after the runtime's
+	LibDirs     []string // library directories, searched before the linker's defaults
+	Libs        []Lib    // libraries to link, in link order
+	LinkArgs    []string // passed to the linker as-is
+	GlueFiles   []string // extern glue headers; errors in them are reported as QK-FFI-003
 }
 
 // ErrNoClang is returned by Find when clang++ is not on PATH.
@@ -93,14 +104,20 @@ func (tc *Toolchain) CompileFlags(opts Options) []string {
 	return args
 }
 
-// Compile compiles cppFile into objFile.
+// Compile compiles cppFile into objFile. A compile error inside an extern
+// glue header is returned as a *DiagnosticError with code QK-FFI-003.
 func (tc *Toolchain) Compile(cppFile, objFile string, opts Options) error {
+	// The PCH is built from the runtime flags only, so it can be shared by
+	// programs with different extern include paths.
 	flags := tc.CompileFlags(opts)
 	args := append([]string{}, flags...)
+	for _, dir := range opts.IncludeDirs {
+		args = append(args, "-I"+dir)
+	}
 	args = append(args, "-fcolor-diagnostics", "-ferror-limit=20")
 	files := []string{"-c", cppFile, "-o", objFile}
 	if !opts.PCH {
-		return tc.run(opts, append(args, files...))
+		return tc.compileOnce(opts, append(args, files...))
 	}
 
 	pch, err := tc.precompiledHeader(flags, opts)
@@ -109,7 +126,7 @@ func (tc *Toolchain) Compile(cppFile, objFile string, opts Options) error {
 		if opts.Verbose {
 			fmt.Fprintf(os.Stderr, "Debug: precompiled header unavailable: %s\n", err)
 		}
-		return tc.run(opts, append(args, files...))
+		return tc.compileOnce(opts, append(args, files...))
 	}
 	withPCH := append(append(append([]string{}, args...), "-include-pch", pch), files...)
 	out, err := tc.runCaptured(opts, withPCH)
@@ -119,14 +136,38 @@ func (tc *Toolchain) Compile(cppFile, objFile string, opts Options) error {
 			fmt.Fprintf(os.Stderr, "Debug: discarding stale precompiled header %s\n", pch)
 		}
 		os.Remove(pch)
-		return tc.run(opts, append(args, files...))
+		return tc.compileOnce(opts, append(args, files...))
 	}
+	return compileResult(out, err, opts)
+}
+
+// compileOnce runs one compile and reports its result like Compile.
+func (tc *Toolchain) compileOnce(opts Options, args []string) error {
+	out, err := tc.runCaptured(opts, args)
+	return compileResult(out, err, opts)
+}
+
+// compileResult prints clang's output and turns an error located in glue
+// code into a QK-FFI-003 diagnostic.
+func compileResult(out string, err error, opts Options) error {
 	os.Stderr.WriteString(out)
+	if err == nil {
+		return nil
+	}
+	if d := glueErrorDiagnostic(out, opts.GlueFiles); d != nil {
+		return &DiagnosticError{Diags: []diagnostics.Diagnostic{*d}}
+	}
 	return err
 }
 
-// Link links objFiles with the runtime libraries into exe.
+// Link links objFiles with the native libraries in opts and the runtime
+// libraries into exe. Libraries that can't be found are reported as
+// QK-FFI-002 diagnostics before the linker runs.
 func (tc *Toolchain) Link(objFiles []string, exe string, opts Options) error {
+	libs, err := tc.resolveLibs(opts)
+	if err != nil {
+		return err
+	}
 	args := []string{}
 	if opts.LTO {
 		args = append(args, "-flto")
@@ -138,6 +179,7 @@ func (tc *Toolchain) Link(objFiles []string, exe string, opts Options) error {
 	}
 	args = append(args, objFiles...)
 	args = append(args, "-o", exe)
+	args = append(args, nativeLinkArgs(libs, opts)...)
 	args = append(args, GCLinkArgs(tc.GCLib)...)
 	if runtime.GOOS != "windows" {
 		args = append(args, "-lm")

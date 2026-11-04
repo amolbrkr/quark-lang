@@ -66,6 +66,12 @@ func printUsage() {
 	fmt.Println("  --debug, -d    Keep the generated C++ file and print compiler commands")
 	fmt.Println("  --lto          Enable link-time optimization")
 	fmt.Println("  --no-pch       Do not use the cached precompiled runtime header")
+	fmt.Println("  --lib-path <dir>       Search <dir> for extern link libraries (repeatable)")
+	fmt.Println("  --include-path <dir>   Add <dir> to the C++ include path (repeatable)")
+	fmt.Println("  --link-arg <arg>       Pass <arg> to the linker as-is (repeatable)")
+	fmt.Println()
+	fmt.Println("Environment:")
+	fmt.Println("  QUARK_LIB_PATH, QUARK_INCLUDE_PATH   Like --lib-path / --include-path; path lists")
 	fmt.Println()
 	fmt.Println("Examples:")
 	fmt.Println("  quark run test.qrk                # Compile and run")
@@ -99,20 +105,73 @@ func parseCommand(fs *flag.FlagSet, usage string, args []string) (string, bool) 
 
 // buildFlags are the flags shared by run and build.
 type buildFlags struct {
-	debug bool
-	lto   bool
-	noPCH bool
+	debug        bool
+	lto          bool
+	noPCH        bool
+	libPaths     repeatedFlag
+	includePaths repeatedFlag
+	linkArgs     repeatedFlag
 }
+
+// repeatedFlag collects every occurrence of a repeatable string flag.
+type repeatedFlag []string
+
+func (r *repeatedFlag) String() string     { return strings.Join(*r, ",") }
+func (r *repeatedFlag) Set(v string) error { *r = append(*r, v); return nil }
 
 func (f *buildFlags) register(fs *flag.FlagSet) {
 	fs.BoolVar(&f.debug, "debug", false, "")
 	fs.BoolVar(&f.debug, "d", false, "")
 	fs.BoolVar(&f.lto, "lto", false, "")
 	fs.BoolVar(&f.noPCH, "no-pch", false, "")
+	fs.Var(&f.libPaths, "lib-path", "")
+	fs.Var(&f.includePaths, "include-path", "")
+	fs.Var(&f.linkArgs, "link-arg", "")
 }
 
-func (f *buildFlags) options() toolchain.Options {
-	return toolchain.Options{LTO: f.lto, PCH: !f.noPCH, Verbose: f.debug}
+// options returns the toolchain options for building u. Search directories
+// come from the CLI first, then the environment; include directories from
+// extern include_path directives follow them.
+func (f *buildFlags) options(u *driver.Unit) toolchain.Options {
+	opts := toolchain.Options{LTO: f.lto, PCH: !f.noPCH, Verbose: f.debug}
+	opts.LibDirs = absDirs(append(append([]string{}, f.libPaths...), filepath.SplitList(os.Getenv("QUARK_LIB_PATH"))...))
+	opts.IncludeDirs = absDirs(append(append([]string{}, f.includePaths...), filepath.SplitList(os.Getenv("QUARK_INCLUDE_PATH"))...))
+	opts.IncludeDirs = append(opts.IncludeDirs, u.Native.IncludeDirs...)
+	for _, lib := range u.Native.Libs {
+		opts.Libs = append(opts.Libs, toolchain.Lib{Name: lib.Name, Origin: lib.Origin()})
+	}
+	opts.LinkArgs = append([]string{}, f.linkArgs...)
+	opts.GlueFiles = append([]string{}, u.Native.Headers...)
+	return opts
+}
+
+// absDirs makes each non-empty directory absolute, relative to the working
+// directory.
+func absDirs(dirs []string) []string {
+	var out []string
+	for _, d := range dirs {
+		if d == "" {
+			continue
+		}
+		if abs, err := filepath.Abs(d); err == nil {
+			d = abs
+		}
+		out = append(out, d)
+	}
+	return out
+}
+
+// reportBuildError prints a compile or link failure. Diagnostics from the
+// toolchain (missing library, error in glue code) are printed as they are;
+// it returns true for those so callers can skip the generated-C++ dump.
+func reportBuildError(err error) bool {
+	var de *toolchain.DiagnosticError
+	if errors.As(err, &de) {
+		fmt.Fprintln(os.Stderr, de.Error())
+		return true
+	}
+	fmt.Fprintf(os.Stderr, "Compilation failed: %s\n", err)
+	return false
 }
 
 // frontEnd runs the compiler front end through upTo and prints diagnostics.
@@ -196,7 +255,7 @@ func cmdBuild(args []string) int {
 	fs := flag.NewFlagSet("build", flag.ContinueOnError)
 	flags.register(fs)
 	fs.StringVar(&output, "o", "", "")
-	file, ok := parseCommand(fs, "quark build <file.qrk> [-o output] [--debug] [--lto] [--no-pch]", args)
+	file, ok := parseCommand(fs, "quark build <file.qrk> [-o output] [--debug] [--lto] [--no-pch] [--lib-path dir] [--include-path dir] [--link-arg arg]", args)
 	if !ok {
 		return 1
 	}
@@ -227,8 +286,8 @@ func cmdBuild(args []string) int {
 		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
 		return 1
 	}
-	if err := compileProgram(tc, u.CPP, cppFile, workDir, output, flags); err != nil {
-		fmt.Fprintf(os.Stderr, "Compilation failed: %s\n", err)
+	if err := compileProgram(tc, u, cppFile, workDir, output, flags); err != nil {
+		reportBuildError(err)
 		return 1
 	}
 	fmt.Printf("Built: %s\n", output)
@@ -239,7 +298,7 @@ func cmdRun(args []string) int {
 	var flags buildFlags
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	flags.register(fs)
-	file, ok := parseCommand(fs, "quark run <file.qrk> [--debug] [--lto] [--no-pch]", args)
+	file, ok := parseCommand(fs, "quark run <file.qrk> [--debug] [--lto] [--no-pch] [--lib-path dir] [--include-path dir] [--link-arg arg]", args)
 	if !ok {
 		return 1
 	}
@@ -270,10 +329,11 @@ func cmdRun(args []string) int {
 		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
 		return 1
 	}
-	if err := compileProgram(tc, u.CPP, cppFile, workDir, exeFile, flags); err != nil {
-		fmt.Fprintf(os.Stderr, "Compilation failed: %s\n", err)
-		fmt.Fprintln(os.Stderr, "\nGenerated C++ code:")
-		fmt.Fprintln(os.Stderr, u.CPP)
+	if err := compileProgram(tc, u, cppFile, workDir, exeFile, flags); err != nil {
+		if !reportBuildError(err) {
+			fmt.Fprintln(os.Stderr, "\nGenerated C++ code:")
+			fmt.Fprintln(os.Stderr, u.CPP)
+		}
 		return 1
 	}
 
@@ -296,10 +356,10 @@ func cmdRun(args []string) int {
 	return 0
 }
 
-// compileProgram writes cpp to cppFile, then compiles it (object file in
+// compileProgram writes u's C++ to cppFile, then compiles it (object file in
 // workDir) and links it into exe.
-func compileProgram(tc *toolchain.Toolchain, cpp, cppFile, workDir, exe string, flags buildFlags) error {
-	if err := os.WriteFile(cppFile, []byte(cpp), 0o644); err != nil {
+func compileProgram(tc *toolchain.Toolchain, u *driver.Unit, cppFile, workDir, exe string, flags buildFlags) error {
+	if err := os.WriteFile(cppFile, []byte(u.CPP), 0o644); err != nil {
 		return fmt.Errorf("writing C++ file: %w", err)
 	}
 	if flags.debug {
@@ -307,7 +367,7 @@ func compileProgram(tc *toolchain.Toolchain, cpp, cppFile, workDir, exe string, 
 		fmt.Fprintf(os.Stderr, "Debug: Runtime include path: %s\n", tc.RuntimeInclude)
 	}
 
-	opts := flags.options()
+	opts := flags.options(u)
 	objFile := filepath.Join(workDir, "main.o")
 	if err := tc.Compile(cppFile, objFile, opts); err != nil {
 		return err

@@ -106,7 +106,9 @@ inline int64_t as_int(QValue v) {
     return v.data.int_val;
 }
 
+// Accepts int as well: int widens to float at the native boundary.
 inline double as_float(QValue v) {
+    if (v.type == QValue::VAL_INT) return static_cast<double>(v.data.int_val);
     if (v.type != QValue::VAL_FLOAT) {
         panic("as_float: value is not float");
     }
@@ -381,7 +383,10 @@ inline int64_t q_as_int(QValue v) {
     if (v.type != QValue::VAL_INT) q_as_type_panic("int", v.type);
     return v.data.int_val;
 }
+// int widens to float for float-typed parameters (extern and Quark
+// functions alike); float never narrows to int.
 inline double q_as_float(QValue v) {
+    if (v.type == QValue::VAL_INT) return static_cast<double>(v.data.int_val);
     if (v.type != QValue::VAL_FLOAT) q_as_type_panic("float", v.type);
     return v.data.float_val;
 }

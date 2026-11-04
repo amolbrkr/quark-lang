@@ -5,6 +5,7 @@ import (
 	"quark/ast"
 	"quark/diagnostics"
 	"quark/token"
+	"strings"
 )
 
 const maxParserErrors = 10
@@ -575,7 +576,6 @@ func (p *Parser) parseTypeExpr() *ast.TreeNode {
 	return node
 }
 
-
 func (p *Parser) parseVarDecl() *ast.TreeNode {
 	nameTok := p.curToken
 	nameNode := ast.NewNode(ast.IdentifierNode, &nameTok)
@@ -869,28 +869,94 @@ func (p *Parser) parseModule() *ast.TreeNode {
 
 // parseExtern parses:
 //
-//	extern 'path/to/impl.hpp'
+//	extern 'path/to/glue.hpp'
+//	extern link 'name'
+//	extern include_path 'dir'
 //	extern fn name(params) ReturnType as 'symbol'
 //	extern fn type.name(params) ReturnType as 'symbol'
+//
+// `link` and `include_path` are contextual words, not keywords.
 func (p *Parser) parseExtern() *ast.TreeNode {
 	tok := p.curToken
 	p.nextToken() // skip 'extern'
 
 	switch p.curToken.Type {
 	case token.STRING:
-		// extern 'path/to/impl.hpp'
-		pathTok := p.curToken
-		node := ast.NewNode(ast.ExternSourceNode, &tok)
-		pathNode := ast.NewNode(ast.LiteralNode, &pathTok)
-		node.AddChild(pathNode)
-		p.nextToken()
-		return node
+		return p.parseExternDirective(&tok, ast.ExternHeaderNode, "")
 	case token.FN:
 		return p.parseExternFn(&tok)
-	default:
-		p.addError("expected string path or 'fn' after 'extern', got %s", p.curToken.Type)
+	case token.ID:
+		switch p.curToken.Literal {
+		case "link":
+			p.nextToken()
+			return p.parseExternDirective(&tok, ast.ExternLinkNode, "link")
+		case "include_path":
+			p.nextToken()
+			return p.parseExternDirective(&tok, ast.ExternIncludePathNode, "include_path")
+		case "include":
+			p.addError("unknown extern directive 'include'; use extern include_path 'dir' to add an include search path, or extern 'file.hpp' to include a header")
+			return nil
+		case "source":
+			p.addError("extern source is not supported yet (planned: ffi_v0_1_spec.md P2); use a header-only glue file with extern 'file.hpp'")
+			return nil
+		}
+	}
+	p.addError("expected string path, 'fn', 'link' or 'include_path' after 'extern', got %s", p.curToken.Type)
+	return nil
+}
+
+// parseExternDirective parses the string argument of a one-line extern
+// directive. Nothing may follow the string: words after it are reserved for
+// per-library options.
+func (p *Parser) parseExternDirective(externTok *token.Token, nodeType ast.NodeType, word string) *ast.TreeNode {
+	form := "extern"
+	if word != "" {
+		form = "extern " + word
+	}
+	if p.curToken.Type != token.STRING {
+		p.addError("expected a string after '%s', got %s", form, p.curToken.Type)
 		return nil
 	}
+	argTok := p.curToken
+	if strings.TrimSpace(argTok.Literal) == "" {
+		p.addError("'%s' needs a non-empty string", form)
+		return nil
+	}
+	if nodeType == ast.ExternLinkNode {
+		if msg := checkLinkName(argTok.Literal); msg != "" {
+			p.addError("invalid library name '%s' in extern link: %s", argTok.Literal, msg)
+			return nil
+		}
+	}
+	p.nextToken()
+	switch p.curToken.Type {
+	case token.NEWLINE, token.DEDENT, token.EOF:
+	default:
+		p.addError("unexpected %s after '%s' string; options after the string are reserved and not supported yet", p.curToken.Type, form)
+		return nil
+	}
+	node := ast.NewNode(nodeType, externTok)
+	node.AddChild(ast.NewNode(ast.LiteralNode, &argTok))
+	return node
+}
+
+// checkLinkName returns why name can't be passed to the linker as -l<name>,
+// or "" if it can.
+func checkLinkName(name string) string {
+	switch {
+	case strings.HasPrefix(name, "-"):
+		return "write the name without a leading '-' or '-l'"
+	case strings.ContainsAny(name, "/\\"):
+		return "use the bare library name; pass directories with --lib-path"
+	case strings.ContainsAny(name, " \t"):
+		return "library names cannot contain whitespace"
+	}
+	for _, ext := range []string{".so", ".a", ".dylib", ".lib", ".dll"} {
+		if strings.HasSuffix(name, ext) {
+			return "write the name without 'lib' and the file extension (for libfoo.so, use 'foo')"
+		}
+	}
+	return ""
 }
 
 // parseExternFn parses:

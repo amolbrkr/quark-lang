@@ -186,7 +186,7 @@ Two insights drive this design:
 
 3. **Zero-copy vector access.** Extension code operating on vectors must be able to access the underlying typed storage (`double*`, `int64_t*`) directly without copying or per-element unboxing. This is the performance bridge that makes Quark competitive with native C++ for numeric workloads.
 
-4. **No Quark-specific plugin/loading mechanism.** Extensions are compiled in — no dlopen, no plugin registry, no runtime discovery. For pure-C++ extensions (custom algorithms, data parsers), this means a single static binary with zero deployment complexity. For extensions that wrap external libraries (DuckDB, SQLite, Arrow), the extension's `.hpp` wrapper is compiled in and the external library is linked by passing `-l` flags to clang++. A syntax for specifying these flags from within `.qrk` files (`extern link`) is planned but deferred to post-v0.1; for now, flags are passed manually.
+4. **No Quark-specific plugin/loading mechanism.** Extensions are compiled in — no dlopen, no plugin registry, no runtime discovery. For pure-C++ extensions (custom algorithms, data parsers), this means a single static binary with zero deployment complexity. For extensions that wrap external libraries (DuckDB, SQLite, Arrow), the extension's `.hpp` wrapper is compiled in and the external library is linked by passing `-l` flags to clang++. These are declared from `.qrk` files with `extern link` and `extern include_path`, specified and implemented in `ffi_v0_1_spec.md` P1.
 
 5. **Extension authors learn one small API.** The `quark/ext/api.hpp` header provides vector access, value construction, GC-aware allocation, and closure callbacks. That's it. No framework, no macros, no base classes.
 
@@ -439,7 +439,7 @@ Each compiler stage has a specific, bounded responsibility for extern declaratio
    - **Return**: Wraps the native return into whatever the caller needs — if caller expects QValue, emit `qv_float(result)`. If caller is also scalar-tiered, keep native.
     - **Thunks**: Emits QValue thunks for free extern functions in the preamble and wraps them in a `QClosure` at use sites.
 
-**5. clang++**: Compiles everything together — generated code + included extension headers + runtime — into one binary. No special flags needed for pure-C++ extensions. For external library extensions that wrap external libraries (DuckDB, Arrow, etc.), additional `-l` flags will be needed — the mechanism for specifying these (`extern link`) is deferred to post-v0.1.
+**5. clang++**: Compiles everything together — generated code + included extension headers + runtime — into one binary. No special flags needed for pure-C++ extensions. For external library extensions that wrap external libraries (DuckDB, Arrow, etc.), additional `-l` flags are needed — they come from `extern link` directives (`ffi_v0_1_spec.md` P1).
 
 The key principle: **nothing downstream of the analyzer changes its architecture.** Extern functions enter the same registries, produce the same `CallPlan` IR (with additional fields), and flow through the same codegen paths (with a new dispatch branch). The extension mechanism is an addition, not a restructuring.
 

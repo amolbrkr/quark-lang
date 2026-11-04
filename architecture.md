@@ -144,7 +144,9 @@ If codegen encounters an unexpected dispatch/runtime-symbol invariant break, it 
     - `-DQUARK_USE_GC` + Boehm GC include flags
     - `-Wno-deprecated-declarations` on Windows
     - `-include-pch <cached quark.hpp PCH>` unless `--no-pch` (see below)
-2. **Link** (`Toolchain.Link`): objects + static `libgc` (`-pthread`, `-ldl` on Linux) + `-lm` on non-Windows. With `--lto`, links with `lld` when `ld.lld` is on PATH, since the system linker needs LLVM's gold plugin for LTO.
+2. **Link** (`Toolchain.Link`): objects + native libraries from `extern link` + static `libgc` (`-pthread`, `-ldl` on Linux) + `-lm` on non-Windows. With `--lto`, links with `lld` when `ld.lld` is on PATH, since the system linker needs LLVM's gold plugin for LTO.
+
+**Native dependencies** (`toolchain/native.go`). The loader collects `extern link` and `extern include_path` directives from every loaded file into `driver.Unit.Native` (`loader.NativeDeps`: include directories, libraries in link order, and the extern glue headers). `main.go` combines them with `--lib-path` / `--include-path` / `--link-arg` and `QUARK_LIB_PATH` / `QUARK_INCLUDE_PATH` into `toolchain.Options`. Before linking, `Link` looks for every library in the user directories, then `LIBRARY_PATH`, then clang's own search path (`clang++ -print-search-dirs`), and reports each missing one as `QK-FFI-002`. The link line gets `-L` for each user directory, `-Wl,-rpath,<dir>` for user directories that provide a shared library, then `-l<name>` in link order, then `--link-arg` values. Extra include directories are added to the compile but not to the precompiled header, which stays shared between programs. When a compile fails and clang's output has an error located in an extern glue header (or in a file one includes), `Compile` returns a `QK-FFI-003` diagnostic and `quark run` skips the generated-C++ dump.
 
 Intermediate files go in a fresh `os.MkdirTemp` directory per build, so concurrent builds never collide.
 
@@ -333,8 +335,8 @@ The extern fn system allows Quark programs to call native C++ functions. See sem
 
 ### Pipeline flow
 
-1. **Parser**: Produces `ExternSourceNode` (header path) and `ExternFnNode` (function declaration with `ExternSymbol` and `ExternReceiver` fields).
-2. **Loader**: Rewrites `ExternSourceNode` paths to absolute paths so codegen can emit `#include "absolute/path.hpp"` directly.
+1. **Parser**: Produces `ExternHeaderNode` (header path), `ExternLinkNode`, `ExternIncludePathNode`, and `ExternFnNode` (function declaration with `ExternSymbol` and `ExternReceiver` fields).
+2. **Loader**: Rewrites `ExternHeaderNode` paths to absolute paths so codegen can emit `#include "absolute/path.hpp"` directly, and collects link and include-path directives into `NativeDeps` (see §1.7).
 3. **Analyzer** (`analyzeExternFn`): Maps Quark type annotations to C++ types via `quarkTypeToNativeCType`. Registers free functions in `builtins` + `externFns[name]`. Registers methods in `methods[receiverKey][methodName]` + `externFns["type.method"]`. Produces a prototype `CallPlan` with `DispatchExtern`.
 4. **Codegen**: At call sites, unboxes each argument via `q_as_int`, `q_as_float`, etc. Boxes the return value back to `QValue`. Also emits a QValue-convention thunk so the function can be passed as a first-class value.
 

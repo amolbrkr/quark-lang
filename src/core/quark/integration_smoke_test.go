@@ -570,6 +570,8 @@ func TestSmokePrograms_Run(t *testing.T) {
 				"hello quark",
 				"5",
 				"21",
+				"3.5",
+				"8",
 			),
 		},
 		{

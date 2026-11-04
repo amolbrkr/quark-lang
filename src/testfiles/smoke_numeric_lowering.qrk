@@ -71,3 +71,14 @@ elseif score > 5:
     println('good')
 else:
     println('low')
+
+// Scalar assignment as the last statement of an if branch (branch value is boxed)
+fn has_two(n: int) bool ->
+    found = false
+    i = 0
+    while i < n:
+        if i == 2:
+            found = true
+        i = i + 1
+    found
+println(has_two(5))   // true

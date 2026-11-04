@@ -1,29 +1,24 @@
-use "std/io"
+fib = fn(n) -> n if n <= 1 else fib(n - 1) + fib(n - 2)
+println(fib(23)) 
 
-chunk_size = 8 * 1024  // 8 KB
+s: str = "loool"
+println(s[0])
+println(len(s))
 
-file = io.open("../../testfiles/customers.csv", "r") | unwrap()
-raw = to_str(unwrap(io.read(file, chunk_size)))
+fn is_palin(s: str) bool -> 
+    left = 0
+    right = len(s) - 1
+    val = true
 
-lines = raw.split('\n')
-headers = lines[0].split(',')
+    while left < right:
+        if s[left] != s[right]:
+            val = false
+            break
 
-rows = list []
-i = 1
-while i < len(lines):
-    line = lines[i].trim()
-
-    if len(line) > 0:
-        rows.push(line.split(','))
-    i = i + 1
-
-
-// Create a dict with the header names as keys and the corresponding values from the first row
-customer = dict {}
-for rowitem in enumerate(rows):
-    for header in enumerate(headers):
-        customer.set(header.value, rowitem.value[header.index])
+        left = left + 1
+        right = right - 1
+        
+    val
 
 
-for i in customer.keys():
-    println(i + ": " + to_str(customer.get(i)))
+println(is_palin(s))

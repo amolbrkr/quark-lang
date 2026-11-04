@@ -1562,7 +1562,7 @@ func (g *Generator) generateOperator(node *ast.TreeNode) string {
 					rawRight = unboxForTier(right, tier, nil)
 				}
 				g.emitLine("%s = %s;", cName, rawRight)
-				return cName
+				return boxExpr(cName, tier)
 			}
 			g.emitLine("%s = %s;", cName, right)
 			return cName
@@ -1587,7 +1587,7 @@ func (g *Generator) generateOperator(node *ast.TreeNode) string {
 			g.emitLine("%s %s = %s;", tier, cName, rawRight)
 			g.declaredVars[varName] = true
 			g.markTier(varName, tier)
-			return cName
+			return boxExpr(cName, tier)
 		}
 		g.emitLine("QValue %s = %s;", cName, right)
 		g.declaredVars[varName] = true

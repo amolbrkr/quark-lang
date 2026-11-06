@@ -26,6 +26,7 @@ CppProperties.json
 
 # Generated files
 *.c
+!src/testfiles/ffi/*.c
 hello
 test_clean
 test_*
@@ -49,3 +50,20 @@ benchmarks/generated/
 # Compiler binaries built in place (go build / integration tests)
 src/core/quark/quark
 src/core/quark/quark_test
+
+# IDE settings
+.posit/
+
+# Boehm GC (deps/bdwgc): commit only the public headers, the prebuilt static
+# libraries (one per platform) and the license, not the GC source.
+# See deps/bdwgc/VENDORED.md. Must stay after the *.a rule above.
+/deps/bdwgc/**
+!/deps/bdwgc/**/
+!/deps/bdwgc/LICENSE
+!/deps/bdwgc/VENDORED.md
+!/deps/bdwgc/build-prebuilt.sh
+!/deps/bdwgc/include/gc.h
+!/deps/bdwgc/include/gc_cpp.h
+!/deps/bdwgc/include/gc/*.h
+!/deps/bdwgc/lib/*/libgc.a
+!/deps/bdwgc/lib/*/gc.lib

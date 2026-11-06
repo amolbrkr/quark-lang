@@ -37,7 +37,7 @@ cd src/core/quark && go test -v -run TestSmokePrograms_Run
 - clang++ (C++17) — **required**, g++ is not supported
   - Ubuntu/Debian: `sudo apt install clang`
   - macOS: `brew install llvm`
-- CMake (for Boehm GC bootstrap on first run)
+- CMake (only on platforms without a prebuilt Boehm GC; linux-amd64, linux-arm64, darwin-arm64 and windows-amd64 have one)
 
 ## Compiler Pipeline
 
@@ -88,7 +88,7 @@ Runtime tests use Catch2: `src/core/quark/runtime/tests/`
 - **All function values are `QClosure*`** — even non-capturing functions. Generated functions take `QClosure* _cl` as hidden first parameter. Direct calls pass `nullptr`.
 - **Variable storage is type-and-capture-driven**: five tiers selected at first declaration — `QCell*` (captured), `long long` (static `int`, not captured), `double` (static `float`, not captured), `bool` (static `bool`, not captured), `QValue` (everything else). The analyzer's `GetCapturedByFunction` and `GetNodeTypes` outputs drive this. Codegen tracks cells in `cellVars` and scalar tiers in `varTiers`. `generateIdentifier` boxes scalars back to `QValue` at read sites so all downstream codegen works uniformly with `QValue` expressions.
 - **Operator lowering**: arithmetic/comparison ops on two scalar atoms (literals or scalar-tiered locals) emit raw C++ operators instead of `q_add` etc. Codegen's `scalarExpr()` detects scalar atoms; result is boxed to `QValue` for the caller.
-- **Memory** — Boehm GC vendored at `deps/bdwgc/`. Use `q_malloc_atomic()` for data without pointers (strings, numeric buffers).
+- **Memory** — Boehm GC vendored at `deps/bdwgc/`: only the public headers, prebuilt static libraries in `lib/<GOOS>-<GOARCH>/` (rebuilt with `build-prebuilt.sh`) and LICENSE are committed; the GC source is gitignored. `toolchain.EnsureGC` uses the prebuilt library, else a local `build-static/` CMake build (see `deps/bdwgc/VENDORED.md`). Use `q_malloc_atomic()` for data without pointers (strings, numeric buffers).
 - **Analyzer → codegen handoff** — the analyzer returns one `types.Analysis` struct (captures, call plans, node types, native/extern fns, struct types, ...), passed to codegen with `SetAnalysis`. New analyzer outputs go in that struct, not new setters.
 - **CallPlan** (`ir/call.go`) — IR metadata attached to each call site by the analyzer. Tracks call kind (builtin vs user), arity, default arg filling. Codegen reads these instead of re-analyzing.
 - **Builtin catalog** (`builtins/`) — shared metadata (name, arity, signatures) used by both analyzer and codegen. Methods are indexed by `(ReceiverType, methodName)` pair, separate from free functions.
@@ -101,6 +101,11 @@ Runtime tests use Catch2: `src/core/quark/runtime/tests/`
 2. Implement the C++ function in `runtime/include/quark/builtins/*.hpp` with `q_` prefix
 3. Analyzer and codegen pick it up automatically via the catalog
 4. Add a smoke test in `src/testfiles/smoke_*.qrk`
+5. Regenerate the editor extension's data: `go test ./internal/editordata -update` (and add the name to the grammar's `builtin-functions` pattern; the test says so if it's missing)
+
+## Editor Extension
+
+`src/devtools/vscode-extension/quark` (VS Code / Positron). Package with `go run ./cmd/quark-vsix` from `src/core/quark` (no Node/npm). `data/quark.json` is generated from the catalog, lexer keywords and stdlib by `internal/editordata`; that package's tests also check grammar coverage, that snippets parse, and run `test/extension.test.js` when `node` (or `QUARK_NODE`) is available.
 
 ## Test Files
 

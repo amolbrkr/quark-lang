@@ -57,10 +57,13 @@ You need three tools on your `PATH`:
 |---|---|---|
 | Go 1.21+ | builds the compiler | `go version` |
 | `clang++` (C++17) | compiles generated C++ — **`g++` is not supported** | `clang++ --version` |
-| CMake | builds the vendored garbage collector on first run | `cmake --version` |
+| CMake | only on platforms without a prebuilt garbage collector (see below) | `cmake --version` |
 
-Quark vendors the Boehm garbage collector under `deps/bdwgc`. The very first
-`build`/`run` bootstraps it with CMake automatically; this happens once.
+Quark vendors the Boehm garbage collector under `deps/bdwgc`: its public
+headers and prebuilt static libraries for Linux (x86_64, arm64), macOS (arm64)
+and Windows (x86_64), but not its source. On any other platform, follow
+`deps/bdwgc/VENDORED.md` to fetch the source; the first `build`/`run` then
+builds it with CMake (once).
 
 ### 2. Build the compiler
 
@@ -728,6 +731,22 @@ For deeper behavior notes, see [stdlib.md](stdlib.md). The code-level source of
 truth for builtin names and arities is
 `src/core/quark/builtins/catalog.go`.
 
+## Editor support
+
+`src/devtools/vscode-extension/quark` is an extension for VS Code and Positron:
+highlighting, snippets for every construct, completion, hover, and a run
+command. It also flags Python and R spellings (`def`, `elif`, `True`, `NULL`,
+`&&`, `#` comments, ...) and says what Quark uses instead. Build and install it
+with Go only:
+
+```bash
+cd src/core/quark && go run ./cmd/quark-vsix
+```
+
+Then run **Extensions: Install from VSIX...** in VS Code or Positron and pick
+the file it prints. See the extension's
+[README](src/devtools/vscode-extension/quark/README.md) for details.
+
 ## Command-line reference
 
 ```text
@@ -787,7 +806,7 @@ quark check hello.qrk          # type-check only
 | `src/core/quark/runtime/include/quark` | header-only C++17 runtime (resolved relative to the binary) |
 | `src/core/stdlib` | standard library modules (`io.qrk`, `fmt.qrk`, `fmt.hpp`) |
 | `src/testfiles` | runnable example/smoke programs (`smoke_*.qrk`) |
-| `deps/bdwgc` | vendored Boehm garbage collector (built on first run) |
+| `deps/bdwgc` | vendored Boehm garbage collector: headers and per-platform prebuilt libraries in `lib/` (see `VENDORED.md`) |
 | `grammar.md`, `semantics.md`, `stdlib.md`, `architecture.md`, `error_codes.md` | reference docs |
 
 ## Current status and roadmap
@@ -838,14 +857,20 @@ verified by compiling and running the bundled examples.
 Install it: `sudo apt install clang` (Debian/Ubuntu) or `brew install llvm`
 (macOS), then re-run.
 
-**`Boehm GC is not built and cmake is not available`** — install CMake so the
-first build can compile the vendored GC under `deps/bdwgc`. This bootstrap runs
-once.
+**`no prebuilt Boehm GC library for <os>/<arch> ... and no GC source to build one`**
+— the repository has prebuilt GC libraries for Linux x86_64 and arm64, macOS
+arm64 and Windows x86_64 only. On other platforms, fetch the GC source as
+described in `deps/bdwgc/VENDORED.md` and install CMake; the next build
+compiles the GC once.
+
+**`Boehm GC is not built and cmake is not available`** — the GC source is
+present but not built yet. Install CMake and re-run.
 
 **`error while loading shared libraries: libgc.so.1`** — the program was built
 by an older compiler that linked the GC as a shared library. Rebuild the
-compiler and the program. Current builds link a static GC from
-`deps/bdwgc/build-static`, so executables do not depend on `libgc` at runtime.
+compiler and the program. Current builds link a static GC (from
+`deps/bdwgc/lib/<os>-<arch>` or a local `deps/bdwgc/build-static`), so
+executables do not depend on `libgc` at runtime.
 
 **Imports or runtime headers not found** — the `quark` binary resolves its runtime
 headers at `./runtime/include` next to itself and the standard library at

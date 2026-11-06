@@ -1,0 +1,137 @@
+{
+  "Function": {
+    "prefix": "fn",
+    "body": ["fn ${1:name}(${2:x}) ->", "\t${0:x}"],
+    "description": "Function. The last expression is the return value (there is no return keyword)."
+  },
+  "Function (one line)": {
+    "prefix": "fn1",
+    "body": ["fn ${1:name}(${2:x}) -> ${0:x}"],
+    "description": "One-line function: fn name(x) -> expr"
+  },
+  "Function (typed)": {
+    "prefix": "fnt",
+    "body": ["fn ${1:name}(${2:x}: ${3:int}) ${4:int} ->", "\t${0:x}"],
+    "description": "Function with parameter and return type annotations (int, float, str, bool, list, dict, vector, result, any)"
+  },
+  "Function (default parameter)": {
+    "prefix": "fnd",
+    "body": ["fn ${1:name}(${2:x}: ${3:int}, ${4:y}: ${5:int} = ${6:0}) ->", "\t${0:x + y}"],
+    "description": "Function with a default parameter (defaults must be literals)"
+  },
+  "Lambda": {
+    "prefix": "lambda",
+    "body": ["fn(${1:x}) -> ${0:x}"],
+    "description": "Anonymous function: fn(x) -> expr (not lambda x: ... or function(x) ...)"
+  },
+  "If": {
+    "prefix": "if",
+    "body": ["if ${1:condition}:", "\t$0"],
+    "description": "If block (no parentheses or braces; the block is indented)"
+  },
+  "If / else": {
+    "prefix": "ife",
+    "body": ["if ${1:condition}:", "\t${2:println('yes')}", "else:", "\t$0"],
+    "description": "If / else"
+  },
+  "If / elseif / else": {
+    "prefix": "ifel",
+    "body": ["if ${1:condition}:", "\t${2:println('a')}", "elseif ${3:other}:", "\t${4:println('b')}", "else:", "\t$0"],
+    "description": "If / elseif / else (elseif, not elif or else if)"
+  },
+  "Ternary": {
+    "prefix": "tern",
+    "body": ["${1:a} if ${2:condition} else ${0:b}"],
+    "description": "Conditional expression: a if condition else b"
+  },
+  "When": {
+    "prefix": "when",
+    "body": ["when ${1:value}:", "\t${2:0} -> ${3:'zero'}", "\t${4:1} or ${5:2} -> ${6:'small'}", "\t_ -> ${0:'other'}"],
+    "description": "Pattern match. Arms are pattern -> expression; _ matches anything."
+  },
+  "When (result)": {
+    "prefix": "whenr",
+    "body": ["when ${1:result_value}:", "\tok ${2:value} -> ${3:println(value)}", "\terr ${4:msg} -> ${0:println(msg)}"],
+    "description": "Match an ok/err result: ok value -> ..., err msg -> ..."
+  },
+  "For": {
+    "prefix": "for",
+    "body": ["for ${1:item} in ${2:items}:", "\t$0"],
+    "description": "Loop over a list, vector or str"
+  },
+  "For range": {
+    "prefix": "forr",
+    "body": ["for ${1:i} in range(${2:10}):", "\t$0"],
+    "description": "Loop over range(end), range(start, end) or range(start, end, step)"
+  },
+  "For enumerate": {
+    "prefix": "fore",
+    "body": ["for ${1:entry} in enumerate(${2:items}):", "\tprintln(to_str(${1:entry}.index) + ': ' + to_str(${1:entry}.value))$0"],
+    "description": "Loop with index: each entry has .index and .value"
+  },
+  "While": {
+    "prefix": "while",
+    "body": ["while ${1:condition}:", "\t$0"],
+    "description": "While loop"
+  },
+  "List": {
+    "prefix": "list",
+    "body": ["list [${0:1, 2, 3}]"],
+    "description": "List literal. The list keyword is required: list [1, 2, 3]"
+  },
+  "Dict": {
+    "prefix": "dict",
+    "body": ["dict { ${1:key}: ${0:value} }"],
+    "description": "Dict literal. The dict keyword is required; keys are identifiers: dict { name: 'quark' }"
+  },
+  "Vector": {
+    "prefix": "vector",
+    "body": ["vector [${0:1.0, 2.0, 3.0}]"],
+    "description": "Typed vector (all int, all float, all bool or all str); element-wise math"
+  },
+  "Struct": {
+    "prefix": "struct",
+    "body": ["struct ${1:Point}:", "\t${2:x}: ${3:float}", "\t${4:y}: ${0:float}"],
+    "description": "Struct type with typed fields"
+  },
+  "Struct literal": {
+    "prefix": "new",
+    "body": ["${1:Point} { ${2:x}: ${3:1.0}, ${4:y}: ${0:2.0} }"],
+    "description": "Create a struct value with named fields"
+  },
+  "Module": {
+    "prefix": "module",
+    "body": ["module ${1:name}:", "\tfn ${2:f}(${3:x}) ->", "\t\t${0:x}"],
+    "description": "Module block; other files import it with use './file' as alias"
+  },
+  "Use (stdlib)": {
+    "prefix": "use",
+    "body": ["use '${1|std/io,std/fmt,std/blas|}' as ${0:io}"],
+    "description": "Import a stdlib module under an alias, then call alias.fn(...)"
+  },
+  "Use (file)": {
+    "prefix": "usef",
+    "body": ["use './${1:other}' as ${0:other}"],
+    "description": "Import a module from another file (path relative to this file, starting with ./ or ../)"
+  },
+  "Result": {
+    "prefix": "okerr",
+    "body": ["fn ${1:safe_div}(${2:a}, ${3:b}) ->", "\tif ${3:b} == 0:", "\t\terr ${4:'division by zero'}", "\telse:", "\t\tok ${0:a / b}"],
+    "description": "Return ok value / err message instead of failing"
+  },
+  "Pipe": {
+    "prefix": "pipe",
+    "body": ["${1:value} | ${2:to_str}() | ${0:println}()"],
+    "description": "Pipe: the left value becomes the first argument of the call on the right"
+  },
+  "Extern": {
+    "prefix": "extern",
+    "body": ["extern '${1:glue.hpp}'", "extern fn ${2:name}(${3:x}: ${4:int}) ${5:int} as '${0:c_function}'"],
+    "description": "Call a C++ function declared in a glue header"
+  },
+  "Extern library": {
+    "prefix": "externlib",
+    "body": ["extern include_path '${1:include}'", "extern link '${2:name}'", "extern '${3:glue.hpp}'", "extern fn ${4:name}(${5:x}: ${6:int}) ${7:int} as '${0:c_function}'"],
+    "description": "Link a native library: include path, library, glue header, extern fn"
+  }
+}

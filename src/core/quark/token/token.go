@@ -1,5 +1,7 @@
 package token
 
+import "sort"
+
 type TokenType int
 
 const (
@@ -185,6 +187,16 @@ var keywords = map[string]TokenType{
 	"continue": CONTINUE,
 	"extern":   EXTERN,
 	"struct":   STRUCT,
+}
+
+// Keywords returns every reserved word, sorted.
+func Keywords() []string {
+	out := make([]string, 0, len(keywords))
+	for k := range keywords {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func LookupIdent(ident string) TokenType {

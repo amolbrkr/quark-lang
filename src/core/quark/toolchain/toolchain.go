@@ -258,12 +258,15 @@ func findGCSourceDir() (string, error) {
 			continue
 		}
 		seen[abs] = struct{}{}
-		if _, err := os.Stat(filepath.Join(abs, "CMakeLists.txt")); err == nil {
+		// The repository commits only the GC headers and prebuilt library
+		// (see deps/bdwgc/VENDORED.md), so look for the headers, not the
+		// CMake project.
+		if _, err := os.Stat(filepath.Join(abs, "include", "gc", "gc.h")); err == nil {
 			return abs, nil
 		}
 	}
 
-	return "", errors.New("could not locate deps/bdwgc (expected vendored Boehm GC source in repository)")
+	return "", errors.New("could not locate deps/bdwgc (expected the vendored Boehm GC headers in the repository)")
 }
 
 // gcBuildDirName is the CMake build directory used for the vendored Boehm GC.
@@ -296,6 +299,12 @@ func findGCLibrary(buildDir string) (string, error) {
 	return "", fmt.Errorf("could not find static Boehm GC library under %s", buildDir)
 }
 
+// prebuiltGCDir is where the repository keeps the static GC library built for
+// the host platform, e.g. deps/bdwgc/lib/linux-amd64 (see deps/bdwgc/VENDORED.md).
+func prebuiltGCDir(gcDir string) string {
+	return filepath.Join(gcDir, "lib", runtime.GOOS+"-"+runtime.GOARCH)
+}
+
 // GCLinkArgs returns the linker arguments needed to link the static GC archive.
 // A static libgc depends on the platform threads library, which a shared
 // libgc would otherwise have pulled in itself.
@@ -310,8 +319,9 @@ func GCLinkArgs(libPath string) []string {
 	return args
 }
 
-// EnsureGC returns the GC include directory and static library, building the
-// vendored GC with CMake if it has not been built yet.
+// EnsureGC returns the GC include directory and static library: the prebuilt
+// library for the host platform if the repository has one, else a local build
+// in build-static, which it bootstraps with CMake from the GC source if needed.
 func EnsureGC() (includePath string, libPath string, err error) {
 	gcSourceDir, err := findGCSourceDir()
 	if err != nil {
@@ -323,11 +333,18 @@ func EnsureGC() (includePath string, libPath string, err error) {
 		return "", "", fmt.Errorf("Boehm GC headers not found at %s", includePath)
 	}
 
+	prebuilt := prebuiltGCDir(gcSourceDir)
+	if libPath, err = findGCLibrary(prebuilt); err == nil {
+		return includePath, libPath, nil
+	}
 	buildDir := filepath.Join(gcSourceDir, gcBuildDirName)
 	if libPath, err = findGCLibrary(buildDir); err == nil {
 		return includePath, libPath, nil
 	}
 
+	if _, statErr := os.Stat(filepath.Join(gcSourceDir, "CMakeLists.txt")); statErr != nil {
+		return "", "", fmt.Errorf("no prebuilt Boehm GC library for %s/%s (expected in %s) and no GC source to build one; see deps/bdwgc/VENDORED.md", runtime.GOOS, runtime.GOARCH, prebuilt)
+	}
 	if _, lookErr := exec.LookPath("cmake"); lookErr != nil {
 		return "", "", fmt.Errorf("Boehm GC is not built and cmake is not available in PATH; install cmake or build deps/bdwgc manually")
 	}

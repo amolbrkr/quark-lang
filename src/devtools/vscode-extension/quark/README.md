@@ -1,68 +1,67 @@
-# Quark Language Support for VS Code
+# Quark for VS Code and Positron
 
-Syntax highlighting and language support for the Quark programming language.
+Editor support for [Quark](https://github.com/amolbrkr/quark-lang) `.qrk` files.
 
 ## Features
 
-- **Syntax Highlighting** - Full syntax highlighting for `.qrk` files
-- **Keywords** - `fn`, `if`, `elseif`, `else`, `when`, `for`, `while`, `in`, `break`, `continue`, `and`, `or`, `true`, `false`, `null`, `module`, `use`, `ok`, `err`, `list`, `dict`, `vector`, `result`
-- **Operators** - Arithmetic, comparison, logical, pipe (`|`), arrow (`->`)
-- **Comments** - Single-line comments with `//`
-- **Strings** - Single and double-quoted strings with escape sequences
-- **Run Current File** - Run current `.qrk` file with `Ctrl+F5` (`Quark: Run Current File`)
+- **Highlighting** for the current language: `fn`, `struct`, `module`, `when`, `extern link`, type annotations, struct literals, `list [...]` / `dict {...}` / `vector [...]`.
+- **Python and R habits are flagged.** `def`, `elif`, `return`, `True` / `False` / `None`, `TRUE` / `FALSE` / `NULL`, `function(`, `&&`, `||` and `#` comments are shown as errors. Hover one to see what Quark uses instead.
+- **Snippets** that show the Quark form of each construct. Type the prefix and press Tab:
 
-## About Quark
+  | Prefix | Inserts |
+  |---|---|
+  | `fn`, `fn1`, `fnt`, `fnd` | function (block, one line, typed, default parameter) |
+  | `lambda` | `fn(x) -> x` |
+  | `if`, `ife`, `ifel`, `tern` | if, if/else, if/elseif/else, `a if cond else b` |
+  | `when`, `whenr` | pattern match; match `ok` / `err` results |
+  | `for`, `forr`, `fore`, `while` | loops over items, `range(...)`, `enumerate(...)` |
+  | `list`, `dict`, `vector` | collection literals |
+  | `struct`, `new` | struct type, struct value |
+  | `module`, `use`, `usef` | module block, stdlib import, file import |
+  | `okerr`, `pipe` | function returning `ok` / `err`, pipe chain |
+  | `extern`, `externlib` | call C++, link a native library |
 
-Quark is a high-level, dynamically-typed language that compiles to C++, designed for fast data-heavy applications. It combines Python-like syntax with native performance.
+- **Completion**:
+  - keywords and builtins, with their signatures;
+  - methods for the receiver's type (`str`, `list`, `dict`, `vector`), from annotations like `s: str`, literals, and assignments;
+  - `alias.` lists the functions of an imported module (stdlib, another file, or a module in the same file);
+  - `point.` lists a struct's fields;
+  - `use '` lists stdlib modules and `.qrk` files, as paths relative to the current file.
+- **Hover** shows builtin and module function signatures.
+- **Run** the current file with `Ctrl+F5` (`Cmd+F5` on macOS) or the ▶ button in the editor title.
 
-```quark
-// Quark example
-fn factorial(n) ->
-    when n:
-        0 or 1 -> 1
-    _ -> n * factorial(n - 1)
+There is no language server yet, so there are no live error squiggles or go-to-definition. Completion reads the open file as text: it doesn't run the compiler.
 
-factorial(10) | println()
-```
+## Install
 
-## Installation
+The extension isn't published to a marketplace. Build the package from a Quark checkout (needs only Go):
 
-1. Open VS Code
-2. Go to Extensions (Ctrl+Shift+X)
-3. Search for "Quark"
-4. Click Install
-
-Or install from VSIX:
 ```bash
-code --install-extension quark-0.0.1.vsix
+cd src/core/quark
+go run ./cmd/quark-vsix
+# -> src/devtools/vscode-extension/dist/quark-language-<version>.vsix
 ```
 
-## Requirements
+Then install it:
 
-- VS Code 1.60.0 or higher
+- **VS Code or Positron:** open the Command Palette, run **Extensions: Install from VSIX...**, and pick the file.
+- **Command line:** `code --install-extension <file>.vsix` (VS Code) or `positron --install-extension <file>.vsix` (Positron desktop).
 
-## Extension Settings
+Reload the window afterwards. To update, rebuild and install again; to remove it, uninstall "Quark Language Support" from the Extensions view.
 
-- `quark.executablePath`: Path to Quark executable used by `Quark: Run Current File` (default: `quark`).
+## Settings
 
-## Known Issues
+| Setting | Default | Description |
+|---|---|---|
+| `quark.executablePath` | `quark` | Compiler used by **Quark: Run Current File**. Left at `quark`, the extension uses `src/core/quark/quark.exe` from an open Quark checkout if it exists, then `quark` from PATH. |
 
-- No language server support yet (no autocomplete, go-to-definition)
-- No debugger integration
+## Development
 
-## Release Notes
+- Builtins, keywords and stdlib modules come from `data/quark.json`, which is generated from the compiler. After changing builtins, keywords or the stdlib, regenerate it:
 
-### 0.0.3
+  ```bash
+  cd src/core/quark && go test ./internal/editordata -update
+  ```
 
-- Added `Quark: Run Current File` command.
-- Added `Ctrl+F5` keybinding for running the active `.qrk` file.
-- Updated syntax highlighting for current Quark grammar and tokens.
-
-### 0.0.1
-
-Initial release with basic syntax highlighting.
-
-## More Information
-
-- [Quark Repository](https://github.com/user/quark-lang)
-- [Language Documentation](https://github.com/user/quark-lang/blob/main/grammar.md)
+- `go test ./internal/editordata` fails when the data file is stale, when the grammar misses a keyword or builtin, or when a snippet doesn't parse as Quark. With `node` on PATH (or `QUARK_NODE` set to one, such as the node bundled with VS Code or Positron) it also runs `test/extension.test.js`.
+- Try changes without packaging: open `src/devtools/vscode-extension/quark` in VS Code and press F5 to start an Extension Development Host.

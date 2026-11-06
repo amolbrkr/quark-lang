@@ -1,27 +1,40 @@
 {
   "name": "quark-language",
   "displayName": "Quark Language Support",
-  "description": "Syntax highlighting and run command support for the Quark language",
-  "version": "0.0.4",
+  "description": "Syntax highlighting, snippets, completion, hover and a run command for the Quark language",
+  "version": "0.1.0",
   "publisher": "quark-lang",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/amolbrkr/quark-lang"
+  },
   "main": "./extension.js",
   "engines": {
     "vscode": "^1.74.0"
   },
   "categories": [
-    "Programming Languages"
+    "Programming Languages",
+    "Snippets"
+  ],
+  "keywords": [
+    "quark",
+    "qrk"
   ],
   "activationEvents": [
-    "onLanguage:quark",
-    "onCommand:quark.runCurrentFile"
+    "onLanguage:quark"
   ],
   "contributes": {
     "languages": [
       {
         "id": "quark",
-        "aliases": ["Quark", "quark"],
-        "extensions": [".qrk"],
+        "aliases": [
+          "Quark",
+          "quark"
+        ],
+        "extensions": [
+          ".qrk"
+        ],
         "configuration": "./language-configuration.json"
       }
     ],
@@ -30,6 +43,12 @@
         "language": "quark",
         "scopeName": "source.quark",
         "path": "./syntaxes/quark.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "quark",
+        "path": "./snippets/quark.json"
       }
     ],
     "commands": [
@@ -44,6 +63,7 @@
       {
         "command": "quark.runCurrentFile",
         "key": "ctrl+f5",
+        "mac": "cmd+f5",
         "when": "editorTextFocus && editorLangId == quark"
       }
     ],
@@ -62,7 +82,7 @@
         "quark.executablePath": {
           "type": "string",
           "default": "quark",
-          "description": "Path to the Quark compiler executable used for running .qrk files."
+          "description": "Path to the Quark compiler used by 'Quark: Run Current File'. If left as 'quark', the extension uses src/core/quark/quark.exe from an open Quark checkout when one exists, then 'quark' from PATH."
         }
       }
     }

@@ -2,20 +2,21 @@
   "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
   "name": "Quark",
   "scopeName": "source.quark",
+  "comment": "Keyword and builtin lists are checked against the compiler by src/core/quark/internal/editordata.",
   "patterns": [
     { "include": "#comments" },
     { "include": "#strings" },
-    { "include": "#function-definitions" },
+    { "include": "#habits" },
+    { "include": "#extern-directives" },
+    { "include": "#declarations" },
+    { "include": "#types" },
+    { "include": "#keywords" },
     { "include": "#builtin-functions" },
     { "include": "#function-calls" },
-    { "include": "#control-keywords" },
-    { "include": "#keyword-values" },
-    { "include": "#constants" },
-    { "include": "#operators" },
-    { "include": "#types" },
     { "include": "#numbers" },
+    { "include": "#operators" },
     { "include": "#punctuation" },
-    { "include": "#identifiers" }
+    { "include": "#properties" }
   ],
   "repository": {
     "comments": {
@@ -27,146 +28,172 @@
       ]
     },
     "strings": {
+      "comment": "Strings end at the closing quote or the end of the line, like the lexer.",
       "patterns": [
         {
           "name": "string.quoted.single.quark",
           "begin": "'",
-          "end": "'",
-          "patterns": [
-            {
-              "name": "constant.character.escape.quark",
-              "match": "\\\\."
-            }
-          ]
+          "end": "'|$",
+          "patterns": [{ "include": "#string-escapes" }]
         },
         {
           "name": "string.quoted.double.quark",
           "begin": "\"",
-          "end": "\"",
-          "patterns": [
-            {
-              "name": "constant.character.escape.quark",
-              "match": "\\\\."
-            }
-          ]
+          "end": "\"|$",
+          "patterns": [{ "include": "#string-escapes" }]
         }
       ]
     },
-    "function-definitions": {
+    "string-escapes": {
       "patterns": [
         {
-          "comment": "Match: fn name(params)",
-          "match": "\\b(fn)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+          "name": "constant.character.escape.quark",
+          "match": "\\\\[nrt0\\\\'\"]"
+        }
+      ]
+    },
+    "habits": {
+      "comment": "Python and R spellings that are not Quark. Highlighted as invalid so they stand out; the comment on each says what to write instead.",
+      "patterns": [
+        {
+          "comment": "Comments start with //",
+          "name": "invalid.illegal.hash-comment.quark",
+          "match": "#.*$"
+        },
+        {
+          "comment": "Use and / or",
+          "name": "invalid.illegal.operator.quark",
+          "match": "&&|\\|\\|"
+        },
+        {
+          "comment": "def -> fn, elif -> elseif, True/False/None -> true/false/null, return is implicit (last expression)",
+          "name": "invalid.illegal.python.quark",
+          "match": "\\b(?:def|elif|True|False|None|return)\\b"
+        },
+        {
+          "comment": "TRUE/FALSE/NULL -> true/false/null, function(x) -> fn(x) ->",
+          "name": "invalid.illegal.r.quark",
+          "match": "\\b(?:TRUE|FALSE|NULL)\\b|\\bfunction(?=\\s*\\()"
+        }
+      ]
+    },
+    "extern-directives": {
+      "patterns": [
+        {
+          "comment": "extern link 'name' / extern include_path 'dir' (contextual words)",
+          "match": "\\b(extern)\\s+(link|include_path)\\b",
+          "captures": {
+            "1": { "name": "keyword.control.import.quark" },
+            "2": { "name": "keyword.control.import.quark" }
+          }
+        }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "comment": "fn name / fn type.name (extern methods)",
+          "match": "\\b(fn)\\s+(?:([A-Za-z_][A-Za-z0-9_]*)(\\.))?([A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
             "1": { "name": "storage.type.function.quark" },
-            "2": { "name": "entity.name.function.quark" }
+            "2": { "name": "support.type.quark" },
+            "3": { "name": "punctuation.accessor.quark" },
+            "4": { "name": "entity.name.function.quark" }
           }
         },
         {
-          "comment": "Match: name = fn(...) -> (lambda assignment)",
-          "match": "([a-zA-Z_][a-zA-Z0-9_]*)\\s*(=)\\s*(fn)",
+          "comment": "name = fn(...) ->",
+          "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*(=)\\s*(fn)\\b",
           "captures": {
             "1": { "name": "entity.name.function.quark" },
             "2": { "name": "keyword.operator.assignment.quark" },
             "3": { "name": "storage.type.function.quark" }
           }
-        }
-      ]
-    },
-    "builtin-functions": {
-      "patterns": [
-        {
-          "comment": "I/O builtins",
-          "match": "\\b(print|println|input|_file_open|_file_read|_file_write|_file_close|_file_seek|_file_exists)(?=\\s*\\()",
-          "name": "support.function.builtin.quark"
         },
         {
-          "comment": "Type conversion builtins",
-          "match": "\\b(len|to_str|to_int|to_float|to_bool|type)(?=\\s*\\()",
-          "name": "support.function.builtin.quark"
-        },
-        {
-          "comment": "Result helper builtins",
-          "match": "\\b(is_ok|is_err|unwrap)(?=\\s*\\()",
-          "name": "support.function.builtin.quark"
-        },
-        {
-          "comment": "Range builtin",
-          "match": "\\b(range|enumerate|vfrom_list)(?=\\s*\\()",
-          "name": "support.function.builtin.quark"
-        },
-        {
-          "comment": "Math builtins",
-          "match": "\\b(abs|min|max|sum|sqrt|floor|ceil|round)(?=\\s*\\()",
-          "name": "support.function.builtin.quark"
-        },
-        {
-          "comment": "String builtins",
-          "match": "\\b(upper|lower|trim|contains|startswith|endswith|replace|concat|split)(?=\\s*\\()",
-          "name": "support.function.builtin.quark"
-        },
-        {
-          "comment": "List builtins",
-          "match": "\\b(push|pop|get|set|insert|remove|slice|reverse|concat|join|enumerate|to_vector)(?=\\s*\\()",
-          "name": "support.function.builtin.quark"
-        },
-        {
-          "comment": "Dict builtins",
-          "match": "\\b(dget|dset|keys|values|items)(?=\\s*\\()",
-          "name": "support.function.builtin.quark"
-        },
-        {
-          "comment": "Vector builtins",
-          "match": "\\b(fillna|astype|to_vector|to_list)(?=\\s*\\()",
-          "name": "support.function.builtin.quark"
-        }
-      ]
-    },
-    "function-calls": {
-      "patterns": [
-        {
-          "comment": "Match: identifier followed by opening paren (function call)",
-          "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)(?=\\s*\\()",
+          "match": "\\b(struct)\\s+([A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
-            "1": { "name": "entity.name.function.call.quark" }
+            "1": { "name": "storage.type.struct.quark" },
+            "2": { "name": "entity.name.type.struct.quark" }
+          }
+        },
+        {
+          "match": "\\b(module)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "storage.type.namespace.quark" },
+            "2": { "name": "entity.name.namespace.quark" }
+          }
+        },
+        {
+          "comment": "use '...' as alias",
+          "match": "\\b(as)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.control.import.quark" },
+            "2": { "name": "entity.name.namespace.quark" }
           }
         }
       ]
     },
-    "control-keywords": {
+    "types": {
+      "patterns": [
+        {
+          "comment": "Annotation after a colon: x: int, field: str. Not when the word starts a literal (list [...], dict {...}).",
+          "match": "(:)\\s*(int|float|str|bool|any|fn|list|dict|vector|result|resource|file_handle)\\b(?!\\s*[\\[{])",
+          "captures": {
+            "1": { "name": "punctuation.separator.annotation.quark" },
+            "2": { "name": "support.type.quark" }
+          }
+        },
+        {
+          "comment": "Struct type annotation: x: Order",
+          "match": "(:)\\s*([A-Z][A-Za-z0-9_]*)\\b",
+          "captures": {
+            "1": { "name": "punctuation.separator.annotation.quark" },
+            "2": { "name": "entity.name.type.quark" }
+          }
+        },
+        {
+          "comment": "Return type after the parameter list: fn f(x) int ->, extern fn f(x) str as",
+          "match": "(\\))\\s*(int|float|str|bool|any|fn|list|dict|vector|result|resource|file_handle|[A-Z][A-Za-z0-9_]*)\\b(?=\\s*(?:->|as\\b|$))",
+          "captures": {
+            "1": { "name": "punctuation.section.parens.end.quark" },
+            "2": { "name": "support.type.quark" }
+          }
+        },
+        {
+          "comment": "Struct literal: Order { ... }",
+          "match": "\\b([A-Z][A-Za-z0-9_]*)(?=\\s*\\{)",
+          "name": "entity.name.type.quark"
+        }
+      ]
+    },
+    "keywords": {
       "patterns": [
         {
           "name": "keyword.control.quark",
-          "match": "\\b(if|else|elseif|for|while|when|in|use|as|module|break|continue)\\b"
+          "match": "\\b(if|elseif|else|for|while|when|in|break|continue)\\b"
+        },
+        {
+          "name": "keyword.control.import.quark",
+          "match": "\\b(use|as|module|extern)\\b"
+        },
+        {
+          "name": "storage.type.quark",
+          "match": "\\b(fn|struct)\\b"
         },
         {
           "name": "keyword.operator.logical.quark",
           "match": "\\b(and|or)\\b"
         },
         {
-          "name": "storage.type.function.quark",
-          "match": "\\b(fn)\\b"
+          "comment": "Literal constructors: list [...], dict {...}, vector [...]; result in annotations",
+          "name": "storage.type.collection.quark",
+          "match": "\\b(list|dict|vector|result)\\b"
         },
         {
-          "name": "variable.language.wildcard.quark",
-          "match": "\\b_\\b"
-        }
-      ]
-    },
-    "keyword-values": {
-      "patterns": [
-        {
-          "name": "keyword.declaration.quark",
-          "match": "\\b(dict|list|vector|result)\\b"
-        },
-        {
-          "name": "keyword.other.result.quark",
+          "name": "support.function.result.quark",
           "match": "\\b(ok|err)\\b"
-        }
-      ]
-    },
-    "constants": {
-      "patterns": [
+        },
         {
           "name": "constant.language.boolean.quark",
           "match": "\\b(true|false)\\b"
@@ -174,13 +201,54 @@
         {
           "name": "constant.language.null.quark",
           "match": "\\b(null)\\b"
+        },
+        {
+          "comment": "Wildcard pattern in when",
+          "name": "variable.language.wildcard.quark",
+          "match": "\\b_\\b"
+        }
+      ]
+    },
+    "builtin-functions": {
+      "patterns": [
+        {
+          "comment": "Free builtins",
+          "name": "support.function.builtin.quark",
+          "match": "\\b(print|println|input|len|to_str|to_int|to_float|to_bool|type|is_ok|is_err|unwrap|range|abs|min|max|sum|all|any|sqrt|floor|ceil|round|enumerate|vfrom_list|_file_open|_file_read|_file_write|_file_close|_file_seek|_file_exists)\\b(?=\\s*\\()"
+        },
+        {
+          "comment": "Builtin methods (str, list, dict, vector), after a dot",
+          "name": "support.function.method.quark",
+          "match": "(?<=\\.)(upper|lower|trim|contains|startswith|endswith|replace|concat|split|slice|push|pop|get|set|insert|remove|reverse|enumerate|join|to_vector|keys|values|items|fillna|astype|to_list)\\b(?=\\s*\\()"
+        }
+      ]
+    },
+    "function-calls": {
+      "patterns": [
+        {
+          "match": "\\b(?!(?:if|elseif|while|for|when|and|or|in|fn|not)\\b)([A-Za-z_][A-Za-z0-9_]*)(?=\\s*\\()",
+          "captures": {
+            "1": { "name": "entity.name.function.call.quark" }
+          }
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "comment": "1.5, 2., .5",
+          "name": "constant.numeric.float.quark",
+          "match": "\\b[0-9]+\\.[0-9]*|(?<![A-Za-z0-9_)\\]])\\.[0-9]+\\b"
+        },
+        {
+          "name": "constant.numeric.integer.quark",
+          "match": "\\b[0-9]+\\b"
         }
       ]
     },
     "operators": {
       "patterns": [
         {
-          "comment": "Arrow must come before arithmetic to avoid - matching first",
           "name": "keyword.operator.arrow.quark",
           "match": "->"
         },
@@ -193,81 +261,38 @@
           "match": "==|!=|<=|>=|<|>"
         },
         {
-          "name": "keyword.operator.exponent.quark",
-          "match": "\\*\\*"
-        },
-        {
           "name": "keyword.operator.arithmetic.quark",
-          "match": "\\+|\\-|\\*|\\/|%"
+          "match": "\\*\\*|\\+|-|\\*|/|%"
         },
         {
           "name": "keyword.operator.assignment.quark",
           "match": "="
         },
         {
-          "name": "keyword.operator.unary.quark",
-          "match": "\\!"
-        }
-      ]
-    },
-    "types": {
-      "patterns": [
-        {
-          "comment": "Type annotations after colon: x: int, param: str",
-          "match": "(?<=:\\s{0,4})\\b(int|float|str|bool|list|dict|vector|result|any)\\b",
-          "name": "support.type.quark"
-        }
-      ]
-    },
-    "numbers": {
-      "patterns": [
-        {
-          "name": "constant.numeric.float.quark",
-          "match": "\\b[0-9]+\\.[0-9]+\\b"
-        },
-        {
-          "name": "constant.numeric.integer.quark",
-          "match": "\\b[0-9]+\\b"
-        }
-      ]
-    },
-    "identifiers": {
-      "patterns": [
-        {
-          "name": "variable.other.property.quark",
-          "match": "(?<=\\.)[a-zA-Z_][a-zA-Z0-9_]*\\b"
+          "name": "keyword.operator.logical.quark",
+          "match": "!"
         }
       ]
     },
     "punctuation": {
       "patterns": [
+        { "name": "punctuation.separator.comma.quark", "match": "," },
+        { "name": "punctuation.separator.colon.quark", "match": ":" },
+        { "name": "punctuation.accessor.quark", "match": "\\." },
+        { "name": "punctuation.section.braces.begin.quark", "match": "\\{" },
+        { "name": "punctuation.section.braces.end.quark", "match": "\\}" },
+        { "name": "punctuation.section.parens.begin.quark", "match": "\\(" },
+        { "name": "punctuation.section.parens.end.quark", "match": "\\)" },
+        { "name": "punctuation.section.brackets.begin.quark", "match": "\\[" },
+        { "name": "punctuation.section.brackets.end.quark", "match": "\\]" }
+      ]
+    },
+    "properties": {
+      "patterns": [
         {
-          "name": "punctuation.separator.quark",
-          "match": ",|:|\\."
-        },
-        {
-          "name": "punctuation.section.block.begin.quark",
-          "match": "\\{"
-        },
-        {
-          "name": "punctuation.section.block.end.quark",
-          "match": "\\}"
-        },
-        {
-          "name": "punctuation.section.parens.begin.quark",
-          "match": "\\("
-        },
-        {
-          "name": "punctuation.section.parens.end.quark",
-          "match": "\\)"
-        },
-        {
-          "name": "punctuation.section.brackets.begin.quark",
-          "match": "\\["
-        },
-        {
-          "name": "punctuation.section.brackets.end.quark",
-          "match": "\\]"
+          "comment": "Field or dict key after a dot",
+          "name": "variable.other.property.quark",
+          "match": "(?<=\\.)[A-Za-z_][A-Za-z0-9_]*\\b"
         }
       ]
     }

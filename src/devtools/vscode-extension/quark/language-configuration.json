@@ -3,44 +3,97 @@
     "lineComment": "//"
   },
   "brackets": [
-    ["{", "}"],
-    ["[", "]"],
-    ["(", ")"]
+    [
+      "{",
+      "}"
+    ],
+    [
+      "[",
+      "]"
+    ],
+    [
+      "(",
+      ")"
+    ]
   ],
   "autoClosingPairs": [
-    { "open": "{", "close": "}" },
-    { "open": "[", "close": "]" },
-    { "open": "(", "close": ")" },
-    { "open": "\"", "close": "\"", "notIn": ["string", "comment"] },
-    { "open": "'", "close": "'", "notIn": ["string", "comment"] }
+    {
+      "open": "{",
+      "close": "}"
+    },
+    {
+      "open": "[",
+      "close": "]"
+    },
+    {
+      "open": "(",
+      "close": ")"
+    },
+    {
+      "open": "\"",
+      "close": "\"",
+      "notIn": [
+        "string",
+        "comment"
+      ]
+    },
+    {
+      "open": "'",
+      "close": "'",
+      "notIn": [
+        "string",
+        "comment"
+      ]
+    }
   ],
   "surroundingPairs": [
-    ["{", "}"],
-    ["[", "]"],
-    ["(", ")"],
-    ["\"", "\""],
-    ["'", "'"]
+    [
+      "{",
+      "}"
+    ],
+    [
+      "[",
+      "]"
+    ],
+    [
+      "(",
+      ")"
+    ],
+    [
+      "\"",
+      "\""
+    ],
+    [
+      "'",
+      "'"
+    ]
   ],
   "folding": {
     "offSide": true
   },
   "wordPattern": "[a-zA-Z_][a-zA-Z0-9_]*",
   "indentationRules": {
-    "increaseIndentPattern": "^\\s*(if|elseif|else|for|while|when|fn|module|impl|struct)\\b.*(:|->)\\s*$",
+    "increaseIndentPattern": "^\\s*(if|elseif|else|for|while|when|fn|module|struct)\\b.*(:|->)\\s*(//.*)?$|^.*->\\s*(//.*)?$",
     "decreaseIndentPattern": "^\\s*(elseif|else)\\b"
   },
   "onEnterRules": [
     {
-      "beforeText": "^\\s*(if|elseif|else|for|while|when|module|struct|impl)\\b.*:\\s*$",
-      "action": { "indent": "indent" }
+      "beforeText": "^\\s*(if|elseif|else|for|while|when|module|struct)\\b.*:\\s*(//.*)?$",
+      "action": {
+        "indent": "indent"
+      }
     },
     {
-      "beforeText": "^\\s*fn\\b.*->\\s*$",
-      "action": { "indent": "indent" }
+      "beforeText": "^.*->\\s*(//.*)?$",
+      "action": {
+        "indent": "indent"
+      }
     },
     {
-      "beforeText": "^\\s*.+->\\s*$",
-      "action": { "indent": "indent" }
+      "beforeText": "^\\s*(break|continue)\\s*(//.*)?$",
+      "action": {
+        "indent": "outdent"
+      }
     }
   ]
 }

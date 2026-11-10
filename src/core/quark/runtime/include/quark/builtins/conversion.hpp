@@ -218,6 +218,15 @@ inline QValue q_type(QValue v) {
     }
 }
 
+// Reports a method call on a receiver whose runtime type has no such method.
+// Used by dynamic method dispatch (receiver type unknown at compile time).
+[[noreturn]] inline void q_no_method(QValue receiver, const char* method) {
+    QValue name = q_type(receiver);
+    q_runtime_reportf("runtime error: type '%s' has no method '%s'\n",
+                      name.data.string_val ? name.data.string_val : "unknown", method);
+    std::exit(1);
+}
+
 inline QValue q_is_ok_builtin(QValue v) {
     return qv_bool(q_is_ok(v));
 }

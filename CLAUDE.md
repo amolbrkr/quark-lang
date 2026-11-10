@@ -51,11 +51,11 @@ All stages live under `src/core/quark/`:
 |-------|---------|---------|
 | Lexer | `lexer/` | Indentation-aware tokenization (emits INDENT/DEDENT tokens) |
 | Parser | `parser/` | Recursive descent → AST (`ast/ast.go` defines `TreeNode`) |
-| Loader | `loader/` | Resolves `use` imports (relative paths and `std/` stdlib), splices ASTs |
+| Loader | `loader/` | Resolves `use` imports (relative paths and `std/` stdlib), splices ASTs, then renames module members to `module__member` (`namespace.go`) so modules and user code can't collide |
 | Analyzer | `types/` | Semantic analysis, scope/symbol tables, closure capture computation, generates `CallPlan` IR |
 | Invariants | `invariants/` | Pre-codegen validation (call plans, return types) |
 | Codegen | `codegen/` | AST → C++17 source generation |
-| Driver | `driver/` | Runs the stages above in order (`CompileFile(path, stage)`); used by every CLI command and by `internal/testutil` |
+| Driver | `driver/` | Runs the stages above in order (`CompileFile(path, stage)`); used by every CLI command except `lex`. `internal/testutil` runs its own lex/parse/analyze on in-memory source and reuses `driver.ResolveImports`/`Validate`/`Generate` |
 | Toolchain | `toolchain/` | clang++/runtime/GC discovery, compile and link steps, precompiled runtime header cache |
 | Entry | `main.go` | CLI dispatch and flag parsing |
 
@@ -67,16 +67,16 @@ Header-only C++17 library at `src/core/quark/runtime/include/quark/`. Key files:
 - `types/closure.hpp` — `QClosure` struct (all function values are closures)
 - `core/gc.hpp` — GC allocation wrappers (`q_malloc`, `q_malloc_atomic`, `q_strdup`)
 - `ops/` — Arithmetic, comparison, logical, member access operators
-- `builtins/` — I/O, string, math, list, dict, conversion builtins
+- `builtins/` — I/O, string, math, list, dict, conversion builtins; each header must be listed in `quark.hpp`
 
-Runtime tests use Catch2: `src/core/quark/runtime/tests/`
+There are no runtime unit tests; the runtime is tested through the Go integration tests (some compile small C++ programs against the headers, e.g. `TestVectorArrowLayout`).
 
 ## Naming Conventions (Critical)
 
 | Prefix | Domain | Examples |
 |--------|--------|---------|
 | `q_` | Runtime builtins/helpers (C++ runtime code) | `q_add()`, `q_print()`, `q_malloc()` |
-| `quark_` | ALL user-defined names in generated C++ (compiler codegen output) | `quark_main()`, `quark_x` |
+| `quark_` | User-defined names in generated C++ (compiler codegen output); `extern fn` symbols keep their C++ name and get `_thunk_<symbol>` wrappers | `quark_main()`, `quark_x` |
 | `qv_` | Value constructors | `qv_int()`, `qv_string()`, `qv_null()` |
 | `QValue`, `QList`, `QClosure` | Type names (PascalCase) | — |
 
@@ -85,21 +85,22 @@ Runtime tests use Catch2: `src/core/quark/runtime/tests/`
 ## Key Architecture Details
 
 - **All values are `QValue`** — a tagged union with type field. Runtime ops must check type before accessing union fields; return `qv_null()` on mismatch.
-- **All function values are `QClosure*`** — even non-capturing functions. Generated functions take `QClosure* _cl` as hidden first parameter. Direct calls pass `nullptr`.
-- **Variable storage is type-and-capture-driven**: five tiers selected at first declaration — `QCell*` (captured), `long long` (static `int`, not captured), `double` (static `float`, not captured), `bool` (static `bool`, not captured), `QValue` (everything else). The analyzer's `GetCapturedByFunction` and `GetNodeTypes` outputs drive this. Codegen tracks cells in `cellVars` and scalar tiers in `varTiers`. `generateIdentifier` boxes scalars back to `QValue` at read sites so all downstream codegen works uniformly with `QValue` expressions.
-- **Operator lowering**: arithmetic/comparison ops on two scalar atoms (literals or scalar-tiered locals) emit raw C++ operators instead of `q_add` etc. Codegen's `scalarExpr()` detects scalar atoms; result is boxed to `QValue` for the caller.
-- **Memory** — Boehm GC vendored at `deps/bdwgc/`: only the public headers, prebuilt static libraries in `lib/<GOOS>-<GOARCH>/` (rebuilt with `build-prebuilt.sh`) and LICENSE are committed; the GC source is gitignored. `toolchain.EnsureGC` uses the prebuilt library, else a local `build-static/` CMake build (see `deps/bdwgc/VENDORED.md`). Use `q_malloc_atomic()` for data without pointers (strings, numeric buffers).
+- **All function values are `QClosure*`** — even non-capturing functions. Generated functions take `QClosure* _cl` as hidden first parameter. Named functions desugar to mutable bindings and are normally called through `q_callN(closure, ...)`; only calls that bypass the closure (fully annotated `DispatchNative` functions, `DispatchDirect`, thunks) pass `nullptr`.
+- **Variable storage is type-and-capture-driven**: five tiers selected at first declaration — `QCell*` (captured), `long long` (static `int`, not captured), `double` (static `float`, not captured), `bool` (static `bool`, not captured), `QValue` (everything else). `Analysis.CapturedByFunction` and `Analysis.NodeTypes` (passed via `SetAnalysis`) drive this. Codegen tracks cells in `cellVars` and scalar tiers in `varTiers`. `generateIdentifier` boxes scalars back to `QValue` at read sites so all downstream codegen works uniformly with `QValue` expressions.
+- **Operator lowering**: `scalarExpr()` recursively lowers arithmetic, unary `-` and comparisons whose operands are all scalars (literals, scalar-tiered locals, or lowered sub-expressions). Int `+ - * %` use overflow-checked `q_checked_add/sub/mul/mod`, `/` uses `q_checked_fdiv` (always `double`), floats use raw C++ operators; `**` is never lowered (`q_pow`). The result stays unboxed when assigned to a scalar-tier variable or used as a condition, otherwise it's boxed to `QValue`.
+- **Conditions** (`if`/`while`/`and`/`or`/`not`) use `q_truthy()` truthiness rules; `and`/`or` are short-circuit lambdas that return an operand.
+- **Memory** — Boehm GC vendored at `deps/bdwgc/`: only the public headers, prebuilt static libraries in `lib/<GOOS>-<GOARCH>/`, `build-prebuilt.sh` (rebuilds them), `VENDORED.md` and LICENSE are committed; the GC source is gitignored. `toolchain.EnsureGC` uses the prebuilt library, else a local `build-static/` CMake build (see `deps/bdwgc/VENDORED.md`). Use `q_malloc_atomic()` for data without pointers (strings, numeric buffers).
 - **Analyzer → codegen handoff** — the analyzer returns one `types.Analysis` struct (captures, call plans, node types, native/extern fns, struct types, ...), passed to codegen with `SetAnalysis`. New analyzer outputs go in that struct, not new setters.
 - **CallPlan** (`ir/call.go`) — IR metadata attached to each call site by the analyzer. Tracks call kind (builtin vs user), arity, default arg filling. Codegen reads these instead of re-analyzing.
-- **Builtin catalog** (`builtins/`) — shared metadata (name, arity, signatures) used by both analyzer and codegen. Methods are indexed by `(ReceiverType, methodName)` pair, separate from free functions.
+- **Builtin catalog** (`builtins/`) — shared metadata (name, arity, signatures) used by the analyzer and `invariants/`; codegen never reads it and emits `CallPlan.RuntimeSymbol` instead. Methods are indexed by `(ReceiverType, methodName)` pair, separate from free functions.
 - **Native libraries (FFI)** — `extern link 'name'` / `extern include_path 'dir'` are collected by the loader into `driver.Unit.Native` (link order follows the import graph); `toolchain/native.go` resolves libraries before linking (`QK-FFI-002`), adds `-L`/rpath/`-l` args, and maps C++ errors in glue headers to `QK-FFI-003`. `integration_ffi_test.go` builds the C test libraries in `src/testfiles/ffi/` at test time; `TestStdBlas` skips when OpenBLAS isn't installed. Spec: `ffi_v0_1_spec.md`.
-- **Method dispatch** — When codegen sees `IsMethod=true` on a CallPlan, the receiver expression is injected as the first runtime argument (e.g., `"hello".upper()` becomes `q_upper(receiver_val)`).
+- **Method dispatch** — When codegen sees `IsMethod=true` on a CallPlan, the receiver expression is injected as the first runtime argument (e.g., `"hello".upper()` becomes `q_upper(receiver_val)`). When the receiver's type is unknown at compile time (`any`, e.g. from `unwrap`), the plan is `DispatchDynamicMethod` and codegen switches on the runtime type tag over `MethodCandidates`.
 
 ## Adding a New Builtin
 
 1. Add a `Spec` entry in `builtins/catalog.go` (set `ReceiverType` for methods, leave empty for free functions)
-2. Implement the C++ function in `runtime/include/quark/builtins/*.hpp` with `q_` prefix
-3. Analyzer and codegen pick it up automatically via the catalog
+2. Implement the C++ function in `runtime/include/quark/builtins/*.hpp` with `q_` prefix (a new header must also be added to the include list in `runtime/include/quark/quark.hpp`)
+3. Analyzer and codegen pick it up automatically via the catalog (codegen through the CallPlan's `RuntimeSymbol`)
 4. Add a smoke test in `src/testfiles/smoke_*.qrk`
 5. Regenerate the editor extension's data: `go test ./internal/editordata -update` (and add the name to the grammar's `builtin-functions` pattern; the test says so if it's missing)
 
@@ -118,7 +119,7 @@ Smoke test programs in `src/testfiles/smoke_*.qrk`. Integration tests in `src/co
 - `dict { key: val }` syntax
 - Pipe operator: `x | foo() | bar()`
 - Result types: `ok(val)` / `err(val)` with `unwrap()`
-- Type annotations: `fn add(x: int, y: int) int -> x + y` (compile-time only)
+- Type annotations: `fn add(x: int, y: int) int -> x + y` (compile-time only for Quark functions — no runtime check or int→float widening; `extern fn` arguments are converted/checked at runtime)
 - Default params: `fn foo(x: int, y: int = 0) -> x + y` (literals only)
 - String type is `str` (not `string`)
-- No generic types — only basic annotations: `int`, `float`, `str`, `bool`, `list`, `dict`
+- Annotation types: `int`, `float`, `str`, `bool`, `any`, `list`, `dict`, `vector`, `result`, `resource`, `file_handle` (assignable to `resource`), and struct names. No generic/element types (`list[int]` doesn't parse)

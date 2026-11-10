@@ -21,7 +21,7 @@ func TestCompileSource_StopsAtRequestedStage(t *testing.T) {
 	}
 
 	emitted := driver.CompileSource(src, "t.qrk", driver.StageEmit)
-	if emitted.Failed() || !strings.Contains(emitted.CPP, "int main()") {
+	if emitted.Failed() || !strings.Contains(emitted.CPP, "int main(int argc, char** argv)") {
 		t.Fatalf("StageEmit: failed=%v cpp=%q", emitted.Failed(), emitted.CPP)
 	}
 }

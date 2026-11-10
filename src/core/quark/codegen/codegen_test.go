@@ -320,8 +320,8 @@ func TestCodegen_ModuleQualifiedCallLowersDirectly(t *testing.T) {
 		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
 	}
 	// The alias m.myfloor resolves to the module's function symbol, which is
-	// a plain (uncaptured) QValue at top level.
-	if !strings.Contains(res.CPP, "q_call1(quark_myfloor, qv_int(3))") {
+	// a plain (uncaptured) QValue at top level, named module__member.
+	if !strings.Contains(res.CPP, "q_call1(quark_math__myfloor, qv_int(3))") {
 		t.Fatalf("expected module-qualified call to lower to resolved module symbol value, cpp=\n%s", res.CPP)
 	}
 	if strings.Contains(res.CPP, "dot-call syntax is not supported") {
@@ -925,7 +925,7 @@ func TestCodegen_ForwardDeclaresLambdas(t *testing.T) {
 	}
 	// Forward declarations should appear before main
 	declIdx := strings.Index(res.CPP, "QValue quark__lambda1(QClosure*")
-	mainIdx := strings.Index(res.CPP, "int main()")
+	mainIdx := strings.Index(res.CPP, "int main(int argc, char** argv)")
 	if declIdx == -1 {
 		t.Fatalf("expected forward declaration for lambda, cpp=\n%s", res.CPP)
 	}

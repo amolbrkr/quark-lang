@@ -300,7 +300,26 @@ func (g *Generator) emitSourceLoc(node *ast.TreeNode) {
 	if node == nil || node.Token == nil {
 		return
 	}
-	g.emitLine("q_set_source_loc(\"%s\", %d, %d);", escapeCppString(g.sourceName), node.Token.Line, node.Token.Column)
+	// Stdlib code keeps the caller's location, so an error raised inside
+	// std/... (bad arguments, mostly) points at the user's call.
+	if isStdlibSource(node) {
+		return
+	}
+	g.emitLine("q_set_source_loc(\"%s\", %d, %d);", escapeCppString(g.sourceFileOf(node)), node.Token.Line, node.Token.Column)
+}
+
+// isStdlibSource reports whether a node was spliced in from a std/ module.
+func isStdlibSource(node *ast.TreeNode) bool {
+	return node != nil && strings.HasPrefix(node.SourceFile, "std/")
+}
+
+// sourceFileOf is the file a node came from: its SourceFile when it was spliced
+// in from an imported module, otherwise the root file being compiled.
+func (g *Generator) sourceFileOf(node *ast.TreeNode) string {
+	if node != nil && node.SourceFile != "" {
+		return node.SourceFile
+	}
+	return g.sourceName
 }
 
 // sanitizeVarName prefixes all user variable names with quark_ to avoid
@@ -586,11 +605,12 @@ func (g *Generator) Generate(node *ast.TreeNode) string {
 	}
 
 	// Generate main function
-	g.emit("\nint main() {\n")
+	g.emit("\nint main(int argc, char** argv) {\n")
 	g.indentLevel++
 	// Set root as currentFuncNode so isCaptured() works for module-scope variables.
 	g.currentFuncNode = node
 	g.emitLine("q_gc_init();")
+	g.emitLine("q_set_args(argc, argv);")
 	g.predeclareMainFunctionBindings(node)
 
 	// Initialize module body bindings so imported symbols are available at runtime.
@@ -811,6 +831,7 @@ func (g *Generator) generateQValueFunction(node *ast.TreeNode, funcName string, 
 
 	g.emit("QValue quark_%s(%s) {\n", funcName, strings.Join(params, ", "))
 	g.indentLevel++
+	g.emitLine("QSourceLocGuard _loc_guard;")
 
 	for _, param := range argsNode.Children {
 		paramName := g.paramName(param)
@@ -871,6 +892,7 @@ func (g *Generator) generateNativeFunction(node *ast.TreeNode, funcName string, 
 
 	g.emit("%s quark_%s(%s) {\n", retType, funcName, strings.Join(params, ", "))
 	g.indentLevel++
+	g.emitLine("QSourceLocGuard _loc_guard;")
 
 	for i, paramName := range paramNames {
 		if paramName == "" {
@@ -1045,6 +1067,11 @@ func (g *Generator) generateModuleBindings(node *ast.TreeNode) {
 	}
 	for _, child := range bodyNode.Children {
 		if child == nil || child.NodeType == ast.UseNode || child.NodeType == ast.ModuleNode {
+			continue
+		}
+		// As at top level: a native function is a C++ function (plus thunk),
+		// so it gets no QValue binding that would hide it.
+		if isFunctionBindingAssignmentNode(child) && g.nativeFns[child.Children[0].TokenLiteral()] != nil {
 			continue
 		}
 		g.emitSourceLoc(child)
@@ -1637,6 +1664,27 @@ func generateBuiltinCall(runtimeSymbol string, args []string) string {
 	return fmt.Sprintf("%s(%s)", runtimeSymbol, strings.Join(args, ", "))
 }
 
+// generateDynamicMethodCall lowers a DispatchDynamicMethod call to a switch on the
+// receiver's runtime type tag. args[0] is the receiver temp. The switch lives in an
+// immediately-invoked lambda so the call stays an expression and is evaluated only
+// where the expression is (e.g. not when short-circuited away).
+func (g *Generator) generateDynamicMethodCall(node *ast.TreeNode, plan *ir.CallPlan, args []string) string {
+	receiver := args[0]
+	var b strings.Builder
+	fmt.Fprintf(&b, "([&]() -> QValue { switch (%s.type) { ", receiver)
+	for _, c := range plan.MethodCandidates {
+		fmt.Fprintf(&b, "case QValue::%s: return %s; ", c.ValueTag, generateBuiltinCall(c.RuntimeSymbol, args))
+	}
+	b.WriteString("default: ")
+	// Point the error at this call, not at the last statement that ran (which
+	// may be inside a function called by an argument).
+	if node != nil && node.Token != nil && !isStdlibSource(node) {
+		fmt.Fprintf(&b, "q_set_source_loc(\"%s\", %d, %d); ", escapeCppString(g.sourceFileOf(node)), node.Token.Line, node.Token.Column)
+	}
+	fmt.Fprintf(&b, "q_no_method(%s, \"%s\"); } }())", receiver, escapeCppString(plan.CalleeName))
+	return b.String()
+}
+
 func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
 	if len(node.Children) < 2 {
 		return "qv_null()"
@@ -1683,6 +1731,8 @@ func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
 			return "qv_null()"
 		}
 		return generateBuiltinCall(plan.RuntimeSymbol, args)
+	case ir.DispatchDynamicMethod:
+		return g.generateDynamicMethodCall(funcNode, plan, args)
 	case ir.DispatchDirect:
 		if plan.RuntimeSymbol == "" {
 			panicICEf("INV-CALLPLAN-RUNTIME", node, "direct call '%s' missing runtime symbol", plan.CalleeName)
@@ -1819,6 +1869,8 @@ func (g *Generator) generatePipe(node *ast.TreeNode) string {
 			return "qv_null()"
 		}
 		return generateBuiltinCall(plan.RuntimeSymbol, args)
+	case ir.DispatchDynamicMethod:
+		return g.generateDynamicMethodCall(funcNode, plan, args)
 	case ir.DispatchDirect:
 		if plan.RuntimeSymbol == "" {
 			panicICEf("INV-CALLPLAN-RUNTIME", rightNode, "direct call '%s' missing runtime symbol", plan.CalleeName)
@@ -2075,7 +2127,10 @@ func (g *Generator) isRangeCall(node *ast.TreeNode) ([]*ast.TreeNode, bool) {
 }
 
 // emitRangeScalar generates a long long expression for a range() argument.
-func (g *Generator) emitRangeScalar(argNode *ast.TreeNode) string {
+// Scalar ints are used as is and scalar floats truncated, like the q_range
+// builtins; any other value goes through q_range_arg, which checks its type at
+// runtime. sig and what name the call form and argument for that error message.
+func (g *Generator) emitRangeScalar(argNode *ast.TreeNode, sig, what string) string {
 	if raw, tier := g.scalarExpr(argNode); tier == "long long" {
 		return raw
 	}
@@ -2083,7 +2138,7 @@ func (g *Generator) emitRangeScalar(argNode *ast.TreeNode) string {
 		return fmt.Sprintf("(long long)(%s)", raw)
 	}
 	expr := g.generateExpr(argNode)
-	return fmt.Sprintf("(%s).data.int_val", expr)
+	return fmt.Sprintf("q_range_arg(%s, \"%s\", \"%s\")", expr, sig, what)
 }
 
 // generateForRange emits a raw C++ for-loop for `for i in range(...)`.
@@ -2096,18 +2151,18 @@ func (g *Generator) generateForRange(cVarName string, varName string, args []*as
 	case 1:
 		// range(end): 0 to end, step 1
 		g.emitLine("long long %s = 0;", startTemp)
-		g.emitLine("long long %s = %s;", endTemp, g.emitRangeScalar(args[0]))
+		g.emitLine("long long %s = %s;", endTemp, g.emitRangeScalar(args[0], "range(end)", "end"))
 		g.emitLine("long long %s = 1;", stepTemp)
 	case 2:
 		// range(start, end): auto-direction
-		g.emitLine("long long %s = %s;", startTemp, g.emitRangeScalar(args[0]))
-		g.emitLine("long long %s = %s;", endTemp, g.emitRangeScalar(args[1]))
+		g.emitLine("long long %s = %s;", startTemp, g.emitRangeScalar(args[0], "range(start, end)", "start"))
+		g.emitLine("long long %s = %s;", endTemp, g.emitRangeScalar(args[1], "range(start, end)", "end"))
 		g.emitLine("long long %s = (%s <= %s) ? 1LL : -1LL;", stepTemp, startTemp, endTemp)
 	default:
 		// range(start, end, step)
-		g.emitLine("long long %s = %s;", startTemp, g.emitRangeScalar(args[0]))
-		g.emitLine("long long %s = %s;", endTemp, g.emitRangeScalar(args[1]))
-		g.emitLine("long long %s = %s;", stepTemp, g.emitRangeScalar(args[2]))
+		g.emitLine("long long %s = %s;", startTemp, g.emitRangeScalar(args[0], "range(start, end, step)", "start"))
+		g.emitLine("long long %s = %s;", endTemp, g.emitRangeScalar(args[1], "range(start, end, step)", "end"))
+		g.emitLine("long long %s = q_range_step(%s);", stepTemp, g.emitRangeScalar(args[2], "range(start, end, step)", "step"))
 	}
 
 	g.emitLine("for (long long %s = %s; %s > 0 ? (%s < %s) : (%s > %s); %s += %s) {",
@@ -2517,6 +2572,7 @@ func (g *Generator) generateLambdaFunc(node *ast.TreeNode) {
 
 	g.emit("QValue quark_%s(%s) {\n", lambdaName, strings.Join(params, ", "))
 	g.indentLevel++
+	g.emitLine("QSourceLocGuard _loc_guard;")
 
 	for _, param := range argsNode.Children {
 		paramName := g.paramName(param)

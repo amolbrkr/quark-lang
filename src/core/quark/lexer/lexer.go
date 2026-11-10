@@ -13,6 +13,10 @@ type Lexer struct {
 	line         int
 	column       int
 
+	// stringHasNul is set by readString when a literal contains the \0 escape,
+	// which strings can't hold (they are NUL-terminated C strings).
+	stringHasNul bool
+
 	// For indentation handling
 	parenCount   int
 	bracketCount int // tracks [] nesting
@@ -350,13 +354,14 @@ func (l *Lexer) nextRawToken() token.Token {
 			return tok
 		}
 		tok = newToken(token.UNDERSCORE, l.ch, tok.Line, tok.Column)
-	case '\'':
+	case '\'', '"':
 		tok.Type = token.STRING
-		tok.Literal = l.readString('\'')
-		return tok
-	case '"':
-		tok.Type = token.STRING
-		tok.Literal = l.readString('"')
+		tok.Literal = l.readString(l.ch)
+		if l.stringHasNul {
+			l.stringHasNul = false
+			tok.Type = token.ILLEGAL
+			tok.Literal = "'\\0' is not supported in string literals: strings can't contain NUL characters"
+		}
 		return tok
 	case '\n':
 		l.readChar()
@@ -477,6 +482,25 @@ func (l *Lexer) readNumber() (token.TokenType, string) {
 		}
 	}
 
+	// Exponent: 1e3, 2.5E-4, 6e+2 (a digit must follow e/E and its sign).
+	if l.position > position && (l.ch == 'e' || l.ch == 'E') {
+		next := l.peekChar()
+		afterSign := byte(0)
+		if l.readPosition+1 < len(l.input) {
+			afterSign = l.input[l.readPosition+1]
+		}
+		if isDigit(next) || ((next == '+' || next == '-') && isDigit(afterSign)) {
+			isFloat = true
+			l.readChar() // consume e/E
+			if l.ch == '+' || l.ch == '-' {
+				l.readChar()
+			}
+			for isDigit(l.ch) {
+				l.readChar()
+			}
+		}
+	}
+
 	if isFloat {
 		return token.FLOAT, l.input[position:l.position]
 	}
@@ -525,7 +549,7 @@ func (l *Lexer) readString(quote byte) string {
 				l.readChar()
 				continue
 			case '0':
-				buf = append(buf, 0)
+				l.stringHasNul = true
 				l.readChar()
 				l.readChar()
 				continue

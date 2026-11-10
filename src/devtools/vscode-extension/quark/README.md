@@ -53,7 +53,7 @@ Reload the window afterwards. To update, rebuild and install again; to remove it
 
 | Setting | Default | Description |
 |---|---|---|
-| `quark.executablePath` | `quark` | Compiler used by **Quark: Run Current File**. Left at `quark`, the extension uses `src/core/quark/quark.exe` from an open Quark checkout if it exists, then `quark` from PATH. |
+| `quark.executablePath` | `quark` | Compiler used by **Quark: Run Current File**. Left at `quark`, the extension uses `src/core/quark/quark.exe` (or `src/core/quark/quark`) from an open Quark checkout if it exists, then `quark` from PATH. |
 
 ## Development
 

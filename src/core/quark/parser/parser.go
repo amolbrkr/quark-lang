@@ -372,7 +372,7 @@ func (p *Parser) isTypeToken() bool {
 		return true
 	case token.ID:
 		switch p.curToken.Literal {
-		case "int", "float", "str", "bool", "any":
+		case "int", "float", "str", "bool", "any", "resource", "file_handle":
 			return true
 		}
 		// User-defined struct names are valid types
@@ -715,6 +715,10 @@ func (p *Parser) parsePattern() *ast.TreeNode {
 		switch p.curToken.Type {
 		case token.OK, token.ERR:
 			tok := p.curToken
+			if len(node.Children) > 0 {
+				p.addError("%s patterns cannot be combined with other patterns using 'or'", tok.Literal)
+				return nil
+			}
 			patternExpr = ast.NewNode(ast.ResultPatternNode, &tok)
 			p.nextToken()
 			if p.curToken.Type != token.ID && p.curToken.Type != token.UNDERSCORE {
@@ -727,7 +731,11 @@ func (p *Parser) parsePattern() *ast.TreeNode {
 			p.nextToken()
 			node.AddChild(patternExpr)
 			// Result patterns cannot be combined with additional OR patterns
-			break
+			if p.curToken.Type == token.OR {
+				p.addError("%s patterns cannot be combined with other patterns using 'or'", tok.Literal)
+				return nil
+			}
+			return p.finishPatternNode(node)
 		case token.UNDERSCORE:
 			// Wildcard pattern
 			tok := p.curToken

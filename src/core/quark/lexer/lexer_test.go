@@ -1,6 +1,7 @@
 package lexer_test
 
 import (
+	"strings"
 	"testing"
 
 	"quark/internal/testutil"
@@ -221,7 +222,7 @@ func TestStringLiteral_EscapeSequences(t *testing.T) {
 		{`'\t'`, "\t"},
 		{`'\r'`, "\r"},
 		{`'\\'`, "\\"},
-		{`'\0'`, "\x00"},
+		{`'\\0'`, "\\0"}, // escaped backslash, then a plain 0
 		{`'\''`, "'"},
 		{`"hello \"world\""`, `hello "world"`},
 	}
@@ -239,6 +240,26 @@ func TestStringLiteral_EscapeSequences(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("input %s: no STRING token found", tt.input)
+		}
+	}
+}
+
+// TestStringLiteral_NulEscapeRejected: strings are NUL-terminated, so a \0
+// escape would silently truncate them; the lexer reports it instead.
+func TestStringLiteral_NulEscapeRejected(t *testing.T) {
+	for _, input := range []string{`'a\0b'`, `"\0"`} {
+		toks := testutil.Lex(input + "\n")
+		found := false
+		for _, tok := range toks {
+			if tok.Type == token.STRING {
+				t.Fatalf("input %s: expected an ILLEGAL token, got STRING %q", input, tok.Literal)
+			}
+			if tok.Type == token.ILLEGAL && strings.Contains(tok.Literal, "not supported in string literals") {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("input %s: no ILLEGAL token explaining the \\0 escape", input)
 		}
 	}
 }
@@ -493,5 +514,27 @@ func TestCRLF_NormalizedToNewline(t *testing.T) {
 	}
 	if newlineCount < 1 {
 		t.Fatalf("expected NEWLINE tokens from CRLF input, got %d", newlineCount)
+	}
+}
+
+// TestNumber_Exponent: exponent forms lex as one FLOAT token; an `e` that
+// isn't followed by digits is left alone.
+func TestNumber_Exponent(t *testing.T) {
+	cases := []struct {
+		input string
+		typ   token.TokenType
+		lit   string
+	}{
+		{"1e3", token.FLOAT, "1e3"},
+		{"2.5E-4", token.FLOAT, "2.5E-4"},
+		{"6e+2", token.FLOAT, "6e+2"},
+		{"7e", token.INT, "7"},
+		{"8e-x", token.INT, "8"},
+	}
+	for _, tc := range cases {
+		toks := testutil.Lex(tc.input + "\n")
+		if len(toks) == 0 || toks[0].Type != tc.typ || toks[0].Literal != tc.lit {
+			t.Fatalf("%s: got %v, want %s(%s)", tc.input, toks, tc.typ, tc.lit)
+		}
 	}
 }

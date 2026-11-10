@@ -182,6 +182,11 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 			return rightType
 		}
 		if target.NodeType != ast.IdentifierNode {
+			// `a = b = 1` parses as `(a = b) = 1`; say what is actually wrong.
+			if target.NodeType == ast.OperatorNode && target.Token != nil && target.Token.Type == token.EQUALS {
+				a.errorAt(target, "chained assignment is not supported; assign each variable separately (a = 1, then b = 1)")
+				return rightType
+			}
 			a.errorAt(target, "left side of assignment must be an identifier")
 			return rightType
 		}

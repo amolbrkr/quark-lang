@@ -83,10 +83,10 @@ extern include_path 'include'   // new: add an include search path, relative to 
 - The directive is `include_path`, not `include`, because `extern '<path>'` already `#include`s a header. `extern include 'duckdb.h'` would read as if it did the same (§9.1, D2).
 - `extern link 'name'` means `-lname`. The library is searched for in the `--lib-path` directories, then the `QUARK_LIB_PATH` entries, then the linker's defaults (`LIBRARY_PATH`, then clang's search path from `clang++ -print-search-dirs`; on macOS also the SDK's `usr/lib`).
 - Paths in directives are relative to the declaring file and point at files shipped with the module. Where a library is installed on a given machine belongs in `--lib-path`/`--include-path` or the environment variables, never in `.qrk` source. For that reason there is no directive for library search paths.
-- Directives may appear in any module, including stdlib modules. The loader collects them across all imported files and removes duplicates.
+- Directives may appear in any file, including stdlib modules, but only at the top level of the file: inside a `module` block or any other block they are reported as `QK-LOAD-001`. The loader collects them across all imported files and removes duplicates.
 - Link order: a module's libraries come before those of the modules it imports. When a library is requested more than once, its last position is kept, so it stays after everything that needs it. This matters for static libraries.
 - Reserved: words after the string (for example `extern link 'duckdb' static`) are reserved for per-library options. v0.1 defines none and reports `QK-PARSE-001` for anything after the string.
-- Each `extern link` becomes one library record internally (`NativeLib{Name, Loc, Options}`), not a bare flag string. A grouped block form or per-library options can then be added later without changing the driver or toolchain.
+- Each `extern link` becomes one library record internally (`loader.NativeLib{Name, File, Line, Column}`), not a bare flag string. A grouped block form or per-library options (an `Options` field) can then be added later without changing the driver or toolchain.
 
 CLI additions for `run` and `build`, all repeatable:
 
@@ -104,10 +104,10 @@ Compiler changes:
 
 | Package | Change |
 |---|---|
-| `ast` / `parser` | Rename the existing `ExternSourceNode` (the `extern '<path>'` header form) to `ExternHeaderNode`, so "source" means only P2's `.cpp` files. Parse `extern link`, `extern include_path` and `extern source` into `ExternLinkNode`, `ExternIncludePathNode` and `ExternCppSourceNode`. |
+| `ast` / `parser` | Rename the existing `ExternSourceNode` (the `extern '<path>'` header form) to `ExternHeaderNode`, so "source" means only P2's `.cpp` files. Parse `extern link` and `extern include_path` into `ExternLinkNode` and `ExternIncludePathNode`. `extern source` (`ExternCppSourceNode`) comes with P2; until then it is reported as `QK-PARSE-001`. |
 | `loader` | Resolve `extern include_path` paths (and P2 `extern source` paths) to absolute paths, like `extern '<path>'` today. |
-| `driver` | Collect the directives into `Unit.Native` (`NativeDeps{IncludeDirs, Libs []NativeLib, Sources}`), keeping the source location of each. |
-| `toolchain` | Add `Options.IncludeDirs`, `LibDirs`, `Libs`, `Sources`, `LinkArgs`. Add library resolution with diagnostics. `Link` emits `-L`, `-l` and rpath arguments. |
+| `loader` / `driver` | The loader collects the directives into `loader.NativeDeps{IncludeDirs, Libs []NativeLib, Headers}`, keeping the source location of each; the driver stores it in `Unit.Native`. P2 will add a `Sources` field. |
+| `toolchain` | Add `Options.IncludeDirs`, `LibDirs`, `Libs`, `LinkArgs`, and `GlueFiles` (the glue headers, for `QK-FFI-003`). Add library resolution with diagnostics. `Link` emits `-L`, `-l` and rpath arguments. `Options.Sources` comes with P2. |
 | `main.go` | Register the new flags on the shared `buildFlags`. |
 
 Codegen does not change: `#include` emission already works, and linking is the toolchain's job.
@@ -194,7 +194,7 @@ New codes in `error_codes.md`:
 | `QK-FFI-003` | build | glue source failed to compile (names the glue file, not the generated C++) |
 | `QK-FFI-004` | runtime | wrong handle kind, or use of a closed handle |
 
-When a compile error is inside glue code (an `extern` header or `extern source` file), report `QK-FFI-003` naming that file and skip the generated-C++ dump. Today clang's message does point at the right line in the glue header, but `quark run` then prints the entire generated C++ underneath it, which buries the real error.
+When a compile error is inside glue code (an `extern` header or `extern source` file), report `QK-FFI-003` naming that file and skip the generated-C++ dump. Before Phase 1, clang's message pointed at the right line in the glue header, but `quark run` then printed the entire generated C++ underneath it, which buried the real error. Phase 1 implements this for glue headers: for `QK-FFI-002` and `QK-FFI-003`, `quark run` prints only the diagnostic (`reportBuildError` in `main.go`). Other C++ compile or link errors print clang's output and a short note (check `extern fn` symbols and headers, otherwise it's a compiler bug; rerun with `--debug` to keep the C++), not the generated program.
 
 ## 5. Providers
 
@@ -272,7 +272,8 @@ println(y[0])                    // 4: inputs are never modified
 
 **Tests.**
 
-- `smoke_blas.qrk`: each function on small vectors with known results; `axpy` and `scal` leave their inputs unchanged; each error case (length mismatch, nulls, i64 input, bad `gemv` dimensions) fails at runtime with the expected message. Skipped when OpenBLAS isn't found, like the tests that need clang++.
+- `smoke_blas.qrk`: each function on small vectors with known results; `axpy` and `scal` leave their inputs unchanged.
+- `TestStdBlas` (`integration_ffi_test.go`) runs `smoke_blas.qrk` and one generated program per error case (length mismatch, nulls, i64 input, bad `gemv` dimensions), each of which must fail at runtime with the expected message. Skipped when OpenBLAS isn't found, like the tests that need clang++.
 - Benchmark (not in CI): `dot` over 10M elements, against the same loop written in Quark.
 
 ### 5.4 SQLite: `std/sqlite`

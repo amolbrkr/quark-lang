@@ -25,6 +25,7 @@
 #include "core/gc.hpp"
 #include "core/value.hpp"
 #include "core/diagnostics.hpp"
+#include "core/process.hpp"
 #include "core/checked.hpp"
 #include "core/cell.hpp"
 #include "types/closure.hpp"
@@ -46,7 +47,6 @@
 // Operations
 #include "ops/arithmetic.hpp"
 #include "ops/comparison.hpp"
-#include "ops/logical.hpp"
 
 // Built-in functions
 #include "builtins/io.hpp"
@@ -55,6 +55,7 @@
 #include "builtins/math.hpp"
 #include "builtins/dict.hpp"
 #include "builtins/strings.hpp"
+#include "builtins/sort.hpp"
 // Member access (must come after types and builtins)
 #include "ops/member.hpp"
 

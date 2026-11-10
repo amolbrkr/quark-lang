@@ -58,12 +58,12 @@ inline QTable* q_table_create(const QStructDef* def, int nrows) {
 // q_table_get_col returns the QValue (VAL_VECTOR) for column index i.
 inline QValue q_table_get_col(QValue tbl, int col_idx) {
     if (tbl.type != QValue::VAL_TABLE || !tbl.data.table_val) {
-        fprintf(stderr, "QK-RUNTIME-001: q_table_get_col: expected table\n");
+        q_runtime_reportf("runtime error: q_table_get_col: expected table\n");
         exit(1);
     }
     QTable* t = tbl.data.table_val;
     if (col_idx < 0 || col_idx >= t->ncols) {
-        fprintf(stderr, "QK-RUNTIME-001: q_table_get_col: column index %d out of range (ncols=%d)\n", col_idx, t->ncols);
+        q_runtime_reportf("runtime error: q_table_get_col: column index %d out of range (ncols=%d)\n", col_idx, t->ncols);
         exit(1);
     }
     return t->cols[col_idx];
@@ -72,7 +72,7 @@ inline QValue q_table_get_col(QValue tbl, int col_idx) {
 // q_table_get_col_by_name returns the column vector by name. Fatal if not found.
 inline QValue q_table_get_col_by_name(QValue tbl, const char* name) {
     if (tbl.type != QValue::VAL_TABLE || !tbl.data.table_val) {
-        fprintf(stderr, "QK-RUNTIME-001: q_table_get_col_by_name: expected table\n");
+        q_runtime_reportf("runtime error: q_table_get_col_by_name: expected table\n");
         exit(1);
     }
     QTable* t = tbl.data.table_val;
@@ -81,7 +81,7 @@ inline QValue q_table_get_col_by_name(QValue tbl, const char* name) {
             return t->cols[i];
         }
     }
-    fprintf(stderr, "QK-RUNTIME-001: table has no column '%s'\n", name);
+    q_runtime_reportf("runtime error: table has no column '%s'\n", name);
     exit(1);
 }
 
@@ -89,13 +89,13 @@ inline QValue q_table_get_col_by_name(QValue tbl, const char* name) {
 // Fatal on out-of-bounds — use q_table_get (planned post-v0.1) for safe access.
 inline QValue q_table_get_row(QValue tbl, int idx) {
     if (tbl.type != QValue::VAL_TABLE || !tbl.data.table_val) {
-        fprintf(stderr, "QK-RUNTIME-001: q_table_get_row: expected table\n");
+        q_runtime_reportf("runtime error: q_table_get_row: expected table\n");
         exit(1);
     }
     QTable* t = tbl.data.table_val;
     if (idx < 0) idx = t->nrows + idx;
     if (idx < 0 || idx >= t->nrows) {
-        fprintf(stderr, "QK-RUNTIME-001: row index %d out of bounds for table with %d rows\n", idx, t->nrows);
+        q_runtime_reportf("runtime error: row index %d out of bounds for table with %d rows\n", idx, t->nrows);
         exit(1);
     }
     QStruct* s = q_struct_create(t->def);
@@ -109,21 +109,21 @@ inline QValue q_table_get_row(QValue tbl, int idx) {
 // containing only the rows where mask[i] is true.
 inline QValue q_table_mask_filter(QValue tbl, QValue mask) {
     if (tbl.type != QValue::VAL_TABLE || !tbl.data.table_val) {
-        fprintf(stderr, "QK-RUNTIME-001: q_table_mask_filter: expected table as first argument\n");
+        q_runtime_reportf("runtime error: q_table_mask_filter: expected table as first argument\n");
         exit(1);
     }
     if (mask.type != QValue::VAL_VECTOR || !mask.data.vector_val) {
-        fprintf(stderr, "QK-RUNTIME-001: q_table_mask_filter: expected bool vector as mask\n");
+        q_runtime_reportf("runtime error: q_table_mask_filter: expected bool vector as mask\n");
         exit(1);
     }
     QTable* src = tbl.data.table_val;
     QVector* mv = mask.data.vector_val;
     if (mv->type != QVector::Type::BOOL) {
-        fprintf(stderr, "QK-RUNTIME-001: table mask index requires bool vector\n");
+        q_runtime_reportf("runtime error: table mask index requires bool vector\n");
         exit(1);
     }
     if (mv->count != static_cast<size_t>(src->nrows)) {
-        fprintf(stderr, "QK-RUNTIME-001: table mask length mismatch: rows=%d, mask=%zu\n", src->nrows, mv->count);
+        q_runtime_reportf("runtime error: table mask length mismatch: rows=%d, mask=%zu\n", src->nrows, mv->count);
         exit(1);
     }
     // Build filtered column vectors
@@ -141,7 +141,7 @@ inline QValue q_table_mask_filter(QValue tbl, QValue mask) {
 // Accepts int (row index → struct) or vector[bool] (mask → table).
 inline QValue q_table_index(QValue tbl, QValue index) {
     if (tbl.type != QValue::VAL_TABLE || !tbl.data.table_val) {
-        fprintf(stderr, "QK-RUNTIME-001: q_table_index: expected table\n");
+        q_runtime_reportf("runtime error: q_table_index: expected table\n");
         exit(1);
     }
     if (index.type == QValue::VAL_INT) {
@@ -150,7 +150,7 @@ inline QValue q_table_index(QValue tbl, QValue index) {
     if (index.type == QValue::VAL_VECTOR) {
         return q_table_mask_filter(tbl, index);
     }
-    fprintf(stderr, "QK-RUNTIME-001: table index must be int or bool vector\n");
+    q_runtime_reportf("runtime error: table index must be int or bool vector\n");
     exit(1);
 }
 

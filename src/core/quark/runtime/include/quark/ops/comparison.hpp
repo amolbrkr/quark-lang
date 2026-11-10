@@ -12,14 +12,23 @@
 // Helper functions to_double() and either_float() are defined in arithmetic.hpp.
 
 // Less than
+// q_str_compare orders two string values by byte order (strcmp).
+inline int q_str_compare(QValue a, QValue b) {
+    return std::strcmp(a.data.string_val ? a.data.string_val : "", b.data.string_val ? b.data.string_val : "");
+}
+
 inline QValue q_lt(QValue a, QValue b) {
     if (a.type == QValue::VAL_VECTOR || b.type == QValue::VAL_VECTOR) {
         return q_vec_lt(a, b);
     }
-    // Type guard: only INT and FLOAT are valid
+    // Two strings compare by byte order (as list.sort does).
+    if (a.type == QValue::VAL_STRING && b.type == QValue::VAL_STRING) {
+        return qv_bool(q_str_compare(a, b) < 0);
+    }
+    // Otherwise only INT and FLOAT are valid
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
-        q_runtime_reportf("runtime error: operator '<' expects numeric operands\n");
+        q_runtime_reportf("runtime error: operator '<' expects two numbers or two strings\n");
         std::exit(1);
     }
     if (quark::detail::either_float(a, b)) {
@@ -33,10 +42,14 @@ inline QValue q_lte(QValue a, QValue b) {
     if (a.type == QValue::VAL_VECTOR || b.type == QValue::VAL_VECTOR) {
         return q_vec_lte(a, b);
     }
-    // Type guard: only INT and FLOAT are valid
+    // Two strings compare by byte order (as list.sort does).
+    if (a.type == QValue::VAL_STRING && b.type == QValue::VAL_STRING) {
+        return qv_bool(q_str_compare(a, b) <= 0);
+    }
+    // Otherwise only INT and FLOAT are valid
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
-        q_runtime_reportf("runtime error: operator '<=' expects numeric operands\n");
+        q_runtime_reportf("runtime error: operator '<=' expects two numbers or two strings\n");
         std::exit(1);
     }
     if (quark::detail::either_float(a, b)) {
@@ -50,10 +63,14 @@ inline QValue q_gt(QValue a, QValue b) {
     if (a.type == QValue::VAL_VECTOR || b.type == QValue::VAL_VECTOR) {
         return q_vec_gt(a, b);
     }
-    // Type guard: only INT and FLOAT are valid
+    // Two strings compare by byte order (as list.sort does).
+    if (a.type == QValue::VAL_STRING && b.type == QValue::VAL_STRING) {
+        return qv_bool(q_str_compare(a, b) > 0);
+    }
+    // Otherwise only INT and FLOAT are valid
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
-        q_runtime_reportf("runtime error: operator '>' expects numeric operands\n");
+        q_runtime_reportf("runtime error: operator '>' expects two numbers or two strings\n");
         std::exit(1);
     }
     if (quark::detail::either_float(a, b)) {
@@ -67,10 +84,14 @@ inline QValue q_gte(QValue a, QValue b) {
     if (a.type == QValue::VAL_VECTOR || b.type == QValue::VAL_VECTOR) {
         return q_vec_gte(a, b);
     }
-    // Type guard: only INT and FLOAT are valid
+    // Two strings compare by byte order (as list.sort does).
+    if (a.type == QValue::VAL_STRING && b.type == QValue::VAL_STRING) {
+        return qv_bool(q_str_compare(a, b) >= 0);
+    }
+    // Otherwise only INT and FLOAT are valid
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
-        q_runtime_reportf("runtime error: operator '>=' expects numeric operands\n");
+        q_runtime_reportf("runtime error: operator '>=' expects two numbers or two strings\n");
         std::exit(1);
     }
     if (quark::detail::either_float(a, b)) {

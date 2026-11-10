@@ -8,7 +8,7 @@ This file is the canonical registry of error codes currently emitted by the comp
 	- `error[CODE] (stage): message ...`
 	- `warning[CODE] (stage): message ...`
 - Frontend diagnostics use stable `QK-*` codes.
-- Runtime diagnostics use stable `QK-*` codes.
+- Runtime diagnostics use stable `QK-*` codes. They go through `q_runtime_reportf` in `diagnostics.hpp`, which prints `error[QK-RUNTIME-001] (runtime): message at file:line:col`.
 - Internal invariant/ICE failures use `INV-*` codes (compiler-bug class, not user-program errors).
 
 ## Stable QK Codes
@@ -16,7 +16,7 @@ This file is the canonical registry of error codes currently emitted by the comp
 | Code | Stage | Meaning | Emitted from |
 | --- | --- | --- | --- |
 | `QK-PARSE-001` | `parse` | Parse error in source program. | `src/core/quark/parser/parser.go` |
-| `QK-LOAD-001` | `load` | Import/module resolution failure. | `src/core/quark/loader/loader.go` |
+| `QK-LOAD-001` | `load` | Import/module resolution failure: file not found, imported file defines no `module`, unsupported import path, import cycle. Also `extern link` / `extern include_path` placed inside a block or module instead of at the top level of a file. | `src/core/quark/loader/loader.go` |
 | `QK-CHECK-001` | `check` | Semantic/type analysis error. | `src/core/quark/types/analyzer.go` |
 | `QK-CHECK-002` | `check` | Semantic analysis warning (non-fatal). | `src/core/quark/types/analyzer.go` |
 | `QK-RUNTIME-001` | `runtime` | Runtime failure emitted by runtime diagnostics reporter. | `src/core/quark/runtime/include/quark/core/diagnostics.hpp` |
@@ -39,6 +39,8 @@ These indicate compiler invariant violations. They are intentionally separate fr
 - `INV-DOT-CALL`
 - `INV-CALLPLAN-RUNTIME`
 - `INV-CALLPLAN-DISPATCH`
+- `INV-STRUCT-LITERAL`
+- `INV-STRUCT-DEFAULT`
 
 Primary source: `src/core/quark/codegen/codegen.go`
 
@@ -52,6 +54,7 @@ Primary source: `src/core/quark/codegen/codegen.go`
 - `INV-RUNTIME-SYMBOL`
 - `INV-BUILTIN-NAME`
 - `INV-METHOD-RECEIVER`
+- `INV-DYNAMIC-METHOD`
 - `INV-BUILTIN-CATALOG`
 - `INV-BUILTIN-RUNTIME`
 - `INV-DEFAULT-COUNT`

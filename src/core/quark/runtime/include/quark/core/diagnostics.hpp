@@ -20,6 +20,17 @@ inline void q_set_source_loc(const char* file, int line, int col) {
     q_runtime_loc.col = col;
 }
 
+// QSourceLocGuard restores the caller's source location when a generated
+// function returns, so a runtime error later in the calling statement is
+// reported there and not at the last statement that ran inside the callee.
+struct QSourceLocGuard {
+    QSourceLoc saved;
+    QSourceLocGuard() : saved(q_runtime_loc) {}
+    ~QSourceLocGuard() { q_runtime_loc = saved; }
+    QSourceLocGuard(const QSourceLocGuard&) = delete;
+    QSourceLocGuard& operator=(const QSourceLocGuard&) = delete;
+};
+
 inline void q_runtime_reportf(const char* fmt, ...) {
     char buffer[2048];
     va_list args;

@@ -51,3 +51,15 @@ total8 = 0
 for i in range(n):
     total8 = total8 + i
 println(total8)
+
+// Arguments of unknown type are checked like the range() builtin: floats are
+// truncated (range(2.5) has 2 elements).
+fn id(x) -> x
+total9 = 0
+for i in range(id(2.5)):
+    total9 = total9 + 1
+println(total9)
+total10 = 0
+for i in range(id(3), id(0)):
+    total10 = total10 * 10 + i
+println(total10)

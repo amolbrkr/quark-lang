@@ -59,7 +59,7 @@ func printUsage() {
 	fmt.Println("  check <file>                  Type check a file")
 	fmt.Println("  emit <file>                   Emit C++ code to stdout")
 	fmt.Println("  build <file> [-o out]         Compile to executable")
-	fmt.Println("  run <file> [--debug]          Compile and run")
+	fmt.Println("  run <file> [--debug] [-- args] Compile and run; arguments after -- go to the program")
 	fmt.Println("  help                          Show this help message")
 	fmt.Println()
 	fmt.Println("Flags (run/build):")
@@ -77,6 +77,7 @@ func printUsage() {
 	fmt.Println("  quark run test.qrk                # Compile and run")
 	fmt.Println("  quark build test.qrk -o app       # Build an executable")
 	fmt.Println("  quark test.qrk                    # Shorthand for run")
+	fmt.Println("  quark run tool.qrk -- in.csv -v   # Pass arguments to the program")
 }
 
 // parseCommand parses flags for a subcommand and returns its single file
@@ -164,6 +165,20 @@ func absDirs(dirs []string) []string {
 // reportBuildError prints a compile or link failure. Diagnostics from the
 // toolchain (missing library, error in glue code) are printed as they are;
 // it returns true for those so callers can skip the generated-C++ dump.
+// printCompilerBugHint follows a C++ compile or link failure that isn't a
+// known user error (such as a missing library or an error in a glue header),
+// instead of printing the whole generated program: the program passed the
+// checks, so this is a wrong extern declaration or a compiler bug.
+func printCompilerBugHint(debug bool, cppFile string) {
+	fmt.Fprintln(os.Stderr, "\nThe program passed Quark's checks but the generated C++ didn't build. If it declares")
+	fmt.Fprintln(os.Stderr, "extern fns, check their 'as' symbols and headers; otherwise this is a compiler bug.")
+	if debug {
+		fmt.Fprintf(os.Stderr, "The generated C++ is in %s.\n", cppFile)
+	} else {
+		fmt.Fprintln(os.Stderr, "Rerun with --debug to keep the generated C++ for a bug report.")
+	}
+}
+
 func reportBuildError(err error) bool {
 	var de *toolchain.DiagnosticError
 	if errors.As(err, &de) {
@@ -287,7 +302,9 @@ func cmdBuild(args []string) int {
 		return 1
 	}
 	if err := compileProgram(tc, u, cppFile, workDir, output, flags); err != nil {
-		reportBuildError(err)
+		if !reportBuildError(err) {
+			printCompilerBugHint(flags.debug, cppFile)
+		}
 		return 1
 	}
 	fmt.Printf("Built: %s\n", output)
@@ -295,10 +312,20 @@ func cmdBuild(args []string) int {
 }
 
 func cmdRun(args []string) int {
+	// Everything after "--" is passed to the program (sys.args() in std/sys).
+	var programArgs []string
+	for i, a := range args {
+		if a == "--" {
+			programArgs = append([]string{}, args[i+1:]...)
+			args = args[:i]
+			break
+		}
+	}
+
 	var flags buildFlags
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	flags.register(fs)
-	file, ok := parseCommand(fs, "quark run <file.qrk> [--debug] [--lto] [--no-pch] [--lib-path dir] [--include-path dir] [--link-arg arg]", args)
+	file, ok := parseCommand(fs, "quark run <file.qrk> [--debug] [--lto] [--no-pch] [--lib-path dir] [--include-path dir] [--link-arg arg] [-- program args...]", args)
 	if !ok {
 		return 1
 	}
@@ -331,8 +358,7 @@ func cmdRun(args []string) int {
 	}
 	if err := compileProgram(tc, u, cppFile, workDir, exeFile, flags); err != nil {
 		if !reportBuildError(err) {
-			fmt.Fprintln(os.Stderr, "\nGenerated C++ code:")
-			fmt.Fprintln(os.Stderr, u.CPP)
+			printCompilerBugHint(flags.debug, cppFile)
 		}
 		return 1
 	}
@@ -341,7 +367,7 @@ func cmdRun(args []string) int {
 	if abs, err := filepath.Abs(exeFile); err == nil {
 		exeFile = abs
 	}
-	runCmd := exec.Command(exeFile)
+	runCmd := exec.Command(exeFile, programArgs...)
 	runCmd.Stdout = os.Stdout
 	runCmd.Stderr = os.Stderr
 	runCmd.Stdin = os.Stdin

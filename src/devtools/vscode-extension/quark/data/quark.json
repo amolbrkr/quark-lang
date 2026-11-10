@@ -215,6 +215,14 @@
         "signature": "reverse() list"
       },
       {
+        "name": "sort",
+        "signature": "sort() list"
+      },
+      {
+        "name": "sort_by",
+        "signature": "sort_by() list"
+      },
+      {
         "name": "enumerate",
         "signature": "enumerate() list"
       },
@@ -325,6 +333,21 @@
       ]
     },
     {
+      "name": "csv",
+      "functions": [
+        {
+          "name": "parse",
+          "signature": "parse(text: str, sep: str = ',') list",
+          "doc": "may contain the separator, quotes and newlines."
+        },
+        {
+          "name": "read",
+          "signature": "read(path: str, sep: str = ',') result",
+          "doc": "or is malformed."
+        }
+      ]
+    },
+    {
       "name": "fmt",
       "functions": [
         {
@@ -391,6 +414,76 @@
         {
           "name": "exists",
           "signature": "exists(path: str) bool"
+        }
+      ]
+    },
+    {
+      "name": "random",
+      "functions": [
+        {
+          "name": "seed",
+          "signature": "seed(n: int)",
+          "doc": "Seed the generator so the following results are reproducible."
+        },
+        {
+          "name": "uniform",
+          "signature": "uniform() float",
+          "doc": "A float in [0, 1)."
+        },
+        {
+          "name": "randint",
+          "signature": "randint(lo: int, hi: int) int",
+          "doc": "An int in [lo, hi], both ends included."
+        },
+        {
+          "name": "choice",
+          "signature": "choice(xs: list)",
+          "doc": "A random element of a non-empty list."
+        },
+        {
+          "name": "shuffle",
+          "signature": "shuffle(xs: list) list",
+          "doc": "Shuffle a list in place and return it."
+        }
+      ]
+    },
+    {
+      "name": "sys",
+      "functions": [
+        {
+          "name": "args",
+          "signature": "args() list",
+          "doc": "Command-line arguments after the program name, as a list of strings."
+        },
+        {
+          "name": "env",
+          "signature": "env(name: str)",
+          "doc": "Value of the environment variable `name`, or null when it isn't set."
+        },
+        {
+          "name": "exit",
+          "signature": "exit(code: int = 0)",
+          "doc": "Exit immediately with status `code` (0 means success)."
+        }
+      ]
+    },
+    {
+      "name": "time",
+      "functions": [
+        {
+          "name": "now",
+          "signature": "now() float",
+          "doc": "Seconds since the Unix epoch (wall-clock time), as a float."
+        },
+        {
+          "name": "clock",
+          "signature": "clock() float",
+          "doc": "Monotonic seconds, for measuring durations: end - start."
+        },
+        {
+          "name": "sleep",
+          "signature": "sleep(seconds: float)",
+          "doc": "Pause for `seconds` (fractions allowed)."
         }
       ]
     }

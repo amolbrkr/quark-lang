@@ -1,7 +1,13 @@
 # Quark Extensions Interface (QEI) Design
 
-Status: Implemented (Phase 1 + Phase 2a–2e complete)
-Date: 2026-03-26
+Status: Implemented (Phase 1 + Phase 2a–2e complete); Phase 3 partly done
+Date: 2026-03-26 (status note updated 2026-11-06)
+
+> **Current state (2026-11-06).**
+> - **Implemented:** `extern '<path>'` headers, `extern fn` free functions and methods, `DispatchExtern`/`DispatchNative`, thunks, the `qext` API (`quark/ext/api.hpp`), native signatures for fully annotated functions (§5.3.4), and every scalar-lowering item in §5.3 (`==`/`!=`, bool `if`/`while` conditions, range loops, direct vector literals).
+> - **Phase 3 (stdlib migration) is partly done:** `std/fmt` is a QEI module (`src/core/stdlib/fmt.qrk` + `fmt.hpp`) and the `_fmt_*` catalog entries are gone. `std/io` still wraps the `_file_*` catalog builtins, and the `enumerate`/`vfrom_list` free-function aliases are still in the catalog.
+> - **Superseded:** native libraries and include paths (`extern link`, `extern include_path`), separately compiled glue sources (`extern source`), handles and results from native code are specified in `ffi_v0_1_spec.md`, which takes precedence where the two differ.
+> - The changelog below is historical; "Current behavior" passages in §5.3 describe the code before each optimization landed.
 
 ---
 
@@ -71,8 +77,8 @@ Annotated user-defined functions now emit native C++ signatures (Phase 2e). Scal
 
 #### What is NOT yet implemented
 
-- **Direct vector literal construction** (Section 5.3.5) — `vector [1, 2, 3]` still builds an intermediate list then calls `q_to_vector()`
-- **Phase 3** (stdlib migration: `std/io`, `std/fmt`, removal of `_`-prefixed catalog entries) — deferred
+- **Direct vector literal construction** (Section 5.3.5) — `vector [1, 2, 3]` still builds an intermediate list then calls `q_to_vector()` *(since implemented: codegen emits `qv_vector_i64(n)` plus `q_vec_push_i64`, with no list)*
+- **Phase 3** (stdlib migration: `std/io`, `std/fmt`, removal of `_`-prefixed catalog entries) — deferred *(since partly done: `std/fmt` migrated on 2026-03-28; `std/io` not yet)*
 
 #### Since this milestone
 
@@ -147,7 +153,7 @@ All language prerequisites and core QEI machinery are implemented and building c
 **`src/core/quark/runtime/include/quark/ext/api.hpp`** (new file)
 - `qext::` namespace: `box()` overloads for all types, `null_val()`, unboxing with runtime checks (`as_int()`, `as_float()`, `as_bool()`, `as_str()`, `as_vector()`, `as_list()`, `as_dict()`, `as_closure()`), memory helpers (`malloc`, `malloc_atomic`, `strdup`), error reporting (`panic()`, `panicf()`)
 - `QSlice<T>` — C++17-compatible pointer+size view (replaces `std::span` which is C++20)
-- Vector accessors: `as_f64()`, `as_f64_mut()`, `as_i64()`, `as_i64_mut()` returning `QSlice<T>` views into internal storage; `bool_at()`, `set_bool()`, `str_at()` for bit-packed bools and strings (vectors use the Arrow layout, see semantics.md §9.3)
+- Vector accessors: `as_f64()`, `as_f64_mut()`, `as_i64()`, `as_i64_mut()` returning `QSlice<T>` views into internal storage; `bool_at()`, `set_bool()`, `str_at()` for bit-packed bools and strings (vectors use the Arrow layout, see semantics.md §9.4)
 - Vector constructors: `new_f64(n)`, `new_i64(n)`, `new_bool_vec(n)` — GC-allocated, zeroed
 - Vector metadata: `vec_size()`, `vec_has_nulls()`, `vec_null_count()`, `vec_dtype()`, `vec_dtype_name()`, `is_null_at()`, `set_null()`, `validity_bitmap()`
 - Dict helpers: `dict_get()`, `dict_set()`, `dict_size()`, `dict_has()`
@@ -159,8 +165,8 @@ All language prerequisites and core QEI machinery are implemented and building c
 
 #### What is NOT yet implemented
 
-- **Phase 2e** (annotated function parameters with native C++ types) — deferred
-- **Phase 3** (stdlib migration: `std/io`, `std/fmt`, removal of `_`-prefixed catalog entries) — deferred
+- **Phase 2e** (annotated function parameters with native C++ types) — deferred *(implemented 2026-03-26, see above)*
+- **Phase 3** (stdlib migration: `std/io`, `std/fmt`, removal of `_`-prefixed catalog entries) — deferred *(partly done since, see the status note)*
 
 ---
 
@@ -208,15 +214,17 @@ An extension is a Quark module (`.qrk` file) where some or all functions are imp
 
 ### 2.1 Syntax
 
-Two constructs, one keyword:
+Two QEI constructs, one keyword:
 
 ```quark
-extern '<path>'                                                  # include a C++ implementation file
-extern fn <name>(<params>) <return_type> as '<symbol>'          # free function
-extern fn <type>.<name>(<params>) <return_type> as '<symbol>'   # method on a type
+extern '<path>'                                                  // include a C++ implementation file
+extern fn <name>(<params>) <return_type> as '<symbol>'          // free function
+extern fn <type>.<name>(<params>) <return_type> as '<symbol>'   // method on a type
 ```
 
-The parser distinguishes free functions from methods by the name pattern: `sqrt` is a free function, `list.shuffle` is a method on `list`. The type prefix must be a known type keyword (`int`, `float`, `str`, `bool`, `list`, `vector`, `dict`). No new keywords beyond `extern` — methods and functions share `extern fn`.
+`ffi_v0_1_spec.md` P1 adds the native-dependency forms `extern link '<lib>'` and `extern include_path '<dir>'` (implemented), and P2 reserves `extern source '<file.cpp>'` for separately compiled glue sources (not yet implemented).
+
+The parser distinguishes free functions from methods by the name pattern: `cbrt` is a free function, `list.shuffle` is a method on `list`. The type prefix must be a known type keyword (`int`, `float`, `str`, `bool`, `list`, `vector`, `dict`). No new keywords beyond `extern` — methods and functions share `extern fn`.
 
 ### 2.2 Complete Example: Free Functions
 
@@ -224,27 +232,34 @@ The parser distinguishes free functions from methods by the name pattern: `sqrt`
 ```quark
 extern 'std/math_impl.hpp'
 
-extern fn sqrt(x: float) float as 'q_sqrt'
-extern fn abs(x: float) float as 'q_abs'
-extern fn pow(base: float, exp: float) float as 'q_pow'
+extern fn cbrt(x: float) float as 'qm_cbrt'
+extern fn fabs(x: float) float as 'qm_fabs'
+extern fn pow(base: float, exp: float) float as 'qm_pow'
+
+module math:
+    fn hypot(a: float, b: float) float -> pow(a * a + b * b, 0.5)
 ```
+
+(An imported file must define a `module` block, or `use` fails with `QK-LOAD-001`. Its top-level `extern fn`s are then visible to the importer as well.)
 
 **C++ implementation** (`std/math_impl.hpp`):
 ```cpp
 #include <cmath>
 #include <quark/ext/api.hpp>
 
-double q_sqrt(double x) { return std::sqrt(x); }
-double q_abs(double x)  { return std::fabs(x); }
-double q_pow(double base, double exp) { return std::pow(base, exp); }
+double qm_cbrt(double x) { return std::cbrt(x); }
+double qm_fabs(double x)  { return std::fabs(x); }
+double qm_pow(double base, double exp) { return std::pow(base, exp); }
 ```
 
 **User code:**
 ```quark
 use 'std/math'
-x = sqrt(144.0)
+x = cbrt(27.0)
 println(x)
 ```
+
+Extern names must not collide with prelude builtins (§3.3): `extern fn sqrt(...)` is rejected with "cannot redefine prelude function 'sqrt'", which is why this example wraps `cbrt`, `fabs` and `pow`.
 
 ### 2.2.1 Complete Example: Type Extension (Methods)
 
@@ -286,12 +301,12 @@ double q_vec_dot(QVector* a, QVector* b) {
 use 'ext/listutils'
 
 items = list [1, 2, 3, 4, 5]
-shuffled = items.shuffle()        # dot syntax — same as builtin methods
+shuffled = items.shuffle()        // dot syntax — same as builtin methods
 chunks = items.chunk(2)
 
 v1 = vector [1.0, 2.0, 3.0]
 v2 = vector [4.0, 5.0, 6.0]
-similarity = v1.dot(v2)           # dot syntax — indistinguishable from builtins
+similarity = v1.dot(v2)           // dot syntax — indistinguishable from builtins
 normed = v1.normalize()
 ```
 
@@ -304,14 +319,14 @@ The user sees no difference between `items.push(6)` (builtin) and `items.shuffle
 The `as 'symbol'` specifies the exact C++ function name to call. Required for all extern declarations — no guessing, no implicit name mangling.
 
 ```quark
-extern fn sqrt(x: float) float as 'q_sqrt'          # free function
-extern fn str.upper() str as 'q_upper'               # method on str
-extern fn vector.dot(other: vector) float as 'q_dot' # method on vector
+extern fn cbrt(x: float) float as 'qm_cbrt'         // free function
+extern fn str.shout() str as 'qx_shout'             // method on str
+extern fn vector.dot(other: vector) float as 'q_dot' // method on vector
 ```
 
 The symbol maps to the `RuntimeSymbol` field in `CallPlan`. But unlike existing builtins which use `Dispatch: DispatchBuiltin` (where all arguments are QValue), extern functions use a new dispatch mode: **`DispatchExtern`**. This tells codegen that the target function has a native-typed signature and arguments must be adapted accordingly.
 
-For methods, the receiver is implicit — it is not listed in the parameter list but is injected as the first C++ argument by codegen (same as existing builtin methods). So `extern fn str.upper() str as 'q_upper'` maps to `const char* q_upper(const char* self)` — the receiver becomes the `self` parameter.
+For methods, the receiver is implicit — it is not listed in the parameter list but is injected as the first C++ argument by codegen (same as existing builtin methods). So `extern fn str.shout() str as 'qx_shout'` maps to `const char* qx_shout(const char* self)` — the receiver becomes the `self` parameter.
 
 ### 2.4 The Type Annotation → ABI Contract
 
@@ -345,11 +360,11 @@ extern fn vec_sum(v: vector) float as 'q_vec_sum'
 // C++ implementation — checks dtype at runtime
 double q_vec_sum(QVector* v) {
     switch (qext::vec_dtype(v)) {
-        case QVector::F64: {
+        case QVector::Type::F64: {
             auto data = qext::as_f64(v);
             return std::accumulate(data.begin(), data.end(), 0.0);
         }
-        case QVector::I64: {
+        case QVector::Type::I64: {
             auto data = qext::as_i64(v);
             return (double)std::accumulate(data.begin(), data.end(), 0LL);
         }
@@ -390,17 +405,17 @@ When a typed extern function is used as a **function value** (assigned to a vari
 
 ```cpp
 // Extension author writes:
-double q_sqrt(double x) { return std::sqrt(x); }
+double qm_cbrt(double x) { return std::cbrt(x); }
 
-// Compiler generates (only when sqrt is used as a value):
-QValue _thunk_q_sqrt(QClosure* _cl, QValue _arg_x) {
-    return qv_float(q_sqrt(q_as_float(_arg_x)));
+// Compiler generates (only when cbrt is used as a value):
+QValue _thunk_qm_cbrt(QClosure* _cl, QValue _arg_x) {
+    return qv_float(qm_cbrt(q_as_float(_arg_x)));
 }
 ```
 
-Note: `q_as_float()` is a safe unboxing helper that checks `_arg_x.type == VAL_FLOAT` and panics with a clear error on mismatch. Raw union access (`_arg_x.data.float_val`) is never used in thunks — the type is not statically guaranteed.
+Note: `q_as_float()` is a safe unboxing helper: it accepts `VAL_FLOAT`, widens `VAL_INT` to `double` (FFI P7), and panics with a clear error on any other type. Raw union access (`_arg_x.data.float_val`) is never used in thunks — the type is not statically guaranteed.
 
-When `sqrt` is only ever called directly (the common case), no thunk is generated.
+When `cbrt` is only ever called directly (the common case), no thunk is generated.
 
 ### 2.5 Path Resolution
 
@@ -449,15 +464,15 @@ For a program that uses an extension module, the generated C++ has this structur
 
 ```cpp
 // ──── Preamble (always present) ────
-#include "quark/runtime.hpp"            // QValue, operators, builtins
+#include "quark/quark.hpp"              // QValue, operators, builtins
 
 // ──── Extension includes (from extern 'path') ────
 #include "resolved/path/to/math_impl.hpp"
 #include "resolved/path/to/io_impl.hpp"
 
 // ──── Thunks (only for extern fns used as function values) ────
-QValue _thunk_q_sqrt(QClosure* _cl, QValue _arg_x) {
-    return qv_float(q_sqrt(q_as_float(_arg_x)));
+QValue _thunk_qm_cbrt(QClosure* _cl, QValue _arg_x) {
+    return qv_float(qm_cbrt(q_as_float(_arg_x)));
 }
 
 // ──── Forward declarations (Quark-defined functions) ────
@@ -466,7 +481,7 @@ QValue quark_process(QClosure* _cl, QValue _arg_data);
 // ──── Quark function bodies ────
 QValue quark_process(QClosure* _cl, QValue _arg_data) {
     // ...
-    double _t1 = q_sqrt(3.14);           // direct native call (typed context)
+    double _t1 = qm_cbrt(3.14);           // direct native call (typed context)
     // ...
 }
 
@@ -480,7 +495,7 @@ int main() {
 
 Key points:
 - Extension `.hpp` files are `#include`d in the preamble, before any generated code. This means extension functions are visible at all call sites without forward declarations.
-- Thunks are generated **only** for extern functions that are used as values (assigned to variables, passed as arguments, stored in collections). If `sqrt` is only ever called directly, no thunk is emitted.
+- Thunks are generated **only** for extern functions that are used as values (assigned to variables, passed as arguments, stored in collections). If `cbrt` is only ever called directly, no thunk is emitted.
 - The rest of the generated code is unchanged — Quark functions, lambdas, and `main()` are emitted the same way they are today.
 
 ### 2.8 Calling Convention
@@ -490,32 +505,32 @@ Extension functions do **not** follow the Quark closure calling convention. They
 **Direct call (common case — caller has type info):**
 ```quark
 x = 2.0
-y = sqrt(x)
+y = cbrt(x)
 ```
 ```cpp
 double quark_x = 2.0;
-double quark_y = q_sqrt(quark_x);      // native double → native double
+double quark_y = qm_cbrt(quark_x);      // native double → native double
 ```
 
 **Direct call (caller has QValue — no type info available):**
 ```quark
 x = some_dynamic_value()
-y = sqrt(x)
+y = cbrt(x)
 ```
 ```cpp
 QValue quark_x = quark_some_dynamic_value(nullptr);
 // Compiler injects guarded unbox at call site:
-double quark_y = q_sqrt(q_as_float(quark_x));
+double quark_y = qm_cbrt(q_as_float(quark_x));
 ```
 
 **Indirect call (extern fn used as a function value):**
 ```quark
-transform = sqrt
+transform = cbrt
 y = transform(9.0)
 ```
 ```cpp
-// sqrt is stored as a QClosure wrapping the thunk:
-QValue quark_transform = qv_func(q_new_closure((void*)_thunk_q_sqrt, 0));
+// cbrt is stored as a QClosure wrapping the thunk:
+QValue quark_transform = qv_func(q_new_closure((void*)_thunk_qm_cbrt, 0));
 // Called through closure dispatch:
 QValue quark_y = q_call1(quark_transform, qv_float(9.0));
 ```
@@ -525,14 +540,14 @@ This means extension functions pay the QValue cost **only** when used as first-c
 **Method calls** follow the same rules but inject the receiver as the first C++ argument:
 
 ```quark
-extern fn str.upper() str as 'q_upper'
+extern fn str.shout() str as 'qx_shout'
 
 name = "hello"
-loud = name.upper()
+loud = name.shout()
 ```
 ```cpp
 const char* quark_name = "hello";
-const char* quark_loud = q_upper(quark_name);  // receiver passed as first arg
+const char* quark_loud = qx_shout(quark_name);  // receiver passed as first arg
 ```
 
 ```quark
@@ -553,7 +568,7 @@ double quark_result = q_vec_dot(quark_v1, quark_v2);  // receiver + explicit arg
 Extension functions sometimes need to call back into Quark code — for `map`, `filter`, `sort` with custom comparators, etc. The extension author API provides typed callback helpers:
 
 ```quark
-# Quark module declaration
+// Quark module declaration
 extern fn vmap(v: vector, f: fn) vector as 'q_vmap'
 ```
 
@@ -643,6 +658,8 @@ Everything currently using the `_` prefix, plus any future builtins that belong 
 | `enumerate` (free fn alias) | removed | use `mylist.enumerate()` method |
 | `vfrom_list` (free fn alias) | removed | use `mylist.to_vector()` method |
 
+Status (2026-11-06): the `_fmt_*` rows are done. `std/fmt` declares `fmt_list`, `fmt_vector`, `fmt_dict` and `fmt_table` as `extern fn`s over `fmt.hpp`, and the catalog no longer has `_fmt_*` entries. The `_file_*` rows and the `enumerate`/`vfrom_list` aliases are not migrated yet; they are still catalog builtins, and `std/io` still wraps `_file_*`.
+
 This is a **breaking change**. The `_` prefix is removed entirely — module boundaries provide encapsulation, not naming conventions. Code using `_file_open(...)` must change to:
 
 ```quark
@@ -686,7 +703,7 @@ This header re-exports the runtime types (`QValue`, `QVector`, `QList`, `QDict`,
 
 ### 4.1 Vector Access (the Performance Bridge)
 
-Vectors store typed data in contiguous arrays (`std::vector<double>`, `std::vector<int64_t>`, etc.) with GC-aware allocators. The extension API provides zero-copy typed views into this storage:
+Vectors store typed data in contiguous Arrow-layout buffers (a values buffer plus an optional validity bitmap; see semantics.md §9.4), allocated on the GC heap. The extension API provides zero-copy typed views into this storage:
 
 ```cpp
 namespace qext {
@@ -737,9 +754,9 @@ QVector* q_vec_scale(QVector* v, double factor) {
 }
 ```
 
-**Implementation note**: These are thin wrappers. `as_f64()` is essentially `std::get<QVecF64>(v->storage).data()` with a size. No copying, no allocation, no type conversion. The typed storage already exists inside `QVector` — the API just gives you a typed pointer to it.
+**Implementation note**: These are thin wrappers. `as_f64()` is essentially `QSlice{q_vec_f64_data(*v), v->count}`. No copying, no allocation, no type conversion. The typed storage already exists inside `QVector` — the API just gives you a typed pointer to it.
 
-**Dtype mismatch**: If the extension calls `as_f64()` on an I64 vector, the function panics with a clear error: "expected F64 vector, got I64". Extension authors should check `vec_dtype()` if they need to handle multiple dtypes.
+**Dtype mismatch**: If the extension calls `as_f64()` on an I64 vector, the function panics with a clear error: "as_f64: vector dtype is not f64". Extension authors should check `vec_dtype()` if they need to handle multiple dtypes.
 
 **GC lifetime warning**: A `QSlice` is not a GC root — it is a raw pointer + size into the `QVector`'s internal storage. If a GC collection runs while you hold only a slice (no live `QVector*`), the underlying vector can be collected and the slice becomes dangling. This is most likely in callback-heavy code: you call `qext::as_f64(v)`, then call `qext::call(f, ...)` — the callback allocates, GC runs, and if `v` was the only reference it may be collected. The rule: **hold the `QVector*` alive for the entire lifetime of any slice derived from it**. In practice: extract all data you need before calling back into Quark, or re-fetch the vector after the callback returns.
 
@@ -879,28 +896,30 @@ The compiler already implements a 5-tier variable storage system driven by type 
 | `bool` | Stack scalar | Type inferred as `bool`, not captured |
 | `QValue` | Tagged union | Type unknown, or container/function/string type |
 
-The analyzer infers types from literals and annotations via `GetNodeTypes()`. Codegen checks each variable's inferred type at declaration and picks the appropriate tier. Within a function body, scalar-tiered variables use raw C++ operators:
+The analyzer infers types from literals and annotations (`Analysis.NodeTypes`). Codegen checks each variable's inferred type at declaration and picks the appropriate tier. Within a function body, scalar-tiered variables use raw C++ operators:
 
 ```quark
 x = 10
 y = 20
-z = x + y    # emits: long long quark_z = ((long long)quark_x + (long long)quark_y);
+z = x + y    // emits: long long quark_z = q_checked_add(quark_x, quark_y);
 ```
 
-No `q_add()` call, no QValue construction, no type dispatch. This is real — it works today for arithmetic (`+`, `-`, `*`, `/`, `%`), comparisons (`<`, `<=`, `>`, `>=`), and unary negation on scalar locals and literals.
+No `q_add()` call, no QValue construction, no type dispatch. This is real — it works today for arithmetic (`+`, `-`, `*`, `/`, `%`), comparisons (`<`, `<=`, `>`, `>=`, `==`, `!=`), and unary negation on scalar locals, literals and nested scalar expressions. Int `+ - * %` go through overflow-checked inline helpers (`q_checked_add` etc.) and int `/` through `q_checked_fdiv`; float arithmetic uses raw C++ operators.
 
 Loop variables are also scalar-tiered when the iterable has a known element type:
 
 ```quark
-for x in list [1, 2, 3]     # x is long long, not QValue
-    y = x * 2               # raw C++ multiplication
+for x in list [1, 2, 3]:    // x is long long, not QValue
+    y = x * 2               // native multiplication (q_checked_mul)
 ```
 
-### 5.3 Where Scalar Tiering Doesn't Reach Yet
+### 5.3 Where Scalar Tiering Didn't Reach (All Implemented)
+
+All five items below are implemented (5.3.1, 5.3.2 and 5.3.4 on 2026-03-26; 5.3.3 and 5.3.5 since). "Current behavior" and "Today" describe the code before each change; line numbers are historical.
 
 The following are concrete, bounded optimizations that extend the scalar-first principle to places where the compiler currently falls back to QValue or runtime dispatch unnecessarily.
 
-#### 5.3.1 `==` and `!=` on Scalars (Priority: High, Effort: Low)
+#### 5.3.1 `==` and `!=` on Scalars (Implemented)
 
 **Current behavior** (`codegen.go:918`): Equality and inequality are explicitly excluded from native comparison lowering. Two scalar-tiered ints go through `q_eq()` / `q_neq()` which check types at runtime.
 
@@ -914,7 +933,7 @@ qv_bool(quark_x == quark_y)               // one C++ comparison, box the bool re
 
 **Fix**: Remove the `op != token.DEQ && op != token.NE` guard in `generateOperator()`. Same scalar detection logic that works for `<`, `>` etc. applies here. The only reason to go through `q_eq` is when operands might be different types (string equality, list equality) — but if both are scalar-tiered, they're guaranteed to be the same type.
 
-#### 5.3.2 `while` Condition on Booleans (Priority: Medium, Effort: Low)
+#### 5.3.2 `while` Condition on Booleans (Implemented)
 
 **Current behavior** (`codegen.go:1437`): `while` always wraps the condition in `q_truthy()`, which takes a QValue, checks its type, and returns a C++ bool.
 
@@ -952,9 +971,9 @@ for (long long quark_i = 0; quark_i < _range_end; quark_i++) {
 
 This optimization was implemented by adding explicit `range(...)` pattern recognition in `generateFor()` and emitting raw loop bounds/steps in `generateForRange()`.
 
-#### 5.3.4 Annotated Function Parameters (Priority: High, Effort: Medium — Deferred to Phase 2)
+#### 5.3.4 Annotated Function Parameters (Implemented in Phase 2e)
 
-> **Note**: This optimization requires the `NativeParamTypes`/`NativeReturnType` machinery added to `CallPlan` for QEI (Section 2.4.1) and the thunk generation mechanism (Section 2.4.2). It is in-scope but deferred until Phase 2 of the implementation plan, after extern functions are working end-to-end.
+> **Note**: This optimization requires the `NativeParamTypes`/`NativeReturnType` machinery added to `CallPlan` for QEI (Section 2.4.1) and the thunk generation mechanism (Section 2.4.2). It was deferred to Phase 2 and implemented in Phase 2e: a fully annotated function now compiles to `int64_t quark_add(QClosure* _cl, int64_t _arg_quark_x, int64_t _arg_quark_y)` plus a `quark_add__thunk` for first-class use.
 
 **Current behavior**: Even with type annotations, function parameters are always `QValue`:
 
@@ -985,7 +1004,7 @@ This is not monomorphization — there is exactly one version of the function. I
 
 **Interaction with closures**: If an annotated function is used as a function value (assigned to a variable, passed as callback), codegen generates a QValue thunk — same mechanism as extern functions (Section 2.4.2). The native version is for direct calls; the thunk is for dynamic dispatch.
 
-#### 5.3.5 Direct Vector Literal Construction (Priority: Medium, Effort: Medium)
+#### 5.3.5 Direct Vector Literal Construction (Implemented)
 
 **Current behavior** (`codegen.go:1474`): `vector [1, 2, 3]` builds an intermediate `QList`, then calls `q_to_vector()` which scans the list to detect the element type and copies into typed storage.
 
@@ -1006,12 +1025,14 @@ QValue _t2 = qv_vector(_t1);
 
 **Fix**: When codegen sees a vector literal where all children are literals of the same type (all INT, all FLOAT, etc.), emit direct typed construction. Skip the intermediate list and the type-detection scan. The type is known at compile time — use it.
 
+As implemented, codegen emits `QValue _t1 = qv_vector_i64(3);` followed by `_t1 = q_vec_push_i64(_t1, qv_int(1));` for each element, with no intermediate list or `q_to_vector()` scan.
+
 ### 5.4 Extension Performance
 
 The QEI calling convention (Section 2.4) extends the scalar-first principle across the Quark↔C++ boundary:
 
-- **Typed extern functions** receive native C++ types directly. `extern fn sqrt(x: float) float as 'q_sqrt'` means the C++ function is `double q_sqrt(double)` — no QValue at the boundary.
-- **Vector extensions** access typed storage via zero-copy spans (`qext::as_f64()` returns `std::span<double>` pointing directly into `QVector`'s internal `std::vector<double>`). The bulk data never touches QValue.
+- **Typed extern functions** receive native C++ types directly. `extern fn cbrt(x: float) float as 'qm_cbrt'` means the C++ function is `double qm_cbrt(double)` — no QValue at the boundary.
+- **Vector extensions** access typed storage via zero-copy views (`qext::as_f64()` returns a `QSlice<const double>` pointing directly into the `QVector`'s values buffer). The bulk data never touches QValue.
 - **QValue at the boundary** only occurs for untyped parameters (the escape hatch for polymorphic functions) and closure callbacks (where the callee's types aren't known).
 
 This means an extension that does `dot(v1, v2)` on two float vectors is: one function call with two native pointers → direct array access → native arithmetic → native double return. Zero QValue in the entire path.
@@ -1035,17 +1056,20 @@ One language change is needed before QEI implementation can begin: the `extern` 
 
 ### 6.1 `extern` Keyword
 
-The core QEI mechanism. One new keyword, two constructs:
+The core QEI mechanism. One new keyword, two QEI constructs (plus the FFI forms in `ffi_v0_1_spec.md`):
 
 ```quark
-extern 'math_impl.hpp'                                       # include C++ source
-extern fn sqrt(x: float) float as 'q_sqrt'                   # free function
-extern fn vector.normalize() vector as 'q_vec_normalize'     # method on a type
+extern 'math_impl.hpp'                                       // include C++ source
+extern fn cbrt(x: float) float as 'qm_cbrt'                  // free function
+extern fn vector.normalize() vector as 'q_vec_normalize'     // method on a type
 ```
 
 The parser distinguishes by what follows `extern`:
-- String literal → C++ source include (previously `extern source`)
+- String literal → C++ header include (`ExternHeaderNode`; called `extern source` in early drafts)
 - `fn` → function/method declaration
+- `link` / `include_path` → native library and include directory (`ffi_v0_1_spec.md` P1)
+
+The name `extern source` now belongs to FFI P2, where it means a separately compiled `.cpp` file, not a header include.
 
 Described in detail in Section 2.
 
@@ -1057,15 +1081,18 @@ Early return is a separate language feature, deferred to a future milestone. It 
 
 ### 7.1 Current State
 
-The stdlib lives at `src/core/stdlib/` with two pure-Quark modules:
+As of 2026-11-06, the stdlib at `src/core/stdlib/` has:
 
 ```
 src/core/stdlib/
-├── io.qrk       # Quark wrappers around _file_* catalog builtins
-└── fmt.qrk      # Quark wrappers around _fmt_* catalog builtins
+├── io.qrk          # Quark wrappers around _file_* catalog builtins (not migrated yet)
+├── fmt.qrk         # QEI module: extern fn declarations (migrated, see §7.2)
+├── fmt.hpp         # C++ implementations for std/fmt
+├── blas.qrk        # std/blas, an FFI provider (ffi_v0_1_spec.md §5.3)
+└── blas_glue.hpp
 ```
 
-These modules define user-friendly APIs (e.g., `io.open`) that delegate to `_` prefixed catalog builtins (e.g., `_file_open`). The C++ implementations live separately in `runtime/include/quark/builtins/`.
+`std/io` defines user-friendly APIs (e.g., `io.open`) that delegate to `_` prefixed catalog builtins (e.g., `_file_open`), whose C++ implementations live in `runtime/include/quark/builtins/`. Before the migration, `std/fmt` worked the same way over `_fmt_*` builtins.
 
 ### 7.2 After QEI
 
@@ -1096,6 +1123,8 @@ fn seek_end() int -> 2
 ```
 
 **`fmt.qrk` after migration:**
+
+(As implemented, `src/core/stdlib/fmt.qrk` declares `fmt_list`, `fmt_vector`, `fmt_dict` and `fmt_table` as `extern fn`s and wraps them in a `module fmt` whose `show_list`, `show_vec`, `show_dict`, `table`, `head` and `tail` add default arguments. The sketch below is the original plan.)
 ```quark
 extern 'fmt.hpp'
 

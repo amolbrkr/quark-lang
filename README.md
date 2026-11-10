@@ -68,7 +68,7 @@ builds it with CMake (once).
 ### 2. Build the compiler
 
 The compiler lives in `src/core/quark`. Build it there so it can find its runtime
-headers and standard library (both are resolved relative to the binary):
+headers, standard library and garbage collector:
 
 ```bash
 cd src/core/quark
@@ -78,8 +78,9 @@ go build -o quark .
 You now have a `quark` executable in `src/core/quark`.
 
 > Keep the binary in `src/core/quark`. It locates the C++ runtime headers at
-> `./runtime/include` next to itself and the standard library at `../stdlib`. If
-> you move it, see [Troubleshooting](#troubleshooting).
+> `./runtime/include` next to itself, the standard library at `../stdlib` and
+> the garbage collector at `../../../deps/bdwgc`. If you move it, see
+> [Troubleshooting](#troubleshooting).
 
 ### 3. Write and run "Hello, Quark!"
 
@@ -100,8 +101,9 @@ Hello, Quark!
 ```
 
 `quark run` compiles to a temporary native binary and executes it. The first run
-also bootstraps the GC (a one-time CMake step), so expect it to take a little
-longer; subsequent runs are fast.
+also builds a precompiled runtime header (cached in your user cache directory,
+e.g. `~/.cache/quark/pch`), so expect it to take a little longer; subsequent
+runs are fast.
 
 To run one of the bundled example programs:
 
@@ -109,11 +111,12 @@ To run one of the bundled example programs:
 ./quark run ../../testfiles/smoke_syntax.qrk
 ```
 
-The bare form `./quark hello.qrk` is shorthand for `./quark run hello.qrk`.
+The bare form `./quark hello.qrk` is shorthand for `./quark run hello.qrk` (the
+argument must end in `.qrk`).
 
 ## How a Quark program is built
 
-Quark is a compiler, not an interpreter. A `.qrk` file flows through seven Go
+Quark is a compiler, not an interpreter. A `.qrk` file flows through six Go
 stages, is emitted as a single C++17 translation unit, and is compiled by
 `clang++` into a native executable:
 
@@ -180,8 +183,15 @@ label: str = 'hello'
 
 If the right-hand side does not match the annotation, you get a compile-time
 error. The available annotation names are `int`, `float`, `str`, `bool`, `any`,
-`result`, `list`, `dict`, `vector`, and any `struct` type you define. Generic
-forms like `list[int]` are **not** supported.
+`result`, `list`, `dict`, `vector`, `resource`, `file_handle` (the handle type
+that `std/io` uses; a `file_handle` can be passed where a `resource` is
+expected), and any `struct` type you define. Generic forms like `list[int]` are
+**not** supported.
+
+Annotations on Quark functions are checked at compile time only: nothing
+converts or checks the value at runtime, so `fn f(x: float) -> x` called as
+`f(1)` returns the int `1`. Only `extern fn` parameters are converted at
+runtime (see [semantics.md](semantics.md) §10.6).
 
 ### Printing and input
 
@@ -195,7 +205,10 @@ name = input('Your name: ')   // read a line from stdin (prompt is optional)
 - `print(value, end, width, align, pad)` writes `value` with up to four optional
   formatting arguments (custom line terminator, minimum field width, alignment,
   and pad character).
-- `input()` / `input(prompt)` reads a line of text and returns a string.
+- `input()` / `input(prompt)` reads a line of text and returns it as a string
+  without the line ending. At end of input it returns `null` (an empty line
+  gives `''`), so `while true: line = input(); if line == null: break` reads
+  stdin to the end.
 
 > **Heads up:** printing a list, vector, or dict shows a compact summary, not the
 > elements:
@@ -237,8 +250,12 @@ From lowest to highest binding:
 println(1 + 2 * 3)      // 7
 println(2 ** 3 ** 2)    // 512  (right-associative: 2 ** (3 ** 2))
 println(-5)             // -5
+println(-2 ** 2)        // 4    (unary minus binds tighter: (-2) ** 2)
 println(!false)         // true
 ```
+
+Assignment is a statement, not a chainable expression: `a = b = 1` is a
+compile-time error.
 
 Ints are 64-bit, and overflow is a runtime error rather than a silent wrap.
 `==` compares lists, dicts and results by value, so `list [1, 2] == list [1, 2]`
@@ -247,8 +264,8 @@ is `true`. Vectors compare element-wise and produce a `vector[bool]`.
 ### Strings
 
 String literals use single or double quotes. Supported escapes are `\\`, `\'`,
-`\"`, `\n`, `\t`, `\r`, and `\0`. (String interpolation is planned but not yet
-available.)
+`\"`, `\n`, `\t` and `\r`. Strings can't contain a NUL character, so `\0` is a
+compile error. (String interpolation is planned but not yet available.)
 
 Strings carry methods, called with dot syntax, and they chain:
 
@@ -506,16 +523,20 @@ Dicts map identifier keys to values. The `dict` keyword is required, and keys in
 literal are written as bare identifiers:
 
 ```quark
-user = dict { name: 'ada', age: 36 }
+user = dict { name: 'ada', city: 'paris' }
 
 println(user.name)           // ada — dot read
-user.age = 37                // dot write
-println(user.age)            // 37
-
-user = user.set('city', 'london')   // .set returns the updated dict
+user.city = 'london'         // dot write
 println(user.city)           // london
+
+user = user.set('lang', 'en')   // .set returns the updated dict
+println(user.lang)           // en
 println(user.get('missing')) // null — missing keys read as null
 ```
+
+The analyzer infers a value type from the literal. Storing a value of a
+different type (say an int in the dict above) still works, but prints a
+`QK-CHECK-002` warning.
 
 Dicts support `.get`, `.set`, `.keys`, `.values`, and `.items`. Bracket indexing
 (`user['name']`) is **not** supported — use dot access or `.get` / `.set`.
@@ -608,11 +629,19 @@ println(m.square(9))   // 81
 println(m.cube(3))     // 27
 ```
 
-**File import** (relative or absolute path, no extension):
+**File import** (relative or absolute path, no extension). The imported file
+must declare a `module`; a file with only top-level functions fails with
+`QK-LOAD-001 ... does not define a module`:
+
+```quark
+// lib/helpers.qrk
+module helpers:
+    fn format_name(name) -> 'Name: ' + name
+```
 
 ```quark
 use './lib/helpers' as h
-println(h.format_name('Ada'))
+println(h.format_name('Ada'))   // Name: Ada
 ```
 
 **Standard library import** (the `std/` prefix; see
@@ -626,10 +655,12 @@ println(io.exists('hello.qrk'))         // true / false
 println(fmt.show_list(list [3, 1, 2]))  // formatted, readable list
 ```
 
-> **Prefer the `as alias` form.** Importing without an alias injects the module's
-> names into the current scope, which can collide with your own definitions and
-> produce `QK-CHECK-001` symbol-conflict errors. Aliased imports keep names tidy
-> and unambiguous.
+> **Prefer the `as alias` form.** Importing without an alias makes the module's
+> names usable without a prefix, so a definition of your own with the same name,
+> or a second unaliased module with that name, is a `QK-LOAD-001` conflict error.
+> With aliases there are no conflicts: each module's members are separate from
+> other modules' and from your own names (`io.read` and `csv.read` coexist, and
+> a variable named `open` doesn't affect `io.open`).
 
 ## Standard library reference
 
@@ -663,6 +694,9 @@ required** for them. (The `std/io` and `std/fmt` modules are separate; see
 | `ceil` | 1 | int | round toward +∞ |
 | `round` | 1 | int | round to nearest int |
 | `enumerate` | 1 | list | list of `{ index, value }` records |
+| `all` | 1 | bool | true if every non-null element of a `vector[bool]` is true |
+| `any` | 1 | bool | true if any non-null element of a `vector[bool]` is true |
+| `vfrom_list` | 1 | vector | same as `list.to_vector()` |
 
 ### Methods by receiver type
 
@@ -693,6 +727,8 @@ required** for them. (The `std/io` and `std/fmt` modules are separate; see
 | `.remove(idx)` | remove and return the item at index |
 | `.slice(start, end)` | sublist `[start, end)` |
 | `.reverse()` | reverse in place |
+| `.sort()` | sort in place, ascending (numbers, strings or bools; stable) |
+| `.sort_by(key)` | sort in place by `key(item)`, e.g. `rows.sort_by(fn(r) -> r.amount)` |
 | `.concat(other)` | concatenate two lists |
 | `.join(sep)` | join into a string |
 | `.enumerate()` | list of `{ index, value }` records |
@@ -725,6 +761,10 @@ These ship under `src/core/stdlib` and are imported with the `std/` prefix:
 |---|---|---|
 | `io` | `use 'std/io' as io` | `io.open`, `io.read`, `io.write`, `io.close`, `io.seek`, `io.exists`, and `io.seek_set` / `io.seek_cur` / `io.seek_end` |
 | `fmt` | `use 'std/fmt' as fmt` | `fmt.show_list`, `fmt.show_vec`, `fmt.show_dict`, `fmt.table`, `fmt.head`, `fmt.tail` for readable rendering |
+| `sys` | `use 'std/sys' as sys` | `sys.args()` (command-line arguments), `sys.env(name)` (environment variable or `null`), `sys.exit(code)` |
+| `csv` | `use 'std/csv' as csv` | `csv.parse(text, sep)` and `csv.read(path, sep)` (RFC 4180 quoting; rows of `str` fields) |
+| `time` | `use 'std/time' as time` | `time.now()` (epoch seconds), `time.clock()` (monotonic seconds, for timing), `time.sleep(seconds)` |
+| `random` | `use 'std/random' as random` | `random.seed(n)`, `random.uniform()`, `random.randint(lo, hi)`, `random.choice(xs)`, `random.shuffle(xs)` |
 | `blas` | `use 'std/blas' as blas` | `blas.dot`, `blas.axpy`, `blas.scal`, `blas.nrm2`, `blas.asum`, `blas.gemv` over f64 vectors via OpenBLAS (needs `libopenblas-dev` or `brew install openblas`) |
 
 For deeper behavior notes, see [stdlib.md](stdlib.md). The code-level source of
@@ -759,17 +799,17 @@ quark <command> [arguments]
 | `quark parse <file>` | parse and print the AST |
 | `quark check <file>` | run the analyzer (types, scopes); report diagnostics only |
 | `quark emit <file>` | print the generated C++ to stdout |
-| `quark build <file> [-o out] [--lto]` | compile to a native executable |
-| `quark run <file> [--debug] [--lto]` | compile and run |
-| `quark <file>` | shorthand for `quark run <file>` |
-| `quark help` | show usage |
+| `quark build <file> [-o out] [--debug] [--lto]` | compile to a native executable |
+| `quark run <file> [--debug] [--lto] [-- args...]` | compile and run; arguments after `--` are passed to the program (`sys.args()` in `std/sys`) |
+| `quark <file>.qrk` | shorthand for `quark run <file>.qrk` (the argument must end in `.qrk`) |
+| `quark help`, `-h`, `--help` | show usage |
 
 Flags:
 
 | Flag | Applies to | Effect |
 |---|---|---|
 | `-o <name>` | `build` | output executable name |
-| `--debug`, `-d` | `run` | keep the generated `.cpp` next to the source and print the compile command |
+| `--debug`, `-d` | `build`, `run` | print every compile and link command; `build` also keeps the generated C++ as `<out>.cpp`, and `run` keeps the C++ and the executable next to the source (`hello.cpp`, `hello`) |
 | `--lto` | `build`, `run` | enable link-time optimization |
 | `--no-pch` | `build`, `run` | don't use the cached precompiled runtime header |
 | `--lib-path <dir>` | `build`, `run` | search `<dir>` for `extern link` libraries; also sets an rpath so the binary finds shared libraries there (repeatable) |
@@ -802,9 +842,12 @@ quark check hello.qrk          # type-check only
 | Path | Contents |
 |---|---|
 | `src/core/quark` | the Go compiler; build the `quark` binary here |
-| `src/core/quark/lexer`, `parser`, `loader`, `types`, `invariants`, `codegen`, `builtins` | the seven compiler stages |
+| `src/core/quark/lexer`, `parser`, `loader`, `types`, `invariants`, `codegen` | the six compiler stages (`types` is the analyzer) |
+| `src/core/quark/driver` | runs the stages in order; used by every CLI command except `lex` |
+| `src/core/quark/toolchain` | finds clang++, the runtime and the GC; compiles and links |
+| `src/core/quark/ast`, `token`, `ir`, `builtins`, `diagnostics` | shared data: AST nodes, tokens, call-plan IR, the builtin catalog, diagnostic codes |
 | `src/core/quark/runtime/include/quark` | header-only C++17 runtime (resolved relative to the binary) |
-| `src/core/stdlib` | standard library modules (`io.qrk`, `fmt.qrk`, `fmt.hpp`) |
+| `src/core/stdlib` | standard library modules (`io.qrk`, `fmt.qrk` + `fmt.hpp`, `blas.qrk` + `blas_glue.hpp`) |
 | `src/testfiles` | runnable example/smoke programs (`smoke_*.qrk`) |
 | `deps/bdwgc` | vendored Boehm garbage collector: headers and per-platform prebuilt libraries in `lib/` (see `VENDORED.md`) |
 | `grammar.md`, `semantics.md`, `stdlib.md`, `architecture.md`, `error_codes.md` | reference docs |
@@ -832,15 +875,18 @@ verified by compiling and running the bundled examples.
 - Extern / FFI declarations for calling into C++, and linking native libraries
   with `extern link` / `extern include_path` (see semantics.md §10.6 and
   [ffi_v0_1_spec.md](ffi_v0_1_spec.md)). `std/blas` wraps OpenBLAS.
+  `extern source` (separately compiled glue `.cpp` files) is not implemented
+  yet and reports `QK-PARSE-001`.
 
 **In progress / not yet usable**
 
 - **`table` literals.** A columnar `table` type is specified in
-  [tables_v0_1_spec.md](tables_v0_1_spec.md) and partially scaffolded (there is a
-  `fmt.table` rendering stub), but `table { ... }` **does not parse in the current
+  [tables_v0_1_spec.md](tables_v0_1_spec.md) and partially scaffolded (the
+  runtime has a table type, and `fmt.table` already renders tables and
+  dict-of-columns values), but `table { ... }` **does not parse in the current
   build** — it reports `QK-PARSE-001`. Treat tables as not yet available.
-- **Un-aliased multi-file imports.** Importing several files without `as` can
-  raise symbol-conflict errors; use aliases.
+- **Un-aliased imports.** Importing modules without `as` reports a conflict when
+  two of them, or one of them and your code, define the same name; use aliases.
 
 **Planned**
 
@@ -872,14 +918,24 @@ compiler and the program. Current builds link a static GC (from
 `deps/bdwgc/lib/<os>-<arch>` or a local `deps/bdwgc/build-static`), so
 executables do not depend on `libgc` at runtime.
 
-**Imports or runtime headers not found** — the `quark` binary resolves its runtime
-headers at `./runtime/include` next to itself and the standard library at
-`../stdlib`. Keep the binary in `src/core/quark`. If you must run it from
-elsewhere, set the stdlib root explicitly:
+**Imports, runtime headers or the GC not found** — keep the binary in
+`src/core/quark`. If you run it from elsewhere, this is where it looks:
 
-```bash
-export QUARK_STDLIB_ROOT=/abs/path/to/src/core/stdlib
-```
+- **Standard library** (`use 'std/...'`): `QUARK_STDLIB_ROOT` if set; then a
+  `stdlib/` directory in the source file's directory or any parent; then
+  `stdlib/`, `../stdlib` or `../../stdlib` next to the binary. To set it
+  explicitly:
+
+  ```bash
+  export QUARK_STDLIB_ROOT=/abs/path/to/src/core/stdlib
+  ```
+
+- **Runtime headers**: `runtime/include` next to the binary, else
+  `runtime/include` in the current directory.
+- **Garbage collector** (`could not locate deps/bdwgc ...`):
+  `../../../deps/bdwgc` or `deps/bdwgc` next to the binary, then `deps/bdwgc` in
+  the current directory or any parent. Running from inside the repository
+  checkout is enough.
 
 **`QK-FFI-002`: native library not found** — a module asked for a library with
 `extern link` (for example `std/blas` needs OpenBLAS) and it isn't in any

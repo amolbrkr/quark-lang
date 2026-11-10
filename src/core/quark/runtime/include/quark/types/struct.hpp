@@ -39,12 +39,12 @@ inline QStruct* q_struct_create(const QStructDef* def) {
 // Index must be valid (enforced at compile time by the analyzer).
 inline QValue q_struct_get_field(QValue val, int index) {
     if (val.type != QValue::VAL_STRUCT || !val.data.struct_val) {
-        fprintf(stderr, "QK-RUNTIME-001: expected struct, got different type\n");
+        q_runtime_reportf("runtime error: expected struct, got different type\n");
         exit(1);
     }
     QStruct* s = val.data.struct_val;
     if (index < 0 || index >= s->def->field_count) {
-        fprintf(stderr, "QK-RUNTIME-001: struct field index %d out of range\n", index);
+        q_runtime_reportf("runtime error: struct field index %d out of range\n", index);
         exit(1);
     }
     return s->fields[index];

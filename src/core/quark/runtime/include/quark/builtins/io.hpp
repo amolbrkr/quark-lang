@@ -143,7 +143,9 @@ inline QValue q_println(QValue v) {
     return q_print(v, qv_string("\n"));
 }
 
-// Read line from stdin (with optional prompt)
+// Read a line from stdin (with optional prompt). Returns the line without its
+// line ending ("\n" or "\r\n"), of any length, or null at end of input, so
+// that an empty line ('') and end of input can be told apart.
 inline QValue q_input(QValue prompt) {
     if (prompt.type != QValue::VAL_NULL && prompt.type != QValue::VAL_STRING) {
         q_runtime_reportf("runtime error: input() optional prompt must be str\n");
@@ -155,15 +157,26 @@ inline QValue q_input(QValue prompt) {
         fflush(stdout);
     }
     char buffer[4096];
-    if (fgets(buffer, sizeof(buffer), stdin) != nullptr) {
-        // Remove trailing newline
+    std::string line;
+    bool readAny = false;
+    while (fgets(buffer, sizeof(buffer), stdin) != nullptr) {
+        readAny = true;
         size_t len = strlen(buffer);
+        line.append(buffer, len);
         if (len > 0 && buffer[len - 1] == '\n') {
-            buffer[len - 1] = '\0';
+            break;
         }
-        return qv_string(buffer);
     }
-    return qv_string("");
+    if (!readAny) {
+        return qv_null();
+    }
+    if (!line.empty() && line.back() == '\n') {
+        line.pop_back();
+    }
+    if (!line.empty() && line.back() == '\r') {
+        line.pop_back();
+    }
+    return qv_string(line.c_str());
 }
 
 // Read line from stdin (no prompt)

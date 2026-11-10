@@ -396,6 +396,7 @@ func (ml *ModuleLoader) ResolveImports(root *ast.TreeNode, currentFilePath strin
 	ml.beginResolve(absPath)
 	ml.resolveImportsInNode(root, absPath)
 	ml.endResolve(absPath)
+	ml.namespaceModules(root)
 }
 
 // resolveImportsInNode processes all UseNode children of `node`.
@@ -549,6 +550,9 @@ func (ml *ModuleLoader) resolveImportsInNode(node *ast.TreeNode, currentFilePath
 			}
 			continue
 		}
+		// Tag the imported file's nodes before transitive imports are spliced in,
+		// so runtime errors inside the module name its file.
+		ast.SetSourceFile(importedAST, moduleDisplayName(importPath, absResolved))
 
 		// Capture module names defined directly in this imported file before
 		// recursive splicing introduces transitive modules.
@@ -589,6 +593,20 @@ func (ml *ModuleLoader) resolveImportsInNode(node *ast.TreeNode, currentFilePath
 	}
 
 	node.Children = newChildren
+}
+
+// moduleDisplayName is how runtime errors name an imported file: std/ imports
+// as "std/<name>.qrk", others relative to the working directory when possible.
+func moduleDisplayName(importPath, absPath string) string {
+	if isStdlibImportPath(importPath) {
+		return "std/" + filepath.Base(absPath)
+	}
+	if wd, err := os.Getwd(); err == nil {
+		if rel, err := filepath.Rel(wd, absPath); err == nil && !strings.HasPrefix(rel, "..") {
+			return filepath.ToSlash(rel)
+		}
+	}
+	return filepath.ToSlash(absPath)
 }
 
 // findModuleNodes returns all top-level ModuleNodes in source order.

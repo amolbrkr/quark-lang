@@ -2,12 +2,14 @@ package types
 
 import (
 	"quark/ast"
+	"quark/token"
 	"quark/ir"
 )
 
 func (a *Analyzer) analyzeCompilationUnit(node *ast.TreeNode) Type {
 	a.predeclareStructTypes(node.Children)
 	a.predeclareFunctions(node.Children)
+	a.checkCallsBeforeDefinition(node.Children)
 	var lastType Type = TypeVoid
 	for _, child := range node.Children {
 		lastType = a.Analyze(child)
@@ -19,6 +21,7 @@ func (a *Analyzer) analyzeBlock(node *ast.TreeNode) Type {
 	a.pushScope()
 	defer a.popScope()
 	a.predeclareFunctions(node.Children)
+	a.checkCallsBeforeDefinition(node.Children)
 	var lastType Type = TypeVoid
 	for _, child := range node.Children {
 		lastType = a.Analyze(child)
@@ -113,6 +116,25 @@ func (a *Analyzer) collectFreeVars(node *ast.TreeNode, lambdaScope *Scope, param
 			seen[name] = true
 			*result = append(*result, name)
 		}
+		return
+	}
+	// Dot access: the right side is a member, key or method name, not a
+	// variable, so only the left side is walked. For alias.member (a module
+	// call), the member's binding lives in main, so it is captured unless it is
+	// a native function, which is called directly.
+	if node.NodeType == ast.OperatorNode && node.Token != nil && node.Token.Type == token.DOT && len(node.Children) == 2 {
+		left, right := node.Children[0], node.Children[1]
+		if left != nil && left.NodeType == ast.IdentifierNode && right != nil && right.NodeType == ast.IdentifierNode {
+			if _, isAlias := a.moduleAliases[left.TokenLiteral()]; isAlias && lambdaScope.Lookup(left.TokenLiteral()) == nil {
+				member := right.TokenLiteral()
+				if _, isNative := a.nativeFns[member]; !isNative && member != "" && !params[member] && !seen[member] {
+					seen[member] = true
+					*result = append(*result, member)
+				}
+				return
+			}
+		}
+		a.collectFreeVars(left, lambdaScope, params, seen, result)
 		return
 	}
 	if node.NodeType == ast.LambdaNode {
@@ -267,4 +289,66 @@ func (a *Analyzer) analyzeLambda(node *ast.TreeNode) Type {
 	}
 
 	return funcType
+}
+
+// checkCallsBeforeDefinition reports a statement that calls a function defined
+// later in the same statement list. Predeclaration makes the name visible, but
+// the function value is only bound when its definition runs, so such a call
+// fails at runtime. Calls inside function and lambda bodies are fine (they run
+// later) and are not checked; calls made indirectly through another function
+// are still caught at runtime.
+func (a *Analyzer) checkCallsBeforeDefinition(stmts []*ast.TreeNode) {
+	defIndex := map[string]int{}
+	defLine := map[string]int{}
+	for i, stmt := range stmts {
+		name := ""
+		var nameNode *ast.TreeNode
+		switch {
+		case stmt == nil:
+			continue
+		case stmt.NodeType == ast.FunctionNode && len(stmt.Children) > 0:
+			nameNode = stmt.Children[0]
+		case isFunctionBindingAssignment(stmt):
+			nameNode = stmt.Children[0]
+		default:
+			continue
+		}
+		name = nameNode.TokenLiteral()
+		if _, seen := defIndex[name]; name == "" || seen {
+			continue
+		}
+		defIndex[name] = i
+		if nameNode.Token != nil {
+			defLine[name] = nameNode.Token.Line
+		}
+	}
+	if len(defIndex) == 0 {
+		return
+	}
+	var walk func(n *ast.TreeNode, stmtIdx int)
+	walk = func(n *ast.TreeNode, stmtIdx int) {
+		if n == nil {
+			return
+		}
+		switch n.NodeType {
+		case ast.FunctionNode, ast.LambdaNode, ast.ModuleNode, ast.StructDefNode:
+			return
+		case ast.FunctionCallNode:
+			if len(n.Children) > 0 && n.Children[0] != nil && n.Children[0].NodeType == ast.IdentifierNode {
+				callee := n.Children[0].TokenLiteral()
+				if idx, ok := defIndex[callee]; ok && idx > stmtIdx {
+					a.errorAt(n.Children[0], "'%s' is called before its definition on line %d; move the definition above this call", callee, defLine[callee])
+				}
+			}
+		}
+		for _, c := range n.Children {
+			walk(c, stmtIdx)
+		}
+	}
+	for i, stmt := range stmts {
+		if stmt == nil || stmt.NodeType == ast.FunctionNode || isFunctionBindingAssignment(stmt) {
+			continue
+		}
+		walk(stmt, i)
+	}
 }

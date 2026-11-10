@@ -267,6 +267,30 @@ inline void q_list_free(QValue list) {
 #endif
 }
 
+// q_range_arg converts one argument of a lowered `for i in range(...)` loop to an
+// integer, with the same rules and messages as the q_range builtins: ints as is,
+// floats truncated, anything else a runtime error. `sig` is the call form, e.g.
+// "range(start, end)", and `what` the argument name, e.g. "end".
+inline long long q_range_arg(QValue v, const char* sig, const char* what) {
+    if (v.type == QValue::VAL_INT) {
+        return v.data.int_val;
+    }
+    if (v.type == QValue::VAL_FLOAT) {
+        return static_cast<long long>(v.data.float_val);
+    }
+    q_runtime_reportf("runtime error: %s expects numeric %s value\n", sig, what);
+    std::exit(1);
+}
+
+// q_range_step validates the step of a lowered `for i in range(start, end, step)`.
+inline long long q_range_step(long long step) {
+    if (step == 0) {
+        q_runtime_reportf("runtime error: range() step must not be zero\n");
+        std::exit(1);
+    }
+    return step;
+}
+
 // Range functions - generate lists of integers
 // range(end) - generates [0, 1, 2, ..., end-1]
 inline QValue q_range(QValue end) {

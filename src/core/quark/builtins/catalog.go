@@ -99,6 +99,8 @@ var catalog = []Spec{
 	{Name: "remove", Runtime: "q_remove", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeInt}, ReturnType: TypeAny, ReceiverType: TypeListAny},
 	{Name: "slice", Runtime: "q_slice", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeInt, TypeInt}, ReturnType: TypeListAny, ReceiverType: TypeListAny},
 	{Name: "reverse", Runtime: "q_reverse", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeListAny},
+	{Name: "sort", Runtime: "q_sort", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeListAny},
+	{Name: "sort_by", Runtime: "q_sort_by", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeListAny, ReceiverType: TypeListAny},
 	{Name: "enumerate", Runtime: "q_enumerate", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeListAny},
 	{Name: "join", Runtime: "q_str_join", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeString, ReceiverType: TypeListAny},
 	{Name: "to_vector", Runtime: "q_to_vector", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeAny, ReceiverType: TypeListAny},

@@ -73,7 +73,7 @@ func ValidateCallPlans(root *ast.TreeNode, plans map[*ast.TreeNode]*ir.CallPlan)
 		// INV-DISPATCH-MODE: every call plan must have a resolved dispatch mode.
 		if plan.Dispatch != ir.DispatchBuiltin && plan.Dispatch != ir.DispatchDirect &&
 			plan.Dispatch != ir.DispatchClosure && plan.Dispatch != ir.DispatchExtern &&
-			plan.Dispatch != ir.DispatchNative {
+			plan.Dispatch != ir.DispatchNative && plan.Dispatch != ir.DispatchDynamicMethod {
 			firstErr = invError("INV-DISPATCH-MODE", n, "call plan for '%s' has unresolved dispatch mode", plan.CalleeName)
 			return
 		}
@@ -82,6 +82,21 @@ func ValidateCallPlans(root *ast.TreeNode, plans map[*ast.TreeNode]*ir.CallPlan)
 			plan.Dispatch == ir.DispatchExtern || plan.Dispatch == ir.DispatchNative) && plan.RuntimeSymbol == "" {
 			firstErr = invError("INV-RUNTIME-SYMBOL", n, "call plan for '%s' requires runtime symbol but has none", plan.CalleeName)
 			return
+		}
+		// INV-DYNAMIC-METHOD: every candidate of a dynamic method call must be a
+		// catalog method with the matching runtime symbol.
+		if plan.Dispatch == ir.DispatchDynamicMethod {
+			if !plan.IsMethod || plan.ReceiverNode == nil || len(plan.MethodCandidates) == 0 {
+				firstErr = invError("INV-DYNAMIC-METHOD", n, "dynamic method call plan for '%s' needs a receiver and candidates", plan.CalleeName)
+				return
+			}
+			for _, c := range plan.MethodCandidates {
+				spec, ok := builtins.LookupMethod(builtins.TypeKey(c.ReceiverTypeKey), plan.CalleeName)
+				if !ok || c.ValueTag == "" || c.RuntimeSymbol != spec.Runtime {
+					firstErr = invError("INV-DYNAMIC-METHOD", n, "dynamic method '%s' has an invalid candidate for receiver type '%s'", plan.CalleeName, c.ReceiverTypeKey)
+					return
+				}
+			}
 		}
 		if plan.Dispatch == ir.DispatchBuiltin {
 			if plan.CalleeName == "" {

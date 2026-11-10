@@ -6,7 +6,7 @@ This document covers the runtime semantics, error behaviour, and design decision
 
 ## 1) Value Model
 
-Every runtime value carries one of eleven types:
+Every runtime value carries one of thirteen types:
 
 | Type | Payload | Notes |
 |------|---------|-------|
@@ -21,10 +21,12 @@ Every runtime value carries one of eleven types:
 | `fn` | Function value | All functions are closures (even non-capturing ones) |
 | `result` | Tagged ok/err wrapper | Holds an arbitrary payload |
 | `resource` | Opaque external handle | Generational slot-based; currently used for file I/O |
+| `struct` | Fixed set of named fields | Declared with `struct`; immutable; `type()` returns the struct's name (grammar.md §9.1) |
+| `table` | Columnar table | Runtime representation only; no syntax creates one yet (`tables_v0_1_spec.md`) |
 
 ### 1.1 Pass-by-value vs reference semantics
 
-Values are passed by copy. For scalar types (int, float, bool, null) this is a full copy. For heap types (list, dict, vector, fn, result, str) the value is copied but the **underlying data is shared** — so two variables can alias the same list/dict. Mutations through one alias are visible through the other.
+Values are passed by copy. For scalar types (int, float, bool, null) this is a full copy. For heap types (list, dict, vector, fn, result, str, struct) the value is copied but the **underlying data is shared** — so two variables can alias the same list/dict. Mutations through one alias are visible through the other.
 
 ### 1.2 String ownership
 
@@ -50,7 +52,9 @@ Quark has **no implicit coercion** except in three narrow cases:
 
 2. **int → float promotion in mixed comparison**: `<`, `<=`, `>`, `>=`, `==`, `!=` promote the int operand when comparing int to float.
 
-3. **int → float widening at `float` parameters**: an `int` argument passed to a parameter annotated `float` (on a Quark function or an `extern fn`) is converted to `float`. The reverse is not done: a `float` passed to an `int` parameter is a runtime error.
+3. **int → float widening at `extern fn` parameters**: an `int` argument passed to an `extern fn` parameter annotated `float` is converted to `float`. The reverse is not done: a `float` passed to an `int` extern parameter is a runtime error.
+
+Annotations on Quark functions are compile-time only. They are checked when the argument type is known, but nothing is converted or checked at runtime: `fn f(x: float) -> x` called as `f(1)` receives the int `1`.
 
 All other type mismatches are errors (compile-time when type info is available, runtime otherwise).
 
@@ -73,6 +77,7 @@ Truthiness governs all condition positions (`if`, `while`, ternary), the `and`/`
 | `fn` | always true (for valid closures) |
 | `result` | **error** — use `is_ok(r)`, `is_err(r)` or `when` |
 | `resource` | handle is alive (not closed or stale) |
+| `struct` | always true |
 
 **Results and vectors are rejected as conditions.** Treating an `err` result as false would silently discard the error. A vector comparison such as `v == w` yields a `vector[bool]`, so its emptiness says nothing about whether the elements matched. Using either in a condition, with `!`, or as an `and`/`or` operand is a compile-time error when the type is known and a runtime error otherwise.
 
@@ -91,8 +96,9 @@ Truthiness governs all condition positions (`if`, `while`, ternary), the `and`/`
 | `-` | numeric×numeric | int or float | Same promotion rules as `+`; int overflow → fatal |
 | `*` | numeric×numeric | int or float | int overflow → fatal |
 | `/` | numeric×numeric | **always float** | Division by zero → fatal |
+| `-` `*` `/` | vector×vector / vector×scalar | vector | Element-wise, like `+` |
 | `%` | **int×int only** | int | Modulo by zero → fatal |
-| `**` | numeric×numeric | int if both int; float otherwise | Exact for ints; int overflow → fatal; negative int exponent truncates (`2 ** -1` = `0`) |
+| `**` | numeric×numeric | int if both int; float otherwise | Exact for ints; int overflow → fatal; negative int exponent truncates (`2 ** -1` = `0`). No vector form (nor for `%`) |
 | unary `-` | numeric | same type | Negating the minimum int → fatal |
 
 Any other type combination → runtime error.
@@ -104,7 +110,11 @@ Any other type combination → runtime error.
 | Operator | Accepted types | Result |
 |----------|---------------|--------|
 | `<` `<=` `>` `>=` | numeric×numeric | bool (with int→float promotion) |
-| `==` `!=` | any×any | bool |
+| `<` `<=` `>` `>=` | str×str | bool, by byte order (`'Zebra' < 'apple'`), as `list.sort()` orders strings |
+| `<` `<=` `>` `>=` | vector×vector / vector×scalar | `vector[bool]`, element-wise |
+| `==` `!=` | any×any | bool (`vector[bool]` for vectors, see below) |
+
+Any other pair, such as `'a' < 1` or `true < false`, is a runtime error ("operator '<' expects two numbers or two strings"). The checker lets mixed operands through, like other cross-type comparisons, and the runtime rejects them.
 
 **Equality rules**: Same-type comparisons use natural equality. Cross-type int/float uses double comparison. All other cross-type comparisons return `false` (not an error).
 
@@ -122,7 +132,8 @@ Type-specific equality:
 | `dict` | Structural: same key set and equal values |
 | `result` | Same tag (`ok`/`err`) and equal payloads |
 | `fn` | Identity: the same function value |
-| `vector` | Element-wise comparison producing `vector[bool]` (see §9.3). A vector nested inside a list, dict or result compares as a whole: same dtype, length, null positions and values |
+| `vector` | Element-wise comparison producing `vector[bool]`. A vector nested inside a list, dict or result compares as a whole: same dtype, length, null positions and values |
+| `struct` | Compile-time error; compare fields explicitly |
 
 ### 4.3 Logical operators
 
@@ -154,7 +165,7 @@ From lowest to highest binding:
 
 | Level | Operators | Associativity |
 |-------|-----------|---------------|
-| 1 | `=` (assignment) | right |
+| 1 | `=` (assignment) | none — `a = b = 1` is a compile-time error |
 | 2 | `\|` (pipe) | left |
 | 3 | `if`/`else` (ternary) | right |
 | 4 | `or` | left |
@@ -163,9 +174,13 @@ From lowest to highest binding:
 | 7 | `<` `<=` `>` `>=` | left |
 | 8 | `+` `-` | left |
 | 9 | `*` `/` `%` | left |
-| 10 | `!` unary`-` | prefix |
-| 11 | `**` | right |
+| 10 | `**` | right |
+| 11 | `!` unary`-` | prefix |
 | 12 | `.` `[]` `()` (access/call) | left |
+
+Unary minus binds tighter than `**`: `-2 ** 2` is `(-2) ** 2`, which is `4`. Write `-(2 ** 2)` for `-4`.
+
+`ok` and `err` take everything that binds tighter than `=` as their operand, so `ok 5 == 1` is `ok (5 == 1)`. Parenthesize a result to compare it: `(ok 5) == (ok 5)`.
 
 ---
 
@@ -218,7 +233,17 @@ Pipes are left-associative: `x | f() | g()` means `g(f(x))`.
 
 The right side of `|` must be a function call expression. Piping to a bare identifier (e.g., `x | f`) is a compile-time error — use `x | f()`.
 
-Newlines before `|` are treated as line continuations, allowing multi-line pipe chains.
+A line that starts with `|` continues the previous line's expression, allowing multi-line pipe chains. The `|` line must be at the same indentation as the line it continues; indenting it is a syntax error.
+
+```quark
+fn double(x) -> x * 2
+fn inc(x) -> x + 1
+
+y = 5
+| double()
+| inc()
+println(y)  // 11
+```
 
 ---
 
@@ -234,7 +259,7 @@ when expr:
 `when` inspects a value and branches on its shape:
 
 - **Result patterns**: `ok identifier` or `err identifier` — matches `ok`/`err` results and binds the payload to the identifier.
-- **Value patterns**: literal values separated by `or` — matches if the scrutinee equals any listed value.
+- **Value patterns**: literal values (numbers, including negative ones, strings, booleans and `null`) separated by `or` — matches if the scrutinee equals any listed value.
 - **Wildcard**: `_` matches anything.
 
 Each arm's `->` body is a single expression. The entire `when` expression evaluates to the matched arm's result, so it can be used anywhere an expression ends a line, including the right side of an assignment:
@@ -274,14 +299,25 @@ Method/index behavior:
 | `xs.pop()` | Removes and returns last element. Fatal on empty list. |
 | `xs.slice(start, end)` | Returns new list with half-open `[start, end)`. Negative indices supported; bounds clamped. |
 | `xs.reverse()` | In-place reversal; returns the mutated list value. |
+| `xs.sort()`, `xs.sort_by(key)` | In-place stable ascending sort (by `key(item)` for `sort_by`); returns the mutated list value. Keys must all be numbers, all strings or all bools; other combinations are a runtime error. |
 | `xs.concat(ys)` | Returns a new list containing shallow-copied element values from both operands. |
 | `xs.enumerate()` | Returns `list[dict{index: int, value: any}]`. |
+
+### 9.2 Dicts
+
+- Created with `dict { key: value }`; keys in a literal are identifiers.
+- Keys are strings. `.get` and `.set` convert a non-string key to its string form, so `d.set(1, 2)` stores the key `'1'` and `d.get(1)` reads it back.
+- `d.key` and `d.get(key)` return `null` for a missing key.
+
+### 9.3 Ranges
 
 `range()` and lists:
 
 - `range(end)`, `range(start, end)`, `range(start, end, step)` return `list[int]`.
 - Start/end/step accept numeric values; float arguments are truncated toward zero before iteration.
 - `step = 0` is a runtime error.
+
+### 9.4 Vectors
 
 **Vectors are immutable.** Every vector operation, including `fillna` and `astype`, returns a new vector and never changes its inputs.
 
@@ -319,6 +355,10 @@ Stdlib imports (starting with `std/`) resolve by searching: `QUARK_STDLIB_ROOT` 
 
 Imported files must define at least one top-level `module` block. The loader parses the file, splices its AST into the importing file, and creates an alias binding. Module-qualified calls like `alias.function()` are resolved at analysis time and lowered to direct calls in codegen.
 
+Each module's members have their own namespace. Two modules may define the same name (`io.read` and `csv.read`), and a user definition or variable with a member's name doesn't affect the member (`open = 5` leaves `io.open` working). Internally the loader renames member `x` of module `m` to `m__x`; messages show the original name. Without an alias, `use m` makes `m`'s members usable as bare names; a bare name that two unaliased modules define, or that the program also defines at top level, is a `QK-LOAD-001` conflict.
+
+Module members can be called (`io.exists(p)`, `p | io.exists()`), including from inside functions, but not yet used as values (`f = io.exists` is an error).
+
 ### 10.4 Cycle detection
 
 The loader maintains a set of files currently being resolved. If a file appears twice in the resolution stack, a circular import error is reported with the full dependency chain.
@@ -336,7 +376,7 @@ extern './math_ext.hpp'
 extern fn fast_sqrt(x: float) float as 'my_sqrt'
 ```
 
-The `extern` source directive specifies a C++ header to include. The `extern fn` declaration maps a Quark-visible name to a C++ symbol. Parameters and return types must be explicitly annotated — the compiler generates unboxing/boxing code at call sites.
+The `extern 'file.hpp'` directive `#include`s a C++ header, resolved relative to the declaring file (`std/...` paths resolve in the stdlib). The `extern fn` declaration maps a Quark-visible name to a C++ symbol. Parameters and return types must be explicitly annotated — the compiler generates unboxing/boxing code at call sites.
 
 Extern functions can also be declared as methods on existing types:
 
@@ -346,7 +386,7 @@ extern fn list.shuffle(seed: int) list as 'q_list_shuffle'
 
 This registers a new method on the `list` type, callable via `my_list.shuffle(42)`.
 
-Supported parameter types: `int`, `float`, `bool`, `str`, `list`, `dict`, `vector`, `fn`, `any`. The compiler maps these to C++ types (`int64_t`, `double`, `bool`, `const char*`, `QList*`, `QDict*`, `QVector*`, `QClosure*`, `QValue`). Return types use the same mapping; the result is automatically boxed back to `QValue`.
+Parameter types map to C++ types: `int`, `float`, `bool` and `str` become `int64_t`, `double`, `bool` and `const char*`; `list`, `dict` and `vector` become `QList*`, `QDict*` and `QVector*`; every other annotation (`any`, `result`, `resource`, struct names) is passed as a boxed `QValue`. An `int` argument to a `float` parameter is widened; a `float` argument to an `int` parameter is a runtime error. Return types use the same mapping; the result is automatically boxed back to `QValue`.
 
 See `runtime/include/quark/ext/api.hpp` for the `qext` namespace available to extension authors.
 
@@ -419,8 +459,7 @@ All runtime errors are **fatal** — they print to stderr and exit. There are no
 | More than 12 arguments in dynamic call | Fatal |
 | Vector size mismatch in arithmetic | Fatal |
 | `min()`/`max()` on empty vector | Fatal |
-| Non-string dict key | Fatal |
-| Dot-key access on non-dict (static key read/write) | Fatal |
+| Dot-key access on non-dict when the type is unknown at compile time | Fatal |
 | Member access on null | Fatal |
 | Operation on closed/stale resource handle | Fatal |
 | Resource kind mismatch (e.g., passing non-file to file op) | Fatal |
@@ -430,8 +469,8 @@ All runtime errors are **fatal** — they print to stderr and exit. There are no
 
 | Operation | Behaviour on failure |
 |-----------|---------------------|
-| `.get(oob_index)` on list | Returns `null` |
-| `.get(oob_index)` on string | Returns `null` |
+| `.get(oob_index)` or `xs[oob_index]` on list | Returns `null` |
+| `s[oob_index]` on string | Returns `null` |
 | `dict.missing_key` / `dict.get(missing)` | Returns `null` |
 
 ---
@@ -467,7 +506,11 @@ The analyzer prevents assigning a `result`-typed value to a variable with a non-
 
 ### 13.1 Available types
 
-`int`, `float`, `str`, `bool`, `list`, `dict`, `vector`, `result`, `resource`, `any`, `void`
+Variable, parameter and struct field annotations: `int`, `float`, `str`, `bool`, `list`, `dict`, `vector`, `result`, `resource`, `file_handle`, `any`, and struct names.
+
+Return type annotations accept the same list. A `file_handle` is accepted where a `resource` is expected.
+
+`null`, `void` and `fn` are not annotations. `void` appears only in inferred types, such as a non-exhaustive `when`.
 
 There are **no generic types**. You cannot write `list[int]` or `dict[str, int]`.
 
@@ -477,7 +520,7 @@ There are **no generic types**. You cannot write `list[int]` or `dict[str, int]`
 fn foo(x: int, y: float = 0.0) -> x + y
 ```
 
-Annotations are checked at compile time when both parameter and argument types are known. When either is `any` or unknown, the check is skipped (deferred to runtime).
+Annotations are checked at compile time when both parameter and argument types are known. When either is `any` or unknown, the check is skipped. Nothing is checked or converted at runtime for Quark functions; only `extern fn` parameters are (§2).
 
 If a parameter has both a type annotation and a default value, the default's type must be assignable to the annotated type.
 
@@ -506,7 +549,7 @@ v: any = 1       // stored as QValue, not as a raw long long
 v = 'changed'    // legal — v can be reassigned to any type
 ```
 
-Without the `any` annotation, the compiler may choose scalar storage (e.g., `long long` for `int`), which prevents reassignment to a different type.
+Without an annotation, a variable's type is fixed by its first assignment, whatever that type is. Assigning a value of another type later is a compile-time error: `x = 1` then `x = 2.5`, `x = list [1]` then `x = 5`, and `x = null` then `x = 1` are all rejected. Only variables whose type is `any` (annotated, or inferred from a value of unknown type) can change type. Separately, the compiler may store a fixed-type `int`, `float` or `bool` variable as a native scalar (e.g. `long long`).
 
 ---
 
@@ -531,16 +574,19 @@ The loop variable `item` is scoped to the loop body. Supported iterables:
 
 ## 15) Dot Syntax
 
-Dot syntax (`.`) serves three distinct purposes depending on context:
+Dot syntax (`.`) serves five distinct purposes depending on context:
 
 | Form | Purpose | Example |
 |------|---------|---------|
 | `d.key` | Dict key read | `user.name` |
 | `d.key = val` | Dict key write | `user.age = 31` |
+| `s.field` | Struct field read (structs are immutable) | `customer.name` |
 | `value.method(args)` | Method dispatch | `'hello'.upper()`, `xs.push(4)` |
 | `alias.fn(args)` | Module-qualified call | `math.square(9)` |
 
 For method calls, the receiver's type determines which method is resolved. See stdlib.md for available methods per type.
+
+When the receiver's type isn't known at compile time (for example the result of `unwrap`, or a parameter without an annotation), the method is resolved at runtime from the value's type: `unwrap(io.read(f, n)).split('\n')` works without an annotation. It is still a compile-time error if no type has the method or if no type's version accepts that many arguments, and a runtime error (`type 'int' has no method 'upper'`) if the value's type lacks it.
 
 ---
 
@@ -555,8 +601,8 @@ For method calls, the receiver's type determines which method is resolved. See s
 | Short-circuit and/or (Python semantics) | Enables guard patterns (`if x and x.foo:`); returns operand values, not bool |
 | Safe reads, fatal writes | `.get()` returning null is convenient; bad `.set()` is always a bug |
 | Named functions desugar to assignments | One representation for all function values |
-| Forward references via predeclaration | Two-pass analysis allows calling functions defined later |
-| Dict keys are strings only | Simplifies hashing and serialisation |
+| Forward references via predeclaration | Two-pass analysis lets a function body call functions defined later in the file (mutual recursion works). Code that runs immediately must come after the definition: a statement that directly calls a function defined further down in the same block is a compile-time error ("'f' is called before its definition on line N"). A call made indirectly, through another function, before the definition runs fails at runtime |
+| Dict keys are strings only | Simplifies hashing and serialisation; `.get`/`.set` convert other keys to strings |
 | No generic type annotations | Keeps the type system simple; runtime is dynamically typed |
 | Result assignment restrictions | Guides users toward explicit error handling |
 | Fatal runtime errors (no exceptions) | Simple, predictable failure mode; no hidden control flow |

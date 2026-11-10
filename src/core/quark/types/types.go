@@ -358,6 +358,10 @@ func CanAssign(dstType, srcType Type) bool {
 	if dstType.Equals(TypeFloat) && srcType.Equals(TypeInt) {
 		return true
 	}
+	// A file handle is a resource
+	if dstType.Equals(TypeResource) && srcType.Equals(TypeFileHandle) {
+		return true
+	}
 	// List covariance: list[any] accepts list[T] for any T
 	if dstList, ok := dstType.(*ListType); ok {
 		if srcList, ok := srcType.(*ListType); ok {

@@ -1,6 +1,6 @@
-# Quark Struct-Lite v0.1 Spec (Draft)
+# Quark Struct-Lite v0.1 Spec
 
-Status: Draft
+Status: Implemented (2026-04-02, commit 7fd7670). Sections 9.4 (schema integration) and the table references remain planned. Implementation differences are noted inline.
 Last Updated: 2026-04-02
 Scope: Struct-lite only (data modeling). Schema/table integration is referenced but not specified here.
 
@@ -133,6 +133,8 @@ Implementation note:
 1. `ID { ... }` is parsed as a struct literal only when `ID` resolves to a struct type symbol.
 2. Otherwise existing expression rules apply and analyzer should emit a clear error.
 
+As implemented, the parser decides this with a per-file pre-pass that collects the struct names declared in that file. If `ID` is not a struct declared in the same file (an unknown name, or a struct imported with `use`), `ID { ... }` is a parse error (`QK-PARSE-001`, "no prefix parse function for LBRACE") rather than an analyzer error, so struct literals of imported structs are not supported yet.
+
 ## 6. Static Semantics
 
 ### 6.1 Type identity
@@ -217,7 +219,7 @@ v0.1 behavior:
 
 Struct-related failures should reuse stable frontend/runtime code families:
 
-1. Parse shape errors: `QK-PARSE-001`.
+1. Parse shape errors: `QK-PARSE-001`. As implemented, this includes a non-constant field default (`struct field default values must be constant expressions`), which the parser rejects.
 2. Type/semantic errors: `QK-CHECK-001`.
 3. Runtime struct misuse (if any dynamic-path checks remain): `QK-RUNTIME-001`.
 
@@ -253,7 +255,7 @@ fn is_adult(c: Customer) bool -> c.age >= 18
 ### 9.4 Schema integration (planned, not normative here)
 
 1. `schema X for Customer` references this struct type as contract base.
-2. Schema checks can target either `Customer` rows or `table Customer` values.
+2. Schema checks can target either `Customer` rows or tables whose rows are `Customer` values. (`tables_v0_1_spec.md` does not use a `table Customer` syntax; how a table names its row type is left to that spec.)
 
 ## 10. Compiler Work Plan (Implementation-Oriented)
 

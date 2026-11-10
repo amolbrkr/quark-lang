@@ -51,6 +51,8 @@ inline int q_file_open_native(const char* path, const char* mode, bool binary) {
         flags = O_RDONLY;
     } else if (std::strcmp(mode, "w") == 0) {
         flags = O_WRONLY | O_CREAT | O_TRUNC;
+    } else if (std::strcmp(mode, "a") == 0) {
+        flags = O_WRONLY | O_CREAT | O_APPEND;
     } else {
         return -2;
     }
@@ -111,7 +113,7 @@ inline QValue q_file_open(QValue path, QValue mode, QValue binary) {
 
     int fd = q_file_open_native(path.data.string_val, mode.data.string_val, binary.data.bool_val);
     if (fd == -2) {
-        return q_file_err_with_detail("open", "mode must be 'r' or 'w'");
+        return q_file_err_with_detail("open", "mode must be 'r', 'w' or 'a'");
     }
     if (fd < 0) {
         return q_file_sys_err("open", path.data.string_val);

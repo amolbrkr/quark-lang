@@ -52,6 +52,16 @@ func (p *Parser) parseExpression(precedence ast.Precedence) *ast.TreeNode {
 	// Get prefix handler
 	prefix := p.prefixParseFn(p.curToken.Type)
 	if prefix == nil {
+		if p.curToken.Type == token.ILLEGAL {
+			// The lexer puts its message (e.g. "unexpected indent") in the
+			// literal; a single character is one it didn't recognize.
+			if len(p.curToken.Literal) > 1 {
+				p.addError("%s", p.curToken.Literal)
+			} else {
+				p.addError("unexpected character '%s'", p.curToken.Literal)
+			}
+			return nil
+		}
 		p.addError("no prefix parse function for %s", p.curToken.Type)
 		return nil
 	}

@@ -1,5 +1,6 @@
-// Consolidated module smoke: graph/import-graph failures
-// Expected: compile-time error due to symbol collision from two modules.
+// Two modules in one file both define `foo` (lib/core.qrk: collision_a and
+// collision_b). Members are namespaced per module, so `use collision_a`
+// brings in collision_a's foo, not whichever module was spliced last.
 
 use './lib/core'
 use collision_a

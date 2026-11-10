@@ -1,6 +1,8 @@
 # Quark Tables v0.1 Spec (Draft)
 
-Status: Draft
+Status: Draft. Work is paused (2026-11-04) while FFI comes first (`ffi_v0_1_spec.md`).
+
+Implementation state: only the runtime representation exists: `QTable` in `runtime/include/quark/types/table.hpp` and the `VAL_TABLE` value tag, which `fmt.table` can render. The lexer, parser, analyzer and codegen have no table support: `table` is not a keyword, a `table { ... }` literal is a parse error (`QK-PARSE-001`), and `table` is not accepted as a type annotation. `src/testfiles/smoke_table.qrk` does not compile yet.
 Last Updated: 2026-04-02
 Scope: Core table type, typed table literals, and in-memory vector-backed backend. This spec also defines a backend abstraction for future lazy and database-backed execution.
 
@@ -391,7 +393,7 @@ In practice, analyzer uses call-site row-shape metadata to statically validate `
     - propagate row-shape metadata through table operations
     - type-check table access/index/slice/mask
 5. Runtime/codegen:
-   - add `QTable` runtime representation referencing vector columns
+   - add `QTable` runtime representation referencing vector columns (done: `types/table.hpp`)
    - emit literal construction and access code paths
    - ensure column vectors keep contiguous typed storage
 6. Tests:

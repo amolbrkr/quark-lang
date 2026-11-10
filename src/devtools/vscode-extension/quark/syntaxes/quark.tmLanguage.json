@@ -219,7 +219,7 @@
         {
           "comment": "Builtin methods (str, list, dict, vector), after a dot",
           "name": "support.function.method.quark",
-          "match": "(?<=\\.)(upper|lower|trim|contains|startswith|endswith|replace|concat|split|slice|push|pop|get|set|insert|remove|reverse|enumerate|join|to_vector|keys|values|items|fillna|astype|to_list)\\b(?=\\s*\\()"
+          "match": "(?<=\\.)(upper|lower|trim|contains|startswith|endswith|replace|concat|split|slice|push|pop|get|set|insert|remove|reverse|sort_by|sort|enumerate|join|to_vector|keys|values|items|fillna|astype|to_list)\\b(?=\\s*\\()"
         }
       ]
     },

@@ -58,6 +58,10 @@ func (a *Analyzer) analyzeWhenStatement(node *ast.TreeNode) Type {
 		for _, pc := range pattern.Children[:len(pattern.Children)-1] {
 			if pc.NodeType == ast.IdentifierNode && pc.TokenLiteral() == "_" {
 				hasWildcard = true
+				continue
+			}
+			if pc.NodeType != ast.ResultPatternNode && !isLiteralPattern(pc) {
+				a.errorAt(pc, "when patterns must be literal values (numbers, strings, booleans, null), '_', or ok/err patterns")
 			}
 		}
 		bindName, hasBinding, bindingIsErr, resultPatternNode := extractResultPatternBinding(pattern)
@@ -97,6 +101,22 @@ func (a *Analyzer) analyzeWhenStatement(node *ast.TreeNode) Type {
 		resultType = MergeTypes(resultType, TypeVoid)
 	}
 	return resultType
+}
+
+// isLiteralPattern reports whether a when pattern is a literal or a negated
+// number literal, the only value patterns the language allows.
+func isLiteralPattern(n *ast.TreeNode) bool {
+	if n == nil {
+		return false
+	}
+	if n.NodeType == ast.LiteralNode {
+		return true
+	}
+	if n.NodeType == ast.OperatorNode && n.Token != nil && n.Token.Type == token.MINUS && len(n.Children) == 1 {
+		lit := n.Children[0]
+		return lit.NodeType == ast.LiteralNode && lit.Token != nil && (lit.Token.Type == token.INT || lit.Token.Type == token.FLOAT)
+	}
+	return false
 }
 
 func extractResultPatternBinding(pattern *ast.TreeNode) (string, bool, bool, *ast.TreeNode) {

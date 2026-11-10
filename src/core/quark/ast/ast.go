@@ -120,6 +120,24 @@ type TreeNode struct {
 	// ReturnType = TypeNode for the return type (reusing existing field)
 	ExternSymbol   string // The 'as' symbol (C++ function name)
 	ExternReceiver string // The receiver type prefix (e.g. "list", "vector", "str") — empty for free functions
+
+	// SourceFile is the display name of the file the node was parsed from, set
+	// by the loader for nodes spliced in from imported modules (empty for the
+	// root file). Codegen uses it for runtime error locations.
+	SourceFile string
+}
+
+// SetSourceFile sets SourceFile on n and every node below it.
+func SetSourceFile(n *TreeNode, file string) {
+	if n == nil {
+		return
+	}
+	n.SourceFile = file
+	for _, c := range n.Children {
+		SetSourceFile(c, file)
+	}
+	SetSourceFile(n.ReturnType, file)
+	SetSourceFile(n.DefaultValue, file)
 }
 
 func NewNode(nodeType NodeType, tok *token.Token) *TreeNode {

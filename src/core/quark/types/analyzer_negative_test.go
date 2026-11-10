@@ -191,15 +191,15 @@ func TestNeg_UnknownMethodOnStr(t *testing.T) {
 }
 
 func TestNeg_UnknownMethodOnList(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("xs = list [1, 2]\nxs.sort()\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("xs = list [1, 2]\nxs.frobnicate()\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
 	if len(typeErrs) == 0 {
-		t.Fatalf("expected error for unknown method 'sort' on list")
+		t.Fatalf("expected error for unknown method 'frobnicate' on list")
 	}
 	joined := strings.Join(typeErrs, "\n")
-	if !strings.Contains(joined, "has no method 'sort'") {
+	if !strings.Contains(joined, "has no method 'frobnicate'") {
 		t.Fatalf("expected 'has no method' error, got: %v", typeErrs)
 	}
 }

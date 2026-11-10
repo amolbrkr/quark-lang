@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -60,7 +61,15 @@ func normalizeNewlines(s string) string {
 
 func runQuark(t *testing.T, args ...string) string {
 	t.Helper()
+	return runQuarkIn(t, "", args...)
+}
+
+// runQuarkIn runs quark with the working directory set to dir ("" for the
+// current one), so programs that write relative paths don't litter the repo.
+func runQuarkIn(t *testing.T, dir string, args ...string) string {
+	t.Helper()
 	cmd := exec.Command(quarkExePath, args...)
+	cmd.Dir = dir
 	var out bytes.Buffer
 	var errBuf bytes.Buffer
 	cmd.Stdout = &out
@@ -386,7 +395,7 @@ func TestSmokePrograms_Run(t *testing.T) {
 			name: "modules_error_graph",
 			file: filepath.Join(testfilesDir, "smoke_modules_error_graph.qrk"),
 			expected: join(
-				"2",
+				"1",
 			),
 		},
 		{
@@ -556,6 +565,8 @@ func TestSmokePrograms_Run(t *testing.T) {
 				"0",
 				"9",
 				"6",
+				"2",
+				"321",
 			),
 		},
 		{
@@ -597,6 +608,80 @@ func TestSmokePrograms_Run(t *testing.T) {
 				"3",
 			),
 		},
+		{
+			name: "module_calls_in_fns",
+			file: filepath.Join(testfilesDir, "smoke_module_calls_in_fns.qrk"),
+			expected: join(
+				"== smoke: module calls inside functions ==",
+				"a,b",
+				"1,2",
+				"true",
+				"false",
+				"true",
+				"true",
+			),
+		},
+		{
+			name: "csv",
+			file: filepath.Join(testfilesDir, "smoke_csv.qrk"),
+			expected: join(
+				"== smoke: csv ==",
+				"3",
+				"name | note",
+				"Smith, J | say \"hi\"",
+				"multi",
+				"line | x",
+				"1+2",
+				"true",
+			),
+		},
+		{
+			name: "time_random",
+			file: filepath.Join(testfilesDir, "smoke_time_random.qrk"),
+			expected: join(
+				"== smoke: time and random ==",
+				"true",
+				"true",
+				"true",
+				"true",
+				"1,2,3,4,5",
+				"true",
+			),
+		},
+		{
+			name: "sort",
+			file: filepath.Join(testfilesDir, "smoke_sort.qrk"),
+			expected: join(
+				"== smoke: sort ==",
+				"-4 1.5 2 3",
+				"-4 1.5 2 3",
+				"apple fig pear",
+				"false true true",
+				"3 2 1",
+				"c b a",
+				"a bb ccc",
+				"true",
+				"false",
+				"true",
+			),
+		},
+		{
+			name: "dynamic_methods",
+			file: filepath.Join(testfilesDir, "smoke_dynamic_methods.qrk"),
+			expected: join(
+				"== smoke: dynamic methods ==",
+				"3",
+				"a-b-c",
+				"20",
+				"x",
+				"1.5",
+				"el",
+				"1,2,3",
+				"PAD",
+				"1",
+				"short-circuit ok",
+			),
+		},
 	}
 
 	for _, tc := range cases {
@@ -617,7 +702,8 @@ func TestSmokePrograms_Run(t *testing.T) {
 				}
 			}
 
-			got := runQuark(t, "run", tc.file)
+			// Run from a temp dir: smoke_stdlib_io.qrk writes a relative file.
+			got := runQuarkIn(t, t.TempDir(), "run", tc.file)
 			gotNorm := strings.TrimSpace(normalizeNewlines(got))
 			expNorm := strings.TrimSpace(normalizeNewlines(tc.expected))
 			if gotNorm != expNorm {
@@ -715,6 +801,33 @@ func TestSemanticsSafety_Rejected(t *testing.T) {
 		// Scalar-lowered division and modulo match the boxed operators.
 		{"mod_zero_scalar", "x = 7\ny = 0\nprintln(x % y)\n", "modulo by zero"},
 		{"fdiv_zero_scalar", "x = 1.0\ny = 0.0\nprintln(x / y)\n", "division by zero"},
+		// Methods on values of unknown type: checked at compile time when no type
+		// has the method or the arity is wrong, at runtime when the value's type lacks it.
+		{"dynamic_method_wrong_type", "fn id(x) -> x\nprintln(id(5).upper())\n", "type 'int' has no method 'upper'"},
+		{"dynamic_method_unknown", "fn id(x) -> x\nid(5).frobnicate()\n", "no type has a method 'frobnicate'"},
+		{"dynamic_method_arity", "fn id(x) -> x\nid('a').split()\n", "method 'split' expects 1 argument(s) but got 0"},
+		{"dynamic_method_arg_type", "fn id(x) -> x\nid('a').split(5)\n", "argument 1 of 'split' expects str, got int"},
+		// Ordering compares two numbers or two strings; mixes are runtime errors.
+		{"order_str_int", "println('a' < 1)\n", "operator '<' expects two numbers or two strings"},
+		{"csv_unterminated_quote", "use 'std/csv' as csv\nprintln(csv.parse('a,\"b\\n'))\n", "csv.parse: unterminated quoted field"},
+		{"csv_bad_separator", "use 'std/csv' as csv\nprintln(csv.parse('a', ';;'))\n", "separator must be a single character"},
+		// A statement can't call a function defined later in the same block.
+		{"call_before_definition", "println(later(2))\nfn later(x) -> x + 1\n", "'later' is called before its definition on line 2"},
+		{"call_before_definition_in_fn", "fn outer() ->\n    r = inner()\n    fn inner() -> 1\n    r\nprintln(outer())\n", "'inner' is called before its definition on line 3"},
+		{"chained_assignment", "a = 0\nb = 0\na = b = 1\n", "chained assignment is not supported"},
+		// sort keys must be mutually comparable.
+		{"sort_mixed_types", "println(list [1, 'a'].sort())\n", "sort() can't compare str and int"},
+		{"sort_null", "println(list [1, null].sort())\n", "sort() can't compare null and int"},
+		{"sort_by_not_fn", "println(list [1].sort_by(5))\n", "sort_by() expects a function"},
+		// when patterns are literals, '_' or ok/err bindings.
+		{"when_call_pattern", "fn f(x) -> x\nn = 3\nwhen n:\n    f(3) -> println(1)\n    _ -> println(2)\n", "when patterns must be literal values"},
+		{"when_identifier_pattern", "y = 3\nn = 3\nwhen n:\n    y -> println(1)\n    _ -> println(2)\n", "when patterns must be literal values"},
+		{"when_result_or", "r = ok 1\nwhen r:\n    ok x or err x -> println(1)\n", "ok patterns cannot be combined with other patterns using 'or'"},
+		// The lowered for-range loop checks its arguments like range().
+		{"range_loop_step_zero", "for i in range(0, 5, 0):\n    println(i)\n", "range() step must not be zero"},
+		{"range_loop_step_zero_dynamic", "fn id(x) -> x\nfor i in range(0, 5, id(0)):\n    println(i)\n", "range() step must not be zero"},
+		{"range_loop_non_numeric", "fn id(x) -> x\nfor i in range(id('x')):\n    println(i)\n", "range(end) expects numeric end value"},
+		{"when_literal_or_result", "n = 1\nwhen n:\n    1 or ok x -> println(1)\n    _ -> println(2)\n", "ok patterns cannot be combined with other patterns using 'or'"},
 	}
 
 	tmp := t.TempDir()
@@ -804,6 +917,12 @@ func TestFileBuiltins_V0(t *testing.T) {
 		"println(unwrap(_file_read(r, 64)))",
 		"_file_close(r) | unwrap()",
 		"println(_file_exists(p))",
+		"a = unwrap(_file_open(p, 'a'))",
+		"_file_write(a, '!') | unwrap()",
+		"_file_close(a) | unwrap()",
+		"r2 = unwrap(_file_open(p, 'r'))",
+		"println(unwrap(_file_read(r2, 64)))",
+		"_file_close(r2) | unwrap()",
 		"",
 	}, "\n")
 	if err := os.WriteFile(program, []byte(source), 0o644); err != nil {
@@ -812,7 +931,7 @@ func TestFileBuiltins_V0(t *testing.T) {
 
 	got := runQuark(t, "run", program)
 	gotNorm := strings.TrimSpace(normalizeNewlines(got))
-	expected := strings.Join([]string{"file_handle", "bool", "10", "hello file", "true"}, "\n")
+	expected := strings.Join([]string{"file_handle", "bool", "10", "hello file", "true", "hello file!"}, "\n")
 	if gotNorm != expected {
 		t.Fatalf("unexpected output\n--- got ---\n%s\n--- expected ---\n%s", gotNorm, expected)
 	}
@@ -1100,5 +1219,200 @@ func TestExternTypedArg_RuntimeTypeGuard(t *testing.T) {
 	}
 	if !strings.Contains(combined, "expected int, got str") {
 		t.Fatalf("expected type mismatch detail in runtime error, got:\n%s", combined)
+	}
+}
+
+// TestInput_EOFAndLongLines checks that input() returns null at end of input
+// (distinct from an empty line), strips "\n" and "\r\n", and reads lines longer
+// than its internal buffer in one piece.
+func TestInput_EOFAndLongLines(t *testing.T) {
+	tmp := t.TempDir()
+	program := filepath.Join(tmp, "input_eof.qrk")
+	source := strings.Join([]string{
+		"n = 0",
+		"while true:",
+		"    line = input()",
+		"    if line == null:",
+		"        break",
+		"    n = n + 1",
+		"    println(to_str(len(line)))",
+		"println('lines: ' + to_str(n))",
+		"",
+	}, "\n")
+	if err := os.WriteFile(program, []byte(source), 0o644); err != nil {
+		t.Fatalf("write %s: %v", program, err)
+	}
+	exe := filepath.Join(tmp, "input_eof")
+	runQuark(t, "build", program, "-o", exe)
+
+	stdin := "a\n\n" + strings.Repeat("x", 10000) + "\ncrlf\r\nno-newline"
+	cmd := exec.Command(exe)
+	cmd.Stdin = strings.NewReader(stdin)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("run %s: %v", exe, err)
+	}
+	got := strings.TrimSpace(normalizeNewlines(string(out)))
+	want := strings.Join([]string{"1", "0", "10000", "4", "10", "lines: 5"}, "\n")
+	if got != want {
+		t.Fatalf("unexpected output\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
+// TestStdSys checks std/sys: program arguments (in a built binary and through
+// `quark run -- ...`), environment variables, and exit status.
+func TestStdSys(t *testing.T) {
+	tmp := t.TempDir()
+	program := filepath.Join(tmp, "sys_args.qrk")
+	source := strings.Join([]string{
+		"use 'std/sys' as sys",
+		"args = sys.args()",
+		"println(to_str(len(args)) + ': ' + args.join('|'))",
+		"println(sys.env('QK_SYS_TEST'))",
+		"println(sys.env('QK_SYS_TEST_UNSET') == null)",
+		"if len(args) > 0 and args[0] == 'fail':",
+		"    sys.exit(3)",
+		"println('done')",
+		"",
+	}, "\n")
+	if err := os.WriteFile(program, []byte(source), 0o644); err != nil {
+		t.Fatalf("write %s: %v", program, err)
+	}
+	exe := filepath.Join(tmp, "sys_args")
+	runQuark(t, "build", program, "-o", exe)
+
+	run := func(args ...string) (string, int) {
+		cmd := exec.Command(exe, args...)
+		cmd.Env = append(os.Environ(), "QK_SYS_TEST=hello")
+		out, err := cmd.Output()
+		code := 0
+		if err != nil {
+			var exitErr *exec.ExitError
+			if !errors.As(err, &exitErr) {
+				t.Fatalf("run %s: %v", exe, err)
+			}
+			code = exitErr.ExitCode()
+		}
+		return strings.TrimSpace(normalizeNewlines(string(out))), code
+	}
+
+	out, code := run("a", "b c", "--flag")
+	want := "3: a|b c|--flag\nhello\ntrue\ndone"
+	if out != want || code != 0 {
+		t.Fatalf("args run: exit %d, output:\n%s\nwant exit 0, output:\n%s", code, out, want)
+	}
+	out, code = run("fail")
+	if code != 3 || !strings.HasPrefix(out, "1: fail") || strings.Contains(out, "done") {
+		t.Fatalf("exit run: exit %d, output:\n%s\nwant exit 3 before 'done'", code, out)
+	}
+
+	// quark run forwards the arguments after "--".
+	cmd := exec.Command(quarkExePath, "run", program, "--", "x", "y")
+	cmd.Env = append(os.Environ(), "QK_SYS_TEST=hello")
+	got, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("quark run -- x y: %v", err)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(normalizeNewlines(string(got))), "2: x|y") {
+		t.Fatalf("quark run -- x y: unexpected output:\n%s", got)
+	}
+}
+
+// TestRuntimeErrorLocations checks that runtime errors name the statement that
+// failed: in the caller after a function call returns, and in the imported
+// module's own file for code spliced in from a module.
+func TestRuntimeErrorLocations(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmp, "lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"after_call.qrk":  "fn id(x) -> x\n\n\nprintln(id(5) + 'a')\n",
+		"lib/helpers.qrk": "module helpers:\n    fn bad(x) ->\n        x + 'oops'\n",
+		"in_module.qrk":   "use './lib/helpers' as h\nprintln(h.bad(1))\n",
+		"in_stdlib.qrk":   "use 'std/random' as random\n\nprintln(random.randint(5, 1))\n",
+	}
+	for name, src := range files {
+		if err := os.WriteFile(filepath.Join(tmp, name), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cases := []struct{ file, want string }{
+		{"after_call.qrk", "after_call.qrk:4:8"},
+		{"in_module.qrk", "lib/helpers.qrk:3:11"},
+		// Errors raised inside std/ modules point at the user's call.
+		{"in_stdlib.qrk", "in_stdlib.qrk:3:8"},
+	}
+	for _, tc := range cases {
+		cmd := exec.Command(quarkExePath, "run", tc.file)
+		cmd.Dir = tmp
+		var errBuf bytes.Buffer
+		cmd.Stderr = &errBuf
+		if err := cmd.Run(); err == nil {
+			t.Fatalf("%s: expected a runtime error", tc.file)
+		}
+		if !strings.Contains(errBuf.String(), tc.want) {
+			t.Fatalf("%s: expected location %q in:\n%s", tc.file, tc.want, errBuf.String())
+		}
+	}
+}
+
+// TestModuleNamespacing checks that module members don't collide with members
+// of other modules or with user definitions, and that ambiguous bare imports
+// are reported.
+func TestModuleNamespacing(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmp, "lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"lib/a.qrk": "module a:\n    fn name() -> 'from a'\n    fn twice() -> name() + name()\n",
+		"lib/b.qrk": "module b:\n    fn name() -> 'from b'\n",
+		"ok.qrk": strings.Join([]string{
+			"use './lib/a' as a",
+			"use './lib/b' as b",
+			"use 'std/io' as io",
+			"use 'std/csv' as csv",
+			"use 'std/sys' as sys",
+			"fn name() -> 'mine'",
+			"open = 5",
+			"args = sys.args()",
+			"println(a.name() + ' ' + b.name() + ' ' + name() + ' ' + a.twice())",
+			"f = unwrap(io.open('t.csv', 'w'))",
+			"io.write(f, 'x,y\\n')",
+			"io.close(f)",
+			"g = unwrap(io.open('t.csv'))",
+			"println(unwrap(io.read(g, 100)).trim() + ' ' + to_str(len(unwrap(csv.read('t.csv')))))",
+			"println(to_str(open) + ' ' + to_str(len(args)))",
+			"",
+		}, "\n"),
+		"bare_ok.qrk":       "use './lib/a'\nprintln(name())\nfn f(name) -> name\nprintln(f('param'))\n",
+		"bare_conflict.qrk": "use './lib/a'\nuse './lib/b'\nprintln(name())\n",
+		"bare_vs_def.qrk":   "use './lib/a'\nfn name() -> 1\n",
+	}
+	for name, src := range files {
+		if err := os.WriteFile(filepath.Join(tmp, name), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := strings.TrimSpace(normalizeNewlines(runQuarkIn(t, tmp, "run", "ok.qrk")))
+	want := "from a from b mine from afrom a\nx,y 1\n5 0"
+	if got != want {
+		t.Fatalf("ok.qrk output:\n%s\nwant:\n%s", got, want)
+	}
+	got = strings.TrimSpace(normalizeNewlines(runQuarkIn(t, tmp, "run", "bare_ok.qrk")))
+	if got != "from a\nparam" {
+		t.Fatalf("bare_ok.qrk output:\n%s", got)
+	}
+	for file, wantErr := range map[string]string{
+		"bare_conflict.qrk": "symbol 'name' from module 'b' conflicts with symbol 'name' from module 'a'",
+		"bare_vs_def.qrk":   "symbol 'name' from module 'a' (imported on line 1) conflicts with this definition",
+	} {
+		cmd := exec.Command(quarkExePath, "run", file)
+		cmd.Dir = tmp
+		out, err := cmd.CombinedOutput()
+		if err == nil || !strings.Contains(string(out), wantErr) {
+			t.Fatalf("%s: expected error %q, got (err=%v):\n%s", file, wantErr, err, out)
+		}
 	}
 }

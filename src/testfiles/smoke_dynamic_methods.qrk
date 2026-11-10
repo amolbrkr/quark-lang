@@ -1,0 +1,26 @@
+println('== smoke: dynamic methods ==')
+
+// Methods on values whose type is unknown at compile time dispatch at runtime.
+fn id(x) -> x
+
+text = unwrap(ok('a,b,c'))
+parts = text.split(',')
+println(len(parts))
+println(parts.join('-'))
+
+// Same method name on different receiver types
+println(id(list [10, 20]).get(1))
+println(id(dict {a: 'x'}).get('a'))
+println(id(vector [1.5, 2.5]).get(0))
+println(id('hello').slice(1, 3))
+println(id(list [1, 2]).concat(list [3]).join(','))
+
+// Chained calls and pipes
+println(id(' pad ').trim().upper())
+println(id('a;b') | id(';').split() | len())
+
+// Short-circuit: the call is not evaluated
+n = id(null)
+if n != null and n.upper() == 'A':
+    println('unreachable')
+println('short-circuit ok')

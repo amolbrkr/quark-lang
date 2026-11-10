@@ -1,0 +1,23 @@
+println('== smoke: sort ==')
+
+// sort() sorts in place (stable, ascending) and returns the list.
+xs = list [3, 1.5, 2, -4]
+println(xs.sort().join(' '))
+println(xs.join(' '))
+println(list ['pear', 'apple', 'fig'].sort().join(' '))
+println(list [true, false, true].sort().join(' '))
+println(list [3, 1, 2].sort().reverse().join(' '))
+
+// sort_by(key) sorts by key(item); equal keys keep their order.
+rows = list [dict {name: 'b', amount: 2}, dict {name: 'a', amount: 2}, dict {name: 'c', amount: 1}]
+rows.sort_by(fn(r) -> r.amount)
+names = list []
+for r in rows:
+    names.push(r.name)
+println(names.join(' '))
+println(list ['bb', 'a', 'ccc'].sort_by(fn(s) -> len(s)).join(' '))
+
+// Ordering operators compare two strings by byte order, like sort().
+println('apple' < 'banana')
+println('b' <= 'a')
+println('Zebra' < 'apple')

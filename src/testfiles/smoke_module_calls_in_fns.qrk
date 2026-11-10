@@ -1,0 +1,30 @@
+println('== smoke: module calls inside functions ==')
+use 'std/io' as io
+use 'std/fmt' as fmt
+use 'std/random' as random
+
+// Module functions called from inside user functions (closures and native
+// functions alike), directly and through pipes.
+fn save(path: str, text: str) ->
+    f = unwrap(io.open(path, 'w'))
+    io.write(f, text)
+    io.close(f)
+
+fn load(path) ->
+    f = unwrap(io.open(path))
+    t = unwrap(io.read(f, 1000))
+    io.close(f)
+    t
+
+fn file_exists(path) -> io.exists(path)
+fn file_exists_piped(path) -> path | io.exists()
+fn first_two(xs) -> fmt.head(xs, 2)
+fn roll() -> random.randint(1, 6)
+
+save('module_calls_tmp.txt', 'a,b\n1,2\n')
+println(load('module_calls_tmp.txt').trim())
+println(file_exists('module_calls_tmp.txt'))
+println(file_exists_piped('no_such_file.txt'))
+println(first_two(list [1, 2, 3]).contains('list'))
+r = roll()
+println(r >= 1 and r <= 6)

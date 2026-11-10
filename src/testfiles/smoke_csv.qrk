@@ -1,0 +1,15 @@
+println('== smoke: csv ==')
+use 'std/csv' as csv
+
+// Quoted fields may hold the separator, doubled quotes and newlines;
+// \r\n line endings and blank lines are handled.
+text = 'name,note\n"Smith, J","say ""hi"""\r\n\n"multi\nline",x\n'
+rows = csv.parse(text)
+println(len(rows))
+for r in rows:
+    println(r.join(' | '))
+println(csv.parse('a;b\n1;2', ';').get(1).join('+'))
+
+when csv.read('definitely_missing_file.csv'):
+    ok r -> println('unexpected')
+    err e -> println(e.startswith('csv.read: definitely_missing_file.csv'))

@@ -1,0 +1,23 @@
+extern 'random.hpp'
+
+extern fn random_seed(n: int) any as 'q_random_seed'
+extern fn random_uniform() float as 'q_random_uniform'
+extern fn random_randint(lo: int, hi: int) int as 'q_random_randint'
+extern fn random_choice(xs: list) any as 'q_random_choice'
+extern fn random_shuffle(xs: list) list as 'q_random_shuffle'
+
+module random:
+    // Seed the generator so the following results are reproducible.
+    fn seed(n: int) -> random_seed(n)
+
+    // A float in [0, 1).
+    fn uniform() float -> random_uniform()
+
+    // An int in [lo, hi], both ends included.
+    fn randint(lo: int, hi: int) int -> random_randint(lo, hi)
+
+    // A random element of a non-empty list.
+    fn choice(xs: list) -> random_choice(xs)
+
+    // Shuffle a list in place and return it.
+    fn shuffle(xs: list) list -> random_shuffle(xs)

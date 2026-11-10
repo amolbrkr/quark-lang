@@ -1,0 +1,15 @@
+extern 'time.hpp'
+
+extern fn time_now() float as 'q_time_now'
+extern fn time_clock() float as 'q_time_clock'
+extern fn time_sleep(seconds: float) any as 'q_time_sleep'
+
+module time:
+    // Seconds since the Unix epoch (wall-clock time), as a float.
+    fn now() float -> time_now()
+
+    // Monotonic seconds, for measuring durations: end - start.
+    fn clock() float -> time_clock()
+
+    // Pause for `seconds` (fractions allowed).
+    fn sleep(seconds: float) -> time_sleep(seconds)

@@ -1,0 +1,13 @@
+extern 'csv.hpp'
+
+extern fn csv_parse(text: str, sep: str) list as 'q_csv_parse'
+extern fn csv_read(path: str, sep: str) result as 'q_csv_read'
+
+module csv:
+    // Rows of a CSV string, each a list of str. Quoted fields ("a, b", "say ""hi""")
+    // may contain the separator, quotes and newlines.
+    fn parse(text: str, sep: str = ',') list -> csv_parse(text, sep)
+
+    // ok(rows) for the CSV file at `path`, or err(message) if it can't be read
+    // or is malformed.
+    fn read(path: str, sep: str = ',') result -> csv_read(path, sep)

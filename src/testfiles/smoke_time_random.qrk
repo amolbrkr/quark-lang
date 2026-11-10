@@ -1,0 +1,23 @@
+println('== smoke: time and random ==')
+use 'std/time' as time
+use 'std/random' as random
+
+start = time.clock()
+time.sleep(0.05)
+elapsed = time.clock() - start
+println(elapsed >= 0.05 and elapsed < 5.0)
+println(time.now() > 1700000000.0)
+
+// seed() makes the sequence reproducible.
+random.seed(42)
+a = random.randint(1, 100)
+f = random.uniform()
+random.seed(42)
+println(a == random.randint(1, 100) and f == random.uniform())
+println(f >= 0.0 and f < 1.0)
+
+xs = list [1, 2, 3, 4, 5]
+random.shuffle(xs)
+println(xs.sort().join(','))
+c = random.choice(list ['x', 'y'])
+println(c == 'x' or c == 'y')

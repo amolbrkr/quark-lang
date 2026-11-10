@@ -1,0 +1,15 @@
+extern 'sys.hpp'
+
+extern fn sys_args() list as 'q_sys_args'
+extern fn sys_env(name: str) any as 'q_sys_env'
+extern fn sys_exit(code: int) any as 'q_sys_exit'
+
+module sys:
+    // Command-line arguments after the program name, as a list of strings.
+    fn args() list -> sys_args()
+
+    // Value of the environment variable `name`, or null when it isn't set.
+    fn env(name: str) -> sys_env(name)
+
+    // Exit immediately with status `code` (0 means success).
+    fn exit(code: int = 0) -> sys_exit(code)

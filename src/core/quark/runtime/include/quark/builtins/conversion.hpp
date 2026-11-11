@@ -5,6 +5,8 @@
 #include "../core/value.hpp"
 #include "../core/constructors.hpp"
 #include "../core/truthy.hpp"
+#include "../core/format.hpp"
+#include "repr.hpp"
 #include "../types/dict.hpp"
 #include "../types/resource.hpp"
 #include <cstdio>
@@ -64,7 +66,7 @@ inline QValue q_str(QValue v) {
             snprintf(buffer, sizeof(buffer), "%lld", v.data.int_val);
             return qv_string(buffer);
         case QValue::VAL_FLOAT:
-            snprintf(buffer, sizeof(buffer), "%g", v.data.float_val);
+            q_format_float(v.data.float_val, buffer, sizeof(buffer));
             return qv_string(buffer);
         case QValue::VAL_BOOL:
             return qv_string(v.data.bool_val ? "true" : "false");
@@ -72,38 +74,9 @@ inline QValue q_str(QValue v) {
             return v.data.string_val ? v : qv_string("");
         case QValue::VAL_NULL:
             return qv_string("null");
-        case QValue::VAL_LIST:
-            snprintf(buffer, sizeof(buffer), "[list len=%zu]",
-                     v.data.list_val ? v.data.list_val->size() : 0);
-            return qv_string(buffer);
-        case QValue::VAL_VECTOR:
-            snprintf(buffer, sizeof(buffer), "[vector len=%d]", q_vec_size(v));
-            return qv_string(buffer);
-        case QValue::VAL_DICT:
-            snprintf(buffer, sizeof(buffer), "[dict len=%zu]",
-                     v.data.dict_val ? v.data.dict_val->entries.size() : 0);
-            return qv_string(buffer);
-        case QValue::VAL_FUNC:
-            return qv_string("<function>");
-        case QValue::VAL_RESOURCE:
-            snprintf(buffer, sizeof(buffer), "<resource %s>",
-                     q_resource_kind_name(v.data.resource_val ? v.data.resource_val->kind : QRES_KIND_NONE));
-            return qv_string(buffer);
-        case QValue::VAL_STRUCT:
-            if (v.data.struct_val && v.data.struct_val->def) {
-                snprintf(buffer, sizeof(buffer), "%s{...}", v.data.struct_val->def->name);
-                return qv_string(buffer);
-            }
-            return qv_string("<struct>");
-        case QValue::VAL_TABLE:
-            if (v.data.table_val && v.data.table_val->def) {
-                snprintf(buffer, sizeof(buffer), "[table<%s> rows=%d]",
-                         v.data.table_val->def->name, v.data.table_val->nrows);
-                return qv_string(buffer);
-            }
-            return qv_string("<table>");
         default:
-            return qv_string("<value>");
+            // Containers, structs, results, functions, resources, tables.
+            return qv_string(q_repr(v).c_str());
     }
 }
 

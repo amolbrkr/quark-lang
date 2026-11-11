@@ -26,6 +26,7 @@
 #include "core/value.hpp"
 #include "core/diagnostics.hpp"
 #include "core/process.hpp"
+#include "core/format.hpp"
 #include "core/checked.hpp"
 #include "core/cell.hpp"
 #include "types/closure.hpp"
@@ -51,6 +52,7 @@
 // Built-in functions
 #include "builtins/io.hpp"
 #include "builtins/conversion.hpp"
+#include "builtins/params.hpp"
 #include "builtins/math.hpp"
 #include "builtins/dict.hpp"
 #include "builtins/strings.hpp"

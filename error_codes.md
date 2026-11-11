@@ -9,6 +9,8 @@ This file is the canonical registry of error codes currently emitted by the comp
 	- `warning[CODE] (stage): message ...`
 - Frontend diagnostics use stable `QK-*` codes.
 - Runtime diagnostics use stable `QK-*` codes. They go through `q_runtime_reportf` in `diagnostics.hpp`, which prints `error[QK-RUNTIME-001] (runtime): message at file:line:col`.
+- The runtime location is the statement that failed. After a call returns, the caller's statement is current again (every generated function restores it on return), so an error later in the same statement points there, not into the callee. Code from an imported user module reports that module's file (`lib/helpers.qrk:3:11`); code from `std/` modules sets no location, so an error raised inside the stdlib (usually a bad argument) points at the user's call. An annotated parameter that receives a value of the wrong type is reported at the call: `argument 'x' of 'f' expects int, got str`.
+- `QK-PARSE-001` also covers lexer errors, reported with the lexer's message: `unexpected indent`, `expected indented block`, `inconsistent indentation`, `unexpected character '#'`, and `'\0' is not supported in string literals`.
 - Internal invariant/ICE failures use `INV-*` codes (compiler-bug class, not user-program errors).
 
 ## Stable QK Codes

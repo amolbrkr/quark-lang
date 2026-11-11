@@ -111,7 +111,7 @@ func TestSmokePrograms_Run(t *testing.T) {
 				"3",
 				"2",
 				"1",
-				"5",
+				"5.0",
 				"division by zero",
 			),
 		},
@@ -147,25 +147,25 @@ func TestSmokePrograms_Run(t *testing.T) {
 				"99",
 				"null",
 				"123",
-				"[vector len=4]",
+				"[1, 2, 3, 4]",
 				"4",
-				"[vector len=4]",
-				"[vector len=4]",
-				"10",
-				"1",
-				"4",
-				"[vector len=4]",
-				"10",
-				"1",
-				"4",
-				"[vector len=4]",
-				"[vector len=4]",
-				"[vector len=4]",
+				"[2, 3, 4, 5]",
+				"[2, 6, 12, 20]",
+				"10.0",
+				"1.0",
+				"4.0",
+				"[1, 2, 3, 4]",
+				"10.0",
+				"1.0",
+				"4.0",
+				"[3, 4, 5, 6]",
+				"[3, 8, 15, 24]",
+				"[1, 2, 3, 4]",
 				"vector[i64]",
 				"vector[i64]",
-				"[vector len=3]",
-				"60",
-				"[list len=3]",
+				"[10, 20, 30]",
+				"60.0",
+				"[10, 20, 30]",
 				"list",
 				"10",
 			),
@@ -192,12 +192,12 @@ func TestSmokePrograms_Run(t *testing.T) {
 				"40",
 				"99",
 				"10",
-				"[list len=2]",
-				"[list len=3]",
-				"[list len=5]",
-				"[list len=5]",
-				"[list len=5]",
-				"[list len=4]",
+				"[55, 99]",
+				"[30, 99, 55]",
+				"[30, 99, 55, 1, 2]",
+				"[0, 1, 2, 3, 4]",
+				"[2, 3, 4, 5, 6]",
+				"[10, 7, 4, 1]",
 			),
 		},
 		{
@@ -328,7 +328,7 @@ func TestSmokePrograms_Run(t *testing.T) {
 				"Hello, World",
 				"true",
 				"false",
-				"5",
+				"5.0",
 				"division by zero",
 				"36",
 				"zero",
@@ -349,24 +349,24 @@ func TestSmokePrograms_Run(t *testing.T) {
 				"vector[i64]",
 				"vector[str]",
 				"vector[str]",
-				"[vector len=5]",
-				"3",
-				"2",
-				"3",
-				"3",
-				"1",
-				"4",
-				"1",
-				"[vector len=3]",
+				"[false, false, true, true, true]",
+				"3.0",
+				"2.0",
+				"3.0",
+				"3.0",
+				"1.0",
+				"4.0",
+				"1.0",
+				"[30, 40, 50]",
 				"3",
 				"10",
 				"50",
 				"50",
-				"120",
+				"120.0",
 				"0",
-				"[vector len=2]",
-				"1",
-				"4",
+				"[4, 5]",
+				"1.0",
+				"4.0",
 			),
 		},
 		{
@@ -380,14 +380,14 @@ func TestSmokePrograms_Run(t *testing.T) {
 				"10.5",
 				"vector[f64]",
 				"vector[f64]",
-				"12",
+				"12.0",
 				"vector[bool]",
-				"2",
+				"2.0",
 				"vector[bool]",
-				"2",
-				"4",
-				"1",
-				"3",
+				"2.0",
+				"4.0",
+				"1.0",
+				"3.0",
 				"15",
 			),
 		},
@@ -457,7 +457,7 @@ func TestSmokePrograms_Run(t *testing.T) {
 			expected: join(
 				"== smoke: numeric lowering ==",
 				"10",
-				"4",
+				"4.0",
 				"4.5",
 				"true",
 				"35",
@@ -478,12 +478,12 @@ func TestSmokePrograms_Run(t *testing.T) {
 			file: filepath.Join(testfilesDir, "smoke_vector_layout.qrk"),
 			expected: join(
 				"== smoke: vector layout ==",
-				"10", "false", "true", "true", "10", "155",
-				"2", "null", "null", "78", "null", "true",
-				"2", "40",
-				"0", "null", "39",
-				"ab", "null", "cde", "0", "[vector len=4]", "true", "zz", "cde",
-				"null", "3", "true", "true",
+				"10.0", "false", "true", "true", "10", "155.0",
+				"2", "null", "null", "78.0", "null", "true",
+				"2", "40.0",
+				"0", "null", "39.0",
+				"ab", "null", "cde", "0", "[false, null, true, false]", "true", "zz", "cde",
+				"null", "3.0", "true", "true",
 				"null", "5",
 			),
 		},
@@ -541,7 +541,7 @@ func TestSmokePrograms_Run(t *testing.T) {
 			expected: join(
 				"== smoke: native functions ==",
 				"7",
-				"6",
+				"6.0",
 				"true",
 				"false",
 				"30",
@@ -582,7 +582,7 @@ func TestSmokePrograms_Run(t *testing.T) {
 				"5",
 				"21",
 				"3.5",
-				"8",
+				"8.0",
 			),
 		},
 		{
@@ -646,6 +646,25 @@ func TestSmokePrograms_Run(t *testing.T) {
 				"true",
 				"1,2,3,4,5",
 				"true",
+			),
+		},
+		{
+			name: "printing",
+			file: filepath.Join(testfilesDir, "smoke_printing.qrk"),
+			expected: join(
+				"== smoke: printing ==",
+				"[1, 'a', null, 2.5, true]",
+				"[1.5, null, 2.0]",
+				"['x', 'y']",
+				"{age: 36, 'first name': 'A', name: 'Ada'}",
+				"Point {x: 1, y: 2}",
+				"[ok 5, err 'boom']",
+				"[0, 1, 2, 3, 4, ..., 995, 996, 997, 998, 999] (1000 items)",
+				"390",
+				"4890",
+				"[1, [...]]",
+				"[4.0, 0.30000000000000004, 1e+16, 1.5e-05]",
+				"it's: ['it\\'s', 'a\\nb']",
 			),
 		},
 		{
@@ -1421,6 +1440,64 @@ func TestModuleNamespacing(t *testing.T) {
 		out, err := cmd.CombinedOutput()
 		if err == nil || !strings.Contains(string(out), wantErr) {
 			t.Fatalf("%s: expected error %q, got (err=%v):\n%s", file, wantErr, err, out)
+		}
+	}
+}
+
+// TestParamAnnotationsEnforced: each annotated parameter is enforced on its
+// own, also for partially annotated functions and for values of unknown type,
+// and that a fully annotated function that captures a variable compiles (it
+// stays a closure instead of becoming a native C++ function).
+func TestParamAnnotationsEnforced(t *testing.T) {
+	ok := strings.Join([]string{
+		"fn id(v) -> v",
+		"fn scale(x: float, k) -> x * k",
+		"fn kinds(x: int, y) -> type(x) + ' ' + type(y)",
+		"fn first(xs: list) -> type(xs)",
+		"n = 10",
+		"fn add_n(x: int) int -> x + n",
+		"g = scale",
+		"println(scale(1, 2))",
+		"println(g(id(3), 1))",
+		"println(kinds(1, 'b'))",
+		"println(first(null))",
+		"println(add_n(1))",
+		"println(id(2) | scale(3))",
+		"",
+	}, "\n")
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "ok.qrk"), []byte(ok), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := strings.TrimSpace(normalizeNewlines(runQuarkIn(t, tmp, "run", "ok.qrk")))
+	if want := "2.0\n3.0\nint str\nnull\n11\n6.0"; got != want {
+		t.Fatalf("output:\n%s\nwant:\n%s", got, want)
+	}
+
+	bad := map[string]string{
+		"partial":   "fn id(v) -> v\nfn kinds(x: int, y) -> type(x)\nprintln(kinds(id('a'), 1))\n",
+		"via_value": "fn id(v) -> v\nfn f(x: float) -> x\ng = f\nprintln(g(id('s')))\n",
+		"default":   "fn id(v) -> v\nfn add(x: int, y: int = 5) -> x + y\nprintln(add(1, id(2.5)))\n",
+		"struct":    "struct P:\n    x: int\nstruct Q:\n    x: int\nfn id(v) -> v\nfn f(p: P) -> p.x\nprintln(f(id(Q { x: 2 })))\n",
+		"captured":  "fn id(v) -> v\nn = 10\nfn f(x: int) int -> x + n\nprintln(f(id('z')))\n",
+	}
+	wants := map[string]string{
+		"partial":   "argument 'x' of 'kinds' expects int, got str at bad_partial.qrk:3:8",
+		"via_value": "argument 'x' of 'f' expects float, got str",
+		"default":   "argument 'y' of 'add' expects int, got float",
+		"struct":    "argument 'p' of 'f' expects P, got Q",
+		"captured":  "argument 'x' of 'f' expects int, got str",
+	}
+	for name, src := range bad {
+		file := "bad_" + name + ".qrk"
+		if err := os.WriteFile(filepath.Join(tmp, file), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command(quarkExePath, "run", file)
+		cmd.Dir = tmp
+		out, err := cmd.CombinedOutput()
+		if err == nil || !strings.Contains(string(out), wants[name]) {
+			t.Fatalf("%s: expected %q, got (err=%v):\n%s", name, wants[name], err, out)
 		}
 	}
 }

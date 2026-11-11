@@ -45,7 +45,7 @@ d.get('a') | println()   // 1
 - `d.method(args)` — method dispatch (when method name is known for the receiver type)
 - `module.fn(args)` — module-qualified call via `use` alias
 
-**How values print:** `println`, `print` and `to_str` render scalars directly, but containers only as a summary: a list prints as `[list len=3]`, a vector as `[vector len=3]`, a dict as `[dict len=2]`. To see elements, use `.join(sep)` or the `std/fmt` module. Floats are formatted with C's `%g`, so `4.0` prints as `4` and `sqrt(2)` as `1.41421`.
+**How values print:** `println`, `print` and `to_str` show values by their contents: lists and vectors as `[1, 'a', null]` (strings inside a collection are quoted), dicts as `{age: 36, 'first name': 'Ada'}` (keys sorted, quoted unless they read like names), structs as `Point {x: 1, y: 2}` and results as `ok 5` / `err 'boom'`. A collection with more than 100 items shows its first and last 5 and a count: `[0, 1, 2, 3, 4, ..., 995, 996, 997, 998, 999] (1000 items)`; `fmt.full(x)` gives every item. A container that contains itself prints `[...]` at the repeat. Floats print as the shortest text that reads back as the same number, with `.0` on whole values, as in Python: `4.0`, `0.1`, `1.4142135623730951`, `1e+16`, `inf`, `nan`. So `0.1 + 0.2` prints `0.30000000000000004`.
 
 ---
 
@@ -137,7 +137,7 @@ range(10, 0, -2).join(', ') | println()  // 10, 8, 6, 4, 2
 abs(0 - 5) | println()       // 5
 min(10, 5) | println()       // 5
 max(10, 5) | println()       // 10
-sqrt(16) | println()         // 4   (a float; %g drops the .0)
+sqrt(16) | println()         // 4.0
 floor(3.7) | println()       // 3
 ```
 
@@ -356,9 +356,9 @@ println(type(v2))              // vector[i64]
 
 ```quark
 vi = vector [1, 2, 3, 4]
-println(sum(vi))              // 10
-println(min(vi))              // 1
-println(max(vi))              // 4
+println(sum(vi))              // 10.0 (reductions return a float)
+println(min(vi))              // 1.0
+println(max(vi))              // 4.0
 
 // Arithmetic (numeric vectors only)
 a = vector [10, 20, 30, 40]
@@ -408,7 +408,7 @@ fn safe_div(a, b) ->
 
 r = safe_div(10, 2)
 is_ok(r) | println()       // true
-unwrap(r) | println()      // 5
+unwrap(r) | println()      // 5.0
 
 // Pattern matching (preferred)
 when safe_div(10, 0):
@@ -462,7 +462,7 @@ when io.open('notes.txt', 'x'):
 
 ## `std/fmt`
 
-Text rendering of containers, which `println` only summarizes. Each function returns a `str`. Import it with `use 'std/fmt' as fmt`.
+Text rendering of containers beyond what `println` shows. Each function returns a `str`. Import it with `use 'std/fmt' as fmt`.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
@@ -472,6 +472,7 @@ Text rendering of containers, which `println` only summarizes. Each function ret
 | `table` | `df: any, n: int = 20, show_index: bool = true -> str` | Render a table, or a dict of equal-length lists/vectors, as a boxed table |
 | `head` | `lst: list, n: int = 5 -> str` | Render the first `n` items of a list |
 | `tail` | `lst: list, n: int = 5 -> str` | Render the last `n` items of a list |
+| `full` | `x: any -> str` | `x` as `println` shows it, but with every item of long collections |
 
 ```quark
 use 'std/fmt' as fmt
@@ -607,7 +608,7 @@ use 'std/blas' as blas
 
 x = vector [1.0, 2.0, 3.0]
 y = vector [4.0, 5.0, 6.0]
-println(blas.dot(x, y))         // 32
+println(blas.dot(x, y))         // 32.0
 z = blas.axpy(2, x, y)          // [6, 9, 12]; y is unchanged
 ```
 

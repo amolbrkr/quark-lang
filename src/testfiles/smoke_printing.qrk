@@ -1,0 +1,32 @@
+println('== smoke: printing ==')
+use 'std/fmt' as fmt
+
+// Containers print their contents; strings inside them are quoted.
+println(list [1, 'a', null, 2.5, true])
+println(list [1.5, null, 2.0].to_vector())
+println(vector ['x', 'y'])
+
+// Dict keys are sorted, and quoted unless they read like names.
+d = dict {name: 'Ada', age: 36}
+d.set('first name', 'A')
+println(d)
+
+struct Point:
+    x: int
+    y: int
+println(Point { x: 1, y: 2 })
+println(list [ok 5, err 'boom'])
+
+// More than 100 items: first and last 5, plus a count. 100 print in full.
+println(range(1000))
+println(len(to_str(range(100))))
+println(len(fmt.full(range(1000))))
+
+// A list that contains itself.
+xs = list [1]
+xs.push(xs)
+println(xs)
+
+// Floats: shortest form that reads back as the same number.
+println(list [4.0, 0.1 + 0.2, 1e16, 1.5e-05])
+println('it\'s: ' + to_str(list ['it\'s', 'a\nb']))

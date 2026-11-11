@@ -52,9 +52,7 @@ Quark has **no implicit coercion** except in three narrow cases:
 
 2. **int → float promotion in mixed comparison**: `<`, `<=`, `>`, `>=`, `==`, `!=` promote the int operand when comparing int to float.
 
-3. **int → float widening at `extern fn` parameters**: an `int` argument passed to an `extern fn` parameter annotated `float` is converted to `float`. The reverse is not done: a `float` passed to an `int` extern parameter is a runtime error.
-
-Annotations on Quark functions are compile-time only. They are checked when the argument type is known, but nothing is converted or checked at runtime: `fn f(x: float) -> x` called as `f(1)` receives the int `1`.
+3. **int → float widening at `float` parameters**: an `int` argument passed to a parameter annotated `float`, of a Quark function or an `extern fn`, is converted to `float`. The reverse is not done: a `float` passed to an `int` parameter is an error (§13.2).
 
 All other type mismatches are errors (compile-time when type info is available, runtime otherwise).
 
@@ -174,11 +172,11 @@ From lowest to highest binding:
 | 7 | `<` `<=` `>` `>=` | left |
 | 8 | `+` `-` | left |
 | 9 | `*` `/` `%` | left |
-| 10 | `**` | right |
-| 11 | `!` unary`-` | prefix |
+| 10 | `!` unary`-` | prefix |
+| 11 | `**` | right |
 | 12 | `.` `[]` `()` (access/call) | left |
 
-Unary minus binds tighter than `**`: `-2 ** 2` is `(-2) ** 2`, which is `4`. Write `-(2 ** 2)` for `-4`.
+`**` binds tighter than unary minus, as in math and Python: `-2 ** 2` is `-(2 ** 2)`, which is `-4`; write `(-2) ** 2` for `4`. The right operand of `**` may be negated (`2 ** -1`).
 
 `ok` and `err` take everything that binds tighter than `=` as their operand, so `ok 5 == 1` is `ok (5 == 1)`. Parenthesize a result to compare it: `(ok 5) == (ok 5)`.
 
@@ -221,7 +219,7 @@ Default values must be **literals only** (int, float, string, bool, null, or emp
 
 ### 6.6 Return type annotations
 
-Return types are compile-time only — no runtime cost. The analyzer infers the body's return type and checks it against the annotation. Mismatch produces a compile-time error. At runtime, the function can return any value.
+Return types are checked at compile time — no runtime cost. The analyzer infers the body's return type and checks it against the annotation. Mismatch produces a compile-time error. A body whose type can't be inferred (it returns an `any` value) is not checked at runtime yet.
 
 ---
 
@@ -259,7 +257,7 @@ when expr:
 `when` inspects a value and branches on its shape:
 
 - **Result patterns**: `ok identifier` or `err identifier` — matches `ok`/`err` results and binds the payload to the identifier.
-- **Value patterns**: literal values (numbers, including negative ones, strings, booleans and `null`) separated by `or` — matches if the scrutinee equals any listed value.
+- **Value patterns**: literal values (numbers, including negative ones, strings, booleans and `null`) separated by `or` — matches if the scrutinee equals any listed value. Variables, calls and other expressions can't be patterns (compile-time error); compare with `if` instead.
 - **Wildcard**: `_` matches anything.
 
 Each arm's `->` body is a single expression. The entire `when` expression evaluates to the matched arm's result, so it can be used anywhere an expression ends a line, including the right side of an assignment:
@@ -520,7 +518,14 @@ There are **no generic types**. You cannot write `list[int]` or `dict[str, int]`
 fn foo(x: int, y: float = 0.0) -> x + y
 ```
 
-Annotations are checked at compile time when both parameter and argument types are known. When either is `any` or unknown, the check is skipped. Nothing is checked or converted at runtime for Quark functions; only `extern fn` parameters are (§2).
+Each annotated parameter is enforced, whether or not the function's other parameters or its return type are annotated, and with the same rules for Quark functions and `extern fn`:
+
+- When the argument's type is known at compile time, it is checked then (`argument 1 of 'foo' expects int, got str`), at no runtime cost.
+- When it isn't (`any`, for example the result of `unwrap` or of an unannotated function), it is checked on entry to the function, and a mismatch is a runtime error naming the parameter: `argument 'x' of 'foo' expects int, got str`. Calls through a function value, pipes and default arguments are covered too.
+- An `int` passed to a `float` parameter is converted to `float`.
+- Reference-type annotations (`list`, `dict`, `vector`, `result`, `resource`, struct names) also accept `null`, as at compile time.
+
+Unannotated parameters accept any value. Inside the body, annotated `int`, `float` and `bool` parameters are native C++ values, so arithmetic on them is unboxed. Fully annotated functions are compiled to native C++ functions, and calls with arguments already known to have the right types pay no check.
 
 If a parameter has both a type annotation and a default value, the default's type must be assignable to the annotated type.
 
@@ -541,6 +546,8 @@ v: any = 1
 ```
 
 The annotated type constrains future assignments. Assigning a value of incompatible type is a compile-time error.
+
+Builtin function names (`sum`, `len`, `max`, ...) are bindings that can't be reassigned, so `sum = 0` is a compile-time error, also inside a function body. A parameter may reuse a builtin's name (`fn f(sum) -> sum`).
 
 The `any` annotation is significant: it forces the variable to use boxed `QValue` storage even when the initial value is a scalar. This allows the variable to hold values of different types over its lifetime:
 

@@ -202,8 +202,8 @@ const (
 	PrecComparison            // < <= > >=
 	PrecTerm                  // + -
 	PrecFactor                // * / %
+	PrecUnary                 // ! - (prefix; their operand is parsed at PrecExponent)
 	PrecExponent              // **
-	PrecUnary                 // ! ~ -
 	PrecAccess                // . [] ()
 )
 

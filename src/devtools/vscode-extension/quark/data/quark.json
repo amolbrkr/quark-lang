@@ -335,6 +335,11 @@
           "signature": "table(df: any, n: int = 20, show_index: bool = true) str"
         },
         {
+          "name": "full",
+          "signature": "full(x: any) str",
+          "doc": "x as println shows it, but with every item of long collections."
+        },
+        {
           "name": "head",
           "signature": "head(lst: list, n: int = 5) str"
         },

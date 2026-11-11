@@ -253,6 +253,10 @@ nothing = null
 The built-in value types are integers, floats, strings, booleans, `null`, lists,
 dicts, vectors, results, structs, and functions.
 
+Float literals can use an exponent (`1e3`, `2.5e-4`). Floats print in their
+shortest exact form, with `.0` on whole numbers, as in Python: `4.0`, `0.1`,
+`1e+16`, and `0.30000000000000004` for `0.1 + 0.2`.
+
 Type annotations are **optional** and serve as compile-time checks; all runtime
 values are dynamic. A typed declaration uses `name: Type = expr`:
 
@@ -267,10 +271,14 @@ error. The available annotation names are `int`, `float`, `str`, `bool`, `any`,
 open file from `std/io`), and any `struct` type you define. Generic forms like `list[int]` are
 **not** supported.
 
-Annotations on Quark functions are checked at compile time only: nothing
-converts or checks the value at runtime, so `fn f(x: float) -> x` called as
-`f(1)` returns the int `1`. Only `extern fn` parameters are converted at
-runtime (see [semantics.md](semantics.md) §10.6).
+A parameter annotation always holds, whether or not the rest of the function is
+annotated. In `fn scale(x: float, k) -> x * k`, `x` is a float: a call whose
+argument type is known is checked at compile time, and a value whose type
+isn't known (for example the result of `unwrap`) is checked when the function
+is entered (`argument 'x' of 'scale' expects float, got str`). An int passed
+to a `float` parameter becomes a float, so `scale(1, 2)` returns `2.0`.
+Unannotated parameters like `k` accept anything. `extern fn` parameters follow
+the same rules.
 
 ### Printing and input
 
@@ -289,19 +297,16 @@ name = input('Your name: ')   // read a line from stdin (prompt is optional)
   gives `''`), so `while true: line = input(); if line == null: break` reads
   stdin to the end.
 
-> **Heads up:** printing a list, vector, or dict shows a compact summary, not the
-> elements:
->
-> ```quark
-> println(list [1, 2, 3])   // [list len=3]
-> println(vector [1, 2, 3]) // [vector len=3]
-> ```
->
-> To see the contents, join them into a string or use the `std/fmt` module:
->
-> ```quark
-> println(list [1, 2, 3].join(', '))   // 1, 2, 3
-> ```
+`println` and `to_str` show a collection's contents. Strings inside it are quoted
+and dict keys are sorted. A collection with more than 100 items shows its first
+and last 5 and a count; `fmt.full(x)` from `std/fmt` gives every item:
+
+```quark
+println(list [1, 'a', null])              // [1, 'a', null]
+println(dict {name: 'Ada', age: 36})      // {age: 36, name: 'Ada'}
+println(range(1000))                      // [0, 1, 2, 3, 4, ..., 995, 996, 997, 998, 999] (1000 items)
+println(ok 5)                             // ok 5
+```
 
 ### Operators and precedence
 
@@ -321,15 +326,16 @@ From lowest to highest binding:
 | 7 | `< <= > >=` |
 | 8 | `+ -` |
 | 9 | `* / %` |
-| 10 | `**` (right-associative) |
-| 11 | unary `! -` |
+| 10 | unary `! -` |
+| 11 | `**` (right-associative) |
 | 12 (highest) | postfix `.` `[]` `()` |
 
 ```quark
 println(1 + 2 * 3)      // 7
 println(2 ** 3 ** 2)    // 512  (right-associative: 2 ** (3 ** 2))
 println(-5)             // -5
-println(-2 ** 2)        // 4    (unary minus binds tighter: (-2) ** 2)
+println(-2 ** 2)        // -4   (** binds tighter, as in math: -(2 ** 2))
+println((-2) ** 2)      // 4
 println(!false)         // true
 ```
 
@@ -561,7 +567,7 @@ fn safe_div(a, b) ->
         ok (a / b)
 
 when safe_div(10, 2):
-    ok value -> println(value)     // 5
+    ok value -> println(value)     // 5.0
     err msg  -> println(msg)
 
 when safe_div(10, 0):
@@ -633,10 +639,10 @@ v = vector [1, 2, 3, 4]
 println(type(v))             // vector[i64]
 
 w = v + 10                   // element-wise add -> vector [11, 12, 13, 14]
-println(sum(w))              // 50
+println(sum(w))              // 50.0  (vector reductions return a float)
 
 mask = v > 2                 // element-wise compare -> bool vector
-println(sum(mask))           // 2   (true counts as 1)
+println(sum(mask))           // 2.0 (true counts as 1)
 ```
 
 Vectors support `.get`, `.fillna` (replace nulls), `.astype` (cast dtype),
@@ -943,7 +949,9 @@ verified by compiling and running the bundled examples.
 - `if` / `elseif` / `else`, the ternary, and `when` pattern matching (literals,
   or-patterns, `_`, and `ok` / `err` patterns).
 - `for` (over list / vector / str) with `range`, `while`, `break`, `continue`.
-- Functions with optional return-type annotations and literal default parameters.
+- Functions with optional type annotations (each annotated parameter is
+  enforced, at compile time when possible and on entry otherwise) and literal
+  default parameters.
 - Lambdas and closures (with the inline-after-`->` caveat noted above).
 - The pipe operator `|`.
 - `ok` / `err` results with `is_ok`, `is_err`, `unwrap`.
@@ -951,6 +959,10 @@ verified by compiling and running the bundled examples.
 - **Structs**: typed fields, constant-expression defaults, named-field
   construction, field access, immutability, reconstruction updates.
 - Same-file modules, file imports, and `std/` imports (use the `as alias` form).
+  Each module's members have their own namespace.
+- Standard library modules: `std/io` (files), `std/fmt` (rendering), `std/sys`
+  (arguments, environment, exit status), `std/time`, `std/random`, `std/csv`,
+  and `std/blas` (OpenBLAS). Lists sort with `.sort()` and `.sort_by(key)`.
 - Extern / FFI declarations for calling into C++, and linking native libraries
   with `extern link` / `extern include_path` (see semantics.md §10.6 and
   [ffi_v0_1_spec.md](ffi_v0_1_spec.md)). `std/blas` wraps OpenBLAS.
@@ -966,6 +978,39 @@ verified by compiling and running the bundled examples.
   build** — it reports `QK-PARSE-001`. Treat tables as not yet available.
 - **Un-aliased imports.** Importing modules without `as` reports a conflict when
   two of them, or one of them and your code, define the same name; use aliases.
+
+**Known limitations**
+
+- **Library gaps:** no regex, JSON, HTTP, subprocesses or dates. Vectors have no
+  sort (`v.to_list().sort()` works). `std/csv` returns every field as a string;
+  typed columns wait on the `table` type.
+- **Builtin names can't be variable names.** `sum = 0`, `len = 3` or `max = 10`
+  is a compile-time error, even inside a function. Parameters may reuse them
+  (`fn f(sum) -> sum`).
+- **Module members can only be called**, not used as values: `io.exists(p)` and
+  `p | io.exists()` work, `f = io.exists` doesn't.
+- **Structs** must be defined at a file's top level, not inside a `module` block
+  (there, `Point { ... }` reports `unknown struct type 'Point'`). A struct
+  literal can only be written in the file that defines the struct; in an
+  importing file it is a parse error, so construct values through a function
+  of the defining module.
+- **`null` and `fn` can't be written as annotations**, so an `extern fn` can't
+  take a callback parameter.
+- **A pipe continuation line** (`| f()` on the next line) must have the same
+  indentation as the line before it.
+- **Calling a function before its definition** is a compile-time error when the
+  call is direct; through another function (`fn a() -> b()`, `a()`, then
+  `fn b`), it fails at runtime.
+- **Return annotations** are checked at compile time only; a body that returns
+  a value of unknown type isn't checked at runtime.
+- **Error wording:** a wrong argument type passed to a fully annotated function
+  or an `extern fn` reports `expected int, got str`, without the parameter name.
+- **Inconsistent failure modes:** `io.close` on a closed file returns `err`, while
+  `io.read` on one is a runtime error; vector `.get` out of range is an error,
+  while list `.get` returns `null`; `min`/`max` of an empty vector are errors,
+  while `sum` returns `0.0`.
+- **Vector reductions** (`sum`, `min`, `max`) return a float, also for int
+  vectors: `min(vector [1, 2])` is `1.0`.
 
 **Planned**
 
@@ -1025,9 +1070,6 @@ directory the linker searches. Install it, or pass its directory with
 the problem. A `'foo.h' file not found` error usually means the library's
 headers are installed somewhere else; pass `--include-path <dir>`.
 
-**A list/vector prints as `[list len=N]`** — that is the intended compact
-representation. Use `.join(sep)` or the `std/fmt` module to render contents.
-
 **A `table { ... }` literal fails with `QK-PARSE-001`** — tables are not yet
 implemented; see [Current status and roadmap](#current-status-and-roadmap).
 
@@ -1042,7 +1084,8 @@ These canonical docs go deeper than this guide:
 - [error_codes.md](error_codes.md) — the diagnostic and invariant code registry.
 - [structs_v0_1_spec.md](structs_v0_1_spec.md),
   [tables_v0_1_spec.md](tables_v0_1_spec.md),
-  [ffi_v0_1_spec.md](ffi_v0_1_spec.md) — feature design specs.
+  [ffi_v0_1_spec.md](ffi_v0_1_spec.md),
+  [stdlib_expansion_v0_1_spec.md](stdlib_expansion_v0_1_spec.md) — feature design specs.
 
 > If a doc disagrees with the compiler, trust the compiler — and please file the
 > drift. Several specs currently describe features ahead of the implementation.

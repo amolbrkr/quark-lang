@@ -270,8 +270,10 @@ func (a *Analyzer) analyzeLambda(node *ast.TreeNode) Type {
 	a.validateReturnType(funcType, returnType, funcName, node)
 
 	// If this lambda is a named top-level function binding with full scalar annotations,
-	// register it as a native fn so call sites can use DispatchNative.
-	if funcName != "lambda" && isFullyAnnotated(funcType) {
+	// register it as a native fn so call sites can use DispatchNative. A native
+	// function is called without its closure, so one that captures outer
+	// variables stays a closure (its annotations are enforced on entry instead).
+	if funcName != "lambda" && isFullyAnnotated(funcType) && len(a.captures[node]) == 0 {
 		nativeParams := make([]string, len(funcType.ParamTypes))
 		for i, pt := range funcType.ParamTypes {
 			nativeParams[i] = quarkTypeToNativeCType(pt)

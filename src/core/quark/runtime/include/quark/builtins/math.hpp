@@ -4,6 +4,7 @@
 
 #include "../core/value.hpp"
 #include "../core/constructors.hpp"
+#include "../core/format.hpp"
 #include <cstdlib>
 #include <cstdio>
 #include <cmath>
@@ -115,7 +116,8 @@ inline QValue q_sqrt(QValue v) {
     }
     double val = quark::detail::to_double(v);
     if (val < 0.0) {
-        q_runtime_reportf("runtime error: sqrt() domain error: argument is negative (%g)\n", val);
+        char fbuf[32];
+        q_runtime_reportf("runtime error: sqrt() domain error: argument is negative (%s)\n", q_format_float(val, fbuf, sizeof(fbuf)));
         std::exit(1);
     }
     return qv_float(sqrt(val));

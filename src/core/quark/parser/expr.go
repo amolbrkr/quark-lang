@@ -459,11 +459,16 @@ func (p *Parser) parseVectorLiteral() *ast.TreeNode {
 	return node
 }
 
+// parseUnary parses `-x` and `!x`. The operand is parsed at exponent
+// precedence, so `**` binds tighter than a prefix operator (`-2 ** 2` is
+// `-(2 ** 2)`, as in math and Python) while `*`, `+`, comparisons etc. bind
+// looser (`-a * b` is `(-a) * b`). `**`'s right operand may itself start with a
+// prefix operator (`2 ** -1`).
 func (p *Parser) parseUnary() *ast.TreeNode {
 	tok := p.curToken
 	node := ast.NewNode(ast.OperatorNode, &tok)
 	p.nextToken()
-	operand := p.parseExpression(ast.PrecUnary)
+	operand := p.parseExpression(ast.PrecExponent)
 	node.AddChild(operand)
 	return node
 }

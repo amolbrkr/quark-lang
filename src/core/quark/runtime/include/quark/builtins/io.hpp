@@ -4,6 +4,7 @@
 
 #include "../core/value.hpp"
 #include "../core/constructors.hpp"
+#include "../core/format.hpp"
 #include "../builtins/conversion.hpp"
 #include "../types/dict.hpp"
 #include "../types/resource.hpp"
@@ -18,7 +19,10 @@ inline void print_qvalue(QValue v) {
             printf("%lld", v.data.int_val);
             break;
         case QValue::VAL_FLOAT:
-            printf("%g", v.data.float_val);
+            {
+                char fbuf[32];
+                fputs(q_format_float(v.data.float_val, fbuf, sizeof(fbuf)), stdout);
+            }
             break;
         case QValue::VAL_STRING:
             printf("%s", v.data.string_val ? v.data.string_val : "null");
@@ -29,37 +33,9 @@ inline void print_qvalue(QValue v) {
         case QValue::VAL_NULL:
             printf("null");
             break;
-        case QValue::VAL_LIST:
-            printf("[list len=%zu]", v.data.list_val ? v.data.list_val->size() : 0);
-            break;
-        case QValue::VAL_VECTOR:
-            printf("[vector len=%d]", q_vec_size(v));
-            break;
-        case QValue::VAL_DICT:
-            printf("[dict len=%zu]", v.data.dict_val ? v.data.dict_val->entries.size() : 0);
-            break;
-        case QValue::VAL_FUNC:
-            printf("<function>");
-            break;
-        case QValue::VAL_RESOURCE:
-            printf("<resource %s>", q_resource_kind_name(v.data.resource_val ? v.data.resource_val->kind : QRES_KIND_NONE));
-            break;
-        case QValue::VAL_STRUCT:
-            if (v.data.struct_val && v.data.struct_val->def) {
-                printf("%s{...}", v.data.struct_val->def->name);
-            } else {
-                printf("<struct>");
-            }
-            break;
-        case QValue::VAL_TABLE:
-            if (v.data.table_val && v.data.table_val->def) {
-                printf("table<%s>[%d rows]", v.data.table_val->def->name, v.data.table_val->nrows);
-            } else {
-                printf("<table>");
-            }
-            break;
         default:
-            printf("<value>");
+            // Containers, structs, results, functions, resources, tables.
+            fputs(q_repr(v).c_str(), stdout);
             break;
     }
 }

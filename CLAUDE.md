@@ -68,6 +68,7 @@ Header-only C++17 library at `src/core/quark/runtime/include/quark/`. Key files:
 - `core/gc.hpp` — GC allocation wrappers (`q_malloc`, `q_malloc_atomic`, `q_strdup`)
 - `ops/` — Arithmetic, comparison, logical, member access operators
 - `builtins/` — prelude builtins (console I/O, string, math, list, dict, conversion); each header must be listed in `quark.hpp`
+- `builtins/repr.hpp` — how values print (`println`/`to_str`: contents, 100-item elision); `core/format.hpp` — float text (shortest round-trip)
 - `types/resource.hpp` — generational registry for native handles; every handle has the single Quark type `resource` (the kind, e.g. `file`, is runtime-only)
 
 There are no runtime unit tests; the runtime is tested through the Go integration tests (some compile small C++ programs against the headers, e.g. `TestVectorArrowLayout`).
@@ -121,7 +122,7 @@ Smoke test programs in `src/testfiles/smoke_*.qrk`. Integration tests in `src/co
 - `dict { key: val }` syntax
 - Pipe operator: `x | foo() | bar()`
 - Result types: `ok(val)` / `err(val)` with `unwrap()`
-- Type annotations: `fn add(x: int, y: int) int -> x + y` (compile-time only for Quark functions — no runtime check or int→float widening; `extern fn` arguments are converted/checked at runtime)
+- Type annotations: `fn add(x: int, y: int) int -> x + y`. Each annotated parameter is enforced on its own (partial annotation counts): checked at compile time when the argument type is known, on function entry otherwise (`emitParamBindings` → `q_param_*` in `builtins/params.hpp`), with int→float widening; same rules as `extern fn`. Fully annotated, non-capturing functions compile to native C++ (`DispatchNative`)
 - Default params: `fn foo(x: int, y: int = 0) -> x + y` (literals only)
 - String type is `str` (not `string`)
 - Annotation types: `int`, `float`, `str`, `bool`, `any`, `list`, `dict`, `vector`, `result`, `resource`, and struct names. No generic/element types (`list[int]` doesn't parse)

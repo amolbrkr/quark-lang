@@ -914,3 +914,48 @@ func TestParser_WhenAsExpression(t *testing.T) {
 		t.Fatalf("expected 4 top-level statements, got %d", got)
 	}
 }
+
+// TestPrecedence_UnaryAndExponent: `**` binds tighter than prefix `-` and `!`
+// (Python's rule), and its right operand may be negated.
+func TestPrecedence_UnaryAndExponent(t *testing.T) {
+	cases := []struct{ src, want string }{
+		{"-2 ** 2", "(-(2 ** 2))"},
+		{"-x ** 2 ** 3", "(-(x ** (2 ** 3)))"},
+		{"2 ** -1", "(2 ** (-1))"},
+		{"2 ** -1 ** 2", "(2 ** (-(1 ** 2)))"},
+		{"-a * b", "((-a) * b)"},
+		{"-a + b", "((-a) + b)"},
+		{"x - -2 ** 2", "(x - (-(2 ** 2)))"},
+		{"!x ** 2", "(!(x ** 2))"},
+		{"(-2) ** 2", "((-2) ** 2)"},
+		{"-xs[0] ** 2", "(-(xs[0] ** 2))"},
+	}
+	for _, tc := range cases {
+		node, errs := testutil.Parse(tc.src + "\n")
+		if len(errs) > 0 {
+			t.Fatalf("%s: parse errors: %v", tc.src, errs)
+		}
+		if got := exprString(node.Children[0]); got != tc.want {
+			t.Errorf("%s: got %s, want %s", tc.src, got, tc.want)
+		}
+	}
+}
+
+// exprString renders an operator tree with full parentheses.
+func exprString(n *ast.TreeNode) string {
+	if n == nil {
+		return "<nil>"
+	}
+	switch {
+	case n.NodeType == ast.OperatorNode && len(n.Children) == 1:
+		return "(" + n.Token.Literal + exprString(n.Children[0]) + ")"
+	case n.NodeType == ast.OperatorNode && len(n.Children) == 2:
+		return "(" + exprString(n.Children[0]) + " " + n.Token.Literal + " " + exprString(n.Children[1]) + ")"
+	case n.NodeType == ast.IndexNode && len(n.Children) == 2:
+		return exprString(n.Children[0]) + "[" + exprString(n.Children[1]) + "]"
+	}
+	if n.Token != nil {
+		return n.Token.Literal
+	}
+	return n.NodeType.String()
+}

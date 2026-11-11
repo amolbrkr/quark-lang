@@ -49,6 +49,9 @@ type Generator struct {
 	funcDecls     []funcDecl               // Function declarations with param counts
 	lambdas       []*ast.TreeNode          // Lambda expressions to generate
 	lambdaNames   map[*ast.TreeNode]string // Maps lambda nodes to their generated names
+	// lambdaUserNames maps lambdas bound by `name = fn(...)` (how named functions
+	// are written) to that name, for runtime messages.
+	lambdaUserNames map[*ast.TreeNode]string
 	tempCounter   int
 	lambdaCounter int
 	inFunction    bool
@@ -92,6 +95,7 @@ func New() *Generator {
 		funcDecls:          make([]funcDecl, 0),
 		lambdas:            make([]*ast.TreeNode, 0),
 		lambdaNames:        make(map[*ast.TreeNode]string),
+		lambdaUserNames:    make(map[*ast.TreeNode]string),
 		tempCounter:        0,
 		sourceName:         "<unknown>",
 		declaredVars:       make(map[string]bool),
@@ -736,6 +740,7 @@ func (g *Generator) collectFunctions(node *ast.TreeNode) {
 			node.Children[1] != nil && node.Children[1].NodeType == ast.LambdaNode {
 			userName := node.Children[0].TokenLiteral()
 			lambdaNode := node.Children[1]
+			g.lambdaUserNames[lambdaNode] = userName
 			if proto, isNative := g.nativeFns[userName]; isNative {
 				// Give the lambda the canonical user name so codegen emits quark_<name>.
 				g.lambdaNames[lambdaNode] = userName
@@ -813,6 +818,103 @@ func (g *Generator) generateFunction(node *ast.TreeNode) {
 	}
 }
 
+// displayFuncName is how runtime messages name a function: module members
+// (renamed module__member by the loader) as module.member.
+func displayFuncName(name string) string {
+	return strings.Replace(name, "__", ".", 1)
+}
+
+// lambdaDisplayName names a lambda for runtime messages: the name it is bound
+// to (`fn f(...)` is `f = fn(...)`), or "lambda".
+func (g *Generator) lambdaDisplayName(node *ast.TreeNode) string {
+	if name, ok := g.lambdaUserNames[node]; ok {
+		return displayFuncName(name)
+	}
+	return "lambda"
+}
+
+// paramAnnotation returns the type name a parameter is annotated with, or "".
+func paramAnnotation(param *ast.TreeNode) string {
+	if param == nil || param.NodeType != ast.ParameterNode {
+		return ""
+	}
+	for _, c := range param.Children[min(1, len(param.Children)):] {
+		if c != nil && c.NodeType == ast.TypeNode {
+			return c.TokenLiteral()
+		}
+	}
+	return ""
+}
+
+// paramTagChecks maps non-scalar annotations to their QValue tag and whether
+// null is accepted (reference types accept null, as in the checker).
+var paramTagChecks = map[string]struct {
+	tag       string
+	allowNull bool
+}{
+	"str":      {"VAL_STRING", false},
+	"list":     {"VAL_LIST", true},
+	"dict":     {"VAL_DICT", true},
+	"vector":   {"VAL_VECTOR", true},
+	"result":   {"VAL_RESULT", true},
+	"resource": {"VAL_RESOURCE", true},
+}
+
+// emitParamBindings binds a QValue-convention function's parameters. Every
+// annotated parameter is enforced on entry (q_param_* reports the caller's
+// line, since the callee hasn't set a location yet); int, float and bool
+// parameters are unboxed to native C++ locals (float widens an int) so the
+// body works on raw values. Unannotated and `any` parameters stay QValue.
+func (g *Generator) emitParamBindings(argsNode *ast.TreeNode, fnDisplay string) {
+	if argsNode == nil {
+		return
+	}
+	for _, param := range argsNode.Children {
+		paramName := g.paramName(param)
+		if paramName == "" {
+			continue
+		}
+		cName := sanitizeVarName(paramName)
+		argName := sanitizeArgName(paramName)
+		fn := escapeCppString(fnDisplay)
+		pn := escapeCppString(paramName)
+
+		value := argName // checked QValue expression
+		scalarExpr, tier := "", ""
+		switch ann := paramAnnotation(param); ann {
+		case "", "any":
+		case "int":
+			scalarExpr, tier = fmt.Sprintf("q_param_int(%s, \"%s\", \"%s\")", argName, fn, pn), "long long"
+			value = fmt.Sprintf("qv_int(%s)", scalarExpr)
+		case "float":
+			scalarExpr, tier = fmt.Sprintf("q_param_float(%s, \"%s\", \"%s\")", argName, fn, pn), "double"
+			value = fmt.Sprintf("qv_float(%s)", scalarExpr)
+		case "bool":
+			scalarExpr, tier = fmt.Sprintf("q_param_bool(%s, \"%s\", \"%s\")", argName, fn, pn), "bool"
+			value = fmt.Sprintf("qv_bool(%s)", scalarExpr)
+		default:
+			if c, ok := paramTagChecks[ann]; ok {
+				value = fmt.Sprintf("q_param_check(%s, QValue::%s, %t, \"%s\", \"%s\", \"%s\")", argName, c.tag, c.allowNull, ann, fn, pn)
+			} else {
+				// A struct name (the checker rejects unknown type names).
+				value = fmt.Sprintf("q_param_struct(%s, \"%s\", \"%s\", \"%s\")", argName, escapeCppString(ann), fn, pn)
+			}
+		}
+
+		switch {
+		case g.isCaptured(paramName):
+			g.emitLine("QCell* %s = q_new_cell(%s);", cName, value)
+			g.markCell(paramName)
+		case tier != "":
+			g.emitLine("%s %s = %s;", tier, cName, scalarExpr)
+			g.markTier(paramName, tier)
+		default:
+			g.emitLine("QValue %s = %s;", cName, value)
+		}
+		g.declaredVars[paramName] = true
+	}
+}
+
 // generateQValueFunction emits the standard QValue-based function body.
 func (g *Generator) generateQValueFunction(node *ast.TreeNode, funcName string, argsNode *ast.TreeNode, bodyNode *ast.TreeNode) {
 	g.currentFunc = funcName
@@ -833,21 +935,7 @@ func (g *Generator) generateQValueFunction(node *ast.TreeNode, funcName string, 
 	g.indentLevel++
 	g.emitLine("QSourceLocGuard _loc_guard;")
 
-	for _, param := range argsNode.Children {
-		paramName := g.paramName(param)
-		if paramName == "" {
-			continue
-		}
-		cName := sanitizeVarName(paramName)
-		argName := sanitizeArgName(paramName)
-		if g.isCaptured(paramName) {
-			g.emitLine("QCell* %s = q_new_cell(%s);", cName, argName)
-			g.markCell(paramName)
-		} else {
-			g.emitLine("QValue %s = %s;", cName, argName)
-		}
-		g.declaredVars[paramName] = true
-	}
+	g.emitParamBindings(argsNode, displayFuncName(funcName))
 
 	result := g.generateBlock(bodyNode)
 	g.emitLine("return %s;", g.boxResultToQValue(result, bodyNode))
@@ -2574,21 +2662,7 @@ func (g *Generator) generateLambdaFunc(node *ast.TreeNode) {
 	g.indentLevel++
 	g.emitLine("QSourceLocGuard _loc_guard;")
 
-	for _, param := range argsNode.Children {
-		paramName := g.paramName(param)
-		if paramName == "" {
-			continue
-		}
-		cName := sanitizeVarName(paramName)
-		argName := sanitizeArgName(paramName)
-		if g.isCaptured(paramName) {
-			g.emitLine("QCell* %s = q_new_cell(%s);", cName, argName)
-			g.markCell(paramName)
-		} else {
-			g.emitLine("QValue %s = %s;", cName, argName)
-		}
-		g.declaredVars[paramName] = true
-	}
+	g.emitParamBindings(argsNode, g.lambdaDisplayName(node))
 
 	// Extract captured variables from closure — always QCell* (shared with outer scope)
 	if caps, ok := g.captures[node]; ok {

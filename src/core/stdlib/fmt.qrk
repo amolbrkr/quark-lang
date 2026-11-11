@@ -4,6 +4,7 @@ extern fn fmt_list(lst: list, n: int, show_index: bool) str as 'q_fmt_list'
 extern fn fmt_vector(vec: vector, n: int, show_index: bool) str as 'q_fmt_vector'
 extern fn fmt_dict(dct: dict, n: int, show_index: bool) str as 'q_fmt_dict'
 extern fn fmt_table(df: any, n: int, show_index: bool) str as 'q_fmt_table'
+extern fn fmt_full(x: any) str as 'q_fmt_full'
 
 module fmt:
     fn show_list(lst: list, n: int = 10, show_index: bool = true) str ->
@@ -17,6 +18,10 @@ module fmt:
 
     fn table(df: any, n: int = 20, show_index: bool = true) str ->
         fmt_table(df, n, show_index)
+
+    // x as println shows it, but with every item of long collections.
+    fn full(x: any) str ->
+        fmt_full(x)
 
     fn head(lst: list, n: int = 5) str ->
         fmt_list(lst.slice(0, n), 0, true)

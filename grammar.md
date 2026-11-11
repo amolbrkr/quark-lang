@@ -161,8 +161,7 @@ double = fn(x: int) int -> x * 2
 ```
 
 Semantics:
-- The annotation is compile-time only — all runtime values are `QValue`
-- Parameter annotations on Quark functions are compile-time only too: nothing is checked or converted at runtime. Only `extern fn` parameters are converted (see semantics.md §2)
+- Each annotated parameter is enforced, independently of the others: at compile time when the argument's type is known, on entry to the function when it isn't, with an `int` argument to a `float` parameter converted to `float` (semantics.md §13.2). Unannotated parameters accept any value
 - The analyzer infers the actual return type from the body and checks it against the annotation
 - A mismatch is a compile-time error (e.g., annotated `int` but body returns `str`)
 - Union types with `void` from incomplete branches (e.g., `when` without wildcard) are accepted if the non-void component matches the annotation
@@ -224,7 +223,8 @@ WildcardPattern ::= "_"
 Semantics:
 - `when` is both a statement and an expression: it evaluates to the matched arm's value, so it can end a line such as `size = when n: ...` (see semantics.md §8)
 - Pattern arms are checked in source order
-- Value patterns are literals; they match when the scrutinee equals one of them
+- Value patterns are literals; they match when the scrutinee equals one of them. A variable, call or other expression as a pattern is a compile-time error ("when patterns must be literal values")
+- An `ok`/`err` pattern stands alone in its arm: combining it with `or` (`ok x or err x`, `1 or ok x`) is a parse error
 - Result propagation is explicit (no implicit bubbling)
 - Nested `when` is supported
 
@@ -340,9 +340,9 @@ LogicalAnd      ::= Equality { "and" Equality }
 Equality        ::= Comparison { ("==" | "!=") Comparison }
 Comparison      ::= Additive { ("<" | "<=" | ">" | ">=") Additive }
 Additive        ::= Multiplicative { ("+" | "-") Multiplicative }
-Multiplicative  ::= Exponent { ("*" | "/" | "%") Exponent }
-Exponent        ::= Unary [ "**" Exponent ]
-Unary           ::= ("!" | "-") Unary | Postfix
+Multiplicative  ::= Unary { ("*" | "/" | "%") Unary }
+Unary           ::= ("!" | "-") Unary | Power
+Power           ::= Postfix [ "**" Unary ]
 
 Postfix         ::= Primary { Accessor | CallArgs }
 Accessor        ::= "." ID | "[" Expression "]"
@@ -399,11 +399,11 @@ Call arguments and collection elements are `PipeExpr`s, so an assignment cannot 
 | 7 | `< <= > >=` |
 | 8 | `+ -` |
 | 9 | `* / %` |
-| 10 | `**` (right-associative) |
-| 11 | unary `! -` |
+| 10 | unary `! -` |
+| 11 | `**` (right-associative) |
 | 12 | postfix `. [] ()` |
 
-Unary minus binds tighter than `**`: `-2 ** 2` is `(-2) ** 2`, which is `4`. Write `-(2 ** 2)` for `-4`.
+`**` binds tighter than unary minus, as in math and Python: `-2 ** 2` is `-(2 ** 2)`, which is `-4`; write `(-2) ** 2` for `4`. The right operand of `**` may be negated (`2 ** -1`), and `-x ** 2 ** 3` is `-(x ** (2 ** 3))`. `*`, `+` and the other binary operators bind looser than unary minus, so `-a * b` is `(-a) * b`. Because `-2 ** 63` is `-(2 ** 63)`, it overflows; the smallest int can be written `-(2 ** 62) * 2`.
 
 ## 11) Runtime-Oriented Semantic Rules
 

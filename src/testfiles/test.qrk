@@ -1,24 +1,15 @@
-fib = fn(n) -> n if n <= 1 else fib(n - 1) + fib(n - 2)
-println(fib(23)) 
+use "std/fmt"
+use "std/blas"
+use "std/time"
 
-s: str = "loool"
-println(s[0])
-println(len(s))
+x = vector [1, 2, 3, 4]
+y = vector [4, 3, 2, 3]
 
-fn is_palin(s: str) bool -> 
-    left = 0
-    right = len(s) - 1
-    val = true
+println(fmt_vector(x, len(x), true))
 
-    while left < right:
-        if s[left] != s[right]:
-            val = false
-            break
+start = time.clock()
+xdoty = blas_dot(x.astype("f64"), y.astype("f64"))
+end = time.clock()
 
-        left = left + 1
-        right = right - 1
-        
-    val
-
-
-println(is_palin(s))
+println(xdoty)
+println("Estimated time: " + to_str(end - start))

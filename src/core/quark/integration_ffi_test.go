@@ -122,7 +122,7 @@ func TestFFI_Phase1(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	basicOut := strings.Join([]string{"42", "6", "5", "qffi 1.0", "true", "false", "6"}, "\n")
+	basicOut := strings.Join([]string{"42", "6.0", "5", "qffi 1.0", "true", "false", "6.0"}, "\n")
 
 	t.Run("shared library, include_path relative to the program", func(t *testing.T) {
 		r := runIn(work, cleanEnv(), quarkExePath, "run", filepath.Join(src, "ffi_basic.qrk"), "--lib-path", lib)
@@ -245,12 +245,12 @@ func TestStdBlas(t *testing.T) {
 	}
 	want := strings.Join([]string{
 		"== smoke: blas ==",
-		"32", "5", "6.5",
-		"6", "9", "12",
+		"32.0", "5.0", "6.5",
+		"6.0", "9.0", "12.0",
 		"1.5",
-		"4", "3",
-		"2", "6", "15",
-		"0",
+		"4.0", "3.0",
+		"2", "6.0", "15.0",
+		"0.0",
 	}, "\n")
 	if got := strings.TrimSpace(r.stdout); got != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", got, want)

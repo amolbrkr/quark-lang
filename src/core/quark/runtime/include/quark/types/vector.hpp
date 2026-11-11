@@ -31,6 +31,7 @@
 #include "../core/checked.hpp"
 #include "../core/value.hpp"
 #include "../core/constructors.hpp"
+#include "../core/format.hpp"
 
 #include <algorithm>
 #include <climits>
@@ -921,7 +922,8 @@ inline QValue q_astype(QValue vec, QValue dtype) {
                 const double x = in[i];
                 // Casting NaN or an out-of-range double to int64 is undefined.
                 if (!(x >= -9223372036854775808.0 && x < 9223372036854775808.0)) {
-                    q_runtime_reportf("runtime error: astype('i64'): value %g at index %zu is out of i64 range\n", x, i);
+                    char fbuf[32];
+                    q_runtime_reportf("runtime error: astype('i64'): value %s at index %zu is out of i64 range\n", q_format_float(x, fbuf, sizeof(fbuf)), i);
                     std::exit(1);
                 }
                 d[i] = static_cast<int64_t>(x);

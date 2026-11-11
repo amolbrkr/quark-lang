@@ -21,7 +21,7 @@ static inline std::string q_fmt_cell(QValue v) {
             std::snprintf(buf, sizeof(buf), "%lld", v.data.int_val);
             return buf;
         case QValue::VAL_FLOAT:
-            std::snprintf(buf, sizeof(buf), "%g", v.data.float_val);
+            q_format_float(v.data.float_val, buf, sizeof(buf));
             return buf;
         case QValue::VAL_BOOL:
             return v.data.bool_val ? "true" : "false";
@@ -140,7 +140,7 @@ inline const char* q_fmt_vector(QVector* vec, int64_t max_rows, bool show_index)
         char buf[64];
         switch (qvec.type) {
             case QVector::Type::F64:
-                std::snprintf(buf, sizeof(buf), "%g", q_vec_f64_data(qvec)[i]);
+                q_format_float(q_vec_f64_data(qvec)[i], buf, sizeof(buf));
                 cells[i] = buf;
                 break;
             case QVector::Type::I64:
@@ -277,7 +277,7 @@ inline void q_fmt_vector_cells(const QVector& qv, size_t nrows,
         char buf[64];
         switch (qv.type) {
             case QVector::Type::F64:
-                std::snprintf(buf, sizeof(buf), "%g", q_vec_f64_data(qv)[r]);
+                q_format_float(q_vec_f64_data(qv)[r], buf, sizeof(buf));
                 out[r] = buf; break;
             case QVector::Type::I64:
                 std::snprintf(buf, sizeof(buf), "%lld", (long long)q_vec_i64_data(qv)[r]);
@@ -427,6 +427,11 @@ inline const char* q_fmt_table(QValue df, int64_t max_rows, bool show_index) {
     out += "[" + std::to_string(nrows) + " row" + (nrows != 1 ? "s" : "") +
            " x " + std::to_string(ncols) + " col" + (ncols != 1 ? "s" : "") + "]";
     return q_strdup(out.c_str());
+}
+
+// fmt.full(x): the println rendering of x, without eliding long collections.
+inline const char* q_fmt_full(QValue v) {
+    return q_strdup(q_repr(v, false).c_str());
 }
 
 #endif // QUARK_STDLIB_FMT_HPP

@@ -86,7 +86,9 @@ inline QValue q_str(QValue v) {
         case QValue::VAL_FUNC:
             return qv_string("<function>");
         case QValue::VAL_RESOURCE:
-            return qv_string(q_resource_kind_name(v.data.resource_val ? v.data.resource_val->kind : QRES_KIND_NONE));
+            snprintf(buffer, sizeof(buffer), "<resource %s>",
+                     q_resource_kind_name(v.data.resource_val ? v.data.resource_val->kind : QRES_KIND_NONE));
+            return qv_string(buffer);
         case QValue::VAL_STRUCT:
             if (v.data.struct_val && v.data.struct_val->def) {
                 snprintf(buffer, sizeof(buffer), "%s{...}", v.data.struct_val->def->name);
@@ -194,7 +196,7 @@ inline QValue q_type(QValue v) {
         case QValue::VAL_RESULT:
             return qv_string("result");
         case QValue::VAL_RESOURCE:
-            return qv_string(q_resource_kind_name(v.data.resource_val ? v.data.resource_val->kind : QRES_KIND_NONE));
+            return qv_string("resource");
         case QValue::VAL_STRUCT:
             if (v.data.struct_val && v.data.struct_val->def) {
                 return qv_string(v.data.struct_val->def->name);

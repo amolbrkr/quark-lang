@@ -1,0 +1,20 @@
+// An open file must survive garbage collections: its payload (the fd) is
+// referenced only from the resource registry.
+use 'std/io' as io
+
+extern 'gcstats.hpp'
+extern fn gc_collect() any as 'q_test_gc_collect'
+
+path = './gc_resource_stress.tmp'
+f = unwrap(io.open(path, 'w'))
+for n in range(5):
+    gc_collect()
+    // churn small objects so freed memory is reused
+    for i in range(20000):
+        junk = list [i, i + 1]
+    io.write(f, 'line ' + to_str(n) + '\n') | unwrap()
+io.close(f) | unwrap()
+
+g = unwrap(io.open(path, 'r'))
+print(unwrap(io.read(g, 1000)))
+io.close(g) | unwrap()

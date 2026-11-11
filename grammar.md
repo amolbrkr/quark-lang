@@ -270,13 +270,13 @@ Current semantics:
 TypedDecl       ::= ID ":" Type "=" Expression
 Type            ::= "int" | "float" | "str" | "bool" | "any" | "result"
                 |   "list" | "dict" | "vector"
-                |   "resource" | "file_handle"
+                |   "resource"
                 |   StructName
 ReturnType      ::= Type
 ```
 
 Notes:
-- `Type` is accepted in variable, parameter, struct field and return type annotations (`resource` and `file_handle` included)
+- `Type` is accepted in variable, parameter, struct field and return type annotations (`resource` included). `resource` is any native handle, such as an open file from `std/io`
 - Other names are a compile-time error (`unknown type 'void'`)
 - Generic type syntax like `list[int]` is not implemented
 - `any` is the current top-level escape-hatch annotation for gradual typing
@@ -478,18 +478,15 @@ Result construction and use:
 | Result | `is_ok`, `is_err`, `unwrap` |
 | Math/range | `range`, `abs`, `min`, `max`, `sum`, `sqrt`, `floor`, `ceil`, `round` |
 | Aggregates | `all`, `any` |
-| Iteration | `enumerate` |
-| Vector | `vfrom_list` (same as `list.to_vector()`) |
-| File I/O | `_file_open`, `_file_read`, `_file_write`, `_file_close`, `_file_seek`, `_file_exists` |
 
 ### 12.2 Methods (by receiver type)
 
 | Receiver | Methods |
 |----------|---------|
-| `str` | `.upper()`, `.lower()`, `.trim()`, `.contains(sub)`, `.startswith(s)`, `.endswith(s)`, `.replace(old, new)`, `.concat(s)`, `.split(sep)`, `.slice(start, end)` |
+| `str` | `.upper()`, `.lower()`, `.trim()`, `.contains(sub)`, `.startswith(s)`, `.endswith(s)`, `.replace(old, new)`, `.split(sep)`, `.slice(start, end)` |
 | `list` | `.push(item)`, `.pop()`, `.get(idx)`, `.set(idx, val)`, `.insert(idx, val)`, `.remove(idx)`, `.slice(start, end)`, `.reverse()`, `.sort()`, `.sort_by(key)`, `.concat(other)`, `.join(sep)`, `.enumerate()`, `.to_vector()` |
 | `dict` | `.get(key)`, `.set(key, val)`, `.keys()`, `.values()`, `.items()` |
-| `vector` | `.get(idx)`, `.fillna(val)`, `.astype(dtype)`, `.to_list()` |
+| `vector` | `.get(idx)`, `.fillna(val)`, `.astype(dtype)`, `.to_list()`, `.enumerate()` |
 
 ## 13) Feature Status Matrix
 
@@ -502,7 +499,7 @@ Result construction and use:
 | Named functions and lambdas | Implemented | Parenthesized params required |
 | Return type annotations | Implemented | `fn f(x) int -> x + 1`; compile-time check only |
 | Default parameters | Implemented | `fn f(x, y = 0) -> x + y`; literals only, required-before-defaults |
-| Typed params / typed var declarations | Implemented | `int`, `float`, `str`, `bool`, `any`, `list`, `dict`, `vector`, `result`, `resource`, `file_handle`, struct names (see §9) |
+| Typed params / typed var declarations | Implemented | `int`, `float`, `str`, `bool`, `any`, `list`, `dict`, `vector`, `result`, `resource`, struct names (see §9) |
 | Generic type expressions | Not implemented | e.g. `list[int]` unsupported |
 | List literals (`list [...]`) | Implemented | Keyword required |
 | Vector literals (`vector [...]`) | Implemented | 1D only |

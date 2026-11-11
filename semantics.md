@@ -38,9 +38,9 @@ Every string-producing operation allocates a **fresh copy**. Strings are never s
 
 ### 1.4 Resources
 
-Resources are opaque handles to external state managed outside the Quark value system. The runtime uses a generational slot-based registry: each resource handle carries a slot index, generation counter, and kind tag. Operations on a closed or stale handle produce a runtime error. The `type()` builtin returns the resource's kind name (e.g., `"file_handle"`) rather than a generic `"resource"` string.
+Resources are opaque handles to external state managed outside the Quark value system. The runtime uses a generational slot-based registry: each resource handle carries a slot index, generation counter, and kind tag. Operations on a closed or stale handle produce a runtime error. Every handle has the single type `resource`: `type()` returns `"resource"`, and `to_str`/`println` show the kind, as in `<resource file>`.
 
-Resources are currently used exclusively by the `std/io` stdlib module for file handles. User code cannot construct resources directly — they are created by builtin functions (e.g., `io.open()`) and consumed by others (e.g., `io.read()`, `io.close()`).
+Resources are currently used exclusively by the `std/io` stdlib module for file handles. User code cannot construct resources directly — they are created by native functions (e.g., `io.open()`) and consumed by others (e.g., `io.read()`, `io.close()`).
 
 ---
 
@@ -506,9 +506,9 @@ The analyzer prevents assigning a `result`-typed value to a variable with a non-
 
 ### 13.1 Available types
 
-Variable, parameter and struct field annotations: `int`, `float`, `str`, `bool`, `list`, `dict`, `vector`, `result`, `resource`, `file_handle`, `any`, and struct names.
+Variable, parameter and struct field annotations: `int`, `float`, `str`, `bool`, `list`, `dict`, `vector`, `result`, `resource`, `any`, and struct names.
 
-Return type annotations accept the same list. A `file_handle` is accepted where a `resource` is expected.
+Return type annotations accept the same list.
 
 `null`, `void` and `fn` are not annotations. `void` appears only in inferred types, such as a non-exhaustive `when`.
 

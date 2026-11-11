@@ -157,30 +157,6 @@ inline QValue q_replace(QValue str, QValue old_str, QValue new_str) {
     return qv_string_own(result);
 }
 
-// Concatenate two strings
-inline QValue q_str_concat(QValue a, QValue b) {
-    if (a.type != QValue::VAL_STRING || b.type != QValue::VAL_STRING ||
-        !a.data.string_val || !b.data.string_val) {
-        q_runtime_reportf("runtime error: concat() expects (str, str)\n");
-        std::exit(1);
-    }
-    size_t alen = strlen(a.data.string_val);
-    size_t blen = strlen(b.data.string_val);
-        if (alen > SIZE_MAX - blen - 1) {
-            q_runtime_reportf("runtime error: concat() overflow while building result\n");
-            std::exit(1);
-        }
-    char* result = static_cast<char*>(q_malloc_atomic(alen + blen + 1));
-    if (!result) {
-        q_runtime_reportf("runtime error: concat() failed to allocate result\n");
-        std::exit(1);
-    }
-    memcpy(result, a.data.string_val, alen);
-    memcpy(result + alen, b.data.string_val, blen);
-    result[alen + blen] = '\0';
-        return qv_string_own(result);
-}
-
 // Get character at index (supports negative indexing)
 inline QValue q_str_get(QValue str, QValue index) {
     if (str.type != QValue::VAL_STRING || str.data.string_val == nullptr) {

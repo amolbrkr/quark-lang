@@ -311,7 +311,7 @@ func TestVectorReductions_Builtins(t *testing.T) {
 }
 
 func TestToVector_InfersVectorIntType(t *testing.T) {
-	analyzer, node, parseErrs, typeErrs := testutil.Analyze("xs = list [1,2,3]\nv = vfrom_list(xs)\nv\n")
+	analyzer, node, parseErrs, typeErrs := testutil.Analyze("xs = list [1,2,3]\nv = xs.to_vector()\nv\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -332,7 +332,7 @@ func TestToVector_InfersVectorIntType(t *testing.T) {
 }
 
 func TestToVector_InfersVectorFloatType(t *testing.T) {
-	analyzer, node, parseErrs, typeErrs := testutil.Analyze("xs = list [1.0,2.0,3.0]\nv = vfrom_list(xs)\nv\n")
+	analyzer, node, parseErrs, typeErrs := testutil.Analyze("xs = list [1.0,2.0,3.0]\nv = xs.to_vector()\nv\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -353,7 +353,7 @@ func TestToVector_InfersVectorFloatType(t *testing.T) {
 }
 
 func TestToVector_RejectsMixedNumericList(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("xs = list [1, 2.0, 3]\nv = vfrom_list(xs)\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("xs = list [1, 2.0, 3]\nv = xs.to_vector()\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -367,7 +367,7 @@ func TestToVector_RejectsMixedNumericList(t *testing.T) {
 }
 
 func TestToVector_InfersVectorStringType(t *testing.T) {
-	analyzer, node, parseErrs, typeErrs := testutil.Analyze("xs = list ['a','b','c']\nv = vfrom_list(xs)\nv\n")
+	analyzer, node, parseErrs, typeErrs := testutil.Analyze("xs = list ['a','b','c']\nv = xs.to_vector()\nv\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -388,7 +388,7 @@ func TestToVector_InfersVectorStringType(t *testing.T) {
 }
 
 func TestToVector_RejectsMixedIntStringList(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("xs = list [1, '2', 3]\nv = vfrom_list(xs)\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("xs = list [1, '2', 3]\nv = xs.to_vector()\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -430,7 +430,7 @@ func TestArithmetic_RejectsListPlusInt(t *testing.T) {
 }
 
 func TestForLoop_AllowsVectorIterable(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("for x in vfrom_list(range(3)):\n    println(x)\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("for x in range(3).to_vector():\n    println(x)\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -582,16 +582,16 @@ func TestUnwrapRejectsNonResultAtAnalysisTime(t *testing.T) {
 }
 
 func TestPipeMethod_ChecksArgumentTypes(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("x = 1 | 'abc'.concat()\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("x = 1 | 'abc'.contains()\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
 	if len(typeErrs) == 0 {
-		t.Fatalf("expected type error for piped int into str.concat")
+		t.Fatalf("expected type error for piped int into str.contains")
 	}
 	joined := strings.Join(typeErrs, "\n")
-	if !strings.Contains(joined, "argument 1 of 'concat' expects str, got int") {
-		t.Fatalf("expected concat argument type error, got: %v", typeErrs)
+	if !strings.Contains(joined, "argument 1 of 'contains' expects str, got int") {
+		t.Fatalf("expected contains argument type error, got: %v", typeErrs)
 	}
 }
 

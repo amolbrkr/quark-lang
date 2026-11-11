@@ -173,22 +173,6 @@ inline QValue q_list_concat(QValue a, QValue b) {
     return result;
 }
 
-// Unified concat - dispatches to string or list concat at runtime
-inline QValue q_concat(QValue a, QValue b) {
-    if (a.type == QValue::VAL_STRING && b.type == QValue::VAL_STRING) {
-        return q_str_concat(a, b);
-    }
-    if (a.type == QValue::VAL_LIST && b.type == QValue::VAL_LIST) {
-        return q_list_concat(a, b);
-    }
-    // Type mismatch - both arguments must be the same type
-    const char* type_names[] = {"int", "float", "string", "bool", "null", "list", "vector", "dict", "fn", "result"};
-    const char* a_type = (a.type >= 0 && a.type <= 8) ? type_names[a.type] : "unknown";
-    const char* b_type = (b.type >= 0 && b.type <= 8) ? type_names[b.type] : "unknown";
-    q_runtime_reportf("runtime error: concat expects both arguments to be the same type (string+string or list+list), got %s and %s\n", a_type, b_type);
-    std::exit(1);
-}
-
 // Slice list [start:end), returns new list
 inline QValue q_slice(QValue list, QValue start, QValue end) {
     if (list.type != QValue::VAL_LIST || !list.data.list_val) {
@@ -229,7 +213,7 @@ inline QValue q_reverse(QValue list) {
     return list;
 }
 
-// enumerate(seq) -> list[dict{index: int, value: any}]
+// xs.enumerate() / v.enumerate() -> list[dict{index: int, value: any}]
 // Supports list, string, and vector sequences.
 inline QValue q_enumerate(QValue seq) {
     int len = 0;

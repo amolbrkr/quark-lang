@@ -11,13 +11,93 @@ run. Every code sample here was run against the current compiler.
 
 > **Maturity note.** Quark is an early, actively-developed project. The core
 > language (functions, closures, control flow, pattern matching, lists, dicts,
-> vectors, and structs) works today. Some advertised features are still in
-> progress — most notably `table` literals, which are specified but **do not yet
-> parse**. See [Current status and roadmap](#current-status-and-roadmap) for an
-> honest, verified breakdown.
+> vectors, and structs) works today.
+
+> **AI note:** Large chunks of the compiler are written using AI assistance. Please use it at your risk, feel free to file issues for bugs.
+
+## Language features overview
+
+Quark aims to feel like a scripting language for data work while compiling to fast
+native code.
+
+### Two collections: lists and vectors
+- A **list** is a general container. It holds values of any type, nests, and can
+  be changed in place (`push`, `insert`, `xs[i] = v`). Use it for records, rows,
+  mixed data, and lists of other collections.
+- A **vector** is one typed column of data: all `int`, all `float`, all `bool`
+  or all `str`, with nulls allowed. Vectors can't be changed in place, and
+  every operation returns a new vector. Arithmetic and comparisons apply to every
+  element at once, and a boolean vector filters another vector.
+
+```quark
+// A list holds anything: here, one CSV row
+row = list ['Pune', 31.5, true]
+row.push(list [1, 2])            // lists nest and grow in place
+println(len(row))                // 4
+
+// A vector is one typed column
+temps = vector [31.5, 29.0, 33.1, 38.2]
+println(type(temps))             // vector[f64]
+fahrenheit = temps * 1.8 + 32.0  // element-wise, no loop
+hot = temps[temps > 30.0]        // filter with a boolean mask
+println(max(hot))                // 38.2
+```
+
+Keeping the two apart lets each one be good at its job. A list doesn't have to
+be fast at arithmetic, and a vector doesn't have to hold arbitrary values. That
+is what makes the next point possible.
+
+### Vectors use the Apache Arrow memory layout
+
+Vector buffers follow the Apache Arrow columnar format:
+
+- `f64` and `i64` are contiguous arrays of `double` / `int64_t`.
+- `bool` is bit-packed.
+- `str` is `int32` offsets plus one UTF-8 byte buffer.
+- Nulls are an Arrow validity bitmap, and vectors without nulls have none.
+- Every buffer is 64-byte aligned and lives on the garbage-collected heap.
+
+Native code can therefore work on a Quark vector's memory directly, without
+converting or copying it element by element. The bundled `std/blas` module, for
+example, hands vector buffers straight to OpenBLAS.
+
+### Dynamic by default, native when typed
+
+Values are dynamically typed, and type annotations are optional
+(`fn add(x: int, y: int) int -> x + y`). The compiler uses what it can prove:
+
+- Annotations and inferred types are checked at compile time, so many mistakes
+  never reach a running program.
+- Local `int`, `float` and `bool` variables that no closure captures are stored
+  as plain C++ `long long`, `double` and `bool`, and arithmetic on them compiles
+  to native operations.
+- Integer arithmetic is overflow-checked: `9223372036854775807 + 1` is a runtime
+  error.
+- A function whose parameters and return type are all annotated gets a native
+  C++ signature and is called directly.
+
+### Compiles to a standalone binary
+
+A `.qrk` program is translated to C++17 and built by `clang++ -O3` into a single
+native executable, with memory managed by the Boehm garbage collector. There is
+no interpreter or VM at runtime.
+
+### A small, expressive core
+
+- **Functions are values.** Every function is a closure, and captured variables
+  are shared by reference.
+- **Pipes** chain calls left to right: `xs | clean() | summarize()`.
+- **Results** make failure explicit: `ok value` / `err message`, taken apart
+  with `when` pattern matching.
+- **Structs** have typed fields and defaults, and can't be changed after creation.
+- **Native interop.** `extern fn` binds C++ functions, and `extern link` links
+  native libraries (see [ffi_v0_1_spec.md](ffi_v0_1_spec.md)).
+- **Diagnostics** carry stable codes (`QK-PARSE-001`, `QK-CHECK-001`, ...).
+  Runtime errors report the source file and line.
 
 ## Table of contents
 
+- [Language features overview](#language-features-overview)
 - [Quickstart](#quickstart)
 - [How a Quark program is built](#how-a-quark-program-is-built)
 - [Language tour](#language-tour)
@@ -183,9 +263,8 @@ label: str = 'hello'
 
 If the right-hand side does not match the annotation, you get a compile-time
 error. The available annotation names are `int`, `float`, `str`, `bool`, `any`,
-`result`, `list`, `dict`, `vector`, `resource`, `file_handle` (the handle type
-that `std/io` uses; a `file_handle` can be passed where a `resource` is
-expected), and any `struct` type you define. Generic forms like `list[int]` are
+`result`, `list`, `dict`, `vector`, `resource` (a native handle, such as an
+open file from `std/io`), and any `struct` type you define. Generic forms like `list[int]` are
 **not** supported.
 
 Annotations on Quark functions are checked at compile time only: nothing
@@ -274,6 +353,8 @@ println('  Quark  '.trim().upper())   // QUARK
 println('hello world'.split(' ').join('-'))  // hello-world
 println('abcdef'.slice(1, 4))         // bcd
 println('hello'.contains('ell'))      // true
+println('Hello, ' + 'Quark')          // Hello, Quark
+println('n = ' + to_str(3))           // n = 3: + joins strings only
 ```
 
 See the [string methods table](#string-methods-str) for the full set.
@@ -405,7 +486,7 @@ println(abs_diff(3, 8)) // 5
 compile time:
 
 ```quark
-fn greet(name: str) str -> 'Hello, '.concat(name)
+fn greet(name: str) str -> 'Hello, ' + name
 ```
 
 **Default parameters** use `= literal`. Only literal defaults are allowed for
@@ -558,8 +639,8 @@ mask = v > 2                 // element-wise compare -> bool vector
 println(sum(mask))           // 2   (true counts as 1)
 ```
 
-Vectors support `.get`, `.fillna` (replace nulls), `.astype` (cast dtype), and
-`.to_list`. Convert a list with `.to_vector()`. You can also index a vector with a
+Vectors support `.get`, `.fillna` (replace nulls), `.astype` (cast dtype),
+`.to_list` and `.enumerate`. Convert a list with `.to_vector()`. You can also index a vector with a
 boolean mask vector to filter it: `v[v > 2]`.
 
 ### Structs
@@ -693,10 +774,8 @@ required** for them. (The `std/io` and `std/fmt` modules are separate; see
 | `floor` | 1 | int | round toward −∞ |
 | `ceil` | 1 | int | round toward +∞ |
 | `round` | 1 | int | round to nearest int |
-| `enumerate` | 1 | list | list of `{ index, value }` records |
 | `all` | 1 | bool | true if every non-null element of a `vector[bool]` is true |
 | `any` | 1 | bool | true if any non-null element of a `vector[bool]` is true |
-| `vfrom_list` | 1 | vector | same as `list.to_vector()` |
 
 ### Methods by receiver type
 
@@ -711,7 +790,6 @@ required** for them. (The `std/io` and `std/fmt` modules are separate; see
 | `.startswith(prefix)` | prefix test |
 | `.endswith(suffix)` | suffix test |
 | `.replace(old, new)` | replace all occurrences |
-| `.concat(other)` | concatenate two strings |
 | `.split(sep)` | split into a list of strings |
 | `.slice(start, end)` | substring `[start, end)` |
 
@@ -752,6 +830,7 @@ required** for them. (The `std/io` and `std/fmt` modules are separate; see
 | `.fillna(val)` | replace null entries |
 | `.astype(dtype)` | cast to a different dtype |
 | `.to_list()` | convert back to a list |
+| `.enumerate()` | list of `{ index, value }` records |
 
 ### Standard library modules
 
@@ -847,7 +926,7 @@ quark check hello.qrk          # type-check only
 | `src/core/quark/toolchain` | finds clang++, the runtime and the GC; compiles and links |
 | `src/core/quark/ast`, `token`, `ir`, `builtins`, `diagnostics` | shared data: AST nodes, tokens, call-plan IR, the builtin catalog, diagnostic codes |
 | `src/core/quark/runtime/include/quark` | header-only C++17 runtime (resolved relative to the binary) |
-| `src/core/stdlib` | standard library modules (`io.qrk`, `fmt.qrk` + `fmt.hpp`, `blas.qrk` + `blas_glue.hpp`) |
+| `src/core/stdlib` | standard library modules (each a `.qrk` file, most with a `.hpp` of native code: `io.qrk` + `io.hpp`, `fmt.qrk` + `fmt.hpp`, `blas.qrk` + `blas_glue.hpp`, ...) |
 | `src/testfiles` | runnable example/smoke programs (`smoke_*.qrk`) |
 | `deps/bdwgc` | vendored Boehm garbage collector: headers and per-platform prebuilt libraries in `lib/` (see `VENDORED.md`) |
 | `grammar.md`, `semantics.md`, `stdlib.md`, `architecture.md`, `error_codes.md` | reference docs |

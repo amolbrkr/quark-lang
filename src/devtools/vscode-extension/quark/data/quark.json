@@ -42,30 +42,6 @@
       "signature": "input(str?) str"
     },
     {
-      "name": "_file_open",
-      "signature": "_file_open(str, str, bool?) result"
-    },
-    {
-      "name": "_file_read",
-      "signature": "_file_read(file_handle, int) result"
-    },
-    {
-      "name": "_file_write",
-      "signature": "_file_write(file_handle, str) result"
-    },
-    {
-      "name": "_file_close",
-      "signature": "_file_close(file_handle) result"
-    },
-    {
-      "name": "_file_seek",
-      "signature": "_file_seek(file_handle, int, int) result"
-    },
-    {
-      "name": "_file_exists",
-      "signature": "_file_exists(str) bool"
-    },
-    {
       "name": "len",
       "signature": "len(any) int"
     },
@@ -144,14 +120,6 @@
     {
       "name": "round",
       "signature": "round(float) int"
-    },
-    {
-      "name": "enumerate",
-      "signature": "enumerate(any) list"
-    },
-    {
-      "name": "vfrom_list",
-      "signature": "vfrom_list(any) any"
     }
   ],
   "methods": {
@@ -265,10 +233,6 @@
         "signature": "replace(str) str"
       },
       {
-        "name": "concat",
-        "signature": "concat() str"
-      },
-      {
         "name": "split",
         "signature": "split() list"
       },
@@ -293,6 +257,10 @@
       {
         "name": "to_list",
         "signature": "to_list() list"
+      },
+      {
+        "name": "enumerate",
+        "signature": "enumerate() list"
       }
     ]
   },
@@ -393,23 +361,25 @@
         },
         {
           "name": "open",
-          "signature": "open(path: str, mode: str = 'r', binary: bool = false) result"
+          "signature": "open(path: str, mode: str = 'r', binary: bool = false) result",
+          "doc": "Open `path` with mode 'r' (read), 'w' (truncate and write) or 'a' (append)."
         },
         {
           "name": "read",
-          "signature": "read(file: file_handle, n: int) result"
+          "signature": "read(file: resource, n: int) result",
+          "doc": "Read up to `n` bytes; ok('') at end of file."
         },
         {
           "name": "write",
-          "signature": "write(file: file_handle, data: str) result"
+          "signature": "write(file: resource, data: str) result"
         },
         {
           "name": "close",
-          "signature": "close(file: file_handle) result"
+          "signature": "close(file: resource) result"
         },
         {
           "name": "seek",
-          "signature": "seek(file: file_handle, offset: int, whence: int = 0) result"
+          "signature": "seek(file: resource, offset: int, whence: int = 0) result"
         },
         {
           "name": "exists",

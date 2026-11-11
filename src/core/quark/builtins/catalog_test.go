@@ -147,7 +147,7 @@ func TestLookup_UnknownReturnsNotFound(t *testing.T) {
 
 func TestLookupMethod_FindsStringMethods(t *testing.T) {
 	methods := []string{"upper", "lower", "trim", "contains", "startswith",
-		"endswith", "replace", "concat", "split", "slice"}
+		"endswith", "replace", "split", "slice"}
 	for _, name := range methods {
 		spec, ok := LookupMethod(TypeString, name)
 		if !ok {
@@ -268,6 +268,7 @@ func TestCatalog_ZeroArgMethods(t *testing.T) {
 		{TypeListAny, "pop"},
 		{TypeListAny, "reverse"},
 		{TypeListAny, "enumerate"},
+		{TypeVectorAny, "enumerate"},
 		{TypeDictAny, "keys"},
 		{TypeDictAny, "values"},
 		{TypeDictAny, "items"},
@@ -301,30 +302,15 @@ func TestCatalog_ReturnsCopy(t *testing.T) {
 	}
 }
 
-// --- Cross-check: concat is both a str method and a list method ---
+// --- Removed builtins stay removed ---
 
-func TestCatalog_ConcatExistsOnBothStrAndList(t *testing.T) {
-	strConcat, ok1 := LookupMethod(TypeString, "concat")
-	listConcat, ok2 := LookupMethod(TypeListAny, "concat")
-	if !ok1 {
-		t.Error("str.concat not found")
-	}
-	if !ok2 {
-		t.Error("list.concat not found")
-	}
-	if ok1 && ok2 && strConcat.Runtime == listConcat.Runtime {
-		t.Error("str.concat and list.concat should have different runtime symbols")
-	}
-}
-
-// --- Backward compatibility aliases ---
-
-func TestCatalog_BackwardCompatAliasesExist(t *testing.T) {
-	aliases := []string{"enumerate", "vfrom_list"}
-	for _, name := range aliases {
-		_, ok := Lookup(name)
-		if !ok {
-			t.Errorf("backward-compat alias %q not found as free function", name)
+func TestCatalog_RemovedBuiltinsAbsent(t *testing.T) {
+	for _, name := range []string{"enumerate", "vfrom_list", "_file_open", "_file_read", "_file_write", "_file_close", "_file_seek", "_file_exists"} {
+		if _, ok := Lookup(name); ok {
+			t.Errorf("free function %q should not be in the catalog", name)
 		}
+	}
+	if _, ok := LookupMethod(TypeString, "concat"); ok {
+		t.Error("str.concat should not be in the catalog; use +")
 	}
 }

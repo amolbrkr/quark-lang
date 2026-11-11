@@ -5,23 +5,18 @@ package builtins
 type TypeKey string
 
 const (
-	TypeAny              TypeKey = "any"
-	TypeInt              TypeKey = "int"
-	TypeFloat            TypeKey = "float"
-	TypeString           TypeKey = "str"
-	TypeBool             TypeKey = "bool"
-	TypeVoid             TypeKey = "void"
-	TypeListAny          TypeKey = "list_any"
-	TypeListInt          TypeKey = "list_int"
-	TypeListString       TypeKey = "list_str"
-	TypeDictAny          TypeKey = "dict_any"
-	TypeVectorAny        TypeKey = "vector_any"
-	TypeFileHandle       TypeKey = "file_handle"
-	TypeResultAny        TypeKey = "result_any"
-	TypeResultString     TypeKey = "result_str"
-	TypeResultInt        TypeKey = "result_int"
-	TypeResultNull       TypeKey = "result_null"
-	TypeResultFileHandle TypeKey = "result_file_handle"
+	TypeAny        TypeKey = "any"
+	TypeInt        TypeKey = "int"
+	TypeFloat      TypeKey = "float"
+	TypeString     TypeKey = "str"
+	TypeBool       TypeKey = "bool"
+	TypeVoid       TypeKey = "void"
+	TypeListAny    TypeKey = "list_any"
+	TypeListInt    TypeKey = "list_int"
+	TypeListString TypeKey = "list_str"
+	TypeDictAny    TypeKey = "dict_any"
+	TypeVectorAny  TypeKey = "vector_any"
+	TypeResultAny  TypeKey = "result_any"
 )
 
 // Spec is the single source of truth for builtin definitions.
@@ -43,12 +38,6 @@ var catalog = []Spec{
 	{Name: "print", Runtime: "q_print", MinArgs: 1, MaxArgs: 5, ParamTypes: []TypeKey{TypeAny, TypeString, TypeInt, TypeString, TypeString}, ReturnType: TypeVoid},
 	{Name: "println", Runtime: "q_println", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeVoid},
 	{Name: "input", Runtime: "q_input", MinArgs: 0, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeString},
-	{Name: "_file_open", Runtime: "q_file_open", MinArgs: 2, MaxArgs: 3, ParamTypes: []TypeKey{TypeString, TypeString, TypeBool}, ReturnType: TypeResultFileHandle},
-	{Name: "_file_read", Runtime: "q_file_read", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeFileHandle, TypeInt}, ReturnType: TypeResultString},
-	{Name: "_file_write", Runtime: "q_file_write", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeFileHandle, TypeString}, ReturnType: TypeResultInt},
-	{Name: "_file_close", Runtime: "q_file_close", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeFileHandle}, ReturnType: TypeResultNull},
-	{Name: "_file_seek", Runtime: "q_file_seek", MinArgs: 3, MaxArgs: 3, ParamTypes: []TypeKey{TypeFileHandle, TypeInt, TypeInt}, ReturnType: TypeResultInt},
-	{Name: "_file_exists", Runtime: "q_file_exists", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeBool},
 
 	// Conversions (free functions)
 	{Name: "len", Runtime: "q_len", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeInt},
@@ -84,7 +73,6 @@ var catalog = []Spec{
 	{Name: "startswith", Runtime: "q_startswith", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeBool, ReceiverType: TypeString},
 	{Name: "endswith", Runtime: "q_endswith", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeBool, ReceiverType: TypeString},
 	{Name: "replace", Runtime: "q_replace", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeString, TypeString}, ReturnType: TypeString, ReceiverType: TypeString},
-	{Name: "concat", Runtime: "q_str_concat", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeString, ReceiverType: TypeString},
 	{Name: "split", Runtime: "q_split", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeListString, ReceiverType: TypeString},
 	{Name: "slice", Runtime: "q_str_slice", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeInt, TypeInt}, ReturnType: TypeString, ReceiverType: TypeString},
 	// Note: join is on list, not str — runtime signature is q_str_join(list, sep).
@@ -117,11 +105,7 @@ var catalog = []Spec{
 	{Name: "fillna", Runtime: "q_fillna", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeVectorAny, ReceiverType: TypeVectorAny},
 	{Name: "astype", Runtime: "q_astype", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeVectorAny, ReceiverType: TypeVectorAny},
 	{Name: "to_list", Runtime: "q_to_list", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeVectorAny},
-
-	// Free-function aliases kept for backward compat during transition
-	{Name: "enumerate", Runtime: "q_enumerate", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeListAny},
-	{Name: "vfrom_list", Runtime: "q_to_vector", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeAny},
-
+	{Name: "enumerate", Runtime: "q_enumerate", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeVectorAny},
 }
 
 var byName map[string]Spec

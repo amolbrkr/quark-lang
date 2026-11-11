@@ -6,20 +6,29 @@
 #include "../core/constructors.hpp"
 #include <unordered_map>
 #include <string>
+#include <string_view>
 #include <cstdio>
 #include <cstdlib>
 
-// Plain string key — std::hash is only specialized for std::string, not for
-// strings with custom allocators, so using gc_allocator<char> here breaks
-// compilation with g++ (and is unnecessary: the GC traces QValue values via
-// the map nodes, not the key bytes themselves).
-using QDictKey = std::string;
+// Dict keys are strings whose buffers come from the GC heap. A QDict is never
+// destroyed (the collector just reclaims its memory), so a key using the
+// default allocator would leak its heap buffer, which std::string allocates
+// for keys too long for the small-string buffer (more than 15 bytes in
+// libstdc++).
+using QDictKey = std::basic_string<char, std::char_traits<char>, q_allocator<char>>;
+
+// std::hash has no specialization for strings with a custom allocator.
+struct QDictKeyHash {
+    size_t operator()(const QDictKey& key) const noexcept {
+        return std::hash<std::string_view>{}(std::string_view(key.data(), key.size()));
+    }
+};
 
 // QDictMap: unordered_map with GC-allocated nodes so the collector can reach
 // the QValue values stored inside.
 using QDictMap = std::unordered_map<
     QDictKey, QValue,
-    std::hash<QDictKey>,
+    QDictKeyHash,
     std::equal_to<QDictKey>,
     q_allocator<std::pair<const QDictKey, QValue>>
 >;

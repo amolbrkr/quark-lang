@@ -41,16 +41,15 @@ func (t *errorType) Equals(other Type) bool {
 
 // Predefined basic types
 var (
-	TypeInt        = &BasicType{Name: "int"}
-	TypeFloat      = &BasicType{Name: "float"}
-	TypeString     = &BasicType{Name: "str"}
-	TypeBool       = &BasicType{Name: "bool"}
-	TypeNull       = &BasicType{Name: "null"}
-	TypeAny        = &BasicType{Name: "any"}  // For unresolved types
-	TypeVoid       = &BasicType{Name: "void"} // For statements with no value
-	TypeResource   = &BasicType{Name: "resource"}
-	TypeFileHandle = &BasicType{Name: "file_handle"}
-	TypeError      = &errorType{} // Poison type — error already reported upstream
+	TypeInt      = &BasicType{Name: "int"}
+	TypeFloat    = &BasicType{Name: "float"}
+	TypeString   = &BasicType{Name: "str"}
+	TypeBool     = &BasicType{Name: "bool"}
+	TypeNull     = &BasicType{Name: "null"}
+	TypeAny      = &BasicType{Name: "any"}  // For unresolved types
+	TypeVoid     = &BasicType{Name: "void"} // For statements with no value
+	TypeResource = &BasicType{Name: "resource"}
+	TypeError    = &errorType{} // Poison type — error already reported upstream
 )
 
 // IsErrorType returns true if the type is the poison error type.
@@ -207,10 +206,10 @@ func (t *UnionType) Equals(other Type) bool {
 
 // StructField describes a single field in a struct type.
 type StructField struct {
-	Name         string
-	Type         Type
-	HasDefault   bool
-	DefaultNode  interface{} // *ast.TreeNode — codegen uses this to emit default values
+	Name        string
+	Type        Type
+	HasDefault  bool
+	DefaultNode interface{} // *ast.TreeNode — codegen uses this to emit default values
 }
 
 // StructType represents a named struct type with ordered fields.
@@ -351,15 +350,11 @@ func CanAssign(dstType, srcType Type) bool {
 		_, isResult := dstType.(*ResultType)
 		_, isStruct := dstType.(*StructType)
 		_, isVec := dstType.(*VectorType)
-		isResource := dstType.Equals(TypeResource) || dstType.Equals(TypeFileHandle)
+		isResource := dstType.Equals(TypeResource)
 		return isList || isDict || isFunc || isResult || isStruct || isVec || isResource
 	}
 	// Int can be promoted to float
 	if dstType.Equals(TypeFloat) && srcType.Equals(TypeInt) {
-		return true
-	}
-	// A file handle is a resource
-	if dstType.Equals(TypeResource) && srcType.Equals(TypeFileHandle) {
 		return true
 	}
 	// List covariance: list[any] accepts list[T] for any T

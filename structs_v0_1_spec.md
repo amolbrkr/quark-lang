@@ -151,7 +151,7 @@ As implemented, the parser decides this with a per-file pre-pass that collects t
 
 v0.1 default values allow constant expressions:
 
-1. Allowed defaults include literals and constant expressions, for example `60 * 60`, `1 + 2`, `'a'.concat('b')` is not allowed in v0.1.
+1. Allowed defaults include literals and constant expressions, for example `60 * 60`, `1 + 2`; `'a' + 'b'` is not allowed in v0.1.
 2. A constant expression default must be side-effect free and may not reference runtime symbols.
 3. Function calls are not allowed in default expressions in v0.1.
 4. Default must be type-compatible with field annotation.

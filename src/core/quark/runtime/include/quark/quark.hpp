@@ -50,7 +50,6 @@
 
 // Built-in functions
 #include "builtins/io.hpp"
-#include "builtins/fileio.hpp"
 #include "builtins/conversion.hpp"
 #include "builtins/math.hpp"
 #include "builtins/dict.hpp"

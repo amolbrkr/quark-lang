@@ -66,7 +66,7 @@
   },
   "For enumerate": {
     "prefix": "fore",
-    "body": ["for ${1:entry} in enumerate(${2:items}):", "\tprintln(to_str(${1:entry}.index) + ': ' + to_str(${1:entry}.value))$0"],
+    "body": ["for ${1:entry} in ${2:items}.enumerate():", "\tprintln(to_str(${1:entry}.index) + ': ' + to_str(${1:entry}.value))$0"],
     "description": "Loop with index: each entry has .index and .value"
   },
   "While": {

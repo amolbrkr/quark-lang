@@ -900,29 +900,30 @@ func TestDefaults_DynamicCallViaAlias(t *testing.T) {
 	}
 }
 
-func TestFileBuiltins_V0(t *testing.T) {
+func TestStdIO_FileModes(t *testing.T) {
 	tmp := t.TempDir()
 	targetPath := filepath.Join(tmp, "io_v0.txt")
 	targetForQuark := strings.ReplaceAll(targetPath, "\\", "/")
 
-	program := filepath.Join(tmp, "file_builtins_v0.qrk")
+	program := filepath.Join(tmp, "std_io_modes.qrk")
 	source := strings.Join([]string{
+		"use 'std/io' as io",
 		"p = '" + targetForQuark + "'",
-		"f = unwrap(_file_open(p, 'w'))",
+		"f = unwrap(io.open(p, 'w'))",
 		"println(type(f))",
-		"println(type(_file_exists(p)))",
-		"_file_write(f, 'hello file') | unwrap() | println()",
-		"_file_close(f) | unwrap()",
-		"r = unwrap(_file_open(p, 'r'))",
-		"println(unwrap(_file_read(r, 64)))",
-		"_file_close(r) | unwrap()",
-		"println(_file_exists(p))",
-		"a = unwrap(_file_open(p, 'a'))",
-		"_file_write(a, '!') | unwrap()",
-		"_file_close(a) | unwrap()",
-		"r2 = unwrap(_file_open(p, 'r'))",
-		"println(unwrap(_file_read(r2, 64)))",
-		"_file_close(r2) | unwrap()",
+		"println(type(io.exists(p)))",
+		"io.write(f, 'hello file') | unwrap() | println()",
+		"io.close(f) | unwrap()",
+		"r = unwrap(io.open(p, 'r'))",
+		"println(unwrap(io.read(r, 64)))",
+		"io.close(r) | unwrap()",
+		"println(io.exists(p))",
+		"a = unwrap(io.open(p, 'a'))",
+		"io.write(a, '!') | unwrap()",
+		"io.close(a) | unwrap()",
+		"r2 = unwrap(io.open(p, 'r'))",
+		"println(unwrap(io.read(r2, 64)))",
+		"io.close(r2) | unwrap()",
 		"",
 	}, "\n")
 	if err := os.WriteFile(program, []byte(source), 0o644); err != nil {
@@ -931,7 +932,7 @@ func TestFileBuiltins_V0(t *testing.T) {
 
 	got := runQuark(t, "run", program)
 	gotNorm := strings.TrimSpace(normalizeNewlines(got))
-	expected := strings.Join([]string{"file_handle", "bool", "10", "hello file", "true", "hello file!"}, "\n")
+	expected := strings.Join([]string{"resource", "bool", "10", "hello file", "true", "hello file!"}, "\n")
 	if gotNorm != expected {
 		t.Fatalf("unexpected output\n--- got ---\n%s\n--- expected ---\n%s", gotNorm, expected)
 	}
@@ -968,9 +969,16 @@ int main() {
     l.data.list_val->push_back(qv_int(1));
     CHECK("list_buffer", l.data.list_val->data());
 
-	/* --- dict (object via gc_allocator; keys are plain std::string, not GC-managed) --- */
+	/* --- dict: object, and key buffers beyond the small-string size --- */
     QValue d = qv_dict();
     CHECK("dict_object", d.data.dict_val);
+    d = q_dict_set(d, qv_string("a key well beyond the small string buffer"), qv_int(1));
+    CHECK("dict_long_key", d.data.dict_val->entries.begin()->first.data());
+
+	/* --- resource registry: slot buffer must be scanned (payloads live only there) --- */
+    QResourceHandle* rh = q_resource_create(QRES_KIND_NONE, q_malloc(16), 0);
+    CHECK("resource_handle", rh);
+    CHECK("resource_slots", q_resource_registry().slots.data());
 
 	/* --- vectors: object + Arrow-layout buffers (64-byte aligned) --- */
     #define CHECK_ALIGNED(label, ptr) do {                                \

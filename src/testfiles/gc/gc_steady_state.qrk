@@ -1,0 +1,62 @@
+// Runs the same allocation-heavy round repeatedly. Everything a round allocates
+// is garbage once it ends, so after a warm-up round neither the GC heap nor
+// peak RSS should grow. integration_gc_test.go compares the two reports.
+use 'std/io' as io
+
+extern 'gcstats.hpp'
+extern fn gc_live() int as 'q_test_gc_live'
+extern fn gc_collect() any as 'q_test_gc_collect'
+extern fn peak_rss() int as 'q_test_peak_rss'
+
+struct Point:
+    x: int
+    y: int
+
+fn make_counter(start) ->
+    count = start
+    fn step() ->
+        count = count + 1
+        count
+    step
+
+fn churn(path) ->
+    for i in range(4000):
+        // lists and short-key dicts
+        xs = list [i, to_str(i), list [i, i]]
+        xs.push(dict {a: i, b: 'value'})
+        // strings
+        s = ('item-' + to_str(i) + '-').upper().split('-').join('+')
+        // dict keys longer than the small-string buffer
+        d = dict {}
+        d.set('a_rather_long_dictionary_key_' + to_str(i), i)
+        d.set('another_long_dictionary_key_name', xs)
+        d.set('a_third_long_key_for_the_leak_check', s)
+        d.set('a_fourth_long_key_for_the_leak_check', i)
+        // vectors, including a string vector with nulls
+        v = range(64).to_vector().astype('f64') * 2.0
+        m = v[v > 10.0]
+        sv = list ['a', null, 'a string longer than sixteen bytes'].to_vector()
+        // closures, structs, results
+        f = make_counter(i)
+        f()
+        p = Point { x: i, y: i + 1 }
+        r = ok p
+        e = err 'failed: ' + to_str(i)
+    // files: open, write, close
+    for j in range(50):
+        h = unwrap(io.open(path, 'w'))
+        io.write(h, 'some file contents') | unwrap()
+        io.close(h) | unwrap()
+    null
+
+fn report(label) ->
+    gc_collect()
+    println(label + ' ' + to_str(gc_live()) + ' ' + to_str(peak_rss()))
+
+path = './gc_steady_state.tmp'
+churn(path)
+churn(path)
+report('warm')
+for r in range(8):
+    churn(path)
+report('final')

@@ -5,7 +5,8 @@ Last Updated: 2026-11-04
 Replaces: the 2026-03-15 draft of this file
 Revision 3: records the directive syntax decision, renames `extern include` to `extern include_path`, and sets the provider order (§5, §9.1).
 Implementation status (2026-11-04): Phase 1 is implemented (P1, P7, the P8 build codes `QK-FFI-001`–`003`, `libqffi_test`, `std/blas`) except P2, which moved to Phase 2. `extern source` currently reports `QK-PARSE-001` saying it isn't supported yet. §2 describes the state before Phase 1.
-Related: `native_modules_design.md` (QEI), `architecture.md` §1.7 and §7, `semantics.md` §10.6, `tables_v0_1_spec.md`
+Canonical for native interop (`extern` declarations, linking, handles); it replaces `native_modules_design.md`, which was removed on 2026-11-10.
+Related: `architecture.md` §1.7 and §7, `semantics.md` §10.6, `tables_v0_1_spec.md`
 
 ## 1. Summary
 
@@ -31,7 +32,7 @@ DuckDB is the target provider: it exercises every one of these pieces, and its c
 | Type mapping | `quarkTypeToNativeCType` | `int`→`int64_t`, `float`→`double`, `bool`→`bool`, `str`→`const char*`, `list`/`dict`/`vector`→`QList*`/`QDict*`/`QVector*`, `fn`→`QClosure*`, anything else→`QValue`. |
 | Marshalling | `codegen.adaptArgForExtern` / `wrapExternReturn` | Guarded unboxing (`q_as_int`, ...) at call sites; returns boxed back. Thunks make free externs first-class. |
 | Extension author API | `runtime/include/quark/ext/api.hpp` (`qext::`) | Boxing, unboxing, vector buffer views, dict helpers, `qext::call`, `qext::panic`. |
-| Resource handles | `runtime/include/quark/types/resource.hpp` | Generational slot registry. `resource` and `file_handle` are type annotations. Used only by file I/O. |
+| Resource handles | `runtime/include/quark/types/resource.hpp` | Generational slot registry. `resource` is the type annotation for every handle. Used only by file I/O (`std/io`). |
 | Vector layout | `runtime/include/quark/types/vector.hpp` | Arrow-compatible since 2026-10-06: contiguous f64/i64, bit-packed bool, int32-offset str, Arrow validity bitmap, 64-byte aligned, immutable. |
 | Build | `driver/` + `toolchain/` (2026-10-07) | Front end in one place; separate `Compile` and `Link` steps; cached precompiled runtime header. |
 
@@ -146,7 +147,7 @@ extern fn duck_query(con: resource, sql: str) result as 'qduck_query'
 
 Runtime changes in `resource.hpp`:
 
-1. **Dynamic kinds.** A kind table maps id → `{name, close_fn}`. Built-in kinds (file) keep ids below 16; extension kinds get the following ids. Error messages use the kind name: `expected duckdb.connection, got file_handle`.
+1. **Dynamic kinds.** A kind table maps id → `{name, close_fn}`. Built-in kinds (file) keep ids below 16; extension kinds get the following ids. Error messages use the kind name: `expected duckdb.connection, got file`.
 2. **Parent references.** `QResourceHandle` gains a `QValue parent` field and is allocated with `q_malloc` (scanned) instead of `q_malloc_atomic`. A connection handle that references its database keeps the database reachable.
 3. **Finalizers.** When a handle has `QRES_FLAG_FINALIZABLE`, `new_handle` registers a Boehm finalizer that calls `close_fn` if the handle is still open when it becomes unreachable. Boehm finalizes in reachability order (an object that points to another is finalized first), so a connection is closed before its database. Explicit `close` is still the documented API; finalizers are a safety net.
 4. **Payload visibility.** Payloads are native pointers (`malloc`, or memory owned by the library) and must not point to GC memory. This is a documented rule, because the registry is not scanned by the GC.
@@ -403,7 +404,7 @@ Phase 1 is independent of DuckDB and useful on its own: any library with a C API
 | Runtime: new `ext/arrow.hpp` | Arrow C Data Interface bridge | Additive |
 | Runtime: `q_as_float` | Accepts `int` | Relaxation only |
 | Stdlib | `std/blas` (needs OpenBLAS), then `std/sqlite` and `std/duckdb` (each needs its library) | Additive; programs that don't `use` them are unaffected |
-| Docs | `semantics.md` §10.6, `architecture.md` §7–8, `error_codes.md`, `stdlib.md`. In `native_modules_design.md`, mark `extern link` as specified here. | — |
+| Docs | `semantics.md` §10.6, `architecture.md` §7–8, `error_codes.md`, `stdlib.md`. | — |
 
 Existing extensions (`std/fmt`, `smoke_extern.qrk`) keep working unchanged.
 

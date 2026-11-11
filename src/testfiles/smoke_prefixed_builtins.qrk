@@ -16,7 +16,7 @@ println(len(m.values()))
 items = m.items()
 println(type(items))
 
-pairs = enumerate(list ['x', 'y'])
+pairs = list ['x', 'y'].enumerate()
 println(type(pairs))
 println(len(pairs))
 

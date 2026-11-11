@@ -34,9 +34,12 @@ struct QResourceSlot {
     bool occupied;
 };
 
+// The slot vector must use the GC allocator: a slot's payload (for example a
+// file's QFilePayload) is GC-allocated and is referenced only from here, so a
+// buffer the collector doesn't scan would let it free a live payload.
 struct QResourceRegistry {
-    std::vector<QResourceSlot> slots;
-    std::vector<uint32_t> free_list;
+    std::vector<QResourceSlot, q_allocator<QResourceSlot>> slots;
+    std::vector<uint32_t, q_allocator<uint32_t>> free_list;
 };
 
 inline QResourceRegistry& q_resource_registry() {
@@ -47,7 +50,7 @@ inline QResourceRegistry& q_resource_registry() {
 inline const char* q_resource_kind_name(uint16_t kind) {
     switch (kind) {
         case QRES_KIND_FILE:
-            return "file_handle";
+            return "file";
         default:
             return "resource";
     }

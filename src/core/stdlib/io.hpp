@@ -1,10 +1,7 @@
-// quark/builtins/fileio.hpp - Low-level file I/O primitives
-#ifndef QUARK_BUILTINS_FILEIO_HPP
-#define QUARK_BUILTINS_FILEIO_HPP
-
-#include "../core/value.hpp"
-#include "../core/constructors.hpp"
-#include "../types/resource.hpp"
+// stdlib/io.hpp — native implementations for the std/io module (io.qrk).
+// Files are resources of kind QRES_KIND_FILE (runtime types/resource.hpp).
+#ifndef QUARK_STDLIB_IO_HPP
+#define QUARK_STDLIB_IO_HPP
 
 #include <cerrno>
 #include <cstdio>
@@ -87,36 +84,24 @@ inline QFilePayload* q_expect_file_payload(QValue file, const char* op) {
     QResourceHandle* handle = nullptr;
     const char* err = nullptr;
     if (!q_resource_resolve(file, QRES_KIND_FILE, slot, handle, err)) {
-        q_runtime_reportf("runtime error: %s() expects live file_handle (%s)\n", op, err ? err : "invalid handle");
+        q_runtime_reportf("runtime error: %s() expects an open file (%s)\n", op, err ? err : "invalid handle");
         std::exit(1);
     }
     if (!slot || !slot->payload) {
-        q_runtime_reportf("runtime error: %s() file_handle has no payload\n", op);
+        q_runtime_reportf("runtime error: %s() file has no payload\n", op);
         std::exit(1);
     }
     return static_cast<QFilePayload*>(slot->payload);
 }
 
-inline QValue q_file_open(QValue path, QValue mode, QValue binary) {
-    if (path.type != QValue::VAL_STRING || !path.data.string_val) {
-        q_runtime_reportf("runtime error: _file_open() argument 1 must be str\n");
-        std::exit(1);
-    }
-    if (mode.type != QValue::VAL_STRING || !mode.data.string_val) {
-        q_runtime_reportf("runtime error: _file_open() argument 2 must be str\n");
-        std::exit(1);
-    }
-    if (binary.type != QValue::VAL_BOOL) {
-        q_runtime_reportf("runtime error: _file_open() argument 3 must be bool\n");
-        std::exit(1);
-    }
-
-    int fd = q_file_open_native(path.data.string_val, mode.data.string_val, binary.data.bool_val);
+// Open `path` with mode 'r', 'w' or 'a'. Returns ok(resource) or err(message).
+inline QValue q_file_open(const char* path, const char* mode, bool binary) {
+    int fd = q_file_open_native(path, mode, binary);
     if (fd == -2) {
         return q_file_err_with_detail("open", "mode must be 'r', 'w' or 'a'");
     }
     if (fd < 0) {
-        return q_file_sys_err("open", path.data.string_val);
+        return q_file_sys_err("open", path);
     }
 
     QFilePayload* payload = static_cast<QFilePayload*>(q_malloc(sizeof(QFilePayload)));
@@ -126,12 +111,12 @@ inline QValue q_file_open(QValue path, QValue mode, QValue binary) {
 #else
         ::close(fd);
 #endif
-        q_runtime_reportf("runtime error: _file_open() failed to allocate payload\n");
+        q_runtime_reportf("runtime error: io.open() failed to allocate payload\n");
         std::exit(1);
     }
 
     payload->fd = fd;
-    payload->binary = binary.data.bool_val;
+    payload->binary = binary;
 
     QResourceHandle* handle = q_resource_create(QRES_KIND_FILE, payload, QRES_FLAG_OWNED | QRES_FLAG_FINALIZABLE);
     if (!handle) {
@@ -141,30 +126,23 @@ inline QValue q_file_open(QValue path, QValue mode, QValue binary) {
         ::close(fd);
 #endif
         // payload is GC-managed, no manual free needed
-        q_runtime_reportf("runtime error: _file_open() failed to allocate resource handle\n");
+        q_runtime_reportf("runtime error: io.open() failed to allocate resource handle\n");
         std::exit(1);
     }
 
     return qv_ok(qv_resource(handle));
 }
 
-inline QValue q_file_open(QValue path, QValue mode) {
-    return q_file_open(path, mode, qv_bool(false));
-}
-
-inline QValue q_file_read(QValue file, QValue n) {
-    if (n.type != QValue::VAL_INT) {
-        q_runtime_reportf("runtime error: _file_read() argument 2 must be int\n");
-        std::exit(1);
-    }
-    if (n.data.int_val < 0) {
-        q_runtime_reportf("runtime error: _file_read() argument 2 must be >= 0\n");
+// Read up to `n` bytes. Returns ok(str), which is '' at end of file, or err(message).
+inline QValue q_file_read(QValue file, int64_t n) {
+    if (n < 0) {
+        q_runtime_reportf("runtime error: io.read() argument 2 must be >= 0\n");
         std::exit(1);
     }
 
-    QFilePayload* payload = q_expect_file_payload(file, "_file_read");
+    QFilePayload* payload = q_expect_file_payload(file, "io.read");
 
-    const size_t want = static_cast<size_t>(n.data.int_val);
+    const size_t want = static_cast<size_t>(n);
     if (want == 0) {
         return qv_ok(qv_string(""));
     }
@@ -189,21 +167,16 @@ inline QValue q_file_read(QValue file, QValue n) {
     return qv_ok(qv_string(buffer.c_str()));
 }
 
-inline QValue q_file_write(QValue file, QValue data) {
-    if (data.type != QValue::VAL_STRING || !data.data.string_val) {
-        q_runtime_reportf("runtime error: _file_write() argument 2 must be str\n");
-        std::exit(1);
-    }
+// Write `data`. Returns ok(bytes written) or err(message).
+inline QValue q_file_write(QValue file, const char* data) {
+    QFilePayload* payload = q_expect_file_payload(file, "io.write");
 
-    QFilePayload* payload = q_expect_file_payload(file, "_file_write");
-
-    const char* raw = data.data.string_val;
-    const size_t len = std::strlen(raw);
+    const size_t len = std::strlen(data);
 
 #ifdef _WIN32
-    int wrote = _write(payload->fd, raw, static_cast<unsigned int>(len));
+    int wrote = _write(payload->fd, data, static_cast<unsigned int>(len));
 #else
-    ssize_t wrote = ::write(payload->fd, raw, len);
+    ssize_t wrote = ::write(payload->fd, data, len);
 #endif
 
     if (wrote < 0) {
@@ -213,12 +186,13 @@ inline QValue q_file_write(QValue file, QValue data) {
     return qv_ok(qv_int(static_cast<long long>(wrote)));
 }
 
+// Close the file. Returns ok(null), or err(message) when it is already closed.
 inline QValue q_file_close(QValue file) {
     QResourceSlot* slot = nullptr;
     QResourceHandle* handle = nullptr;
     const char* err = nullptr;
     if (!q_resource_resolve(file, QRES_KIND_FILE, slot, handle, err)) {
-        return q_file_err_with_detail("close", err ? err : "invalid file_handle");
+        return q_file_err_with_detail("close", err ? err : "not a file");
     }
 
     QFilePayload* payload = static_cast<QFilePayload*>(slot->payload);
@@ -240,30 +214,23 @@ inline QValue q_file_close(QValue file) {
     return qv_ok(qv_null());
 }
 
-inline QValue q_file_seek(QValue file, QValue offset, QValue whence) {
-    if (offset.type != QValue::VAL_INT) {
-        q_runtime_reportf("runtime error: _file_seek() argument 2 must be int\n");
-        std::exit(1);
-    }
-    if (whence.type != QValue::VAL_INT) {
-        q_runtime_reportf("runtime error: _file_seek() argument 3 must be int\n");
-        std::exit(1);
-    }
-
+// Move the file position. whence: 0 = start, 1 = current, 2 = end.
+// Returns ok(new position) or err(message).
+inline QValue q_file_seek(QValue file, int64_t offset, int64_t whence) {
     int cWhence = 0;
-    if (whence.data.int_val == 0) {
+    if (whence == 0) {
         cWhence = SEEK_SET;
-    } else if (whence.data.int_val == 1) {
+    } else if (whence == 1) {
         cWhence = SEEK_CUR;
-    } else if (whence.data.int_val == 2) {
+    } else if (whence == 2) {
         cWhence = SEEK_END;
     } else {
-        q_runtime_reportf("runtime error: _file_seek() whence must be 0, 1, or 2\n");
+        q_runtime_reportf("runtime error: io.seek() whence must be 0, 1, or 2\n");
         std::exit(1);
     }
 
-    QFilePayload* payload = q_expect_file_payload(file, "_file_seek");
-    long long newPos = q_file_seek_native(payload->fd, offset.data.int_val, cWhence);
+    QFilePayload* payload = q_expect_file_payload(file, "io.seek");
+    long long newPos = q_file_seek_native(payload->fd, offset, cWhence);
     if (newPos < 0) {
         return q_file_sys_err("seek", nullptr);
     }
@@ -271,13 +238,8 @@ inline QValue q_file_seek(QValue file, QValue offset, QValue whence) {
     return qv_ok(qv_int(newPos));
 }
 
-inline QValue q_file_exists(QValue path) {
-    if (path.type != QValue::VAL_STRING || !path.data.string_val) {
-        q_runtime_reportf("runtime error: _file_exists() argument 1 must be str\n");
-        std::exit(1);
-    }
-
-    return qv_bool(q_file_exists_native(path.data.string_val));
+inline bool q_file_exists(const char* path) {
+    return q_file_exists_native(path);
 }
 
-#endif // QUARK_BUILTINS_FILEIO_HPP
+#endif // QUARK_STDLIB_IO_HPP

@@ -14,7 +14,7 @@ println('== smoke: string/list builtins ==')
 'hello world'.endswith('world') | println()
 
 'hello world'.replace('world', 'quark') | println()
-'hello '.concat('world') | println()
+'hello ' + 'world' | println()
 
 '  HELLO world  '.trim().lower().replace('world', 'quark') | println()
 

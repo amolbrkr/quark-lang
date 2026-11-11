@@ -123,7 +123,7 @@ func (a *Analyzer) resolveMethodCall(
 				// Flow typing: widen element type on mutation methods
 				a.widenReceiverOnMutation(receiverNode, receiverType, methodName, argTypes)
 				if methodName == "to_vector" {
-					return methodCallResult{returnType: a.inferBuiltinReturnType("vfrom_list", []Type{receiverType}, errorNode), resolved: true}
+					return methodCallResult{returnType: a.inferToVectorType(receiverType, errorNode), resolved: true}
 				}
 				if methodName == "astype" {
 					return methodCallResult{returnType: inferAstypeReturnType(receiverType, argNodes), resolved: true}

@@ -424,12 +424,12 @@ func TestNeg_ForLoopOnInt(t *testing.T) {
 // --- Pipe errors ---
 
 func TestNeg_PipeMethodWrongArgType(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("x = 1 | 'abc'.concat()\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("x = 1 | 'abc'.contains()\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
 	if len(typeErrs) == 0 {
-		t.Fatalf("expected type error for piping int into str.concat")
+		t.Fatalf("expected type error for piping int into str.contains")
 	}
 	joined := strings.Join(typeErrs, "\n")
 	if !strings.Contains(joined, "expects str, got int") {

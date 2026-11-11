@@ -1,5 +1,5 @@
 // smoke_string_slice_join.qrk
-// Covers: str.slice, str.concat, list.join.
+// Covers: str.slice, str +, list.join.
 
 println('== smoke: sslice and sjoin ==')
 
@@ -14,9 +14,9 @@ println('hi'.slice(0, 99))
 println('hi'.slice(5, 8))
 println('hi'.slice(1, 1))
 println('world'.upper())
-println('hello'.concat(' world'))
+println('hello' + ' world')
 println(list ['a', 'b', 'c'].join(','))
-println('foo'.concat('bar'))
+println('foo' + 'bar')
 println(list ['only'].join(','))
 println(list [].join(','))
 println(list ['1', '2', '3'].join('+'))

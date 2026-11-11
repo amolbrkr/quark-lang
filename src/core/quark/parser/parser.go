@@ -372,7 +372,7 @@ func (p *Parser) isTypeToken() bool {
 		return true
 	case token.ID:
 		switch p.curToken.Literal {
-		case "int", "float", "str", "bool", "any", "resource", "file_handle":
+		case "int", "float", "str", "bool", "any", "resource":
 			return true
 		}
 		// User-defined struct names are valid types

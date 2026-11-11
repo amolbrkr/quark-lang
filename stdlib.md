@@ -143,24 +143,11 @@ floor(3.7) | println()       // 3
 
 `min`, `max` and `sum` also take a single vector; see [Vector free functions](#vector-free-functions-reductions).
 
-### `enumerate`
-
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `enumerate` | `list\|str\|vector -> list` | Build list of `{ index, value }` records |
-
-```quark
-pairs = enumerate(list ['x', 'y', 'z'])
-for pair in pairs:
-    println(pair.index)
-    println(pair.value)
-```
-
 ---
 
 ## String Methods (`str`)
 
-All string methods leave the original string unchanged and return a new string (or value).
+All string methods leave the original string unchanged and return a new string (or value). Join strings with `+` (`'a' + 'b'`); both sides must be strings, so convert other values with `to_str` first.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -171,7 +158,6 @@ All string methods leave the original string unchanged and return a new string (
 | `.startswith(prefix)` | `str -> bool` | Check if starts with prefix |
 | `.endswith(suffix)` | `str -> bool` | Check if ends with suffix |
 | `.replace(old, new)` | `str, str -> str` | Replace all occurrences |
-| `.concat(other)` | `str -> str` | Concatenate two strings |
 | `.split(sep)` | `str -> list` | Split by separator |
 | `.slice(start, end)` | `int, int -> str` | Substring `[start:end)` (negative indices supported) |
 
@@ -190,7 +176,7 @@ All string methods leave the original string unchanged and return a new string (
 
 // Manipulation
 'hello world'.replace('world', 'quark') | println()  // hello quark
-'hello '.concat('world') | println()                  // hello world
+'hello ' + 'world' | println()                        // hello world
 
 // Split
 parts = 'a,b,c'.split(',')
@@ -234,7 +220,7 @@ parts.get(1) | println()              // b
 | `.sort_by(key)` | `key: fn -> list` | Sort in place by `key(item)`, calling `key` once per item, and return the list. Stable, so items with equal keys keep their order. Keys follow the same rules as `.sort()` |
 | `.concat(other)` | `list -> list` | Concatenate two lists |
 | `.join(sep)` | `str -> str` | Join elements with separator (non-strings are coerced) |
-| `.enumerate()` | `-> list` | Build list of `{ index, value }` records |
+| `.enumerate()` | `-> list` | Build list of `{ index, value }` records: `for e in xs.enumerate(): println(e.index)` |
 | `.to_vector()` | `-> vector` | Convert to typed vector (requires homogeneous elements; nulls allowed) |
 
 ```quark
@@ -346,10 +332,6 @@ vs = vector ['a', 'b', 'c']    // vector[str]  (from literal)
 // From a homogeneous list
 v2 = list [10, 20, 30].to_vector()
 println(type(v2))              // vector[i64]
-
-// Free-function form of .to_vector()
-v3 = vfrom_list(list [1.5, 2.5])
-println(type(v3))              // vector[f64]
 ```
 
 ### Vector methods
@@ -360,6 +342,7 @@ println(type(v3))              // vector[f64]
 | `.fillna(val)` | `any -> vector` | New vector with null entries replaced |
 | `.astype(dtype)` | `str -> vector` | Cast vector dtype (`f64`, `i64`, `bool`) |
 | `.to_list()` | `-> list` | Convert vector back to list |
+| `.enumerate()` | `-> list` | Build list of `{ index, value }` records, as for lists |
 
 ### Vector free functions (reductions)
 
@@ -435,40 +418,19 @@ when safe_div(10, 0):
 
 ---
 
-## File I/O Intrinsics
-
-Low-level file I/O via `_file_*` builtins. The first-party module [`std/io`](#stdio) wraps these; prefer it in programs.
-These functions are intentionally primitive. Invalid argument types, and reading, writing or seeking a closed handle, are runtime errors. `_file_close` on an already closed handle instead returns `err('close: resource is closed')`.
-
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `_file_open` | `path: str, mode: str[, binary: bool] -> result[file_handle]` | Open file path with mode `r` (read), `w` (write: create or truncate) or `a` (append: create if missing, write at the end); any other mode returns `err("open: mode must be 'r', 'w' or 'a'")` |
-| `_file_read` | `file: file_handle, n: int -> result[str]` | Read up to `n` bytes/chars |
-| `_file_write` | `file: file_handle, data: str -> result[int]` | Write data and return bytes/chars written |
-| `_file_close` | `file: file_handle -> result[null]` | Close file |
-| `_file_seek` | `file: file_handle, offset: int, whence: int -> result[int]` | Seek (`0`=set, `1`=cur, `2`=end) |
-| `_file_exists` | `path: str -> bool` | Check path existence |
-
-```quark
-f = unwrap(_file_open('notes.txt', 'r'))
-chunk = unwrap(_file_read(f, 4096))
-println(chunk)
-unwrap(_file_close(f))
-```
-
----
-
 ## `std/io`
 
-File I/O over the `_file_*` intrinsics, with defaults. Import it with `use 'std/io' as io`.
+File I/O. Import it with `use 'std/io' as io`. The module is `extern fn` bindings over `src/core/stdlib/io.hpp`, like the other stdlib modules; there are no file builtins in the prelude. An open file is a `resource` (`type(f)` is `'resource'`; it prints as `<resource file>`).
+
+Reading, writing or seeking a closed file, and invalid argument types, are runtime errors. `close` on an already closed file instead returns `err('close: resource is closed')`.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `open` | `path: str, mode: str = 'r', binary: bool = false -> result` | Open a file (`r`, `w` or `a`, as `_file_open`) |
-| `read` | `file: file_handle, n: int -> result` | Read up to `n` bytes/chars |
-| `write` | `file: file_handle, data: str -> result` | Write data; `ok` holds the count written |
-| `close` | `file: file_handle -> result` | Close the file |
-| `seek` | `file: file_handle, offset: int, whence: int = 0 -> result` | Seek; `ok` holds the new position |
+| `open` | `path: str, mode: str = 'r', binary: bool = false -> result` | Open a file with mode `r` (read), `w` (write: create or truncate) or `a` (append: create if missing, write at the end); `ok` holds the file. Any other mode returns `err("open: mode must be 'r', 'w' or 'a'")` |
+| `read` | `file: resource, n: int -> result` | Read up to `n` bytes; `ok('')` at end of file |
+| `write` | `file: resource, data: str -> result` | Write data; `ok` holds the count written |
+| `close` | `file: resource -> result` | Close the file; `ok(null)` |
+| `seek` | `file: resource, offset: int, whence: int = 0 -> result` | Seek (`0` = start, `1` = current, `2` = end); `ok` holds the new position |
 | `exists` | `path: str -> bool` | Check path existence |
 | `seek_set`, `seek_cur`, `seek_end` | `-> int` | `whence` values `0`, `1`, `2` |
 

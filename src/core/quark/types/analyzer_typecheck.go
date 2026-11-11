@@ -79,37 +79,17 @@ func (a *Analyzer) inferBuiltinReturnType(name string, argTypes []Type, callNode
 			return sig.Type.ReturnType
 		}
 		return TypeAny
-	case "concat":
-		if len(argTypes) == 2 {
-			t0, t1 := argTypes[0], argTypes[1]
-			if !isUnknownType(t0) && !isUnknownType(t1) {
-				_, t0List := t0.(*ListType)
-				_, t1List := t1.(*ListType)
-				bothStr := isStringLike(t0) && isStringLike(t1)
-				bothList := t0List && t1List
-				if !bothStr && !bothList {
-					a.errorAt(callNode, "concat requires both arguments to be str+str or list+list, got %s and %s", t0.String(), t1.String())
-				}
-			}
-		}
-		if sig, ok := a.builtins[name]; ok {
-			return sig.Type.ReturnType
-		}
-		return TypeAny
 	}
 
-	if name != "vfrom_list" {
-		if sig, ok := a.builtins[name]; ok {
-			return sig.Type.ReturnType
-		}
-		return TypeAny
+	if sig, ok := a.builtins[name]; ok {
+		return sig.Type.ReturnType
 	}
+	return TypeAny
+}
 
-	if len(argTypes) != 1 {
-		return TypeAny
-	}
-
-	srcType := argTypes[0]
+// inferToVectorType is the result type of xs.to_vector(): a typed vector when
+// the list's elements are all int, all float, all bool or all str (nulls allowed).
+func (a *Analyzer) inferToVectorType(srcType Type, callNode *ast.TreeNode) Type {
 	if vec, ok := srcType.(*VectorType); ok {
 		return &VectorType{ElementType: vec.ElementType}
 	}

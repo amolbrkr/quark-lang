@@ -14,7 +14,7 @@ Editor support for [Quark](https://github.com/amolbrkr/quark-lang) `.qrk` files.
   | `lambda` | `fn(x) -> x` |
   | `if`, `ife`, `ifel`, `tern` | if, if/else, if/elseif/else, `a if cond else b` |
   | `when`, `whenr` | pattern match; match `ok` / `err` results |
-  | `for`, `forr`, `fore`, `while` | loops over items, `range(...)`, `enumerate(...)` |
+  | `for`, `forr`, `fore`, `while` | loops over items, `range(...)`, `.enumerate()` |
   | `list`, `dict`, `vector` | collection literals |
   | `struct`, `new` | struct type, struct value |
   | `module`, `use`, `usef` | module block, stdlib import, file import |

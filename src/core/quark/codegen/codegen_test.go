@@ -110,7 +110,7 @@ func TestCodegen_EmitsVectorLiteral(t *testing.T) {
 }
 
 func TestCodegen_EmitsToVectorBuiltin(t *testing.T) {
-	res := testutil.GenerateCPP("xs = list [1, 2, 3]\nv = vfrom_list(xs)\n")
+	res := testutil.GenerateCPP("xs = list [1, 2, 3]\nv = xs.to_vector()\n")
 	if len(res.ParserErrors) > 0 {
 		t.Fatalf("unexpected parse errors: %v", res.ParserErrors)
 	}
@@ -123,7 +123,7 @@ func TestCodegen_EmitsToVectorBuiltin(t *testing.T) {
 }
 
 func TestCodegen_ForLoopUsesGenericLenForVector(t *testing.T) {
-	res := testutil.GenerateCPP("for x in vfrom_list(range(3)):\n    println(x)\n")
+	res := testutil.GenerateCPP("for x in range(3).to_vector():\n    println(x)\n")
 	if len(res.ParserErrors) > 0 {
 		t.Fatalf("unexpected parse errors: %v", res.ParserErrors)
 	}

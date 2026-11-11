@@ -17,8 +17,6 @@ func typeToBuiltinTypeKey(t Type) builtins.TypeKey {
 			return builtins.TypeFloat
 		case "bool":
 			return builtins.TypeBool
-		case "file_handle":
-			return builtins.TypeFileHandle
 		}
 	case *ListType:
 		return builtins.TypeListAny
@@ -54,18 +52,8 @@ func mapBuiltinTypeKey(key builtins.TypeKey) Type {
 		return &DictType{KeyType: TypeAny, ValueType: TypeAny}
 	case builtins.TypeVectorAny:
 		return &VectorType{ElementType: TypeAny}
-	case builtins.TypeFileHandle:
-		return TypeFileHandle
 	case builtins.TypeResultAny:
 		return &ResultType{OkType: TypeAny, ErrType: TypeString}
-	case builtins.TypeResultString:
-		return &ResultType{OkType: TypeString, ErrType: TypeString}
-	case builtins.TypeResultInt:
-		return &ResultType{OkType: TypeInt, ErrType: TypeString}
-	case builtins.TypeResultNull:
-		return &ResultType{OkType: TypeNull, ErrType: TypeString}
-	case builtins.TypeResultFileHandle:
-		return &ResultType{OkType: TypeFileHandle, ErrType: TypeString}
 	default:
 		return TypeAny
 	}
@@ -103,8 +91,6 @@ func (a *Analyzer) resolveTypeNode(node *ast.TreeNode) Type {
 		return &ResultType{OkType: TypeAny, ErrType: TypeAny}
 	case "resource":
 		return TypeResource
-	case "file_handle":
-		return TypeFileHandle
 	default:
 		// Check user-defined struct types
 		if st, ok := a.structTypes[name]; ok {

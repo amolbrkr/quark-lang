@@ -946,7 +946,8 @@ func paramAnnotation(param *ast.TreeNode) string {
 }
 
 // paramTagChecks maps non-scalar annotations to their QValue tag and whether
-// null is accepted (reference types accept null, as in the checker).
+// null is accepted (reference types other than result accept null, as in the
+// checker).
 var paramTagChecks = map[string]struct {
 	tag       string
 	allowNull bool
@@ -955,7 +956,7 @@ var paramTagChecks = map[string]struct {
 	"list":     {"VAL_LIST", true},
 	"dict":     {"VAL_DICT", true},
 	"vec":      {"VAL_VECTOR", true},
-	"result":   {"VAL_RESULT", true},
+	"result":   {"VAL_RESULT", false},
 	"resource": {"VAL_RESOURCE", true},
 	"fn":       {"VAL_FUNC", true},
 }

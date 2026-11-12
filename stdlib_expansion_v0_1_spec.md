@@ -179,7 +179,7 @@ Compared with Python's `open()`:
 | Function | Notes |
 |---|---|
 | `open(path, mode = 'r') result` | modes `r`, `w`, `a`, plus `x` (create, fail if it exists) and `r+` (read and write) |
-| `read_line(f)` | next line without its ending, or `null` at end of file (like `input()`) |
+| `read_line(f)` | next line without its ending, or `null` at end of file. (Note, 2026-11-12: `input()` now returns `ok(line)` / `err('end of input')` instead of `null`; decide whether `read_line` should match before implementing it) |
 | `read(f, n: int = -1)` | up to `n` bytes; `-1` reads to the end |
 | `write(f, text)` | buffered; returns the number of bytes |
 | `flush(f)`, `close(f)` | `close` flushes; closing twice stays an `err` |

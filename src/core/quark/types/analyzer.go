@@ -59,10 +59,17 @@ type Analyzer struct {
 	nativeFns map[string]*ir.CallPlan
 	// structTypes maps struct name → StructType for user-defined struct types.
 	structTypes map[string]*StructType
+	// builtinSyms and nativeSyms hold the symbol each builtin (prelude or
+	// extern fn) and native function was declared with. Calls and captures
+	// are resolved by name, so a name that looks up to a different symbol is
+	// a local (parameter, loop variable, nested function) shadowing it.
+	builtinSyms map[string]*Symbol
+	nativeSyms  map[string]*Symbol
 }
 
 func NewAnalyzer() *Analyzer {
 	globalScope := NewScope(nil)
+	builtinSyms := make(map[string]*Symbol)
 
 	builtinSigs := make(map[string]*builtinSignature)
 	methodSigs := make(map[builtins.TypeKey]map[string]*builtinSignature)
@@ -77,7 +84,7 @@ func NewAnalyzer() *Analyzer {
 
 		if spec.ReceiverType == "" {
 			if _, exists := builtinSigs[spec.Name]; !exists {
-				globalScope.Define(spec.Name, funcType, false)
+				builtinSyms[spec.Name] = globalScope.Define(spec.Name, funcType, false)
 				funcs[spec.Name] = funcType
 				builtinSigs[spec.Name] = sig
 			}
@@ -110,7 +117,30 @@ func NewAnalyzer() *Analyzer {
 		externSources:    make([]string, 0),
 		nativeFns:        make(map[string]*ir.CallPlan),
 		structTypes:      make(map[string]*StructType),
+		builtinSyms:      builtinSyms,
+		nativeSyms:       make(map[string]*Symbol),
 	}
+}
+
+// refersToBuiltin reports whether name, read in scope, is the builtin or
+// extern fn of that name, not a local binding that shadows it.
+func (a *Analyzer) refersToBuiltin(scope *Scope, name string) bool {
+	if _, ok := a.builtins[name]; !ok {
+		return false
+	}
+	sym := scope.Lookup(name)
+	return sym == nil || sym == a.builtinSyms[name]
+}
+
+// refersToNative reports whether name, read in scope, is the native function
+// of that name, not a local binding that shadows it.
+func (a *Analyzer) refersToNative(scope *Scope, name string) bool {
+	if _, ok := a.nativeFns[name]; !ok {
+		return false
+	}
+	decl, known := a.nativeSyms[name]
+	sym := scope.Lookup(name)
+	return sym == nil || !known || sym == decl
 }
 
 func (a *Analyzer) Errors() []string {

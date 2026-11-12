@@ -36,7 +36,8 @@ inline bool q_param_bool(QValue v, const char* fn, const char* param) {
 }
 
 // q_param_check checks a non-scalar annotation. Reference types (list, dict,
-// vector, result, resource, fn) also accept null, as the checker does.
+// vector, resource, fn) also accept null, as the checker does; a result never
+// does (it is always ok(...) or err(...)).
 inline QValue q_param_check(QValue v, QValue::ValueType tag, bool allowNull, const char* expected, const char* fn, const char* param) {
     if (v.type == tag || (allowNull && v.type == QValue::VAL_NULL)) return v;
     q_param_type_error(v, expected, fn, param);

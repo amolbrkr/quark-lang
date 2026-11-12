@@ -18,18 +18,20 @@ Today an import splices the imported file's top-level statements into the import
 
 | Situation | Result today |
 |---|---|
-| Library has top-level `fn helper`, used by its module; importer also defines `fn helper` | The library's own calls run the importer's `helper` (`l.api(1)` returned 3, not 102) |
-| Library and importer both assign a top-level variable | One shared variable |
-| Importer defines `fn io_open` while `std/io` declares `extern fn io_open` | The importer's function is ignored; calls go to the extern (externs live in the builtins table, which the analyzer checks first) |
+| Library has top-level `fn helper`, used by its module; importer also defines `fn helper` | ~~The library's own calls run the importer's `helper`~~ Since 2026-11-12 a load error: `'helper' is already defined as a fn (lib/l.qrk:1)`. Two libraries both defining `helper` is also an error. v0.2 makes both programs valid |
+| Library and importer both assign a top-level variable | ~~One shared variable~~ Since 2026-11-12 a load error, as for functions |
+| Importer defines `fn io_open` while `std/io` declares `extern fn io_open` | ~~The importer's function is ignored~~ Since 2026-11-12 a load error: `'io_open' is already defined as an extern fn (std/io.qrk:3)`. Redefining a prelude builtin (`fn len`) is a check error; parameters and locals may shadow builtins |
 | Two libraries each contain `module utils` | `module 'utils' already defined`, even with different aliases |
 | Two files define `struct Point` | `struct 'Point' already defined`; struct names are global |
 | A struct is used from another file | No qualified type syntax (`q: geo.Point` is a parse error); literals and annotations use the bare global name (`Point { ... }`) |
-| `incl 'std/fmt' as fmt` | `fmt_vec`, `blas_dot` etc. are callable unqualified, colliding with user names |
+| `incl 'std/fmt' as fmt` | `fmt_vec`, `blas_dot` etc. are callable unqualified; since 2026-11-12 a user definition with the same name is a load error instead of being ignored |
 | An imported file has top-level statements (`print(...)`) | They run inside the importer's program, at the `incl` |
 | `fn f` declared twice | The second silently wins |
 | `fn f`, then `f = fn(x) -> 0` | Silently replaced; for a fully annotated `f`, the program fails to compile with a C++ error (`redefinition of 'quark_f'`) |
 | `fn a() -> b()`, `a()`, then `fn b` | Runtime failure: `b` is bound only when its line runs |
 | Runtime struct parameter check (`q_param_struct`) | Compares struct *names* (`strcmp`), so two different structs named `Point` would pass each other's check once struct names are no longer global |
+| `struct` defined inside a `module` block (observed 2026-11-12) | Not supported: struct types are registered only from a file's top level (`predeclareStructTypes`), and the error reads like a compiler bug: `internal: struct 'L' not pre-declared` (`types/analyzer_structs.go`), followed by `unknown struct type 'L'` at every use. Rule 25 makes this valid |
+| Qualified struct literal, `shapes.Sq { side: 1 }` (observed 2026-11-12) | Raw parse error: `no prefix parse function for LBRACE`. Rule 27 makes `shapes::Sq { ... }` valid; the `.` form should get a clear error pointing to `::` (§4) |
 
 ## 3. Rules
 
@@ -258,6 +260,10 @@ Every rule gets a negative test (CLAUDE.md, Robustness Bar). At minimum:
 - **Runtime struct identity:** a value of `a::Point` passed through an untyped path to a parameter annotated `b::Point` is rejected at runtime. This is the `strcmp` bug, and the test must fail on today's runtime.
 - **Unassigned read:** reading a captured variable through a function value before it is assigned is a runtime error, not `null`.
 - **Reassigned native function:** reassigning a fully annotated function is a Quark compile error, not a C++ error.
+
+**Revisit once v0.2 is implemented** (two rows of §2, observed 2026-11-12). Confirm each is fixed and keep a test for it:
+- A `struct` inside a `module` block works within the file (bare name), from elsewhere in that file (`module::Point`) and from an importer (`file::module::Point`). No diagnostic starts with `internal:`.
+- `shapes::Sq { ... }` parses and builds the struct; `shapes.Sq { ... }` is a clear check error that suggests `::`, not `no prefix parse function for LBRACE`.
 
 ## 8. Rollout
 

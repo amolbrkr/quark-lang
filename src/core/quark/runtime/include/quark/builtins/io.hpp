@@ -114,9 +114,9 @@ inline QValue q_print(QValue v, QValue end, QValue width, QValue align, QValue p
     return q_print_impl(v, end, width, align, pad);
 }
 
-// Read a line from stdin (with optional prompt). Returns the line without its
-// line ending ("\n" or "\r\n"), of any length, or null at end of input, so
-// that an empty line ('') and end of input can be told apart.
+// Read a line from stdin (with optional prompt). Returns ok(line), the line
+// without its line ending ("\n" or "\r\n") and of any length, or
+// err('end of input') once stdin is exhausted (an empty line is ok('')).
 inline QValue q_input(QValue prompt) {
     if (prompt.type != QValue::VAL_NULL && prompt.type != QValue::VAL_STRING) {
         q_runtime_reportf("runtime error: input() optional prompt must be str\n");
@@ -139,7 +139,10 @@ inline QValue q_input(QValue prompt) {
         }
     }
     if (!readAny) {
-        return qv_null();
+        if (ferror(stdin)) {
+            return qv_err(qv_string("input: cannot read from stdin"));
+        }
+        return qv_err(qv_string("end of input"));
     }
     if (!line.empty() && line.back() == '\n') {
         line.pop_back();
@@ -147,7 +150,7 @@ inline QValue q_input(QValue prompt) {
     if (!line.empty() && line.back() == '\r') {
         line.pop_back();
     }
-    return qv_string(line.c_str());
+    return qv_ok(qv_string(line.c_str()));
 }
 
 // Read line from stdin (no prompt)

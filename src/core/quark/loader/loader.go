@@ -396,7 +396,127 @@ func (ml *ModuleLoader) ResolveImports(root *ast.TreeNode, currentFilePath strin
 	ml.beginResolve(absPath)
 	ml.resolveImportsInNode(root, absPath)
 	ml.endResolve(absPath)
+	ml.checkTopLevelClashes(root)
 	ml.namespaceModules(root)
+}
+
+// topLevelDef is a name defined at the top level of one of the spliced files.
+type topLevelDef struct {
+	name string
+	kind string // "fn", "variable", "extern fn" or "struct"
+	file string // ast.TreeNode.SourceFile: "" for the main file
+	node *ast.TreeNode
+}
+
+// topLevelDefinition returns what a top-level statement defines, if anything.
+// `fn f(...)` is parsed as `f = fn(...)`, so it is an assignment here.
+func topLevelDefinition(stmt *ast.TreeNode) (topLevelDef, bool) {
+	if stmt == nil {
+		return topLevelDef{}, false
+	}
+	switch stmt.NodeType {
+	case ast.ExternFnNode:
+		if stmt.ExternReceiver != "" || stmt.TokenLiteral() == "" {
+			return topLevelDef{}, false // methods live per receiver type
+		}
+		return topLevelDef{name: stmt.TokenLiteral(), kind: "extern fn", file: stmt.SourceFile, node: stmt}, true
+	case ast.StructDefNode:
+		if stmt.TokenLiteral() == "" {
+			return topLevelDef{}, false
+		}
+		return topLevelDef{name: stmt.TokenLiteral(), kind: "struct", file: stmt.SourceFile, node: stmt}, true
+	}
+	name := definedName(stmt)
+	if name == "" {
+		return topLevelDef{}, false
+	}
+	kind := "variable"
+	if stmt.NodeType == ast.FunctionNode || (len(stmt.Children) == 2 && stmt.Children[1] != nil && stmt.Children[1].NodeType == ast.LambdaNode) {
+		kind = "fn"
+	}
+	return topLevelDef{name: name, kind: kind, file: stmt.SourceFile, node: stmt.Children[0]}, true
+}
+
+// checkTopLevelClashes rejects a top-level name defined by two different files.
+// Every top-level name of an included file lands in the importer's single
+// scope (only `module` members are namespaced), so without this check one
+// definition silently replaces the other: an importer's `fn helper` would
+// hijack a library's internal calls, or a user's `fn fmt_full` would be
+// ignored in favour of std/fmt's extern. Within one file, a `fn` or variable
+// may be assigned again as usual, but an `extern fn` or `struct` name can't be
+// reused.
+func (ml *ModuleLoader) checkTopLevelClashes(root *ast.TreeNode) {
+	if root == nil {
+		return
+	}
+	first := map[string]topLevelDef{}
+	reported := map[string]bool{}
+	for _, stmt := range root.Children {
+		def, ok := topLevelDefinition(stmt)
+		if !ok {
+			continue
+		}
+		prev, seen := first[def.name]
+		if !seen {
+			first[def.name] = def
+			continue
+		}
+		if reported[def.name] {
+			continue
+		}
+		reassignable := func(k string) bool { return k == "fn" || k == "variable" }
+		if def.file == prev.file && reassignable(def.kind) && reassignable(prev.kind) {
+			continue
+		}
+		if def.file == prev.file && def.kind == "struct" && prev.kind == "struct" {
+			continue // the checker reports `struct 'X' already defined`
+		}
+		reported[def.name] = true
+		// Point at the main file's definition when there is one: that is the
+		// one the user can rename.
+		at, other := def, prev
+		if prev.file == "" && def.file != "" {
+			at, other = prev, def
+		}
+		where := fmt.Sprintf("line %d", lineOf(other.node))
+		if other.file != "" && other.file != at.file {
+			where = fmt.Sprintf("%s:%d", other.file, lineOf(other.node))
+		}
+		var hint string
+		switch {
+		case at.file == other.file:
+			hint = "rename one of them"
+		case at.file == "":
+			hint = "every top-level name of an included file is visible to the importer, so rename this one"
+		default:
+			hint = "both files are included and their top-level names share one scope; rename one of them or move it into its file's module block"
+		}
+		ml.addClashError(at, fmt.Sprintf("'%s' is already defined as %s (%s); %s",
+			at.name, article(other.kind), where, hint))
+	}
+}
+
+func article(kind string) string {
+	if kind == "extern fn" {
+		return "an extern fn"
+	}
+	return "a " + kind
+}
+
+// addClashError reports msg at def, naming def's own file when it isn't the
+// main file (loader diagnostics default to the main file).
+func (ml *ModuleLoader) addClashError(def topLevelDef, msg string) {
+	loc := &diagnostics.Location{File: def.file, Line: lineOf(def.node)}
+	if def.node != nil && def.node.Token != nil {
+		loc.Column = def.node.Token.Column
+	}
+	ml.errors = append(ml.errors, diagnostics.Diagnostic{
+		Code:     "QK-LOAD-001",
+		Stage:    diagnostics.StageLoad,
+		Severity: diagnostics.SeverityError,
+		Message:  msg,
+		Location: loc,
+	})
 }
 
 // resolveImportsInNode processes all InclNode children of `node`.

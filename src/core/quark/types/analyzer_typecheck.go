@@ -1,9 +1,15 @@
 package types
 
-import "quark/ast"
+import (
+	"quark/ast"
+	"quark/token"
+)
 
 func (a *Analyzer) inferBuiltinReturnType(name string, argTypes []Type, callNode *ast.TreeNode) Type {
 	switch name {
+	case "input":
+		// ok(line) or err('end of input'): a line is always a str.
+		return &ResultType{OkType: TypeString, ErrType: TypeString}
 	case "unwrap":
 		if len(argTypes) >= 1 {
 			if res, ok := argTypes[0].(*ResultType); ok {
@@ -228,6 +234,12 @@ func (a *Analyzer) validateDefaultValues(specs []paramSpec, funcType *FunctionTy
 			continue
 		}
 		defaultType := inferLiteralType(spec.defaultValue)
+		// inferLiteralType reads `= null` as any (an unannotated `x = null`
+		// accepts anything); against an annotation it is checked as null, so
+		// `x: int = null` or `r: result = null` fails here, not at every call.
+		if lit := spec.defaultValue; lit.NodeType == ast.LiteralNode && lit.Token != nil && lit.Token.Type == token.NULL {
+			defaultType = TypeNull
+		}
 		if i >= len(funcType.ParamTypes) {
 			continue
 		}

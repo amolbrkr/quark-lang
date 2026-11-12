@@ -134,6 +134,20 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 				return TypeError
 			}
 		}
+		// `fn len(x) -> ...` is `len = fn(x) -> ...`. Assigning a builtin or
+		// extern fn name would rebind it, but calls by that name always reach
+		// the builtin, so the new definition would be silently ignored.
+		// (Parameters, loop variables and nested functions can shadow one.)
+		if target.NodeType == ast.IdentifierNode && a.refersToBuiltin(a.currentScope, target.TokenLiteral()) {
+			name := target.TokenLiteral()
+			if _, isExtern := a.externFns[name]; isExtern {
+				a.errorAt(target, "'%s' is an extern fn and can't be redefined or assigned; choose another name", name)
+			} else {
+				a.errorAt(target, "'%s' is a builtin function and can't be redefined or assigned; choose another name", name)
+			}
+			a.Analyze(node.Children[1])
+			return TypeError
+		}
 		if target.NodeType == ast.IdentifierNode && node.Children[1].NodeType == ast.LambdaNode {
 			varName := target.TokenLiteral()
 			if a.currentScope.LookupLocal(varName) == nil {
@@ -351,6 +365,15 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 			return &VectorType{ElementType: TypeBool}
 		}
 		if a.checkStructEquality(node, leftType, rightType, op) {
+			return TypeError
+		}
+		// A result is never null (null can't be stored where a result is
+		// expected), so this comparison would be a constant: `r == null` never
+		// detects an err, e.g. the end of input() in a read loop.
+		_, leftIsResult := leftType.(*ResultType)
+		_, rightIsResult := rightType.(*ResultType)
+		if (leftIsResult && rightType.Equals(TypeNull)) || (rightIsResult && leftType.Equals(TypeNull)) {
+			a.errorAt(node, "a result is never null, so this comparison is always %t; use is_ok(r), is_err(r) or when to check it", op == token.NE)
 			return TypeError
 		}
 		return TypeBool

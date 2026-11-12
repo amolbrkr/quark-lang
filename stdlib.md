@@ -56,25 +56,26 @@ d.get('a') | print()   // 1
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `print` | `value[, end: str[, width: int[, align: str[, pad: str]]]] -> void` | Print value followed by `end` (default `'\n'`, so each call prints its own line); optional width/alignment |
-| `input` | `[prompt: str] -> str` | Read a line from stdin, without its `\n` or `\r\n` ending; any length. Returns `null` at end of input (an empty line gives `''`). Optional prompt must be a string |
+| `input` | `[prompt: str] -> result` | Read a line from stdin, without its `\n` or `\r\n` ending; any length. Returns `ok(line)` (an empty line gives `ok('')`), or `err('end of input')` once stdin is exhausted. Optional prompt must be a string |
 
 ```quark
 print('Hello, World!')
-name = input('Name: ')
+name = unwrap(input('Name: '))
 print(name)
 
 print('row', '|', 8, 'left', '.')
 print('42', '\n', 8, 'right', '0')
 ```
 
-To process stdin line by line, loop until `input()` returns `null`:
+To process stdin line by line, loop until `input()` returns an `err`:
 
 ```quark
 count = 0
 while true:
-    line = input()
-    if line == null:
+    r = input()
+    if is_err(r):
         break
+    line = unwrap(r)
     count = count + 1
 print(count)
 ```

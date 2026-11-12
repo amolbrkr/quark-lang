@@ -533,7 +533,7 @@ Each annotated parameter is enforced, whether or not the function's other parame
 - When the argument's type is known at compile time, it is checked then (`argument 1 of 'foo' expects int, got str`), at no runtime cost.
 - When it isn't (`any`, for example the result of `unwrap` or of an unannotated function), it is checked on entry to the function, and a mismatch is a runtime error naming the parameter: `argument 'x' of 'foo' expects int, got str`. Calls through a function value, pipes and default arguments are covered too.
 - An `int` passed to a `float` parameter is converted to `float`.
-- Reference-type annotations (`list`, `dict`, `vec`, `result`, `resource`, `fn`, struct names) also accept `null`, as at compile time.
+- Reference-type annotations (`list`, `dict`, `vec`, `resource`, `fn`, struct names) also accept `null`, as at compile time. `result` doesn't: a result is always `ok(...)` or `err(...)`, so `null` can't be passed, stored, returned or used as a default where a `result` is expected, and `r == null` / `r != null` on a result is a compile error (use `is_ok`, `is_err` or `when`).
 
 Unannotated parameters accept any value. Inside the body, annotated `int`, `float` and `bool` parameters are native C++ values, so arithmetic on them is unboxed. Fully annotated functions are compiled to native C++ functions, and calls with arguments already known to have the right types pay no check.
 

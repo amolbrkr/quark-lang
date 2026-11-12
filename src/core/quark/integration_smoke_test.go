@@ -633,6 +633,18 @@ func TestSmokePrograms_Run(t *testing.T) {
 			),
 		},
 		{
+			name: "shadowing",
+			file: filepath.Join(testfilesDir, "smoke_shadowing.qrk"),
+			expected: join(
+				"== smoke: shadowing builtins and native functions ==",
+				"6", "42", "7", "11",
+				"99", "4", "5", "5", "8",
+				"1000", "20",
+				"42",
+				"3", "2",
+			),
+		},
+		{
 			name: "function_values",
 			file: filepath.Join(testfilesDir, "smoke_function_values.qrk"),
 			expected: join(
@@ -932,6 +944,33 @@ func TestSemanticsSafety_Rejected(t *testing.T) {
 		// d.key names a key in the source: a missing key is an error, not null.
 		{"dict_dot_missing_key", "rows = list [dict {name: 'b', amount: 2}]\nfor r in rows:\n    print(r.amonut)\n", "dict has no key 'amonut'"},
 		{"dict_dot_missing_key_untyped", "fn id(v) -> v\nd = id(dict {a: 1})\nprint(d.b)\n", "dict has no key 'b'"},
+		// A definition named like a builtin or extern fn would be ignored by
+		// every call; it is rejected (parameters and locals may shadow one).
+		{"builtin_redefined_fn", "fn len(x) -> 42\nprint(len('ab'))\n", "'len' is a builtin function and can't be redefined or assigned"},
+		{"builtin_redefined_lambda", "len = fn(x) -> 42\nprint(len('ab'))\n", "'len' is a builtin function and can't be redefined or assigned"},
+		{"builtin_redefined_print", "fn print(x) -> 1\nprint(5)\n", "'print' is a builtin function and can't be redefined or assigned"},
+		{"builtin_assigned_value", "sum = 0\nprint(sum)\n", "'sum' is a builtin function and can't be redefined or assigned"},
+		{"builtin_assigned_in_fn", "fn f() ->\n    max = 1\n    max\nprint(f())\n", "'max' is a builtin function and can't be redefined or assigned"},
+		{"extern_redefined_same_file", "extern fn myargs() list as 'q_sys_args'\nfn myargs() -> 1\nprint(1)\n", "'myargs' is already defined as an extern fn (line 1)"},
+		{"stdlib_extern_redefined", "incl 'std/fmt' as fmt\nfn fmt_full(x) -> 'mine'\nprint(fmt_full(1))\n", "'fmt_full' is already defined as an extern fn (std/fmt.qrk:7)"},
+		// input() returns ok(line) / err('end of input'), and a result is never
+		// null, so the old `line == null` EOF check can't silently loop forever.
+		{"input_used_as_str", "print(len(input()))\n", "argument 1 of 'len' expects str, list, dict, or vec, got result[str, str]"},
+		{"input_str_param", "fn f(s: str) -> s\nprint(f(input()))\n", "argument 1 of 'f' expects str, got result[str, str]"},
+		{"input_method", "x = input()\nprint(x.upper())\n", "type 'result[str, str]' has no method 'upper'"},
+		{"input_eq_null", "while true:\n    line = input()\n    if line == null:\n        break\n    print(line)\n", "a result is never null, so this comparison is always false"},
+		{"input_ne_null", "print(input() != null)\n", "a result is never null, so this comparison is always true"},
+		{"input_unwrap_eof", "print(unwrap(input()))\n", "unwrap on err: end of input"},
+		{"result_param_null", "fn f(r: result) -> is_ok(r)\nprint(f(null))\n", "argument 1 of 'f' expects result[any, any], got null"},
+		{"result_param_null_untyped", "fn id(v) -> v\nfn f(r: result) -> is_ok(r)\nprint(f(id(null)))\n", "argument 'r' of 'f' expects result, got null"},
+		{"result_var_null", "r: result = null\nprint(r)\n", "cannot assign value of type 'null' to 'result[any, any]'"},
+		{"result_reassigned_null", "r = ok(1)\nr = null\nprint(r)\n", "cannot assign value of type 'null' to 'result[int, any]'"},
+		{"result_field_null", "struct S:\n    r: result\nprint(S { r: null })\n", "cannot assign value of type 'null' to field 'r'"},
+		{"result_field_null_untyped", "fn id(v) -> v\nstruct S:\n    r: result\nprint(S { r: id(null) })\n", "field 'r' of S expects result, got null"},
+		{"result_return_null", "fn f() result -> null\nprint(f())\n", "declares return type 'result[any, any]' but body returns 'null'"},
+		{"result_default_null", "fn f(r: result = null) -> r\nprint(f())\n", "default value type 'null' doesn't match parameter type 'result[any, any]'"},
+		{"int_default_null", "fn f(x: int = null) -> x\nprint(f())\n", "default value type 'null' doesn't match parameter type 'int'"},
+		{"stdlib_extern_assigned_before_incl", "fmt_vec = 3\nincl 'std/fmt' as fmt\nprint(fmt_vec)\n", "'fmt_vec' is already defined as an extern fn (std/fmt.qrk:4)"},
 	}
 
 	tmp := t.TempDir()
@@ -1379,9 +1418,10 @@ func TestInput_EOFAndLongLines(t *testing.T) {
 	source := strings.Join([]string{
 		"n = 0",
 		"while true:",
-		"    line = input()",
-		"    if line == null:",
+		"    r = input()",
+		"    if is_err(r):",
 		"        break",
+		"    line = unwrap(r)",
 		"    n = n + 1",
 		"    print(to_str(len(line)))",
 		"print('lines: ' + to_str(n))",
@@ -1561,6 +1601,55 @@ func TestModuleNamespacing(t *testing.T) {
 		out, err := cmd.CombinedOutput()
 		if err == nil || !strings.Contains(string(out), wantErr) {
 			t.Fatalf("%s: expected error %q, got (err=%v):\n%s", file, wantErr, err, out)
+		}
+	}
+}
+
+// TestTopLevelNameClashes: every top-level name of an included file shares the
+// importer's scope, so a name defined by two files is a compile error naming
+// both, instead of one definition silently replacing the other. A file
+// included along two paths is spliced once and doesn't clash with itself.
+func TestTopLevelNameClashes(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmp, "lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"lib/helpy.qrk":  "fn helper(x) -> x + 100\nstruct Box:\n    v: int\nmodule helpy:\n    fn api(x) -> helper(x)\n",
+		"lib/helpy2.qrk": "fn helper(x) -> x + 200\nmodule helpy2:\n    fn api(x) -> helper(x)\n",
+		"lib/base.qrk":   "fn shared(x) -> x * 2\nmodule base:\n    fn twice(x) -> shared(x)\n",
+		"lib/left.qrk":   "incl './base.qrk' as b\nmodule left:\n    fn go(x) -> shared(x) + 1\n",
+		"lib/right.qrk":  "incl './base.qrk' as b\nmodule right:\n    fn go(x) -> shared(x) + 2\n",
+		"ok.qrk":         "incl './lib/helpy' as h\nincl './lib/left' as l\nincl './lib/right' as r\nfn mine(x) -> x\nprint(h.api(1))\nprint(l.go(1) + r.go(1))\nprint(Box { v: mine(3) })\n",
+		"fn_after.qrk":   "incl './lib/helpy' as h\nfn helper(x) -> x + 1\nprint(h.api(1))\n",
+		"fn_before.qrk":  "fn helper(x) -> x + 1\nincl './lib/helpy' as h\nprint(h.api(1))\n",
+		"variable.qrk":   "incl './lib/helpy' as h\nhelper = 5\nprint(h.api(1))\n",
+		"struct.qrk":     "incl './lib/helpy' as h\nstruct Box:\n    w: int\nprint(1)\n",
+		"two_libs.qrk":   "incl './lib/helpy' as h\nincl './lib/helpy2' as h2\nprint(h.api(1))\n",
+	}
+	for name, src := range files {
+		if err := os.WriteFile(filepath.Join(tmp, name), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := strings.TrimSpace(normalizeNewlines(runQuarkIn(t, tmp, "run", "ok.qrk")))
+	if want := "101\n7\nBox {v: 3}"; got != want {
+		t.Fatalf("ok.qrk output:\n%s\nwant:\n%s", got, want)
+	}
+	for file, wantErrs := range map[string][]string{
+		"fn_after.qrk":  {"'helper' is already defined as a fn (lib/helpy.qrk:1); every top-level name of an included file is visible to the importer, so rename this one", "fn_after.qrk:2:4"},
+		"fn_before.qrk": {"'helper' is already defined as a fn (lib/helpy.qrk:1)", "fn_before.qrk:1:4"},
+		"variable.qrk":  {"'helper' is already defined as a fn (lib/helpy.qrk:1)", "variable.qrk:2:1"},
+		"struct.qrk":    {"'Box' is already defined as a struct (lib/helpy.qrk:2)", "struct.qrk:2"},
+		"two_libs.qrk":  {"'helper' is already defined as a fn (lib/helpy.qrk:1); both files are included and their top-level names share one scope; rename one of them or move it into its file's module block", "at lib/helpy2.qrk:1:4"},
+	} {
+		cmd := exec.Command(quarkExePath, "run", file)
+		cmd.Dir = tmp
+		out, err := cmd.CombinedOutput()
+		for _, wantErr := range wantErrs {
+			if err == nil || !strings.Contains(string(out), wantErr) {
+				t.Fatalf("%s: expected error containing %q, got (err=%v):\n%s", file, wantErr, err, out)
+			}
 		}
 	}
 }

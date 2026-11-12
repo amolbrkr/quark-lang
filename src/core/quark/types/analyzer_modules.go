@@ -222,7 +222,7 @@ func (a *Analyzer) analyzeExternFn(node *ast.TreeNode) Type {
 			return TypeVoid
 		}
 		a.builtins[funcName] = sig
-		a.currentScope.Define(funcName, funcType, false)
+		a.builtinSyms[funcName] = a.currentScope.Define(funcName, funcType, false)
 		a.functions[funcName] = funcType
 
 		// Record the extern registration so call sites can use DispatchExtern

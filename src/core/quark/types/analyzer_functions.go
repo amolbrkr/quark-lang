@@ -110,7 +110,9 @@ func (a *Analyzer) collectFreeVars(node *ast.TreeNode, lambdaScope *Scope, param
 		if name == "_" || params[name] || seen[name] {
 			return
 		}
-		if _, isBuiltin := a.builtins[name]; isBuiltin {
+		// A parameter or local named like a builtin or a native function
+		// shadows it and is captured like any other variable.
+		if a.refersToBuiltin(lambdaScope, name) {
 			return
 		}
 		if lambdaScope.LookupLocal(name) != nil {
@@ -118,7 +120,7 @@ func (a *Analyzer) collectFreeVars(node *ast.TreeNode, lambdaScope *Scope, param
 		}
 		// Native functions are C++ functions, called (and used as values,
 		// through their thunk) by name, so there is no binding to capture.
-		if _, isNative := a.nativeFns[name]; isNative {
+		if a.refersToNative(lambdaScope, name) {
 			return
 		}
 		if lambdaScope.Parent != nil && lambdaScope.Parent.Lookup(name) != nil {
@@ -292,6 +294,7 @@ func (a *Analyzer) analyzeLambda(node *ast.TreeNode) Type {
 		for i, pt := range funcType.ParamTypes {
 			nativeParams[i] = quarkTypeToNativeCType(pt)
 		}
+		a.nativeSyms[funcName] = a.currentScope.Lookup(funcName)
 		a.nativeFns[funcName] = &ir.CallPlan{
 			Kind:             ir.CallFunctionValue,
 			CalleeName:       funcName,

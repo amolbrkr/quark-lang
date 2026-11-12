@@ -332,7 +332,7 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 	a.recordParamCall(funcNode, argTypes, argsNode.Children)
 	if funcNode.NodeType == ast.IdentifierNode {
 		name := funcNode.TokenLiteral()
-		if sig, ok := a.builtins[name]; ok {
+		if sig, ok := a.builtins[name]; ok && a.refersToBuiltin(a.currentScope, name) {
 			// Check if this builtin is actually an extern fn (DispatchExtern)
 			if proto, isExtern := a.externFns[name]; isExtern {
 				plan := *proto // copy prototype
@@ -397,7 +397,7 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 	if funcNode.NodeType == ast.IdentifierNode {
 		name := funcNode.TokenLiteral()
 		// Check nativeFns first — applies regardless of mutability.
-		if proto, isNative := a.nativeFns[name]; isNative {
+		if proto, isNative := a.nativeFns[name]; isNative && a.refersToNative(a.currentScope, name) {
 			dispatch = ir.DispatchNative
 			runtimeSymbol = proto.RuntimeSymbol
 			nativeParamTypes = proto.NativeParamTypes
@@ -593,7 +593,7 @@ func (a *Analyzer) analyzePipe(node *ast.TreeNode) Type {
 	a.recordParamCall(funcNode, append([]Type{inputType}, argTypes...), append([]*ast.TreeNode{inputNode}, argsNode.Children...))
 	if funcNode.NodeType == ast.IdentifierNode {
 		name := funcNode.TokenLiteral()
-		if sig, ok := a.builtins[name]; ok {
+		if sig, ok := a.builtins[name]; ok && a.refersToBuiltin(a.currentScope, name) {
 			pipeArgTypes := make([]Type, 0, pipeArgCount)
 			pipeArgTypes = append(pipeArgTypes, inputType)
 			pipeArgTypes = append(pipeArgTypes, argTypes...)
@@ -642,7 +642,7 @@ func (a *Analyzer) analyzePipe(node *ast.TreeNode) Type {
 		if funcNode.NodeType == ast.IdentifierNode {
 			name := funcNode.TokenLiteral()
 			// Check nativeFns first — applies regardless of mutability.
-			if proto, isNative := a.nativeFns[name]; isNative {
+			if proto, isNative := a.nativeFns[name]; isNative && a.refersToNative(a.currentScope, name) {
 				dispatch = ir.DispatchNative
 				runtimeSymbol = proto.RuntimeSymbol
 				nativeParamTypes = proto.NativeParamTypes

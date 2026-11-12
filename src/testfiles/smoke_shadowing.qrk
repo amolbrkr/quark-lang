@@ -1,0 +1,45 @@
+print('== smoke: shadowing builtins and native functions ==')
+
+// Parameters named like builtins: used as values...
+fn clamp(x, min, max) -> x + min + max
+print(clamp(1, 2, 3))
+
+// ...called directly, through a pipe, and captured by a lambda.
+fn call_len(len) -> len('abc')
+print(call_len(fn(s) -> 42))
+fn pipe_len(len) -> 'abc' | len()
+print(pipe_len(fn(s) -> 7))
+fn adder(max) -> (fn(x) -> x + max)
+print(adder(10)(1))
+
+// A nested function, a loop variable, a lambda parameter and a `when` binding.
+fn outer(s) ->
+    fn len(x) -> 99
+    len(s)
+print(outer('ab'))
+for max in list [4, 5]:
+    print(max)
+g = fn(len) -> len('abc')
+print(g(fn(x) -> 5))
+r = ok(fn(x) -> 8)
+when r:
+    ok len -> print(len('abc'))
+    err e -> print(e)
+
+// A parameter named like a native (fully annotated) function.
+fn nat(x: int) int -> x + 1
+fn wrap(nat) -> (fn(z) -> nat(z))
+print(wrap(fn(y) -> y * 100)(10))
+fn wrap_pipe(nat) -> 10 | nat()
+print(wrap_pipe(fn(y) -> y * 2))
+
+// A module member named like a builtin.
+module m:
+    fn len(x) -> 42
+    fn use(x) -> len(x)
+incl m as mm
+print(mm.use('a'))
+
+// Outside the shadowing scopes, the originals are unaffected.
+print(len('abc'))
+print(nat(1))

@@ -346,16 +346,16 @@ func CanAssign(dstType, srcType Type) bool {
 	if srcType.Equals(TypeAny) {
 		return dstType.Equals(TypeAny)
 	}
-	// Null can be assigned to any reference type
+	// Null can be assigned to any reference type except result: a result is
+	// always ok(...) or err(...), so `r == null` can't stand in for is_err(r).
 	if srcType.Equals(TypeNull) {
 		_, isList := dstType.(*ListType)
 		_, isDict := dstType.(*DictType)
 		_, isFunc := dstType.(*FunctionType)
-		_, isResult := dstType.(*ResultType)
 		_, isStruct := dstType.(*StructType)
 		_, isVec := dstType.(*VectorType)
 		isResource := dstType.Equals(TypeResource)
-		return isList || isDict || isFunc || isResult || isStruct || isVec || isResource || dstType.Equals(TypeFn)
+		return isList || isDict || isFunc || isStruct || isVec || isResource || dstType.Equals(TypeFn)
 	}
 	// `fn` accepts every function value; a function value typed only as `fn`
 	// can go where a specific signature is expected (checked when called).

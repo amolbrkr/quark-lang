@@ -286,17 +286,27 @@ the same rules.
 ```quark
 print('hello')              // value followed by a newline
 print('no newline by default?') // print also writes a trailing newline by default
-name = input('Your name: ')   // read a line from stdin (prompt is optional)
+name = unwrap(input('Your name: '))   // read a line from stdin (prompt is optional)
 ```
 
 - `print(value)` writes `value` followed by a newline.
 - `print(value, end, width, align, pad)` writes `value` with up to four optional
   formatting arguments (custom line terminator, minimum field width, alignment,
   and pad character).
-- `input()` / `input(prompt)` reads a line of text and returns it as a string
-  without the line ending. At end of input it returns `null` (an empty line
-  gives `''`), so `while true: line = input(); if line == null: break` reads
-  stdin to the end.
+- `input()` / `input(prompt)` reads a line of text and returns it as a
+  `result`: `ok(line)` without the line ending (an empty line gives `ok('')`),
+  or `err('end of input')` once stdin is exhausted. To read stdin to the end:
+
+  ```quark
+  while true:
+      r = input()
+      if is_err(r):
+          break
+      line = unwrap(r)
+      print(line.upper())
+  ```
+
+  A result is never `null`, so `input() == null` is a compile error.
 
 `print` and `to_str` show a collection's contents. Strings inside it are quoted
 and dict keys are sorted. A collection with more than 100 items shows its first
@@ -776,6 +786,22 @@ module helpers:
 incl './lib/helpers' as h
 print(h.format_name('Ada'))   // Name: Ada
 ```
+
+**Top-level names are shared.** Only `module` members are namespaced: every
+other top-level name of an included file (its `fn`s, variables, `struct`s and
+`extern fn` bindings such as `fmt_vec`) is visible in the importing program.
+Defining the same top-level name in two files is a compile error that names
+both places, rather than one definition silently replacing the other:
+
+```quark
+incl 'std/fmt' as fmt
+fn fmt_full(x) -> 'mine'   // error: 'fmt_full' is already defined as an extern fn (std/fmt.qrk:7)
+```
+
+Builtin names work the same way. `fn len(x) -> ...` or `sum = 0` is an error
+(`'len' is a builtin function and can't be redefined or assigned`), but a
+parameter, loop variable, `when` binding or nested function may shadow a
+builtin, and calls inside that scope use it: `fn clamp(x, min, max)` is fine.
 
 **Standard library import** (the `std/` prefix; see
 [stdlib modules](#standard-library-modules)):

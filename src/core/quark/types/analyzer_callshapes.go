@@ -254,14 +254,9 @@ func (a *Analyzer) describeFunctionArg(node *ast.TreeNode) string {
 	}
 	switch node.NodeType {
 	case ast.IdentifierNode:
-		return fmt.Sprintf("'%s'", displayName(node.TokenLiteral()))
+		return fmt.Sprintf("'%s'", node.TokenLiteral())
 	case ast.LambdaNode:
 		return "the lambda passed"
-	case ast.OperatorNode:
-		if len(node.Children) == 2 && node.Children[0] != nil && node.Children[1] != nil && a.moduleMemberRefs[node] {
-			alias := node.Children[0].TokenLiteral()
-			return fmt.Sprintf("'%s.%s'", alias, displayMember(a.moduleAliases[alias], node.Children[1].TokenLiteral()))
-		}
 	}
 	return "the function passed"
 }
@@ -301,14 +296,4 @@ func arityText(minArity, maxArity int) string {
 		return pluralArgs(maxArity)
 	}
 	return fmt.Sprintf("%d-%d arguments", minArity, maxArity)
-}
-
-// displayName shows an internal module member name (`io__exists`) as written.
-func displayName(name string) string {
-	for i := 0; i+1 < len(name); i++ {
-		if name[i] == '_' && name[i+1] == '_' && i > 0 {
-			return name[:i] + "." + name[i+2:]
-		}
-	}
-	return name
 }

@@ -14,15 +14,15 @@ The goal is not Python or R parity. Each module should cover the common 80% of i
 Measured problems in the current modules (2026-11-11, Linux x86_64):
 
 - `std/io` writes are unbuffered: writing 1M short lines takes 2.8s, against 0.4s in Python.
-- `std/io` never closes a file the program forgot to close. With a 256-descriptor limit (the macOS default), a loop that opens files without `io.close` fails after about 250 files with "Too many open files".
-- Reading a whole file needs a guessed size: `io.read(f, 100000000)`.
+- `std/io` never closes a file the program forgot to close. With a 256-descriptor limit (the macOS default), a loop that opens files without `io::close` fails after about 250 files with "Too many open files".
+- Reading a whole file needs a guessed size: `io::read(f, 100000000)`.
 - There is no way to print to stderr, read a line from a file, list a directory, or get the working directory.
 
 ## 2. Design Principles
 
 1. **Modules, not prelude.** New functionality goes in `std/` modules. Prelude builtin names can't be used as variable names, so every new builtin takes a name away from users. The one exception proposed is multi-argument `print` (§3.2, decision 1).
 2. **Results for things that can fail because of the environment** (missing file, bad date string). Programming errors (a negative count, an unknown format code) are runtime errors.
-3. **Convenience first, then control.** Each module gets one-call helpers for the common case (`io.read_text(path)`) next to the handle-based API (`io.open`, `io.read_line`).
+3. **Convenience first, then control.** Each module gets one-call helpers for the common case (`io.read_text(path)`) next to the handle-based API (`io::open`, `io.read_line`).
 4. **Dicts, not structs, for compound returns.** A struct can't be defined inside a `module` block yet, so stdlib functions return dicts (`time.parts(ts)` gives `{year: ..., month: ...}`).
 5. **Compile cost counts.** Glue headers are compiled into every program that imports the module; `extern source` (FFI P2), which would cache them, isn't implemented. A module should add well under a second to a build.
 6. **No new syntax.** No string interpolation, no varargs in Quark functions, no keyword arguments; the language-scope decisions of 2026-11-10 stand.
@@ -154,9 +154,9 @@ Only UTC and the machine's local zone are supported. Named zones (`Europe/Berlin
 
 Compared with Python's `open()`:
 
-1. **Unclosed files leak.** The `FINALIZABLE` flag on file resources isn't backed by a GC finalizer, so a forgotten `io.close` keeps the descriptor until exit. Python closes files when they're collected and has `with`.
-2. **Writes are unbuffered**, one system call per `io.write`: 7× slower than Python for many small writes (§1).
-3. **No whole-file or line reading.** `io.read(f, n)` needs a size; there is no `readline`, no line iteration, and no read-everything.
+1. **Unclosed files leak.** The `FINALIZABLE` flag on file resources isn't backed by a GC finalizer, so a forgotten `io::close` keeps the descriptor until exit. Python closes files when they're collected and has `with`.
+2. **Writes are unbuffered**, one system call per `io::write`: 7× slower than Python for many small writes (§1).
+3. **No whole-file or line reading.** `io::read(f, n)` needs a size; there is no `readline`, no line iteration, and no read-everything.
 4. **Binary data is truncated at the first NUL byte**, because strings are NUL-terminated. `binary: true` only changes Windows newline handling, so the parameter promises more than it delivers.
 5. **No stdout/stderr/stdin handles** (no `print(..., file=sys.stderr)`, no reading all of stdin).
 6. **Every call returns a result**, so a three-line read is three `unwrap`s. Results are right for `open`, but reads and writes on an open file rarely fail.
@@ -201,7 +201,7 @@ The things Python has in `os`, `os.path`, `shutil` and `pathlib`, implemented wi
 
 | Function | Notes |
 |---|---|
-| `exists(path)`, `is_file(path)`, `is_dir(path)` | `bool`; `io.exists` stays as an alias |
+| `exists(path)`, `is_file(path)`, `is_dir(path)` | `bool`; `io::exists` stays as an alias |
 | `list_dir(path = '.') result` | sorted names |
 | `walk(path) result` | every file below `path`, relative paths, sorted |
 | `glob(pattern) result` | `*`, `?`, `**`; sorted |
@@ -249,7 +249,7 @@ Measured on 2026-11-11 (clang 22, `-O2`; compile time of a file that only includ
 | `parse(text, sep = ',') list` | existing: rows of strings |
 | `read(path, sep = ',') result` | existing: `ok(rows)` |
 | `read_records(path, sep = ',') result` | `ok(list of dicts)` keyed by the header row |
-| `read_columns(path, sep = ',', types: bool = true) result` | `ok(dict)` from header name to column. With `types`, a column whose non-empty cells are all integers becomes `vec[i64]`, all numbers `vec[f64]`, all `true`/`false` `vec[bool]`, otherwise `vec[str]`; empty cells become `null`. `fmt.table` already renders this shape. |
+| `read_columns(path, sep = ',', types: bool = true) result` | `ok(dict)` from header name to column. With `types`, a column whose non-empty cells are all integers becomes `vec[i64]`, all numbers `vec[f64]`, all `true`/`false` `vec[bool]`, otherwise `vec[str]`; empty cells become `null`. `fmt::table` already renders this shape. |
 | `each(path, f, sep = ',') result` | calls `f(row)` for every row without loading the file; `ok(row count)`. A callback rather than an iterator, since Quark has no iterator protocol. |
 | `format(rows, sep = ',') str` | quotes fields that contain `sep`, quotes or newlines |
 | `write(path, rows, sep = ',') result` | `rows` is a list of lists, or a list of dicts (header from the first dict's sorted keys) |
@@ -307,6 +307,6 @@ Every function gets a smoke test, an entry in `stdlib.md`, and editor data (`go 
 3. **`fs.join` arity.** Quark functions have no varargs: `fs.join(a, b)` with two arguments (nest for more), or `fs.join(list [a, b, c])`?
 4. **`std/fs` vs. more in `std/io`.** A separate module (proposed), or put directory and path functions in `std/io`?
 5. **Timing helpers.** Is `time.since(start)` plus `time.duration(s)` enough, or do you want a named stopwatch (`stopwatch('load')` … `lap('load')` printing `load: 1.25s`)? The named form needs module-level state.
-6. **Results on open handles.** Make `read`, `read_line`, `write` and `flush` on an open handle return plain values with runtime errors on failure (proposed, like Python's exceptions for rare I/O errors), and keep results for `open` and the path-based helpers? This changes the current `io.read`/`io.write` signatures.
+6. **Results on open handles.** Make `read`, `read_line`, `write` and `flush` on an open handle return plain values with runtime errors on failure (proposed, like Python's exceptions for rare I/O errors), and keep results for `open` and the path-based helpers? This changes the current `io::read`/`io::write` signatures.
 7. **CSV type inference.** Whole-column inference (proposed), or only the first N rows, as DuckDB samples? Whole-column is exact; sampling is faster on huge files but can fail late.
 8. **CSV library.** Agree to stay in-house for v0.1 and revisit after DuckDB (§8.2)?

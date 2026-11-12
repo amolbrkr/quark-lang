@@ -5,7 +5,6 @@ import (
 	"quark/builtins"
 	"quark/ir"
 	"quark/token"
-	"strings"
 )
 
 // checkArgTypes validates argument types against parameter types using the knowability rule.
@@ -264,39 +263,6 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 		argTypes = append(argTypes, a.Analyze(arg))
 	}
 
-	if moduleName, member, sym, ok := a.lookupModuleCall(funcNode); ok {
-		if sym == nil {
-			a.callPlans[node] = &ir.CallPlan{Kind: ir.CallFunctionValue, CalleeName: moduleName + "." + displayMember(moduleName, member), MinArity: argCount, MaxArity: argCount, Dispatch: ir.DispatchClosure, ArgTypesChecked: true}
-			return TypeAny
-		}
-		funcType, isFunc := sym.Type.(*FunctionType)
-		if !isFunc {
-			a.errorAt(funcNode, "module symbol '%s.%s' is not callable", moduleName, displayMember(moduleName, member))
-			a.callPlans[node] = &ir.CallPlan{Kind: ir.CallFunctionValue, CalleeName: moduleName + "." + displayMember(moduleName, member), MinArity: argCount, MaxArity: argCount, Dispatch: ir.DispatchClosure, ArgTypesChecked: true}
-			return TypeAny
-		}
-		minArity := funcType.MinArity()
-		maxArity := len(funcType.ParamTypes)
-		defaultNodes := defaultNodesFromFunctionType(funcType, argCount)
-		dispatch := ir.DispatchClosure
-		runtimeSymbol := ""
-		var nativeParamTypes []string
-		nativeReturnType := ""
-		a.callPlans[node] = &ir.CallPlan{Kind: ir.CallFunctionValue, CalleeName: moduleName + "." + displayMember(moduleName, member), MinArity: minArity, MaxArity: maxArity, Dispatch: dispatch, RuntimeSymbol: runtimeSymbol, DefaultNodes: defaultNodes, NativeParamTypes: nativeParamTypes, NativeReturnType: nativeReturnType}
-		a.deferFixedDispatch(a.callPlans[node], sym)
-		if argCount < minArity || argCount > maxArity {
-			if minArity == maxArity {
-				a.errorAt(node, "function expects %d arguments but got %d", maxArity, argCount)
-			} else {
-				a.errorAt(node, "function expects %d-%d arguments but got %d", minArity, maxArity, argCount)
-			}
-		}
-		a.checkArgTypes(moduleName+"."+displayMember(moduleName, member), funcType.ParamTypes, argTypes, argsNode.Children)
-		a.checkCallbackArgs(moduleName+"."+displayMember(moduleName, member), funcType, argTypes, argsNode.Children)
-		a.callPlans[node].ArgTypesChecked = true
-		return funcType.ReturnType
-	}
-
 	// Method dispatch: x.method(args)
 	if funcNode.NodeType == ast.OperatorNode && funcNode.Token != nil && funcNode.Token.Type == token.DOT {
 		result := a.resolveMethodCall(node, node, funcNode, argCount, argTypes, argsNode.Children, "")
@@ -409,40 +375,9 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 		calleeName = funcNode.TokenLiteral()
 	}
 	a.checkArgTypes(calleeName, funcType.ParamTypes, argTypes, argsNode.Children)
-	a.checkCallbackArgs(displayName(calleeName), funcType, argTypes, argsNode.Children)
+	a.checkCallbackArgs(calleeName, funcType, argTypes, argsNode.Children)
 	a.callPlans[node].ArgTypesChecked = true
 	return funcType.ReturnType
-}
-
-func (a *Analyzer) lookupModuleCall(funcNode *ast.TreeNode) (string, string, *Symbol, bool) {
-	if funcNode == nil || funcNode.NodeType != ast.OperatorNode || funcNode.Token == nil || funcNode.Token.Type != token.DOT {
-		return "", "", nil, false
-	}
-	if len(funcNode.Children) < 2 || funcNode.Children[0] == nil || funcNode.Children[1] == nil {
-		return "", "", nil, false
-	}
-	left := funcNode.Children[0]
-	right := funcNode.Children[1]
-	if left.NodeType != ast.IdentifierNode || right.NodeType != ast.IdentifierNode {
-		return "", "", nil, false
-	}
-	alias := left.TokenLiteral()
-	moduleName, ok := a.moduleAliases[alias]
-	if !ok {
-		return "", "", nil, false
-	}
-	module, exists := a.modules[moduleName]
-	if !exists {
-		a.errorAt(left, "undefined module '%s' for alias '%s'", moduleName, alias)
-		return moduleName, right.TokenLiteral(), nil, true
-	}
-	member := right.TokenLiteral()
-	sym, exists := module.Symbols[member]
-	if !exists {
-		a.errorAt(right, "module '%s' has no symbol '%s'", moduleName, displayMember(moduleName, member))
-		return moduleName, member, nil, true
-	}
-	return moduleName, member, sym, true
 }
 
 func builtinsRuntimeName(name string) string {
@@ -514,43 +449,6 @@ func (a *Analyzer) analyzePipe(node *ast.TreeNode) Type {
 		argTypes = append(argTypes, a.Analyze(arg))
 	}
 	pipeArgCount := len(argsNode.Children) + 1
-
-	if moduleName, member, sym, ok := a.lookupModuleCall(funcNode); ok {
-		if sym == nil {
-			a.callPlans[rightNode] = &ir.CallPlan{Kind: ir.CallFunctionValue, CalleeName: moduleName + "." + displayMember(moduleName, member), MinArity: pipeArgCount, MaxArity: pipeArgCount, Dispatch: ir.DispatchClosure, ArgTypesChecked: true}
-			return TypeAny
-		}
-		funcType, isFunc := sym.Type.(*FunctionType)
-		if !isFunc {
-			a.errorAt(funcNode, "module symbol '%s.%s' is not callable", moduleName, displayMember(moduleName, member))
-			a.callPlans[rightNode] = &ir.CallPlan{Kind: ir.CallFunctionValue, CalleeName: moduleName + "." + displayMember(moduleName, member), MinArity: pipeArgCount, MaxArity: pipeArgCount, Dispatch: ir.DispatchClosure, ArgTypesChecked: true}
-			return TypeAny
-		}
-		minArity := funcType.MinArity()
-		maxArity := len(funcType.ParamTypes)
-		defaultNodes := defaultNodesFromFunctionType(funcType, pipeArgCount)
-		dispatch := ir.DispatchClosure
-		runtimeSymbol := ""
-		var nativeParamTypes []string
-		nativeReturnType := ""
-		a.callPlans[rightNode] = &ir.CallPlan{Kind: ir.CallFunctionValue, CalleeName: moduleName + "." + displayMember(moduleName, member), MinArity: minArity, MaxArity: maxArity, Dispatch: dispatch, RuntimeSymbol: runtimeSymbol, DefaultNodes: defaultNodes, NativeParamTypes: nativeParamTypes, NativeReturnType: nativeReturnType}
-		a.deferFixedDispatch(a.callPlans[rightNode], sym)
-		if pipeArgCount < minArity || pipeArgCount > maxArity {
-			if minArity == maxArity {
-				a.errorAt(node, "function expects %d arguments but got %d (including piped input)", maxArity, pipeArgCount)
-			} else {
-				a.errorAt(node, "function expects %d-%d arguments but got %d (including piped input)", minArity, maxArity, pipeArgCount)
-			}
-		}
-		pipeArgTypes := []Type{inputType}
-		pipeArgTypes = append(pipeArgTypes, argTypes...)
-		pipeArgNodes := []*ast.TreeNode{inputNode}
-		pipeArgNodes = append(pipeArgNodes, argsNode.Children...)
-		a.checkArgTypes(moduleName+"."+displayMember(moduleName, member), funcType.ParamTypes, pipeArgTypes, pipeArgNodes)
-		a.checkCallbackArgs(moduleName+"."+displayMember(moduleName, member), funcType, pipeArgTypes, pipeArgNodes)
-		a.callPlans[rightNode].ArgTypesChecked = true
-		return funcType.ReturnType
-	}
 
 	// Method dispatch in pipe: value | x.method(args)
 	if funcNode.NodeType == ast.OperatorNode && funcNode.Token != nil && funcNode.Token.Type == token.DOT {
@@ -647,7 +545,7 @@ func (a *Analyzer) analyzePipe(node *ast.TreeNode) Type {
 		pipeArgNodes := []*ast.TreeNode{inputNode}
 		pipeArgNodes = append(pipeArgNodes, argsNode.Children...)
 		a.checkArgTypes(pipeCallee, funcType.ParamTypes, pipeArgTypes, pipeArgNodes)
-		a.checkCallbackArgs(displayName(pipeCallee), funcType, pipeArgTypes, pipeArgNodes)
+		a.checkCallbackArgs(pipeCallee, funcType, pipeArgTypes, pipeArgNodes)
 		a.callPlans[rightNode].ArgTypesChecked = true
 		return funcType.ReturnType
 	}
@@ -848,10 +746,4 @@ func defaultNodesFromFunctionType(ft *FunctionType, provided int) []*ast.TreeNod
 		return nil
 	}
 	return nodes
-}
-
-// displayMember is a module member's name as the user wrote it: the loader
-// renames member `open` of module `io` to `io__open` (loader.MemberName).
-func displayMember(module, member string) string {
-	return strings.TrimPrefix(member, module+"__")
 }

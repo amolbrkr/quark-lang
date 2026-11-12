@@ -125,6 +125,9 @@ func TestSmokePrograms_Run(t *testing.T) {
 				"16",
 				"18",
 				"42",
+				"1",
+				"2",
+				"2",
 			),
 		},
 		{
@@ -765,23 +768,6 @@ func TestSmokePrograms_Run(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.name == "modules_success" {
-				modulesFixtureDir := filepath.Join(testfilesDir, "lib")
-				if _, err := os.Stat(modulesFixtureDir); err != nil {
-					t.Skipf("skipping %s: missing module fixtures at %s", tc.name, modulesFixtureDir)
-				}
-
-				coreFixture := filepath.Join(modulesFixtureDir, "core.qrk")
-				coreSource, err := os.ReadFile(coreFixture)
-				if err != nil {
-					t.Skipf("skipping %s: missing module fixture file %s", tc.name, coreFixture)
-				}
-				if !strings.Contains(string(coreSource), "module core") {
-					t.Skipf("skipping %s: %s no longer exposes module core", tc.name, coreFixture)
-				}
-			}
-
-			// Run from a temp dir: smoke_stdlib_io.qrk writes a relative file.
 			got := runQuarkIn(t, t.TempDir(), "run", tc.file)
 			gotNorm := strings.TrimSpace(normalizeNewlines(got))
 			expNorm := strings.TrimSpace(normalizeNewlines(tc.expected))
@@ -888,12 +874,12 @@ func TestSemanticsSafety_Rejected(t *testing.T) {
 		{"dynamic_method_arg_type", "fn id(x) -> x\nid('a').split(5)\n", "argument 1 of 'split' expects str, got int"},
 		// Ordering compares two numbers or two strings; mixes are runtime errors.
 		{"order_str_int", "print('a' < 1)\n", "operator '<' expects two numbers or two strings"},
-		{"csv_unterminated_quote", "incl 'std/csv' as csv\nprint(csv.parse('a,\"b\\n'))\n", "csv.parse: unterminated quoted field"},
-		{"csv_bad_separator", "incl 'std/csv' as csv\nprint(csv.parse('a', ';;'))\n", "separator must be a single character"},
+		{"csv_unterminated_quote", "incl 'std/csv' as csv\nprint(csv::parse('a,\"b\\n'))\n", "csv.parse: unterminated quoted field"},
+		{"csv_bad_separator", "incl 'std/csv' as csv\nprint(csv::parse('a', ';;'))\n", "separator must be a single character"},
 		// `fn` declarations are fixed (modules v0.2, rules 18-20).
 		{"fn_declared_twice", "fn f(x) -> x\nfn f(x) -> x + 1\nprint(f(1))\n", "'f' is already defined on line 1"},
 		{"fn_declared_twice_in_fn", "fn outer() ->\n    fn g() -> 1\n    fn g() -> 2\n    g()\nprint(outer())\n", "'g' is already defined on line 2"},
-		{"fn_declared_twice_in_module", "module m:\n    fn g() -> 1\n    fn g() -> 2\nincl m as mm\nprint(mm.g())\n", "'m__g' is already defined on line 2"},
+		{"fn_declared_twice_in_module", "module m:\n    fn g() -> 1\n    fn g() -> 2\nprint(m::g())\n", "'g' is already defined on line 2"},
 		{"fn_reassigned", "fn f(x) -> x\nf = fn(x) -> 0\nprint(f(1))\n", "'f' is a function declaration (line 1) and can't be reassigned; use a variable: g = fn ..."},
 		{"fn_reassigned_value", "fn f(x) -> x\nf = 3\nprint(f)\n", "'f' is a function declaration (line 1) and can't be reassigned"},
 		{"fn_reassigned_native", "fn f(x: int) int -> x\nf = fn(x: int) int -> 0\nprint(f(1))\n", "'f' is a function declaration (line 1) and can't be reassigned"},
@@ -945,7 +931,7 @@ func TestSemanticsSafety_Rejected(t *testing.T) {
 		{"fn_var_annotation", "f: fn = 3\n", "cannot assign value of type 'int' to 'fn'"},
 		{"fn_struct_field", "struct H:\n    run: fn\nh = H { run: 1 }\n", "to field 'run' of type 'fn'"},
 		{"native_return_checked", "fn nat(f: fn) int -> f(1)\nprint(nat(fn(a) -> 'x'))\n", "expected int, got str"},
-		{"module_member_value_unknown", "incl 'std/io' as io\nf = io.nope\n", "module 'io' has no symbol 'nope'"},
+		{"module_member_value_unknown", "incl 'std/io' as io\nf = io::nope\n", "'io' (std/io) has no 'nope'"},
 		// Calls through function parameters are checked at compile time against
 		// the function passed: arity, argument types (including arguments the
 		// body passes on from its own parameters), across pipes, modules and
@@ -954,7 +940,7 @@ func TestSemanticsSafety_Rejected(t *testing.T) {
 		{"callback_arity_passed_on", "fn h(a, b) -> b\nfn apply(k: fn) -> k(1)\nfn wrap(k) -> apply(k)\nprint(wrap(h))\n", "argument 1 of 'wrap' is called with 1 argument (line 2), but 'h' takes 2 arguments"},
 		{"callback_arity_pipe", "fn h(a, b) -> b\nfn apply(k) -> 1 | k()\nprint(apply(h))\n", "argument 1 of 'apply' is called with 1 argument (line 2), but 'h' takes 2 arguments"},
 		{"callback_arity_lambda", "fn apply(k) -> k(1)\nprint(apply(fn(a, b) -> b))\n", "but the lambda passed takes 2 arguments"},
-		{"callback_arity_module_member", "incl 'std/io' as io\nfn apply(k) -> k()\nprint(apply(io.exists))\n", "but 'io.exists' takes 1 argument"},
+		{"callback_arity_module_member", "incl 'std/io' as io\nfn apply(k) -> k()\nprint(apply(io::exists))\n", "but 'io::exists' takes 1 argument"},
 		{"callback_arity_in_closure", "fn h(a, b) -> b\nfn apply(k) ->\n    g = fn() -> k(1)\n    g()\nprint(apply(h))\n", "is called with 1 argument (line 3), but 'h' takes 2 arguments"},
 		{"callback_arg_type", "fn inc(x: int) -> x + 1\nfn apply(k) -> k('s')\nprint(apply(inc))\n", "argument 1 of 'apply' is called with str as argument 1 (line 2), but 'inc' expects int"},
 		{"callback_arg_type_from_param", "fn apply(k, v) -> k(v)\nprint(apply(fn(x: int) -> x, 'str'))\n", "is called with str as argument 1 (line 1), but the lambda passed expects int"},
@@ -968,7 +954,7 @@ func TestSemanticsSafety_Rejected(t *testing.T) {
 		{"dynamic_arity_too_many", "fn id(v) -> v\nf = id(fn(a) -> a)\nprint(f(1, 2))\n", "function expects 1 argument but got 2"},
 		{"dynamic_arity_default_range", "fn id(v) -> v\nfn g(a, b = 1) -> a\nf = id(g)\nprint(f())\n", "function 'g' expects 1-2 arguments but got 0"},
 		{"dynamic_arity_struct_field", "struct H:\n    run: fn\nfn h(a, b) -> b\nx = H { run: h }\nr = x.run\nprint(r(1))\n", "function 'h' expects 2 arguments but got 1"},
-		{"dynamic_arity_module_member", "incl 'std/io' as io\nfn id(v) -> v\nf = id(io.exists)\nprint(f())\n", "function 'io.exists' expects 1 argument but got 0"},
+		{"dynamic_arity_module_member", "incl 'std/io' as io\nfn id(v) -> v\nf = id(io::exists)\nprint(f())\n", "function 'io::exists' expects 1 argument but got 0"},
 		{"when_literal_or_result", "n = 1\nwhen n:\n    1 or ok x -> print(1)\n    _ -> print(2)\n", "ok patterns cannot be combined with other patterns using 'or'"},
 		// Struct field values of unknown type are checked when the literal is
 		// built, so a field read never reinterprets a value of the wrong type.
@@ -992,8 +978,7 @@ func TestSemanticsSafety_Rejected(t *testing.T) {
 		{"builtin_redefined_print", "fn print(x) -> 1\nprint(5)\n", "'print' is a builtin function and can't be redefined or assigned"},
 		{"builtin_assigned_value", "sum = 0\nprint(sum)\n", "'sum' is a builtin function and can't be redefined or assigned"},
 		{"builtin_assigned_in_fn", "fn f() ->\n    max = 1\n    max\nprint(f())\n", "'max' is a builtin function and can't be redefined or assigned"},
-		{"extern_redefined_same_file", "extern fn myargs() list as 'q_sys_args'\nfn myargs() -> 1\nprint(1)\n", "'myargs' is already defined as an extern fn (line 1)"},
-		{"stdlib_extern_redefined", "incl 'std/fmt' as fmt\nfn fmt_full(x) -> 'mine'\nprint(fmt_full(1))\n", "'fmt_full' is already defined as an extern fn (std/fmt.qrk:7)"},
+		{"extern_redefined_same_file", "extern fn myargs() list as 'q_sys_args'\nfn myargs() -> 1\nprint(1)\n", "'myargs' is already defined on line 1"},
 		// input() returns ok(line) / err('end of input'), and a result is never
 		// null, so the old `line == null` EOF check can't silently loop forever.
 		{"input_used_as_str", "print(len(input()))\n", "argument 1 of 'len' expects str, list, dict, or vec, got result[str, str]"},
@@ -1011,7 +996,6 @@ func TestSemanticsSafety_Rejected(t *testing.T) {
 		{"result_return_null", "fn f() result -> null\nprint(f())\n", "declares return type 'result[any, any]' but body returns 'null'"},
 		{"result_default_null", "fn f(r: result = null) -> r\nprint(f())\n", "default value type 'null' doesn't match parameter type 'result[any, any]'"},
 		{"int_default_null", "fn f(x: int = null) -> x\nprint(f())\n", "default value type 'null' doesn't match parameter type 'int'"},
-		{"stdlib_extern_assigned_before_incl", "fmt_vec = 3\nincl 'std/fmt' as fmt\nprint(fmt_vec)\n", "'fmt_vec' is already defined as an extern fn (std/fmt.qrk:4)"},
 	}
 
 	tmp := t.TempDir()
@@ -1093,21 +1077,21 @@ func TestStdIO_FileModes(t *testing.T) {
 	source := strings.Join([]string{
 		"incl 'std/io' as io",
 		"p = '" + targetForQuark + "'",
-		"f = unwrap(io.open(p, 'w'))",
+		"f = unwrap(io::open(p, 'w'))",
 		"print(type(f))",
-		"print(type(io.exists(p)))",
-		"io.write(f, 'hello file') | unwrap() | print()",
-		"io.close(f) | unwrap()",
-		"r = unwrap(io.open(p, 'r'))",
-		"print(unwrap(io.read(r, 64)))",
-		"io.close(r) | unwrap()",
-		"print(io.exists(p))",
-		"a = unwrap(io.open(p, 'a'))",
-		"io.write(a, '!') | unwrap()",
-		"io.close(a) | unwrap()",
-		"r2 = unwrap(io.open(p, 'r'))",
-		"print(unwrap(io.read(r2, 64)))",
-		"io.close(r2) | unwrap()",
+		"print(type(io::exists(p)))",
+		"io::write(f, 'hello file') | unwrap() | print()",
+		"io::close(f) | unwrap()",
+		"r = unwrap(io::open(p, 'r'))",
+		"print(unwrap(io::read(r, 64)))",
+		"io::close(r) | unwrap()",
+		"print(io::exists(p))",
+		"a = unwrap(io::open(p, 'a'))",
+		"io::write(a, '!') | unwrap()",
+		"io::close(a) | unwrap()",
+		"r2 = unwrap(io::open(p, 'r'))",
+		"print(unwrap(io::read(r2, 64)))",
+		"io::close(r2) | unwrap()",
 		"",
 	}, "\n")
 	if err := os.WriteFile(program, []byte(source), 0o644); err != nil {
@@ -1495,12 +1479,12 @@ func TestStdSys(t *testing.T) {
 	program := filepath.Join(tmp, "sys_args.qrk")
 	source := strings.Join([]string{
 		"incl 'std/sys' as sys",
-		"args = sys.args()",
+		"args = sys::args()",
 		"print(to_str(len(args)) + ': ' + args.join('|'))",
-		"print(sys.env('QK_SYS_TEST'))",
-		"print(sys.env('QK_SYS_TEST_UNSET') == null)",
+		"print(sys::env('QK_SYS_TEST'))",
+		"print(sys::env('QK_SYS_TEST_UNSET') == null)",
 		"if len(args) > 0 and args[0] == 'fail':",
-		"    sys.exit(3)",
+		"    sys::exit(3)",
 		"print('done')",
 		"",
 	}, "\n")
@@ -1558,8 +1542,8 @@ func TestRuntimeErrorLocations(t *testing.T) {
 	files := map[string]string{
 		"after_call.qrk":  "fn id(x) -> x\n\n\nprint(id(5) + 'a')\n",
 		"lib/helpers.qrk": "module helpers:\n    fn bad(x) ->\n        x + 'oops'\n",
-		"in_module.qrk":   "incl './lib/helpers' as h\nprint(h.bad(1))\n",
-		"in_stdlib.qrk":   "incl 'std/random' as random\n\nprint(random.randint(5, 1))\n",
+		"in_module.qrk":   "incl './lib/helpers' as h\nprint(h::bad(1))\n",
+		"in_stdlib.qrk":   "incl 'std/random' as random\n\nprint(random::randint(5, 1))\n",
 	}
 	for name, src := range files {
 		if err := os.WriteFile(filepath.Join(tmp, name), []byte(src), 0o644); err != nil {
@@ -1586,9 +1570,9 @@ func TestRuntimeErrorLocations(t *testing.T) {
 	}
 }
 
-// TestModuleNamespacing checks that module members don't collide with members
-// of other modules or with user definitions, and that ambiguous bare imports
-// are reported.
+// TestModuleNamespacing checks that members of different modules and files,
+// and user definitions, never collide: everything from another file or module
+// is reached with `::`, and nothing from another file is visible unqualified.
 func TestModuleNamespacing(t *testing.T) {
 	tmp := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(tmp, "lib"), 0o755); err != nil {
@@ -1605,19 +1589,19 @@ func TestModuleNamespacing(t *testing.T) {
 			"incl 'std/sys' as sys",
 			"fn name() -> 'mine'",
 			"open = 5",
-			"args = sys.args()",
-			"print(a.name() + ' ' + b.name() + ' ' + name() + ' ' + a.twice())",
-			"f = unwrap(io.open('t.csv', 'w'))",
-			"io.write(f, 'x,y\\n')",
-			"io.close(f)",
-			"g = unwrap(io.open('t.csv'))",
-			"print(unwrap(io.read(g, 100)).trim() + ' ' + to_str(len(unwrap(csv.read('t.csv')))))",
+			"args = sys::args()",
+			"print(a::name() + ' ' + b::name() + ' ' + name() + ' ' + a::twice())",
+			"f = unwrap(io::open('t.csv', 'w'))",
+			"io::write(f, 'x,y\\n')",
+			"io::close(f)",
+			"g = unwrap(io::open('t.csv'))",
+			"print(unwrap(io::read(g, 100)).trim() + ' ' + to_str(len(unwrap(csv::read('t.csv')))))",
 			"print(to_str(open) + ' ' + to_str(len(args)))",
 			"",
 		}, "\n"),
-		"bare_ok.qrk":       "incl './lib/a'\nprint(name())\nfn f(name) -> name\nprint(f('param'))\n",
-		"bare_conflict.qrk": "incl './lib/a'\nincl './lib/b'\nprint(name())\n",
-		"bare_vs_def.qrk":   "incl './lib/a'\nfn name() -> 1\n",
+		"not_visible.qrk": "incl './lib/a'\nprint(name())\n",
+		"dot_access.qrk":  "incl './lib/a'\nprint(a.name())\n",
+		"flat_stdlib.qrk": "incl 'std/fmt'\nprint(show_vec(vec [1]))\n",
 	}
 	for name, src := range files {
 		if err := os.WriteFile(filepath.Join(tmp, name), []byte(src), 0o644); err != nil {
@@ -1629,13 +1613,10 @@ func TestModuleNamespacing(t *testing.T) {
 	if got != want {
 		t.Fatalf("ok.qrk output:\n%s\nwant:\n%s", got, want)
 	}
-	got = strings.TrimSpace(normalizeNewlines(runQuarkIn(t, tmp, "run", "bare_ok.qrk")))
-	if got != "from a\nparam" {
-		t.Fatalf("bare_ok.qrk output:\n%s", got)
-	}
 	for file, wantErr := range map[string]string{
-		"bare_conflict.qrk": "symbol 'name' from module 'b' conflicts with symbol 'name' from module 'a'",
-		"bare_vs_def.qrk":   "symbol 'name' from module 'a' (imported on line 1) conflicts with this definition",
+		"not_visible.qrk": "undefined identifier 'name'",
+		"dot_access.qrk":  "'a' is an imported file; use a::name",
+		"flat_stdlib.qrk": "undefined identifier 'show_vec'",
 	} {
 		cmd := exec.Command(quarkExePath, "run", file)
 		cmd.Dir = tmp
@@ -1646,83 +1627,127 @@ func TestModuleNamespacing(t *testing.T) {
 	}
 }
 
-// TestTopLevelNameClashes: every top-level name of an included file shares the
-// importer's scope, so a name defined by two files is a compile error naming
-// both, instead of one definition silently replacing the other. A file
-// included along two paths is spliced once and doesn't clash with itself.
-func TestTopLevelNameClashes(t *testing.T) {
+// TestNamesArePerFile: each file has its own scope (modules v0.2 rule 12).
+// Two files can define the same name, a library's own calls always reach its
+// own definitions whatever the importer defines, and a file imported along
+// two paths is one file.
+func TestNamesArePerFile(t *testing.T) {
 	tmp := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(tmp, "lib"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	files := map[string]string{
-		"lib/helpy.qrk":  "fn helper(x) -> x + 100\nstruct Box:\n    v: int\nmodule helpy:\n    fn api(x) -> helper(x)\n",
-		"lib/helpy2.qrk": "fn helper(x) -> x + 200\nmodule helpy2:\n    fn api(x) -> helper(x)\n",
-		"lib/base.qrk":   "fn shared(x) -> x * 2\nmodule base:\n    fn twice(x) -> shared(x)\n",
-		"lib/left.qrk":   "incl './base.qrk' as b\nmodule left:\n    fn go(x) -> shared(x) + 1\n",
-		"lib/right.qrk":  "incl './base.qrk' as b\nmodule right:\n    fn go(x) -> shared(x) + 2\n",
-		"ok.qrk":         "incl './lib/helpy' as h\nincl './lib/left' as l\nincl './lib/right' as r\nfn mine(x) -> x\nprint(h.api(1))\nprint(l.go(1) + r.go(1))\nprint(Box { v: mine(3) })\n",
-		"fn_after.qrk":   "incl './lib/helpy' as h\nfn helper(x) -> x + 1\nprint(h.api(1))\n",
-		"fn_before.qrk":  "fn helper(x) -> x + 1\nincl './lib/helpy' as h\nprint(h.api(1))\n",
-		"variable.qrk":   "incl './lib/helpy' as h\nhelper = 5\nprint(h.api(1))\n",
-		"struct.qrk":     "incl './lib/helpy' as h\nstruct Box:\n    w: int\nprint(1)\n",
-		"two_libs.qrk":   "incl './lib/helpy' as h\nincl './lib/helpy2' as h2\nprint(h.api(1))\n",
+		"lib/helpy.qrk":       "fn helper(x) -> x + 100\nstruct Box:\n    v: int\nmodule helpy:\n    fn api(x) -> helper(x)\n",
+		"lib/helpy2.qrk":      "fn helper(x) -> x + 200\nmodule helpy2:\n    fn api(x) -> helper(x)\n",
+		"lib/base.qrk":        "fn shared(x) -> x * 2\nmodule base:\n    fn twice(x) -> shared(x)\n",
+		"lib/left.qrk":        "incl './base.qrk' as b\nmodule left:\n    fn go(x) -> b::shared(x) + 1\n",
+		"lib/right.qrk":       "incl './base.qrk' as b\nmodule right:\n    fn go(x) -> b::shared(x) + 2\n",
+		"ok.qrk":              "incl './lib/helpy' as h\nincl './lib/left' as l\nincl './lib/right' as r\nfn mine(x) -> x\nprint(h::api(1))\nprint(l::go(1) + r::go(1))\nprint(h::Box { v: mine(3) })\n",
+		"fn_after.qrk":        "incl './lib/helpy' as h\nfn helper(x) -> x + 1\nprint(h::api(1))\nprint(helper(1))\n",
+		"fn_before.qrk":       "fn helper(x) -> x + 1\nincl './lib/helpy' as h\nprint(h::api(1))\n",
+		"variable.qrk":        "incl './lib/helpy' as h\nhelper = 5\nprint(h::api(1))\nprint(helper)\n",
+		"struct.qrk":          "incl './lib/helpy' as h\nstruct Box:\n    w: int\nprint(Box { w: 1 })\nprint(h::Box { v: 2 })\n",
+		"two_libs.qrk":        "incl './lib/helpy' as h\nincl './lib/helpy2' as h2\nprint(h::api(1))\nprint(h2::api(1))\n",
+		"stdlib_names.qrk":    "incl 'std/fmt' as fmt\nfn fmt_full(x) -> 'mine'\nfmt_vec = 3\nprint(fmt_full(1))\nprint(fmt_vec)\nprint(fmt::fmt_full(list [1]))\n",
+		"struct_mismatch.qrk": "incl './lib/helpy' as h\nstruct Box:\n    v: int\nfn f(b: Box) -> b.v\nprint(f(h::Box { v: 1 }))\n",
+		"lib/u1.qrk":          "module utils:\n    fn tag() -> 'u1'\n",
+		"lib/u2.qrk":          "module utils:\n    fn tag() -> 'u2'\n",
+		"two_utils.qrk":       "incl './lib/u1'\nincl './lib/u2'\nprint(u1::utils::tag() + u2::utils::tag())\n",
+		// A library's locals never see the importer's names, which are
+		// spliced into the same tree with their bare names.
+		"lib/acc.qrk": "fn g() ->\n    total = 5\n    inner = fn() -> total\n    inner() + 1\n" +
+			"fn h(r, n: int) ->\n    s = 0\n    for total in range(n):\n        s = s + total\n    when r:\n        ok total -> total + s\n        err e -> 0\n" +
+			"fn k(x) ->\n    fn total(y) -> y * 2\n    total(x)\n" +
+			"fn rt(total: int) -> total\n",
+		"locals.qrk":    "incl './lib/acc'\nfn total() -> 100\nfn inner() -> 'main inner'\nprint(acc::g())\nprint(acc::h(ok(10), 3))\nprint(acc::k(4))\nprint(total())\nprint(acc::rt(7))\n",
+		"locals_rt.qrk": "incl './lib/acc'\nfn total() -> 1\nfn id(v) -> v\nprint(acc::rt(id('s')))\n",
 	}
 	for name, src := range files {
 		if err := os.WriteFile(filepath.Join(tmp, name), []byte(src), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	got := strings.TrimSpace(normalizeNewlines(runQuarkIn(t, tmp, "run", "ok.qrk")))
-	if want := "101\n7\nBox {v: 3}"; got != want {
-		t.Fatalf("ok.qrk output:\n%s\nwant:\n%s", got, want)
-	}
-	for file, wantErrs := range map[string][]string{
-		"fn_after.qrk":  {"'helper' is already defined as a fn (lib/helpy.qrk:1); every top-level name of an included file is visible to the importer, so rename this one", "fn_after.qrk:2:4"},
-		"fn_before.qrk": {"'helper' is already defined as a fn (lib/helpy.qrk:1)", "fn_before.qrk:1:4"},
-		"variable.qrk":  {"'helper' is already defined as a fn (lib/helpy.qrk:1)", "variable.qrk:2:1"},
-		"struct.qrk":    {"'Box' is already defined as a struct (lib/helpy.qrk:2)", "struct.qrk:2"},
-		"two_libs.qrk":  {"'helper' is already defined as a fn (lib/helpy.qrk:1); both files are included and their top-level names share one scope; rename one of them or move it into its file's module block", "at lib/helpy2.qrk:1:4"},
+	for file, want := range map[string]string{
+		"ok.qrk":           "101\n7\nhelpy::Box {v: 3}",
+		"fn_after.qrk":     "101\n2",
+		"fn_before.qrk":    "101",
+		"variable.qrk":     "101\n5",
+		"struct.qrk":       "Box {w: 1}\nhelpy::Box {v: 2}",
+		"two_libs.qrk":     "101\n201",
+		"stdlib_names.qrk": "mine\n3\n[1]",
+		"two_utils.qrk":    "u1u2",
+		"locals.qrk":       "6\n13\n8\n100\n7",
 	} {
-		cmd := exec.Command(quarkExePath, "run", file)
-		cmd.Dir = tmp
-		out, err := cmd.CombinedOutput()
-		for _, wantErr := range wantErrs {
-			if err == nil || !strings.Contains(string(out), wantErr) {
-				t.Fatalf("%s: expected error containing %q, got (err=%v):\n%s", file, wantErr, err, out)
-			}
+		got := strings.TrimSpace(normalizeNewlines(runQuarkIn(t, tmp, "run", file)))
+		if got != want {
+			t.Fatalf("%s output:\n%s\nwant:\n%s", file, got, want)
 		}
+	}
+	cmd := exec.Command(quarkExePath, "run", "struct_mismatch.qrk")
+	cmd.Dir = tmp
+	out, err := cmd.CombinedOutput()
+	if wantErr := "argument 1 of 'f' expects Box, got helpy::Box"; err == nil || !strings.Contains(string(out), wantErr) {
+		t.Fatalf("struct_mismatch.qrk: expected error %q, got (err=%v):\n%s", wantErr, err, out)
+	}
+	// A renamed local is named as written in runtime messages.
+	cmd = exec.Command(quarkExePath, "run", "locals_rt.qrk")
+	cmd.Dir = tmp
+	out, err = cmd.CombinedOutput()
+	if wantErr := "argument 'total' of 'acc::rt' expects int, got str"; err == nil || !strings.Contains(string(out), wantErr) {
+		t.Fatalf("locals_rt.qrk: expected error %q, got (err=%v):\n%s", wantErr, err, out)
 	}
 }
 
-// TestStructsAcrossFiles: a struct defined in an imported file can be built
-// with a literal and used as a return type in the importer (the parser no
-// longer needs to have seen the struct's definition), and its field values are
-// checked like those of a local struct.
+// TestStructsAcrossFiles: a struct of an imported file is named file::Struct
+// (or file::module::Struct) in literals, annotations and return types; its
+// field values are checked like a local struct's; a struct can be defined in
+// a module body; and struct identity is the definition, at compile time and
+// at runtime, so two structs named Point never pass for each other.
 func TestStructsAcrossFiles(t *testing.T) {
 	tmp := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(tmp, "lib"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	files := map[string]string{
-		"lib/geo.qrk": "struct Point:\n    x: int\n    y: float = 0\n\nmodule geo:\n    fn sum(p: Point) float -> p.x + p.y\n",
-		"ok.qrk":      "incl './lib/geo.qrk'\np = Point { x: 3, y: 4 }\nprint(geo.sum(p))\nfn mk(a: int) Point -> Point { x: a }\nprint(mk(2))\n",
-		"bad.qrk":     "incl './lib/geo.qrk'\nfn mk(a) -> Point { x: a }\nprint(mk('s'))\n",
+		"lib/geo.qrk":    "struct Point:\n    x: int\n    y: float = 0\n\nmodule geo:\n    fn sum(p: Point) float -> p.x + p.y\n",
+		"lib/geo2.qrk":   "struct Point:\n    x: int\n",
+		"lib/shapes.qrk": "module shapes:\n    struct Sq:\n        side: int\n    fn mk(n) -> Sq { side: n }\n    fn area(s: Sq) -> s.side * s.side\nfn outside() -> shapes::Sq { side: 2 }\n",
+		"ok.qrk":         "incl './lib/geo.qrk'\np = geo::Point { x: 3, y: 4 }\nprint(geo::sum(p))\nfn mk(a: int) geo::Point -> geo::Point { x: a }\nprint(mk(2))\nprint(type(p))\n",
+		"bad.qrk":        "incl './lib/geo.qrk'\nfn mk(a) -> geo::Point { x: a }\nprint(mk('s'))\n",
+		"module_struct.qrk": "incl './lib/shapes'\nprint(shapes::area(shapes::mk(3)))\nprint(shapes::outside())\nprint(shapes::shapes::Sq { side: 1 })\n" +
+			"module local:\n    struct L:\n        n: int\n    fn mk() -> L { n: 1 }\nprint(local::mk())\nprint(local::L { n: 2 })\n",
+		"identity_static.qrk":  "incl './lib/geo'\nincl './lib/geo2'\nfn f(p: geo::Point) -> p.x\nprint(f(geo2::Point { x: 1 }))\n",
+		"identity_runtime.qrk": "incl './lib/geo'\nincl './lib/geo2'\nfn f(p: geo::Point) -> p.x\nq: any = geo2::Point { x: 1 }\nprint(f(q))\n",
+		"identity_field.qrk":   "incl './lib/geo'\nincl './lib/geo2'\nstruct W:\n    p: geo::Point\nq: any = geo2::Point { x: 1 }\nprint(W { p: q })\n",
+		"dot_literal.qrk":      "incl './lib/shapes'\nx = shapes.Sq { side: 1 }\n",
 	}
 	for name, src := range files {
 		if err := os.WriteFile(filepath.Join(tmp, name), []byte(src), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	got := strings.TrimSpace(normalizeNewlines(runQuarkIn(t, tmp, "run", "ok.qrk")))
-	if want := "7.0\nPoint {x: 2, y: 0.0}"; got != want {
-		t.Fatalf("ok.qrk output:\n%s\nwant:\n%s", got, want)
+	for file, want := range map[string]string{
+		"ok.qrk":            "7.0\ngeo::Point {x: 2, y: 0.0}\ngeo::Point",
+		"module_struct.qrk": "9\nshapes::Sq {side: 2}\nshapes::Sq {side: 1}\nlocal::L {n: 1}\nlocal::L {n: 2}",
+	} {
+		got := strings.TrimSpace(normalizeNewlines(runQuarkIn(t, tmp, "run", file)))
+		if got != want {
+			t.Fatalf("%s output:\n%s\nwant:\n%s", file, got, want)
+		}
 	}
-	cmd := exec.Command(quarkExePath, "run", "bad.qrk")
-	cmd.Dir = tmp
-	out, err := cmd.CombinedOutput()
-	if wantErr := "field 'x' of Point expects int, got str"; err == nil || !strings.Contains(string(out), wantErr) {
-		t.Fatalf("bad.qrk: expected error %q, got (err=%v):\n%s", wantErr, err, out)
+	for file, wantErr := range map[string]string{
+		"bad.qrk":              "field 'x' of geo::Point expects int, got str",
+		"identity_static.qrk":  "argument 1 of 'f' expects geo::Point, got geo2::Point",
+		"identity_runtime.qrk": "argument 'p' of 'f' expects geo::Point, got geo2::Point",
+		"identity_field.qrk":   "field 'p' of W expects geo::Point, got geo2::Point",
+		"dot_literal.qrk":      "a struct from a module or imported file is written shapes::Sq { ... }, with '::'",
+	} {
+		cmd := exec.Command(quarkExePath, "run", file)
+		cmd.Dir = tmp
+		out, err := cmd.CombinedOutput()
+		if err == nil || !strings.Contains(string(out), wantErr) || strings.Contains(string(out), "internal:") {
+			t.Fatalf("%s: expected error %q, got (err=%v):\n%s", file, wantErr, err, out)
+		}
 	}
 }
 

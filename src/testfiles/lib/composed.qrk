@@ -1,5 +1,6 @@
 incl './core'
 
+// The primary module (named like the file): importers write composed::square.
 module composed:
-    fn double_square(n) -> double(square(n))
+    fn double_square(n) -> core::helpers::double(square(n))
     fn square(n) -> n * n

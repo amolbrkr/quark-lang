@@ -153,7 +153,7 @@ test('method insert text places the cursor inside the parentheses', async () => 
 });
 
 test('stdlib module members after an alias', async () => {
-	const items = await complete("incl 'std/blas' as blas\nblas.|", '.');
+	const items = await complete("incl 'std/blas' as blas\nblas::|", ':');
 	const dot = items.find((i) => i.label === 'dot');
 	assert(dot, labels(items).join(','));
 	assert(dot.detail.includes('dot(x: vec, y: vec) float'), dot.detail);
@@ -162,10 +162,21 @@ test('stdlib module members after an alias', async () => {
 
 test('module members from another file', async () => {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'quark-ext-'));
-	fs.writeFileSync(path.join(dir, 'shapes.qrk'), 'module shapes:\n    // Area of a circle.\n    fn area(r: float) float ->\n        3.14 * r * r\n');
-	const items = await complete("incl './shapes' as s\ns.|", '.', path.join(dir, 'main.qrk'));
+	fs.writeFileSync(path.join(dir, 'shapes.qrk'), 'fn unit() -> 1\nmodule shapes:\n    // Area of a circle.\n    fn area(r: float) float ->\n        3.14 * r * r\nmodule extra:\n    fn more() -> 2\n');
+	const main = path.join(dir, 'main.qrk');
+	const items = await complete("incl './shapes' as s\ns::|", ':', main);
 	const area = items.find((i) => i.label === 'area');
 	assert(area && area.detail.includes('area(r: float) float'), labels(items).join(','));
+	assert(labels(items).includes('unit'), labels(items).join(','));
+	assert(labels(await complete("incl './shapes'\nshapes::extra::|", ':', main)).includes('more'));
+	// Modules aren't reached with a dot.
+	assert(!labels(await complete("incl './shapes' as s\ns.|", '.', main)).includes('area'));
+});
+
+test('same-file module members', async () => {
+	const l = labels(await complete('module mathx:\n    fn square(x) -> x * x\nmathx::|', ':'));
+	assert(l.includes('square'), l.join(','));
+	assert.strictEqual((await complete('x = a :|', ':')).length, 0);
 });
 
 test('struct fields', async () => {
@@ -206,7 +217,8 @@ test('hover explains Python and R habits', () => {
 
 test('hover shows builtin and module signatures', () => {
 	assert(/len\(any\) int/.test(hover('n = le|n(x)')));
-	assert(/Dot product/.test(hover("incl 'std/blas' as blas\nblas.d|ot(x, y)")));
+	assert(/Dot product/.test(hover("incl 'std/blas' as blas\nblas::d|ot(x, y)")));
+	assert(/blas::dot/.test(hover("incl 'std/blas' as blas\nblas::d|ot(x, y)")));
 });
 
 (async () => {

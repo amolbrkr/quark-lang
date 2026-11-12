@@ -34,8 +34,7 @@ print(wrap_pipe(fn(y) -> y * 2))
 module m:
     fn len(x) -> 42
     fn use(x) -> len(x)
-incl m as mm
-print(mm.use('a'))
+print(m::use('a'))
 
 // Outside the shadowing scopes, the originals are unaffected.
 print(len('abc'))

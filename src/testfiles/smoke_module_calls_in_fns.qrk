@@ -6,20 +6,20 @@ incl 'std/random' as random
 // Module functions called from inside user functions (closures and native
 // functions alike), directly and through pipes.
 fn save(path: str, text: str) ->
-    f = unwrap(io.open(path, 'w'))
-    io.write(f, text)
-    io.close(f)
+    f = unwrap(io::open(path, 'w'))
+    io::write(f, text)
+    io::close(f)
 
 fn load(path) ->
-    f = unwrap(io.open(path))
-    t = unwrap(io.read(f, 1000))
-    io.close(f)
+    f = unwrap(io::open(path))
+    t = unwrap(io::read(f, 1000))
+    io::close(f)
     t
 
-fn file_exists(path) -> io.exists(path)
-fn file_exists_piped(path) -> path | io.exists()
-fn first_two(xs) -> fmt.head(xs, 2)
-fn roll() -> random.randint(1, 6)
+fn file_exists(path) -> io::exists(path)
+fn file_exists_piped(path) -> path | io::exists()
+fn first_two(xs) -> fmt::head(xs, 2)
+fn roll() -> random::randint(1, 6)
 
 save('module_calls_tmp.txt', 'a,b\n1,2\n')
 print(load('module_calls_tmp.txt').trim())

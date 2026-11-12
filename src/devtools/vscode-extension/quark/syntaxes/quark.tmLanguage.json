@@ -8,6 +8,7 @@
     { "include": "#strings" },
     { "include": "#habits" },
     { "include": "#extern-directives" },
+    { "include": "#qualified-names" },
     { "include": "#declarations" },
     { "include": "#types" },
     { "include": "#keywords" },
@@ -85,6 +86,18 @@
           "captures": {
             "1": { "name": "keyword.control.import.quark" },
             "2": { "name": "keyword.control.import.quark" }
+          }
+        }
+      ]
+    },
+    "qualified-names": {
+      "patterns": [
+        {
+          "comment": "io::exists, geo::Point, formats::csv::read: every segment before :: is a module or imported file",
+          "match": "\\b([A-Za-z_][A-Za-z0-9_]*)(::)",
+          "captures": {
+            "1": { "name": "entity.name.namespace.quark" },
+            "2": { "name": "punctuation.accessor.quark" }
           }
         }
       ]

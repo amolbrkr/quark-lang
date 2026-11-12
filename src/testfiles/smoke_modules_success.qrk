@@ -1,18 +1,21 @@
-// Consolidated module smoke: success paths
-// Covers local imports, multiple imports, transitive import, duplicate import dedup, and same-file module use.
+// Consolidated module smoke: success paths (modules v0.2)
+// Covers local imports, a transitive import, a file imported along two paths,
+// primary modules, file::module::name, same-file modules and `as`.
 
 incl './lib/core'
 incl './lib/composed'
-incl './lib/core'
+incl './lib/core' as core_again
 
 module localmod:
     fn inc(n) -> n + 1
 
-incl localmod
-
 print('== smoke: modules success ==')
-double(5) | print()
-triple(3) | print()
-square(4) | print()
-double_square(3) | print()
-inc(41) | print()
+core::helpers::double(5) | print()
+core::helpers::triple(3) | print()
+composed::square(4) | print()
+composed::double_square(3) | print()
+localmod::inc(41) | print()
+// Two modules of one file each define foo.
+core::collision_a::foo() | print()
+core::collision_b::foo() | print()
+core_again::helpers::double(1) | print()

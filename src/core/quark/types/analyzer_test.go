@@ -72,7 +72,7 @@ func TestCallPlans_DefaultsForAliasCall(t *testing.T) {
 }
 
 func TestModuleQualifiedCall_WithAlias(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("module math:\n    fn myfloor(x) -> x\nincl math as m\nprint(m.myfloor(3))\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("module math:\n    fn myfloor(x) -> x\nprint(math::myfloor(3))\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -82,16 +82,11 @@ func TestModuleQualifiedCall_WithAlias(t *testing.T) {
 }
 
 func TestModuleQualifiedCall_UnknownSymbol(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("module math:\n    fn myfloor(x) -> x\nincl math as m\nprint(m.ceil(3))\n")
-	if len(parseErrs) > 0 {
-		t.Fatalf("unexpected parse errors: %v", parseErrs)
-	}
-	if len(typeErrs) == 0 {
-		t.Fatalf("expected type errors")
-	}
-	joined := strings.Join(typeErrs, "\n")
-	if !strings.Contains(joined, "has no symbol 'ceil'") {
-		t.Fatalf("expected module symbol error, got: %v", typeErrs)
+	// An unknown member is a load error (reported with the parse errors).
+	_, _, loadErrs, _ := testutil.Analyze("module math:\n    fn myfloor(x) -> x\nprint(math::ceil(3))\n")
+	joined := strings.Join(loadErrs, "\n")
+	if !strings.Contains(joined, "module 'math' has no 'ceil'") {
+		t.Fatalf("expected module member error, got: %v", loadErrs)
 	}
 }
 

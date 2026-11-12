@@ -257,11 +257,11 @@ func TestStdBlas(t *testing.T) {
 	}
 
 	cases := []struct{ name, call, want string }{
-		{"length mismatch", "blas.dot(vec [1.0, 2.0], vec [1.0])", "blas.dot: vec size mismatch: x has 2 elements, y has 1"},
-		{"i64 input", "blas.nrm2(vec [1, 2])", "blas.nrm2: x must be an f64 vec, got i64; convert it with x.astype('f64')"},
-		{"nulls", "blas.asum(list [1.0, null].to_vec())", "blas.asum: x has 1 null values"},
-		{"gemv matrix size", "blas.gemv(vec [1.0, 2.0, 3.0], 2, 2, vec [1.0, 1.0])", "blas.gemv: a has 3 elements, but rows * cols = 2 * 2"},
-		{"gemv x length", "blas.gemv(vec [1.0, 2.0], 1, 2, vec [1.0])", "blas.gemv: x has 1 elements, but the matrix has 2 columns"},
+		{"length mismatch", "blas::dot(vec [1.0, 2.0], vec [1.0])", "blas.dot: vec size mismatch: x has 2 elements, y has 1"},
+		{"i64 input", "blas::nrm2(vec [1, 2])", "blas.nrm2: x must be an f64 vec, got i64; convert it with x.astype('f64')"},
+		{"nulls", "blas::asum(list [1.0, null].to_vec())", "blas.asum: x has 1 null values"},
+		{"gemv matrix size", "blas::gemv(vec [1.0, 2.0, 3.0], 2, 2, vec [1.0, 1.0])", "blas.gemv: a has 3 elements, but rows * cols = 2 * 2"},
+		{"gemv x length", "blas::gemv(vec [1.0, 2.0], 1, 2, vec [1.0])", "blas.gemv: x has 1 elements, but the matrix has 2 columns"},
 	}
 	tmp := t.TempDir()
 	for i, tc := range cases {

@@ -1,6 +1,16 @@
 # Quark Modules v0.2 Spec
 
-Status: Partially implemented. Step 1, fixed and hoisted `fn` declarations (rules 17-23), landed 2026-11-12; the module rules (`::`, file scopes, struct identity) are not implemented yet.
+Status: Implemented 2026-11-12 (Phase A of §5.1). Step 1, fixed and hoisted `fn` declarations (rules 17-23), and step 2, the module rules (`::`, file scopes, struct identity, migration). Deviations from the text below, decided during implementation:
+- `QStructDef.name` holds the display name (`geo::Point`) instead of a separate `display_name`; identity is the `QStructDef` address, as in §5.3.
+- References to an imported file's constants are replaced by the constant's value in the loader, and the definitions are dropped, so a library's functions don't capture them.
+- Module bodies are analyzed in the file scope (their members already have unique internal names), and their declarations are hoisted together with the top level.
+- Most rule violations of §3.2-3.6 are load errors (`QK-LOAD-001`), not check errors, because the loader resolves names.
+- Mangling hygiene (§5.2, §9) is enforced after all: a user name containing `__` is a load error, since every generated name contains it.
+- The analyzer's diagnostics show internal names through `names.Table.DisplayText` applied to each message (one function, as §5.1 asks; Phase B replaces it).
+- A file's identity (rule 6) is its absolute path with symbolic links resolved.
+- Imported files are spliced into the main script's tree, where the main script's names are bare, so a local of an imported file named like a main-script name is renamed (`q<N>__name__l`) to keep rule 12.
+- Two definitions whose internal names coincide (member `_x` of `m` and member `x` of `m_`, or a main-script `module q1_a` and the file `a.qrk`) are a load error instead of a more elaborate mangling scheme.
+- A `module` nested in a main-script module is a load error, as it is in an imported file.
 Last Updated: 2026-11-12
 Scope: import unit, name scoping and qualification (`::`), function declarations, struct naming across files, and the symbol metadata the compiler carries from front end to back end. Supersedes the module and import rules in README.md ("Modules and imports"), grammar.md and semantics.md §10 once implemented.
 

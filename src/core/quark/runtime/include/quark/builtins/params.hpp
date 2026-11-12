@@ -44,14 +44,15 @@ inline QValue q_param_check(QValue v, QValue::ValueType tag, bool allowNull, con
 }
 
 // q_param_struct checks a struct-typed parameter (null allowed, as for other
-// reference types).
-inline QValue q_param_struct(QValue v, const char* structName, const char* fn, const char* param) {
+// reference types). Struct identity is the definition: there is one
+// QStructDef per struct definition, so two structs named Point in different
+// files are different types.
+inline QValue q_param_struct(QValue v, const QStructDef* def, const char* fn, const char* param) {
     if (v.type == QValue::VAL_NULL) return v;
-    if (v.type == QValue::VAL_STRUCT && v.data.struct_val && v.data.struct_val->def &&
-        std::strcmp(v.data.struct_val->def->name, structName) == 0) {
+    if (v.type == QValue::VAL_STRUCT && v.data.struct_val && v.data.struct_val->def == def) {
         return v;
     }
-    q_param_type_error(v, structName, fn, param);
+    q_param_type_error(v, def->name, fn, param);
 }
 
 // Struct field values. A struct literal checks each field value whose type the
@@ -85,13 +86,12 @@ inline QValue q_field_check(QValue v, QValue::ValueType tag, bool allowNull, con
     q_field_type_error(v, expected, structName, field);
 }
 
-inline QValue q_field_struct(QValue v, const char* expectedStruct, const char* structName, const char* field) {
+inline QValue q_field_struct(QValue v, const QStructDef* expected, const char* structName, const char* field) {
     if (v.type == QValue::VAL_NULL) return v;
-    if (v.type == QValue::VAL_STRUCT && v.data.struct_val && v.data.struct_val->def &&
-        std::strcmp(v.data.struct_val->def->name, expectedStruct) == 0) {
+    if (v.type == QValue::VAL_STRUCT && v.data.struct_val && v.data.struct_val->def == expected) {
         return v;
     }
-    q_field_type_error(v, expectedStruct, structName, field);
+    q_field_type_error(v, expected->name, structName, field);
 }
 
 #endif // QUARK_BUILTINS_PARAMS_HPP

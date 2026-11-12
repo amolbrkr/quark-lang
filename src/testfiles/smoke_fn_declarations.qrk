@@ -97,14 +97,12 @@ print(g(5))
 module mathx:
     fn cube(x) -> x * sq(x)
     fn sq(x) -> x * x
-incl mathx as mx
-print(mx.cube(3))
+print(mathx::cube(3))
 
 // A module function can read a top-level variable assigned before it.
 counter = 7
 module cnt:
     fn get() -> counter
-incl cnt as cn
-print(cn.get())
+print(cnt::get())
 counter = 8
-print(cn.get())
+print(cnt::get())

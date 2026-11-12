@@ -310,7 +310,7 @@ name = unwrap(input('Your name: '))   // read a line from stdin (prompt is optio
 
 `print` and `to_str` show a collection's contents. Strings inside it are quoted
 and dict keys are sorted. A collection with more than 100 items shows its first
-and last 5 and a count; `fmt.full(x)` from `std/fmt` gives every item:
+and last 5 and a count; `fmt::full(x)` from `std/fmt` gives every item:
 
 ```quark
 print(list [1, 'a', null])              // [1, 'a', null]
@@ -591,7 +591,7 @@ print(add5(10))          // 15
 ```
 
 Functions are values: named functions, lambdas, `extern fn`s and module
-members (`io.exists`, without calling it) can be stored, passed and returned.
+members (`io::exists`, without calling it) can be stored, passed and returned.
 Annotate a parameter, return type, variable or struct field with `fn` to
 require a function value:
 
@@ -798,48 +798,77 @@ fields explicitly).
 
 ### Modules and imports
 
-A module groups functions under a name. Import it with `incl`, and the recommended
-form binds an alias you then qualify calls with.
+A **file** is the unit you import, and every file has its own scope. Names
+from another file, or from a `module` block, are always written with `::`.
 
-**Same-file module:**
+**Same-file module.** A `module` block groups names inside a file. Inside the
+block its members are written bare; elsewhere in the file, `module::name`:
 
 ```quark
 module mathx:
     fn square(x) -> x * x
-    fn cube(x) -> x * x * x
+    fn quad(x) -> square(square(x))   // a member calls another bare
 
-incl mathx as m
-print(m.square(9))   // 81
-print(m.cube(3))     // 27
+print(mathx::square(9))   // 81
+print(mathx::quad(2))     // 16
 ```
 
-**File import** (relative or absolute path, no extension). The imported file
-must declare a `module`; a file with only top-level functions fails with
-`QK-LOAD-001 ... does not define a module`:
+**File import.** `incl 'path'` binds the file under its name (the last path
+segment, without `.qrk`); `incl 'path' as name` picks another name. Any file
+can be imported: its top-level definitions are `file::name`, and the members
+of a `module` block are `file::module::name`. A module named like its file
+(the *primary* module) can also be reached as `file::name`:
 
 ```quark
-// lib/helpers.qrk
-module helpers:
-    fn format_name(name) -> 'Name: ' + name
+// lib/geo.qrk
+PI = 3.14159
+struct Point:
+    x: float
+    y: float
+fn area(r) -> PI * r * r
+module shapes:
+    fn square(side) -> side * side
 ```
 
 ```quark
-incl './lib/helpers' as h
-print(h.format_name('Ada'))   // Name: Ada
+incl './lib/geo'
+incl './lib/geo' as g            // the same file under a second name
+
+p = geo::Point { x: 1.0, y: 2.0 }
+fn norm(q: geo::Point) float -> q.x * q.x + q.y * q.y
+print(geo::area(2.0))           // 12.56636
+print(geo::shapes::square(3))   // 9
+print(g::PI)                    // 3.14159
+print(type(p))                  // geo::Point
 ```
 
-**Top-level names are shared.** Only `module` members are namespaced: every
-other top-level name of an included file (its `fn`s, variables, `struct`s and
-`extern fn` bindings such as `fmt_vec`) is visible in the importing program.
-Defining the same top-level name in two files is a compile error that names
-both places, rather than one definition silently replacing the other:
+**Names never collide.** Each file's names are its own: two files may both
+define `helper` or `Point`, a library's calls to its own `helper` always reach
+it whatever the importer defines, and nothing from another file is visible
+unqualified. `geo::Point` and `other::Point` are different types, at compile
+time and at runtime. Within one file, a module member can't have the same name
+as a top-level name, and an import's name can't be a name defined in the file
+(`incl './geo' as other_name` resolves that).
 
-```quark
-incl 'std/fmt' as fmt
-fn fmt_full(x) -> 'mine'   // error: 'fmt_full' is already defined as an extern fn (std/fmt.qrk:7)
-```
+**What an imported file may contain.** Definitions only: `fn`, `struct`,
+`module`, `incl`, `extern` declarations, and constants (`name = ` an int,
+float, str or bool literal, or arithmetic on them). A statement such as
+`print(...)` is a load error, so importing a file never runs code. An
+importer can read and call every name of an imported file (there are no
+access modifiers) but can't assign to it.
 
-Builtin names work the same way. `fn len(x) -> ...` or `sum = 0` is an error
+**`.` is for values.** `io.exists` where `io` is an imported file, or `m.f`
+where `m` is a module, is an error suggesting `io::exists` / `m::f`.
+
+**Reserved names.** A name can't contain `__`; the compiler uses it for the
+names it generates.
+
+**File names.** An imported file's name, and each directory in a relative or
+`std/` import path, must be lowercase letters, digits and underscores,
+starting with a letter (`./lib/geo_utils`, not `./My Lib/geo-utils`). The
+main script is exempt.
+
+Builtin names can't be redefined. `fn len(x) -> ...` or `sum = 0` is an error
 (`'len' is a builtin function and can't be redefined or assigned`), but a
 parameter, loop variable or `when` binding may shadow a builtin, and calls
 inside that scope use it: `fn clamp(x, min, max)` is fine. A nested `fn len`
@@ -850,29 +879,18 @@ is an error, like any `fn` that reuses a visible name.
 
 ```quark
 incl 'std/io' as io
-incl 'std/fmt' as fmt
+incl 'std/fmt'                           // binds fmt
 
-print(io.exists('hello.qrk'))         // true / false
-print(fmt.show_list(list [3, 1, 2]))  // formatted, readable list
+print(io::exists('hello.qrk'))           // true / false
+print(fmt::show_list(list [3, 1, 2]))    // formatted, readable list
 
-exists = io.exists                      // a module member as a value
+exists = io::exists                      // a member as a value
 ```
 
-> **Prefer the `as alias` form.** Importing without an alias makes the module's
-> names usable without a prefix, so a definition of your own with the same name,
-> or a second unaliased module with that name, is a `QK-LOAD-001` conflict error.
-> With aliases there are no conflicts: each module's members are separate from
-> other modules' and from your own names (`io.read` and `csv.read` coexist, and
-> a variable named `open` doesn't affect `io.open`).
-
-**Everything at the top level of an imported file is visible.** The alias only
-qualifies the `module` block's members. Functions, variables, `struct`s and
-`extern fn`s defined outside the `module` block (in your own libraries and in
-the stdlib) become global names in the importing program, alias or not. The
-stdlib's native bindings are an example: after `incl 'std/fmt' as fmt`,
-`fmt_vec(v, 10, true)` is callable, although the intended API is
-`fmt.show_vec(v)`. Quark has no access modifiers; put a library's public API in
-its `module` block and treat its other top-level names as internal.
+Every stdlib file is one primary module, so stdlib calls are two-part
+(`io::open`, `fmt::show_vec`, `blas::dot`). Its native bindings are reachable
+too (`fmt::fmt_vec(v, 10, true)`), but the module's functions are the intended
+API.
 
 ## Standard library reference
 
@@ -968,13 +986,13 @@ These ship under `src/core/stdlib` and are imported with the `std/` prefix:
 
 | Module | Import | Highlights |
 |---|---|---|
-| `io` | `incl 'std/io' as io` | `io.open`, `io.read`, `io.write`, `io.close`, `io.seek`, `io.exists`, and `io.seek_set` / `io.seek_cur` / `io.seek_end` |
-| `fmt` | `incl 'std/fmt' as fmt` | `fmt.show_list`, `fmt.show_vec`, `fmt.show_dict`, `fmt.table`, `fmt.head`, `fmt.tail` for readable rendering |
-| `sys` | `incl 'std/sys' as sys` | `sys.args()` (command-line arguments), `sys.env(name)` (environment variable or `null`), `sys.exit(code)` |
-| `csv` | `incl 'std/csv' as csv` | `csv.parse(text, sep)` and `csv.read(path, sep)` (RFC 4180 quoting; rows of `str` fields) |
-| `time` | `incl 'std/time' as time` | `time.now()` (epoch seconds), `time.clock()` (monotonic seconds, for timing), `time.sleep(seconds)` |
-| `random` | `incl 'std/random' as random` | `random.seed(n)`, `random.uniform()`, `random.randint(lo, hi)`, `random.choice(xs)`, `random.shuffle(xs)` |
-| `blas` | `incl 'std/blas' as blas` | `blas.dot`, `blas.axpy`, `blas.scal`, `blas.nrm2`, `blas.asum`, `blas.gemv` over f64 vectors via OpenBLAS (needs `libopenblas-dev` or `brew install openblas`) |
+| `io` | `incl 'std/io' as io` | `io::open`, `io::read`, `io::write`, `io::close`, `io::seek`, `io::exists`, and `io::seek_set` / `io::seek_cur` / `io::seek_end` |
+| `fmt` | `incl 'std/fmt' as fmt` | `fmt::show_list`, `fmt::show_vec`, `fmt::show_dict`, `fmt::table`, `fmt::head`, `fmt::tail` for readable rendering |
+| `sys` | `incl 'std/sys' as sys` | `sys::args()` (command-line arguments), `sys::env(name)` (environment variable or `null`), `sys::exit(code)` |
+| `csv` | `incl 'std/csv' as csv` | `csv::parse(text, sep)` and `csv::read(path, sep)` (RFC 4180 quoting; rows of `str` fields) |
+| `time` | `incl 'std/time' as time` | `time::now()` (epoch seconds), `time::clock()` (monotonic seconds, for timing), `time::sleep(seconds)` |
+| `random` | `incl 'std/random' as random` | `random::seed(n)`, `random::uniform()`, `random::randint(lo, hi)`, `random::choice(xs)`, `random::shuffle(xs)` |
+| `blas` | `incl 'std/blas' as blas` | `blas::dot`, `blas::axpy`, `blas::scal`, `blas::nrm2`, `blas::asum`, `blas::gemv` over f64 vectors via OpenBLAS (needs `libopenblas-dev` or `brew install openblas`) |
 
 For deeper behavior notes, see [stdlib.md](stdlib.md). The code-level source of
 truth for builtin names and arities is
@@ -1009,7 +1027,7 @@ quark <command> [arguments]
 | `quark check <file>` | run the analyzer (types, scopes); report diagnostics only |
 | `quark emit <file>` | print the generated C++ to stdout |
 | `quark build <file> [-o out] [--debug] [--lto]` | compile to a native executable |
-| `quark run <file> [--debug] [--lto] [-- args...]` | compile and run; arguments after `--` are passed to the program (`sys.args()` in `std/sys`) |
+| `quark run <file> [--debug] [--lto] [-- args...]` | compile and run; arguments after `--` are passed to the program (`sys::args()` in `std/sys`) |
 | `quark <file>.qrk` | shorthand for `quark run <file>.qrk` (the argument must end in `.qrk`) |
 | `quark help`, `-h`, `--help` | show usage |
 
@@ -1088,7 +1106,7 @@ verified by compiling and running the bundled examples.
   (arguments, environment, exit status), `std/time`, `std/random`, `std/csv`,
   and `std/blas` (OpenBLAS). Lists sort with `.sort()` and `.sort_by(key)`.
 - Extern / FFI declarations for calling into C++, and linking native libraries
-  with `extern link` / `extern include_path` (see semantics.md §10.6 and
+  with `extern link` / `extern include_path` (see semantics.md §10.8 and
   [ffi_v0_1_spec.md](ffi_v0_1_spec.md)). `std/blas` wraps OpenBLAS.
   `extern source` (separately compiled glue `.cpp` files) is not implemented
   yet and reports `QK-PARSE-001`.
@@ -1097,11 +1115,9 @@ verified by compiling and running the bundled examples.
 
 - **`tbl` literals.** A columnar `tbl` type is specified in
   [tables_v0_1_spec.md](tables_v0_1_spec.md) and partially scaffolded (the
-  runtime has a table type, and `fmt.table` already renders tables and
+  runtime has a table type, and `fmt::table` already renders tables and
   dict-of-columns values), but `tbl { ... }` **does not parse in the current
   build** — it reports `QK-PARSE-001`. Treat tables as not yet available.
-- **Un-aliased imports.** Importing modules without `as` reports a conflict when
-  two of them, or one of them and your code, define the same name; use aliases.
 
 **Known limitations**
 
@@ -1111,19 +1127,6 @@ verified by compiling and running the bundled examples.
 - **Builtin names can't be variable names.** `sum = 0`, `len = 3` or `max = 10`
   is a compile-time error, even inside a function. Parameters may reuse them
   (`fn f(sum) -> sum`).
-- **A clash with an imported file's top-level name isn't reported**, and how it
-  resolves depends on the kind of name. Redefining an imported top-level
-  function replaces it for the library too (with `fn helper` in the library and
-  in your program, the library's own calls to `helper` run yours); assigning an
-  imported top-level variable changes the library's variable; defining a
-  function with the name of an imported `extern fn` is ignored, and calls go to
-  the extern.
-- **Structs aren't namespaced.** They must be defined at a file's top level,
-  not inside a `module` block (there, `Point { ... }` reports
-  `unknown struct type 'Point'`). Struct names are global, so two imported
-  files that each define `Point` report `struct 'Point' already defined`. An
-  importing file uses the bare name for literals and annotations
-  (`Point { x: 1 }`, `q: Point`); `q: geo.Point` is a parse error.
 - **No "any struct" annotation:** `fn f(x: struct)` is a parse error; use `any`.
 - **Struct fields can't be nullable**, since `null` can't be written as an
   annotation.
@@ -1142,8 +1145,8 @@ verified by compiling and running the bundled examples.
   checked.
 - **Error wording:** a wrong argument type passed to a fully annotated function
   or an `extern fn` reports `expected int, got str`, without the parameter name.
-- **Inconsistent failure modes:** `io.close` on a closed file returns `err`, while
-  `io.read` on one is a runtime error; vector `.get` out of range is an error,
+- **Inconsistent failure modes:** `io::close` on a closed file returns `err`, while
+  `io::read` on one is a runtime error; vector `.get` out of range is an error,
   while list `.get` returns `null`; `min`/`max` of an empty vector are errors,
   while `sum` returns `0.0`.
 - **Vector reductions** (`sum`, `min`, `max`) return a float, also for int

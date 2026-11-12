@@ -49,6 +49,7 @@ const (
 	COMMA      // ,
 	PIPE       // |
 	COLON      // :
+	COLONCOLON // :: (qualified names: io::exists)
 	UNDERSCORE // _
 
 	// Keywords
@@ -123,6 +124,7 @@ var tokenNames = map[TokenType]string{
 	COMMA:      "COMMA",
 	PIPE:       "PIPE",
 	COLON:      "COLON",
+	COLONCOLON: "COLONCOLON",
 	UNDERSCORE: "UNDERSCORE",
 
 	INCL:     "INCL",

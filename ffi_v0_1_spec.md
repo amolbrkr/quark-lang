@@ -6,7 +6,7 @@ Replaces: the 2026-03-15 draft of this file
 Revision 3: records the directive syntax decision, renames `extern include` to `extern include_path`, and sets the provider order (§5, §9.1).
 Implementation status (2026-11-04): Phase 1 is implemented (P1, P7, the P8 build codes `QK-FFI-001`–`003`, `libqffi_test`, `std/blas`) except P2, which moved to Phase 2. `extern source` currently reports `QK-PARSE-001` saying it isn't supported yet. §2 describes the state before Phase 1.
 Canonical for native interop (`extern` declarations, linking, handles); it replaces `native_modules_design.md`, which was removed on 2026-11-10.
-Related: `architecture.md` §1.7 and §7, `semantics.md` §10.6, `tables_v0_1_spec.md`
+Related: `architecture.md` §1.7 and §7, `semantics.md` §10.8, `tables_v0_1_spec.md`
 
 ## 1. Summary
 
@@ -259,8 +259,8 @@ incl 'std/blas' as blas
 
 x = vec [1.0, 2.0, 3.0]
 y = vec [4.0, 5.0, 6.0]
-print(blas.dot(x, y))          // 32
-z = blas.axpy(2, x, y)           // P7 lets 2 stand for 2.0
+print(blas::dot(x, y))          // 32
+z = blas::axpy(2, x, y)           // P7 lets 2 stand for 2.0
 print(z[0])                    // 6
 print(y[0])                    // 4: inputs are never modified
 ```
@@ -405,7 +405,7 @@ Phase 1 is independent of DuckDB and useful on its own: any library with a C API
 | Runtime: new `ext/arrow.hpp` | Arrow C Data Interface bridge | Additive |
 | Runtime: `q_as_float` | Accepts `int` | Relaxation only |
 | Stdlib | `std/blas` (needs OpenBLAS), then `std/sqlite` and `std/duckdb` (each needs its library) | Additive; programs that don't `incl` them are unaffected |
-| Docs | `semantics.md` §10.6, `architecture.md` §7–8, `error_codes.md`, `stdlib.md`. | — |
+| Docs | `semantics.md` §10.8, `architecture.md` §7–8, `error_codes.md`, `stdlib.md`. | — |
 
 Existing extensions (`std/fmt`, `smoke_extern.qrk`) keep working unchanged.
 

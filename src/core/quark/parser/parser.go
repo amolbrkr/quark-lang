@@ -388,7 +388,7 @@ func (p *Parser) parseFunction() *ast.TreeNode {
 
 	// Optional return type annotation before ->
 	var returnTypeNode *ast.TreeNode
-	if p.isTypeToken() && p.peek(1).Type == token.ARROW {
+	if p.atReturnType() {
 		returnTypeNode = p.parseTypeExpr()
 	}
 
@@ -552,11 +552,35 @@ func (p *Parser) parseTypeExpr() *ast.TreeNode {
 		return nil
 	}
 
+	// A qualified struct name (geo::Point): Literal holds the whole path.
+	if p.curToken.Type == token.ID && p.peek(1).Type == token.COLONCOLON {
+		tok, ok := p.parseQualifiedPath()
+		if !ok {
+			return nil
+		}
+		return ast.NewNode(ast.TypeNode, &tok)
+	}
+
 	tok := p.curToken
 	node := ast.NewNode(ast.TypeNode, &tok)
 	p.nextToken()
 
 	return node
+}
+
+// atReturnType reports whether the tokens before the next `->` are a return
+// type annotation: a type name, possibly qualified (geo::Point).
+func (p *Parser) atReturnType() bool {
+	if !p.isTypeToken() {
+		return false
+	}
+	i := 1
+	if p.curToken.Type == token.ID {
+		for p.peek(i).Type == token.COLONCOLON && p.peek(i+1).Type == token.ID {
+			i += 2
+		}
+	}
+	return p.peek(i).Type == token.ARROW
 }
 
 func (p *Parser) parseVarDecl() *ast.TreeNode {

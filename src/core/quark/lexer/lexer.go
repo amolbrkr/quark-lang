@@ -345,7 +345,13 @@ func (l *Lexer) nextRawToken() token.Token {
 	case '|':
 		tok = newToken(token.PIPE, l.ch, tok.Line, tok.Column)
 	case ':':
-		tok = newToken(token.COLON, l.ch, tok.Line, tok.Column)
+		if l.peekChar() == ':' {
+			l.readChar()
+			tok.Type = token.COLONCOLON
+			tok.Literal = "::"
+		} else {
+			tok = newToken(token.COLON, l.ch, tok.Line, tok.Column)
+		}
 	case '_':
 		if isLetter(l.peekChar()) || isDigit(l.peekChar()) {
 			// Part of an identifier

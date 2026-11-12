@@ -62,9 +62,10 @@ type fnScope struct {
 	fns   []*FixedFn
 }
 
-// symDef is where a variable was first assigned in its scope.
+// symDef is where a variable was first assigned.
 type symDef struct {
-	stmt int // index of the statement in the scope's statement list
+	list *ast.TreeNode // the statement list (CompilationUnit, module body, block)
+	stmt int           // index of the statement in that list
 	line int
 }
 
@@ -80,12 +81,6 @@ func nodeLine(n *ast.TreeNode) int {
 	return 0
 }
 
-// enterStatement records that statement idx of the current scope is being
-// analyzed, so first assignments can be ordered against calls (rule 23).
-func (a *Analyzer) enterStatement(idx int) {
-	a.scopeStmt[a.currentScope] = idx
-}
-
 // recordDef notes the first assignment of a variable defined in the current scope.
 func (a *Analyzer) recordDef(sym *Symbol, at *ast.TreeNode) {
 	if sym == nil {
@@ -94,7 +89,7 @@ func (a *Analyzer) recordDef(sym *Symbol, at *ast.TreeNode) {
 	if _, seen := a.symDefs[sym]; seen {
 		return
 	}
-	a.symDefs[sym] = symDef{stmt: a.scopeStmt[a.currentScope], line: nodeLine(at)}
+	a.symDefs[sym] = symDef{list: a.curList, stmt: a.curIdx, line: nodeLine(at)}
 }
 
 // declareFixedFns declares every `fn` of a statement list in the current
@@ -148,7 +143,7 @@ func (a *Analyzer) declareFixedFns(scopeNode *ast.TreeNode, stmts []*ast.TreeNod
 			Type:     ft,
 			sym:      sym,
 			scope:    a.currentScope,
-			topLevel: a.currentScope == a.rootScope || a.moduleScopes[a.currentScope],
+			topLevel: a.currentScope == a.rootScope,
 		}
 		a.fixedBySym[sym] = f
 		a.fixedByLambda[f.Lambda] = f
@@ -193,7 +188,7 @@ func (a *Analyzer) deferFixedDispatch(plan *ir.CallPlan, sym *Symbol) {
 
 // reassignedDeclError reports an assignment to a declared function (rule 19).
 func (a *Analyzer) reassignedDeclError(target *ast.TreeNode, f *FixedFn) {
-	a.errorAt(target, "'%s' is a function declaration (line %d) and can't be reassigned; use a variable: g = fn ...", displayName(f.Name), f.Line)
+	a.errorAt(target, "'%s' is a function declaration (line %d) and can't be reassigned; use a variable: g = fn ...", f.Name, f.Line)
 }
 
 // finalizeFixedFns runs once the whole program has been analyzed.
@@ -361,40 +356,23 @@ func (a *Analyzer) checkDefiniteAssignment() {
 				for _, s := range vars {
 					via := needs[f][s]
 					d, ok := a.symDefs[s]
-					if !ok || d.stmt < i {
-						continue
+					if !ok || d.list != sc.node || d.stmt < i {
+						continue // assigned earlier, or in another statement list
 					}
 					at := call.Children[0]
 					if via == f {
-						a.errorAt(at, "'%s' uses '%s', which is assigned on line %d, after this call", displayName(f.Name), s.Name, d.line)
+						a.errorAt(at, "'%s' uses '%s', which is assigned on line %d, after this call", f.Name, s.Name, d.line)
 					} else {
-						a.errorAt(at, "'%s' uses '%s' (through '%s'), which is assigned on line %d, after this call", displayName(f.Name), s.Name, displayName(via.Name), d.line)
+						a.errorAt(at, "'%s' uses '%s' (through '%s'), which is assigned on line %d, after this call", f.Name, s.Name, via.Name, d.line)
 					}
 				}
 			})
 		}
 
-		// Cells the scope's closures capture before they can be assigned. The
-		// top level and module bodies all run in main, where their closures
-		// are created together before the first statement, so variables of
-		// any of those scopes count.
+		// Cells the scope's closures capture before they can be assigned. (The
+		// top level and module bodies share the file scope and all run in
+		// main, where their closures are created before the first statement.)
 		hoistVar := isScopeVar
-		if a.isMainScope(sc.scope) {
-			hoistVar = func(s *Symbol) bool {
-				if s == nil || a.fixedBySym[s] != nil {
-					return false
-				}
-				if a.rootScope.Symbols[s.Name] == s {
-					return true
-				}
-				for ms := range a.moduleScopes {
-					if ms.Symbols[s.Name] == s {
-						return true
-					}
-				}
-				return false
-			}
-		}
 		hs := &HoistScope{Fns: sc.fns}
 		seen := map[string]bool{}
 		for _, f := range sc.fns {
@@ -421,12 +399,6 @@ func (a *Analyzer) checkDefiniteAssignment() {
 			}
 		}
 	}
-}
-
-// isMainScope reports whether a scope's statements run directly in main:
-// the top level and module bodies.
-func (a *Analyzer) isMainScope(s *Scope) bool {
-	return s == a.rootScope || a.moduleScopes[s]
 }
 
 // walkFixedCalls calls visit for every call of a declared function under n.

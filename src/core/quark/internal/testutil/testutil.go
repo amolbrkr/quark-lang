@@ -6,6 +6,7 @@ import (
 	"quark/ast"
 	"quark/driver"
 	"quark/lexer"
+	"quark/names"
 	"quark/parser"
 	"quark/token"
 	"quark/types"
@@ -38,18 +39,18 @@ func Parse(source string) (*ast.TreeNode, []string) {
 }
 
 // resolveImports runs the loader on a parsed test source, as the driver
-// does, and returns its errors.
-func resolveImports(node *ast.TreeNode) []string {
+// does, and returns its errors and name table.
+func resolveImports(node *ast.TreeNode) ([]string, names.Table) {
 	absPath, err := filepath.Abs(sourceFile)
 	if err != nil {
-		return []string{err.Error()}
+		return []string{err.Error()}, nil
 	}
 	var errs []string
-	_, diags := driver.ResolveImports(node, absPath)
+	_, table, diags := driver.ResolveImports(node, absPath)
 	for _, d := range diags {
 		errs = append(errs, d.Message)
 	}
-	return errs
+	return errs, table
 }
 
 // Analyze parses, resolves imports and analyzes source. Unlike the driver it
@@ -57,10 +58,12 @@ func resolveImports(node *ast.TreeNode) []string {
 // errors. Loader errors are reported with the parse errors.
 func Analyze(source string) (*types.Analyzer, *ast.TreeNode, []string, []string) {
 	node, parseErrs := Parse(source)
+	var table names.Table
 	if len(parseErrs) == 0 {
-		parseErrs = resolveImports(node)
+		parseErrs, table = resolveImports(node)
 	}
 	analyzer := types.NewAnalyzer()
+	analyzer.SetNames(table)
 	analyzer.Analyze(node)
 	return analyzer, node, parseErrs, analyzer.Errors()
 }

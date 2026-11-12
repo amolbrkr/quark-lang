@@ -312,7 +312,7 @@ func TestCodegen_EmitClosureCallHelper(t *testing.T) {
 }
 
 func TestCodegen_ModuleQualifiedCallLowersDirectly(t *testing.T) {
-	res := testutil.GenerateCPP("module math:\n    fn myfloor(x) -> x\nincl math as m\nprint(m.myfloor(3))\n")
+	res := testutil.GenerateCPP("module math:\n    fn myfloor(x) -> x\nprint(math::myfloor(3))\n")
 	if len(res.ParserErrors) > 0 {
 		t.Fatalf("unexpected parse errors: %v", res.ParserErrors)
 	}

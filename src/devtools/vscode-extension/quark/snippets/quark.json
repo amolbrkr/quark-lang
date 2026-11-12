@@ -102,17 +102,17 @@
   "Module": {
     "prefix": "module",
     "body": ["module ${1:name}:", "\tfn ${2:f}(${3:x}) ->", "\t\t${0:x}"],
-    "description": "Module block; other files import it with incl './file' as alias"
+    "description": "Module block; write name::f(...) in this file, file::name::f(...) from an importer"
   },
   "Incl (stdlib)": {
     "prefix": "incl",
-    "body": ["incl '${1|std/io,std/fmt,std/blas|}' as ${0:io}"],
-    "description": "Import a stdlib module under an alias, then call alias.fn(...)"
+    "body": ["incl '${1|std/io,std/fmt,std/csv,std/sys,std/time,std/random,std/blas|}' as ${0:io}"],
+    "description": "Import a stdlib module under an alias, then call alias::fn(...)"
   },
   "Incl (file)": {
     "prefix": "inclf",
     "body": ["incl './${1:other}' as ${0:other}"],
-    "description": "Import a module from another file (path relative to this file, starting with ./ or ../)"
+    "description": "Import another file (path relative to this file, starting with ./ or ../), then call other::fn(...)"
   },
   "Result": {
     "prefix": "okerr",

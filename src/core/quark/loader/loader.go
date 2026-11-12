@@ -8,19 +8,27 @@ import (
 
 	"quark/ast"
 	"quark/diagnostics"
-	"quark/lexer"
-	"quark/parser"
+	"quark/names"
 	"quark/token"
 )
 
-// ModuleLoader resolves multi-file imports by loading external .qrk files,
-// parsing them, and splicing their AST into the main tree.
+// ModuleLoader resolves multi-file imports (modules v0.2): it loads every
+// imported .qrk file once, gives each definition a unique internal name,
+// resolves every reference (bare and `::`-qualified) per file, and splices
+// the files into one tree.
 type ModuleLoader struct {
-	loaded        map[string]bool   // absolute paths fully processed (for dedup)
-	loadedModules map[string]string // absolute path -> primary module name
-	resolving     map[string]int    // absolute paths currently in DFS stack (for cycle detection)
-	stack         []string          // current import chain
-	errors        []diagnostics.Diagnostic
+	loaded    map[string]bool // absolute paths fully processed (for dedup)
+	resolving map[string]int  // absolute paths currently in DFS stack (for cycle detection)
+
+	// Every loaded file, main script first, and the internal-name table.
+	files  []*srcFile
+	byPath map[string]*srcFile
+	names  names.Table
+	stack  []string // current import chain
+	// Every name the main script defines or writes. A local of an imported
+	// file with one of these names is renamed (renameLocal).
+	mainNames map[string]bool
+	errors    []diagnostics.Diagnostic
 
 	// Native dependencies from extern link / extern include_path, recorded
 	// per file so NativeDeps can order libraries by the import graph.
@@ -57,15 +65,16 @@ type NativeDeps struct {
 // NewModuleLoader creates a new module loader.
 func NewModuleLoader() *ModuleLoader {
 	return &ModuleLoader{
-		loaded:        make(map[string]bool),
-		loadedModules: make(map[string]string),
-		resolving:     make(map[string]int),
-		stack:         make([]string, 0),
-		errors:        make([]diagnostics.Diagnostic, 0),
-		fileLibs:      make(map[string][]NativeLib),
-		fileImports:   make(map[string][]string),
-		seenIncludes:  make(map[string]bool),
-		seenHeaders:   make(map[string]bool),
+		loaded:       make(map[string]bool),
+		byPath:       make(map[string]*srcFile),
+		names:        make(names.Table),
+		resolving:    make(map[string]int),
+		stack:        make([]string, 0),
+		errors:       make([]diagnostics.Diagnostic, 0),
+		fileLibs:     make(map[string][]NativeLib),
+		fileImports:  make(map[string][]string),
+		seenIncludes: make(map[string]bool),
+		seenHeaders:  make(map[string]bool),
 	}
 }
 
@@ -233,7 +242,7 @@ func (ml *ModuleLoader) addErrorAt(line int, col int, format string, args ...int
 }
 
 func (ml *ModuleLoader) beginResolve(absPath string) {
-	ml.resolving[absPath] = len(ml.stack)
+	ml.resolving[realPath(absPath)] = len(ml.stack)
 	ml.stack = append(ml.stack, absPath)
 }
 
@@ -241,7 +250,7 @@ func (ml *ModuleLoader) endResolve(absPath string) {
 	if len(ml.stack) > 0 {
 		ml.stack = ml.stack[:len(ml.stack)-1]
 	}
-	delete(ml.resolving, absPath)
+	delete(ml.resolving, realPath(absPath))
 	ml.loaded[absPath] = true
 }
 
@@ -343,378 +352,6 @@ func normalizeStdlibImportPath(importPath, currentFilePath string) (string, erro
 	return resolved, nil
 }
 
-func extractInclAlias(inclNode *ast.TreeNode) string {
-	if inclNode == nil || len(inclNode.Children) < 2 {
-		return ""
-	}
-	aliasNode := inclNode.Children[1]
-	if aliasNode == nil || aliasNode.NodeType != ast.IdentifierNode {
-		return ""
-	}
-	return aliasNode.TokenLiteral()
-}
-
-func buildSyntheticInclNode(moduleName string, alias string, inclLine int) *ast.TreeNode {
-	syntheticInclTok := token.Token{
-		Type:    token.INCL,
-		Literal: "incl",
-		Line:    inclLine,
-		Column:  0,
-	}
-	syntheticIncl := ast.NewNode(ast.InclNode, &syntheticInclTok)
-	syntheticNameTok := token.Token{
-		Type:    token.ID,
-		Literal: moduleName,
-		Line:    inclLine,
-		Column:  0,
-	}
-	syntheticName := ast.NewNode(ast.IdentifierNode, &syntheticNameTok)
-	syntheticIncl.AddChild(syntheticName)
-
-	if alias != "" {
-		aliasTok := token.Token{Type: token.ID, Literal: alias, Line: inclLine, Column: 0}
-		syntheticIncl.AddChild(ast.NewNode(ast.IdentifierNode, &aliasTok))
-	}
-
-	return syntheticIncl
-}
-
-// ResolveImports walks the AST rooted at `root`, finds InclNode children that
-// reference file paths (string literals), loads and parses those files, and
-// splices their ModuleNode + a synthetic InclNode back into the tree.
-//
-// currentFilePath is the absolute path of the file that produced `root`.
-func (ml *ModuleLoader) ResolveImports(root *ast.TreeNode, currentFilePath string) {
-	absPath, err := filepath.Abs(currentFilePath)
-	if err != nil {
-		ml.addErrorAt(0, 0, "cannot resolve path for '%s': %s", currentFilePath, err)
-		return
-	}
-	if ml.root == "" {
-		ml.root = absPath
-	}
-	ml.beginResolve(absPath)
-	ml.resolveImportsInNode(root, absPath)
-	ml.endResolve(absPath)
-	ml.checkTopLevelClashes(root)
-	ml.namespaceModules(root)
-}
-
-// topLevelDef is a name defined at the top level of one of the spliced files.
-type topLevelDef struct {
-	name string
-	kind string // "fn", "variable", "extern fn" or "struct"
-	file string // ast.TreeNode.SourceFile: "" for the main file
-	node *ast.TreeNode
-}
-
-// topLevelDefinition returns what a top-level statement defines, if anything.
-// `fn f(...)` is parsed as `f = fn(...)`, so it is an assignment here.
-func topLevelDefinition(stmt *ast.TreeNode) (topLevelDef, bool) {
-	if stmt == nil {
-		return topLevelDef{}, false
-	}
-	switch stmt.NodeType {
-	case ast.ExternFnNode:
-		if stmt.ExternReceiver != "" || stmt.TokenLiteral() == "" {
-			return topLevelDef{}, false // methods live per receiver type
-		}
-		return topLevelDef{name: stmt.TokenLiteral(), kind: "extern fn", file: stmt.SourceFile, node: stmt}, true
-	case ast.StructDefNode:
-		if stmt.TokenLiteral() == "" {
-			return topLevelDef{}, false
-		}
-		return topLevelDef{name: stmt.TokenLiteral(), kind: "struct", file: stmt.SourceFile, node: stmt}, true
-	}
-	name := definedName(stmt)
-	if name == "" {
-		return topLevelDef{}, false
-	}
-	kind := "variable"
-	if stmt.NodeType == ast.FunctionNode || (len(stmt.Children) == 2 && stmt.Children[1] != nil && stmt.Children[1].NodeType == ast.LambdaNode) {
-		kind = "fn"
-	}
-	return topLevelDef{name: name, kind: kind, file: stmt.SourceFile, node: stmt.Children[0]}, true
-}
-
-// checkTopLevelClashes rejects a top-level name defined by two different files.
-// Every top-level name of an included file lands in the importer's single
-// scope (only `module` members are namespaced), so without this check one
-// definition silently replaces the other: an importer's `fn helper` would
-// hijack a library's internal calls, or a user's `fn fmt_full` would be
-// ignored in favour of std/fmt's extern. Within one file, a `fn` or variable
-// may be assigned again as usual, but an `extern fn` or `struct` name can't be
-// reused.
-func (ml *ModuleLoader) checkTopLevelClashes(root *ast.TreeNode) {
-	if root == nil {
-		return
-	}
-	first := map[string]topLevelDef{}
-	reported := map[string]bool{}
-	for _, stmt := range root.Children {
-		def, ok := topLevelDefinition(stmt)
-		if !ok {
-			continue
-		}
-		prev, seen := first[def.name]
-		if !seen {
-			first[def.name] = def
-			continue
-		}
-		if reported[def.name] {
-			continue
-		}
-		reassignable := func(k string) bool { return k == "fn" || k == "variable" }
-		if def.file == prev.file && reassignable(def.kind) && reassignable(prev.kind) {
-			continue
-		}
-		if def.file == prev.file && def.kind == "struct" && prev.kind == "struct" {
-			continue // the checker reports `struct 'X' already defined`
-		}
-		reported[def.name] = true
-		// Point at the main file's definition when there is one: that is the
-		// one the user can rename.
-		at, other := def, prev
-		if prev.file == "" && def.file != "" {
-			at, other = prev, def
-		}
-		where := fmt.Sprintf("line %d", lineOf(other.node))
-		if other.file != "" && other.file != at.file {
-			where = fmt.Sprintf("%s:%d", other.file, lineOf(other.node))
-		}
-		var hint string
-		switch {
-		case at.file == other.file:
-			hint = "rename one of them"
-		case at.file == "":
-			hint = "every top-level name of an included file is visible to the importer, so rename this one"
-		default:
-			hint = "both files are included and their top-level names share one scope; rename one of them or move it into its file's module block"
-		}
-		ml.addClashError(at, fmt.Sprintf("'%s' is already defined as %s (%s); %s",
-			at.name, article(other.kind), where, hint))
-	}
-}
-
-func article(kind string) string {
-	if kind == "extern fn" {
-		return "an extern fn"
-	}
-	return "a " + kind
-}
-
-// addClashError reports msg at def, naming def's own file when it isn't the
-// main file (loader diagnostics default to the main file).
-func (ml *ModuleLoader) addClashError(def topLevelDef, msg string) {
-	loc := &diagnostics.Location{File: def.file, Line: lineOf(def.node)}
-	if def.node != nil && def.node.Token != nil {
-		loc.Column = def.node.Token.Column
-	}
-	ml.errors = append(ml.errors, diagnostics.Diagnostic{
-		Code:     "QK-LOAD-001",
-		Stage:    diagnostics.StageLoad,
-		Severity: diagnostics.SeverityError,
-		Message:  msg,
-		Location: loc,
-	})
-}
-
-// resolveImportsInNode processes all InclNode children of `node`.
-// It modifies node.Children in place, replacing file-based InclNodes with
-// [ModuleNode, InclNode(identifier)] pairs.
-func (ml *ModuleLoader) resolveImportsInNode(node *ast.TreeNode, currentFilePath string) {
-	currentDir := filepath.Dir(currentFilePath)
-
-	// We need to iterate carefully since we're modifying the children slice.
-	// Process from the end to preserve indices, or rebuild the slice.
-	newChildren := make([]*ast.TreeNode, 0, len(node.Children))
-	ml.checkNestedDirectives(node, currentFilePath)
-
-	for _, child := range node.Children {
-		if child.NodeType == ast.ExternLinkNode || child.NodeType == ast.ExternIncludePathNode {
-			ml.recordExternDirective(child, currentFilePath)
-			newChildren = append(newChildren, child)
-			continue
-		}
-
-		// Resolve extern 'path' source includes — rewrite token literal to absolute path.
-		if child.NodeType == ast.ExternHeaderNode && len(child.Children) > 0 {
-			pathNode := child.Children[0]
-			if pathNode != nil && pathNode.Token != nil && pathNode.Token.Type == token.STRING {
-				importPath := pathNode.Token.Literal
-				var resolvedPath string
-				if isStdlibImportPath(importPath) {
-					stdResolved, err := normalizeStdlibImportPath(importPath, currentFilePath)
-					if err != nil {
-						inclLine := 0
-						if child.Token != nil {
-							inclLine = child.Token.Line
-						}
-						ml.addErrorAt(inclLine, 0, "%s", err)
-						newChildren = append(newChildren, child)
-						continue
-					}
-					resolvedPath = stdResolved
-				} else {
-					resolvedPath = normalizeExternPath(currentDir, importPath)
-				}
-				absResolved, err := filepath.Abs(resolvedPath)
-				if err != nil {
-					inclLine := 0
-					if child.Token != nil {
-						inclLine = child.Token.Line
-					}
-					ml.addErrorAt(inclLine, 0, "cannot resolve extern path '%s': %s", importPath, err)
-					newChildren = append(newChildren, child)
-					continue
-				}
-				if !ml.seenHeaders[absResolved] {
-					ml.seenHeaders[absResolved] = true
-					ml.headers = append(ml.headers, absResolved)
-				}
-				// Rewrite the literal to the resolved absolute path
-				newTok := *pathNode.Token
-				newTok.Literal = absResolved
-				newPathNode := ast.NewNode(ast.LiteralNode, &newTok)
-				child.Children[0] = newPathNode
-			}
-			newChildren = append(newChildren, child)
-			continue
-		}
-
-		if child.NodeType != ast.InclNode || len(child.Children) == 0 {
-			newChildren = append(newChildren, child)
-			continue
-		}
-
-		inclChild := child.Children[0]
-
-		// Only process string-literal incl nodes (file imports).
-		// Identifier incl nodes (same-file modules) pass through unchanged.
-		if inclChild.NodeType != ast.LiteralNode || inclChild.Token == nil || inclChild.Token.Type != token.STRING {
-			newChildren = append(newChildren, child)
-			continue
-		}
-
-		importPath := inclChild.Token.Literal
-		alias := extractInclAlias(child)
-		inclLine := 0
-		if child.Token != nil {
-			inclLine = child.Token.Line
-		}
-
-		resolvedPath := ""
-		// Determine resolution strategy
-		if isFileImportPath(importPath) {
-			// Tier 1: file import — resolve relative to current file or use absolute path directly
-			resolvedPath = normalizeImportPath(currentDir, importPath)
-		} else if isStdlibImportPath(importPath) {
-			// Tier 2: stdlib import
-			stdResolved, err := normalizeStdlibImportPath(importPath, currentFilePath)
-			if err != nil {
-				ml.addErrorAt(inclLine, 0, "%s", err)
-				continue
-			}
-			resolvedPath = stdResolved
-		} else {
-			ml.addErrorAt(inclLine, 0, "unsupported import path '%s'; use relative, absolute, or std/... path", importPath)
-			continue
-		}
-
-		absResolved, err := filepath.Abs(resolvedPath)
-		if err != nil {
-			ml.addErrorAt(inclLine, 0, "cannot resolve import path '%s': %s", importPath, err)
-			continue
-		}
-
-		// Check for circular import (current DFS path)
-		if idx, inProgress := ml.resolving[absResolved]; inProgress {
-			chain := append(append([]string{}, ml.stack[idx:]...), absResolved)
-			ml.addErrorAt(inclLine, 0, "circular import detected: %s", formatImportChain(chain))
-			continue
-		}
-
-		// Record the import edge so NativeDeps can order libraries.
-		ml.fileImports[currentFilePath] = append(ml.fileImports[currentFilePath], absResolved)
-
-		// Check for duplicate import (dedup after successful load)
-		if ml.loaded[absResolved] {
-			if moduleName, ok := ml.loadedModules[absResolved]; ok && moduleName != "" {
-				newChildren = append(newChildren, buildSyntheticInclNode(moduleName, alias, inclLine))
-			}
-			continue
-		}
-
-		// Check file exists
-		if _, err := os.Stat(absResolved); os.IsNotExist(err) {
-			ml.addErrorAt(inclLine, 0, "cannot find module '%s': file '%s' does not exist", importPath, absResolved)
-			continue
-		}
-
-		// Read and parse the imported file
-		content, err := os.ReadFile(absResolved)
-		if err != nil {
-			ml.addErrorAt(inclLine, 0, "cannot read '%s': %s", absResolved, err)
-			continue
-		}
-
-		l := lexer.New(string(content))
-		tokens := l.Tokenize()
-
-		p := parser.New(tokens)
-		importedAST := p.Parse()
-
-		if len(p.Errors()) > 0 {
-			for _, pErr := range p.Errors() {
-				ml.addErrorAt(inclLine, 0, "in '%s': %s", importPath, pErr)
-			}
-			continue
-		}
-		// Tag the imported file's nodes before transitive imports are spliced in,
-		// so runtime errors inside the module name its file.
-		ast.SetSourceFile(importedAST, moduleDisplayName(importPath, absResolved))
-
-		// Capture module names defined directly in this imported file before
-		// recursive splicing introduces transitive modules.
-		directModules := findModuleNodes(importedAST)
-
-		// Mark as resolving before descending (for cycle detection)
-		ml.beginResolve(absResolved)
-
-		// Recursively resolve imports in the imported file
-		ml.resolveImportsInNode(importedAST, absResolved)
-		ml.endResolve(absResolved)
-
-		if len(directModules) == 0 {
-			ml.addErrorAt(inclLine, 0, "imported file '%s' does not define a module", importPath)
-			continue
-		}
-
-		// Splice all children from the imported AST into our tree.
-		// This includes transitively-resolved ModuleNodes/InclNodes from sub-imports
-		// as well as the file's own ModuleNode.
-		for _, importedChild := range importedAST.Children {
-			newChildren = append(newChildren, importedChild)
-		}
-
-		// Use only the primary direct module from the imported file.
-		// Additional modules can still be imported explicitly via `incl moduleName`.
-		moduleName := ""
-		if len(directModules[0].Children) > 0 {
-			moduleName = directModules[0].Children[0].TokenLiteral()
-		}
-		if moduleName == "" {
-			ml.addErrorAt(inclLine, 0, "module in '%s' has no name", importPath)
-			continue
-		}
-		ml.loadedModules[absResolved] = moduleName
-
-		newChildren = append(newChildren, buildSyntheticInclNode(moduleName, alias, inclLine))
-	}
-
-	node.Children = newChildren
-}
-
 // moduleDisplayName is how runtime errors name an imported file: std/ imports
 // as "std/<name>.qrk", others relative to the working directory when possible.
 func moduleDisplayName(importPath, absPath string) string {
@@ -727,15 +364,4 @@ func moduleDisplayName(importPath, absPath string) string {
 		}
 	}
 	return filepath.ToSlash(absPath)
-}
-
-// findModuleNodes returns all top-level ModuleNodes in source order.
-func findModuleNodes(root *ast.TreeNode) []*ast.TreeNode {
-	modules := make([]*ast.TreeNode, 0)
-	for _, child := range root.Children {
-		if child.NodeType == ast.ModuleNode {
-			modules = append(modules, child)
-		}
-	}
-	return modules
 }

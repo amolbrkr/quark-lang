@@ -126,6 +126,25 @@ function documentLines(document, untilLine) {
 	return lines;
 }
 
+// topLevelFunctionsFromText lists the functions defined at the top level of a
+// file (`fn name(...)` with no indentation).
+function topLevelFunctionsFromText(text) {
+	const functions = [];
+	const lines = text.split(/\r?\n/);
+	for (let i = 0; i < lines.length; i += 1) {
+		const fn = lines[i].match(new RegExp(`^fn\\s+(${IDENT})\\s*\\(([^)]*)\\)\\s*(${IDENT}(?:::${IDENT})*)?\\s*->`));
+		if (fn) {
+			const prev = i > 0 ? lines[i - 1].trim() : '';
+			functions.push({
+				name: fn[1],
+				signature: `${fn[1]}(${fn[2].trim()})${fn[3] ? ` ${fn[3]}` : ''}`,
+				doc: prev.startsWith('//') ? prev.replace(/^\/\/\s*/, '') : undefined,
+			});
+		}
+	}
+	return functions;
+}
+
 // moduleFunctionsFromText lists the functions defined inside `module name:`
 // blocks, keyed by module name. A `//` comment line above a function is its doc.
 function moduleFunctionsFromText(text) {
@@ -193,38 +212,39 @@ function structFields(text) {
 	return structs;
 }
 
-// importedModules maps each name usable before a dot to the module behind
-// it: `incl 'std/io' as io`, `incl './other' as o`, `incl name` (same file).
+// importedModules maps each path usable before `::` to the functions behind
+// it: a module of this file (`mathx`), an imported file (`incl 'std/io' as io`,
+// `incl './other'`: its top-level functions and those of its primary module,
+// the one named like the file), and a module of an imported file
+// (`other::helpers`).
 function importedModules(document) {
 	const text = document.getText();
 	const result = new Map();
-	const local = moduleFunctionsFromText(text);
-	for (const [name, mod] of local) {
+	for (const [name, mod] of moduleFunctionsFromText(text)) {
 		result.set(name, { name, functions: mod.functions });
 	}
-	const re = new RegExp(`^\\s*incl\\s+(?:['"]([^'"]+)['"]|(${IDENT}))(?:\\s+as\\s+(${IDENT}))?`, 'gm');
+	const re = new RegExp(`^incl\\s+['"]([^'"]+)['"](?:\\s+as\\s+(${IDENT}))?`, 'gm');
 	let m;
 	while ((m = re.exec(text)) !== null) {
-		const [, importPath, sameFile, alias] = m;
-		if (sameFile) {
-			const mod = local.get(sameFile);
-			if (mod && alias) {
-				result.set(alias, { name: sameFile, functions: mod.functions });
-			}
+		const [, importPath, alias] = m;
+		const file = loadImport(importPath, document);
+		if (!file) {
 			continue;
 		}
-		const mod = loadImport(importPath, document);
-		if (mod) {
-			result.set(alias || mod.name, mod);
+		const binding = alias || file.stem;
+		result.set(binding, { name: binding, functions: file.functions });
+		for (const [name, mod] of file.modules) {
+			result.set(`${binding}::${name}`, { name: `${binding}::${name}`, functions: mod.functions });
 		}
 	}
 	return result;
 }
 
 function loadImport(importPath, document) {
+	const stem = importPath.replace(/\.qrk$/, '').split('/').pop();
 	if (importPath.startsWith('std/')) {
-		const mod = STDLIB.get(importPath.slice(4).replace(/\.qrk$/, ''));
-		return mod ? { name: mod.name, functions: mod.functions } : undefined;
+		const mod = STDLIB.get(stem);
+		return mod ? { stem, functions: mod.functions, modules: new Map() } : undefined;
 	}
 	if (document.isUntitled) {
 		return undefined;
@@ -234,9 +254,11 @@ function loadImport(importPath, document) {
 		file += '.qrk';
 	}
 	try {
-		const modules = moduleFunctionsFromText(fs.readFileSync(file, 'utf8'));
-		const first = modules.values().next().value;
-		return first ? { name: first.name, functions: first.functions } : undefined;
+		const text = fs.readFileSync(file, 'utf8');
+		const modules = moduleFunctionsFromText(text);
+		const primary = modules.get(stem);
+		const functions = topLevelFunctionsFromText(text).concat(primary ? primary.functions : []);
+		return { stem, functions, modules };
 	} catch (e) {
 		return undefined;
 	}
@@ -324,18 +346,24 @@ function functionItem(fn, kind, detailPrefix) {
 	return item;
 }
 
+// qualifiedCompletions offers the functions of the module or imported file
+// named before a trailing `::` (io::, other::helpers::).
+function qualifiedCompletions(document, linePrefix) {
+	const m = linePrefix.match(new RegExp(`((?:${IDENT}::)+)[A-Za-z0-9_]*$`));
+	if (!m) {
+		return [];
+	}
+	const mod = importedModules(document).get(m[1].slice(0, -2));
+	if (!mod) {
+		return [];
+	}
+	return mod.functions.map((fn) => functionItem(fn, vscode.CompletionItemKind.Function, `${mod.name}::`));
+}
+
 function dotCompletions(document, position, linePrefix) {
 	const lines = documentLines(document, position.line);
 	const text = document.getText();
 	const structs = structFields(text);
-
-	const receiverName = linePrefix.match(new RegExp(`(?:^|[^.\\w])(${IDENT})\\s*\\.\\s*[A-Za-z0-9_]*$`));
-	if (receiverName) {
-		const mod = importedModules(document).get(receiverName[1]);
-		if (mod) {
-			return mod.functions.map((fn) => functionItem(fn, vscode.CompletionItemKind.Function, `${mod.name}.`));
-		}
-	}
 
 	const type = receiverType(linePrefix, knownTypes(lines, structs), structs);
 	if (type && type.startsWith('struct:')) {
@@ -418,13 +446,17 @@ const completionProvider = {
 		if (/^\s*incl\s+['"][^'"]*$/.test(linePrefix)) {
 			return importCompletions(document);
 		}
-		// Quotes and / only trigger completion for import paths.
+		// Quotes and / only trigger completion for import paths, and ':' only
+		// after `::`.
 		const trigger = context && context.triggerCharacter;
-		if (trigger && trigger !== '.') {
+		if (trigger && trigger !== '.' && !(trigger === ':' && linePrefix.endsWith('::'))) {
 			return [];
 		}
 		if (inCommentOrString(linePrefix)) {
 			return [];
+		}
+		if (new RegExp(`${IDENT}::[A-Za-z0-9_]*$`).test(linePrefix)) {
+			return qualifiedCompletions(document, linePrefix);
 		}
 		if (/\.\s*[A-Za-z0-9_]*$/.test(linePrefix) && !/\b\d+\.[0-9]*$/.test(linePrefix)) {
 			return dotCompletions(document, position, linePrefix);
@@ -465,13 +497,14 @@ const hoverProvider = {
 			if (doc) s.appendMarkdown(doc);
 			return s;
 		};
+		const qualifier = prefix.match(new RegExp(`((?:${IDENT}::)+)$`));
+		if (qualifier) {
+			const mod = importedModules(document).get(qualifier[1].slice(0, -2));
+			const fn = mod && mod.functions.find((f) => f.name === word);
+			return fn ? new vscode.Hover(md(`${mod.name}::${fn.signature}`, fn.doc), range) : undefined;
+		}
 		const qualified = prefix.match(new RegExp(`(${IDENT})\\s*\\.\\s*$`));
 		if (qualified) {
-			const mod = importedModules(document).get(qualified[1]);
-			const fn = mod && mod.functions.find((f) => f.name === word);
-			if (fn) {
-				return new vscode.Hover(md(`${mod.name}.${fn.signature}`, fn.doc), range);
-			}
 			const sigs = [];
 			for (const [recv, methods] of Object.entries(DATA.methods)) {
 				for (const m of methods) {
@@ -496,7 +529,7 @@ const hoverProvider = {
 function activate(context) {
 	context.subscriptions.push(
 		vscode.commands.registerCommand('quark.runCurrentFile', runCurrentFile),
-		vscode.languages.registerCompletionItemProvider('quark', completionProvider, '.', "'", '"', '/'),
+		vscode.languages.registerCompletionItemProvider('quark', completionProvider, '.', ':', "'", '"', '/'),
 		vscode.languages.registerHoverProvider('quark', hoverProvider),
 	);
 }

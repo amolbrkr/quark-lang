@@ -6,14 +6,26 @@ import (
 )
 
 func (a *Analyzer) analyzeCompilationUnit(node *ast.TreeNode) Type {
-	a.predeclareStructTypes(node.Children)
-	a.predeclareFunctions(node.Children)
-	a.declareFixedFns(node, node.Children)
-	var lastType Type = TypeVoid
-	for i, child := range node.Children {
-		a.enterStatement(i)
-		lastType = a.Analyze(child)
+	// Structs of every file and module body (the loader gave each a unique
+	// internal name), so any of them can be used before its definition.
+	structs := append([]*ast.TreeNode(nil), node.Children...)
+	for _, child := range node.Children {
+		if child != nil && child.NodeType == ast.ModuleNode && len(child.Children) >= 2 && child.Children[1] != nil {
+			structs = append(structs, child.Children[1].Children...)
+		}
 	}
+	a.predeclareStructTypes(structs)
+	a.predeclareFunctions(node.Children)
+	// Module bodies share the file scope: all of the program's top-level
+	// and module declarations are hoisted together.
+	a.declareFixedFns(node, node.Children)
+	for _, child := range node.Children {
+		if child != nil && child.NodeType == ast.ModuleNode && len(child.Children) >= 2 && child.Children[1] != nil {
+			a.predeclareFunctions(child.Children[1].Children)
+			a.declareFixedFns(child.Children[1], child.Children[1].Children)
+		}
+	}
+	lastType := a.analyzeStatements(node, node.Children)
 	a.finalizeFixedFns()
 	return lastType
 }
@@ -23,9 +35,17 @@ func (a *Analyzer) analyzeBlock(node *ast.TreeNode) Type {
 	defer a.popScope()
 	a.predeclareFunctions(node.Children)
 	a.declareFixedFns(node, node.Children)
+	return a.analyzeStatements(node, node.Children)
+}
+
+// analyzeStatements analyzes a statement list in order, tracking the current
+// statement so first assignments can be ordered against calls (rule 23).
+func (a *Analyzer) analyzeStatements(list *ast.TreeNode, stmts []*ast.TreeNode) Type {
+	savedList, savedIdx := a.curList, a.curIdx
+	defer func() { a.curList, a.curIdx = savedList, savedIdx }()
 	var lastType Type = TypeVoid
-	for i, child := range node.Children {
-		a.enterStatement(i)
+	for i, child := range stmts {
+		a.curList, a.curIdx = list, i
 		lastType = a.Analyze(child)
 	}
 	return lastType
@@ -131,25 +151,10 @@ func (a *Analyzer) collectFreeVars(node *ast.TreeNode, lambdaScope *Scope, param
 		}
 		return
 	}
-	// Dot access: the right side is a member, key or method name, not a
-	// variable, so only the left side is walked. For alias.member (a module
-	// call), the member's binding lives in main, so it is captured (and
-	// dropped again when it needs no closure, as for any declaration).
+	// Dot access: the right side is a field, key or method name, not a
+	// variable, so only the left side is walked.
 	if node.NodeType == ast.OperatorNode && node.Token != nil && node.Token.Type == token.DOT && len(node.Children) == 2 {
-		left, right := node.Children[0], node.Children[1]
-		if left != nil && left.NodeType == ast.IdentifierNode && right != nil && right.NodeType == ast.IdentifierNode {
-			if moduleName, isAlias := a.moduleAliases[left.TokenLiteral()]; isAlias && lambdaScope.Lookup(left.TokenLiteral()) == nil {
-				member := right.TokenLiteral()
-				if module := a.modules[moduleName]; module != nil && member != "" && !params[member] && !seen[member] {
-					if sym := module.Symbols[member]; sym != nil {
-						seen[member] = true
-						*result = append(*result, member)
-						*syms = append(*syms, sym)
-					}
-				}
-				return
-			}
-		}
+		left := node.Children[0]
 		a.collectFreeVars(left, lambdaScope, params, seen, result, syms)
 		return
 	}

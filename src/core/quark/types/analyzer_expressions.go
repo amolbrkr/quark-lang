@@ -62,19 +62,6 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 			a.errorAt(node, "malformed dot access expression")
 			return TypeError
 		}
-		// alias.member used as a value (calls are resolved in analyzeCall).
-		if left := node.Children[0]; left.NodeType == ast.IdentifierNode && a.currentScope.Lookup(left.TokenLiteral()) == nil {
-			if _, _, sym, ok := a.lookupModuleCall(node); ok {
-				if sym == nil {
-					return TypeError
-				}
-				a.moduleMemberRefs[node] = true
-				if f := a.fixedFnOf(sym); f != nil {
-					a.fixedRefs[node.Children[1]] = f
-				}
-				return sym.Type
-			}
-		}
 		targetType := a.Analyze(node.Children[0])
 		if IsErrorType(targetType) {
 			return TypeError

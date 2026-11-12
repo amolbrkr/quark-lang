@@ -4,5 +4,5 @@ extern link 'qffi_test'
 incl './mod_a'
 incl './mod_c'
 
-print(mod_a.compute(4))   // 13
-print(mod_c.add3(4))      // 7
+print(mod_a::compute(4))   // 13
+print(mod_c::add3(4))      // 7

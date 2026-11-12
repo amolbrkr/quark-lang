@@ -19,7 +19,8 @@ This document is the grammar and semantic reference for the Quark compiler in `s
 | `->` | produces/maps to | function bodies, `when` pattern results |
 | `:` | contains/has type | block headers, type annotations, dict entries |
 | `\|` | pipe to | dataflow chaining |
-| `.` | member of | dict keys, struct fields, method calls and module-qualified calls |
+| `.` | member of | dict keys, struct fields and method calls on values |
+| `::` | qualified name | a member of a module or an imported file (`io::exists`, `geo::Point`, `core::helpers::double`) |
 
 ## 3) Lexical Elements
 
@@ -97,10 +98,16 @@ Statement       ::= FunctionDef
 ModuleDef       ::= "module" ID ":" Block
 ```
 
-### 5.2 Use forms
+A module body may contain any statement except another `module` in the main script; in an imported file it may only contain definitions (see semantics.md §10.4). A `struct` may be defined in a module body. Modules can't be nested.
+
+### 5.2 Incl and qualified names
 
 ```ebnf
-InclStatement    ::= "incl" ( ID | STRING ) [ "as" ID ]
+InclStatement    ::= "incl" STRING [ "as" ID ]          (top level only)
+
+QualifiedName    ::= ID "::" ID { "::" ID }             (a value, call or pipe target)
+TypeName         ::= ID { "::" ID }                     (an annotation: x: geo::Point)
+StructLiteral    ::= TypeName "{" [ FieldInit { "," FieldInit } ] "}"
 
 ExternStatement ::= ExternHeader
                 |   ExternLink
@@ -117,15 +124,15 @@ BuiltinTypeName ::= "int" | "float" | "str" | "bool" | "list" | "dict" | "vec"
 ```
 
 Semantics:
-- `incl ID`: same-file module import
-- `incl './path'` or `incl '../path'`: file import resolved by loader
+- `incl './path'` or `incl '../path'`: file import resolved by loader, bound under the file's stem
 - `incl 'C:/path/to/file'` or `incl '/path/to/file'`: absolute file import resolved by loader
-- `incl 'std/name'`: stdlib import resolved from stdlib root (`QUARK_STDLIB_ROOT` or discovered `stdlib/` directory)
-- `incl ... as alias`: binds `alias` as a module qualifier for `alias.symbol(...)` calls
+- `incl 'std/name'`: stdlib import resolved from stdlib root (`QUARK_STDLIB_ROOT` or discovered `stdlib/` directory), bound as `name`
+- `incl ... as alias`: binds the file as `alias` instead
+- `module::name`, `file::name`, `file::module::name`: see semantics.md §10.3. `incl ID` (a same-file module) was removed; write `module::name`
 
 Extern/QEI semantics:
 - `extern 'path.hpp'` `#include`s a C++ header. The path is resolved by the loader relative to the declaring file (`std/...` paths resolve in the stdlib).
-- `extern link 'name'` links a native library (`-lname`). `extern include_path 'dir'` adds a C++ include search directory, relative to the declaring file. See semantics.md §10.6 and `ffi_v0_1_spec.md` P1.
+- `extern link 'name'` links a native library (`-lname`). `extern include_path 'dir'` adds a C++ include search directory, relative to the declaring file. See semantics.md §10.8 and `ffi_v0_1_spec.md` P1.
 - Directives must be at the top level of a file (inside a `module` block or any other block they are a `QK-LOAD-001` error), and nothing may follow the string.
 - `extern source` is reserved for separately compiled glue files and is not supported yet (`QK-PARSE-001`).
 - `extern fn name(...) T as 'symbol'` declares a free extern function.
@@ -409,13 +416,12 @@ Call arguments and collection elements are `PipeExpr`s, so an assignment cannot 
 
 ### 11.1 Dot syntax rules
 
-Dot syntax (`.`) serves five purposes:
+Dot syntax (`.`) serves four purposes (members of modules and imported files use `::`, §5.2):
 
 - `d.key` — dict key read
 - `d.key = value` — dict key write
 - `s.field` — struct field read (struct fields can't be assigned; see §9.1)
 - `value.method(args)` — method dispatch (receiver type determines which method is resolved; see stdlib.md for available methods per type)
-- `alias.fn(args)` — module-qualified call after `incl ... as alias`
 
 Dot-key access on a value that isn't a dict or struct is a compile-time error when the type is known (`dot access is only supported on dict ...`) and a runtime error otherwise. Method calls on types that don't define the method are a compile-time error.
 
@@ -493,8 +499,8 @@ Result construction and use:
 | Feature | Status | Notes |
 |---|---|---|
 | Indentation blocks | Implemented | Triggered after `:` and `->` |
-| `module` / `incl` same-file | Implemented | `incl ID` |
-| `incl STRING` file imports | Implemented | Relative and absolute file paths |
+| `module` blocks | Implemented | Members are `module::name`; structs allowed in module bodies |
+| `incl STRING` file imports | Implemented | Relative and absolute file paths; any file of definitions is a library |
 | Stdlib string imports (`incl 'std/name'`) | Implemented | Resolved via stdlib root |
 | Named functions and lambdas | Implemented | Parenthesized params required |
 | Return type annotations | Implemented | `fn f(x) int -> x + 1`; checked at compile time, and at runtime in fully annotated (native) functions |
@@ -506,7 +512,7 @@ Result construction and use:
 | Dict literals (`dict {k: v}`) | Implemented | Keys are identifiers in source |
 | Loop control (`break`, `continue`) | Implemented | Exits/skips nearest enclosing loop; compile error outside loops |
 | Method dispatch (`value.method()`) | Implemented | String, list, dict, vec methods |
-| Module-qualified call syntax (`alias.fn(...)`) | Implemented | Requires `incl ... as alias` |
+| Qualified names (`file::name`, `file::module::name`, `module::name`) | Implemented | Values, calls, pipes, annotations and struct literals (modules v0.2) |
 | Dot data access on dict | Implemented | read/write |
 | Result values `ok` / `err` | Implemented | Analyzer has `ResultType` |
 | `when` result patterns | Implemented | `ok x`, `err e` |

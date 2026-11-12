@@ -37,7 +37,7 @@ Key parser decisions:
 
 Resolves all `incl` statements by loading, parsing, and splicing external files into the main AST. See semantics.md §10 for resolution rules.
 
-After splicing, `namespaceModules` (`loader/namespace.go`) gives module members unique names, since all files share one scope: each definition at the top level of module `m` and every reference to it becomes `m__name` (`loader.MemberName`). That covers sibling references inside the module, the member side of `alias.member` (kept as a dot so the analyzer resolves it through the module's symbols), and bare names imported by an unaliased `incl`. Parameters, loop variables and ok/err bindings shadow as usual. The analyzer shows the original name in messages (`displayMember`). The loader also tags nodes from imported files with `SourceFile`, which codegen's `q_set_source_loc` calls use so runtime errors name the module's file (code from `std/` sets no location, so its errors point at the user's call). Every generated function starts with a `QSourceLocGuard` that restores the caller's location when it returns.
+Names are resolved per file (modules v0.2, `semantics.md` §10). `loader/files.go` loads each imported file once (keyed by absolute path, numbered in load order), checks file names and that imported files only contain definitions, and builds each file's scope: top-level definitions, modules with their members, and import bindings, reporting clashes. `loader/resolve.go` then walks every file: each definition of an imported file gets the internal name `q<N>_<stem>__name` (module members `q<N>_<stem>__<module>__name`; main-script module members `<module>__name`), and every reference, bare (local, then enclosing module, then file, then prelude) or `::`-qualified, is rewritten to that internal name. Constants of imported files are inlined. Parameters, loop variables and ok/err bindings shadow as usual. The files are then spliced into one tree, imported files first, without their `incl` statements. The resulting `names.Table` maps internal names back to the names users write; the analyzer's diagnostics and codegen's runtime names go through it. The loader also tags nodes from imported files with `SourceFile`, which codegen's `q_set_source_loc` calls use so runtime errors name the module's file (code from `std/` sets no location, so its errors point at the user's call). Every generated function starts with a `QSourceLocGuard` that restores the caller's location when it returns.
 
 ### 1.4 Analyzer → Annotated AST + Metadata
 
@@ -346,7 +346,7 @@ Methods are indexed by `(ReceiverType, methodName)` pair. Free functions are ind
 
 ## 7) Extern Function System
 
-The extern fn system allows Quark programs to call native C++ functions. See semantics.md §10.6 for the language-level syntax.
+The extern fn system allows Quark programs to call native C++ functions. See semantics.md §10.8 for the language-level syntax.
 
 ### Pipeline flow
 
@@ -486,3 +486,149 @@ Several tests construct temporary `.qrk` files from Go strings for targeted veri
 ### GC selfcheck
 
 Compiles a standalone C++ program (not a Quark program) that allocates runtime values and verifies via `GC_base()` that all object and buffer allocations land on the Boehm GC heap. Covers: strings, lists, dicts, all four vector dtypes, closures, cells, and ok/err results.
+
+---
+
+## 12) Code Health and Simplification Plan
+
+A health review on 2026-11-12 (at `b52660f` plus the uncommitted modules v0.2 work) measured the Go compiler and the C++ runtime and read each stage for duplicated or conflicting logic. Line numbers are as of that review and will drift. The bugs it found are in `changelog.md` under Known issues. This section is about structure: where the code is too complex, where one decision is made in several places, and what is dead. Most of the known issues trace back to a decision that lives in more than one place.
+
+Tools: `gocyclo` (cyclomatic complexity, non-test Go), a function-length count with `go/ast`, and `golang.org/x/tools/cmd/deadcode`. Build, `go vet` and the full test suite were green; the integration package takes about 4 minutes uncached.
+
+### 12.1 Measurements
+
+A cyclomatic complexity above about 15-20 means a function has more paths than its tests can cover. `analyzeOperator` is more than twice the next one.
+
+| Function | Location | Lines | Complexity |
+|---|---|---|---|
+| `Analyzer.analyzeOperator` | `types/analyzer_expressions.go:45-399` | 355 | 159 |
+| `ModuleLoader.walk` | `loader/resolve.go:75-238` | 164 | 64 |
+| `Generator.generateOperator` | `codegen/codegen.go:1683-1883` | 201 | 60 |
+| `Lexer.nextRawToken` | `lexer/lexer.go:255-416` | 162 | 48 |
+| `ValidateCallPlans` | `invariants/callplan.go:43-154` | 112 | 48 |
+| `Analyzer.inferBuiltinReturnType` | `types/analyzer_typecheck.go:8-94` | 87 | 40 |
+| `CanAssign` | `types/types.go:335` | | 37 |
+| `Analyzer.analyzeFunctionCall` | `types/analyzer_calls.go:252-381` | 130 | 37 |
+| `Analyzer.checkDefiniteAssignment` | `types/analyzer_fixed.go:298-402` | 105 | 34 |
+| `ModuleLoader.collect` | `loader/files.go:536-626` | 91 | 34 |
+| `Generator.scalarExpr` | `codegen/codegen.go:1496-1575` | 80 | 34 |
+| `Generator.checkedFieldValue` | `codegen/codegen.go:2883` | | 32 |
+| `Generator.generateFunctionCall` | `codegen/codegen.go:1944-2056` | 113 | 31 |
+| `Analyzer.analyzePipe` | `types/analyzer_calls.go:433-554` | 122 | 30 |
+| `Generator.generatePipe` | `codegen/codegen.go:2071-2180` | 110 | 29 |
+| `Generator.Generate` | `codegen/codegen.go:537-660` | 124 | 29 |
+| `Generator.generateFor` | `codegen/codegen.go:2433-2556` | 124 | |
+| `Generator.generateNativeFunction` | `codegen/codegen.go:1096-1203` | 108 | 22 |
+| `Analyzer.analyzeExternFn` | `types/analyzer_modules.go:143-250` | 108 | |
+| `Lexer.indentationFilter` | `lexer/lexer.go:150-253` | 104 | |
+| `Generator.generateWhen` | `codegen/codegen.go:2249-2349` | 101 | 22 |
+| `Analyzer.resolveMethodCall` | `types/analyzer_calls.go:54-154` | 101 | |
+
+File sizes: `codegen/codegen.go` is 2996 lines in one file; the next largest non-test files are `parser/parser.go` (1100), `loader/files.go` (756), `types/analyzer_calls.go` (749). In the runtime, `types/vector.hpp` is 1252 lines, `ext/api.hpp` 458.
+
+`analyzeOperator` handles member access, every kind of assignment (to a name, a struct field, a dict key, a list index, a fixed `fn`, a builtin) and all unary, binary, vector and comparison operators in one function. It should be split by node shape: `analyzeMemberAccess`, `analyzeAssignment` (dispatching to one function per target kind), `analyzeUnary`, `analyzeVectorArith`, `analyzeBinary`.
+
+### 12.2 One decision, several places (Go)
+
+Each of these is a decision made in more than one place, with copies that already disagree. Fixing each one in one place also fixes the known issues listed next to it.
+
+- **Variable storage tier** (`QCell*` / `long long` / `double` / `bool` / `QValue`) is chosen in at least six places in codegen: the assignment branch of `generateOperator` (~1857-1876), `generateVarDecl` (~2716-2736), parameter bindings (~1048-1057), native parameters (~1143-1155), the `for` loop variable (three times inside `generateFor`), and `hoistScopes`. `generateVarDecl` picks the tier from the value instead of the annotation, and reassignment unboxes with the variable's tier whatever the value's type. Known issues: `x: float = len(l)` stays an int, an int assigned to a float variable reads garbage. Fix: one `declareVar(name, declaredType, rhs)` that is the only tier decision.
+- **Raw union reads.** `unboxForTier` (`codegen.go:264`) and the loop element read (`codegen.go:2486`) emit `.data.int_val` / `.data.float_val` with no tag check whenever the analyzer reports a scalar type, including element types of lists and dicts and the type of a narrowed `any` variable, which the analyzer does not keep sound (see 12.6). `unboxForTier` also ignores its type argument.
+- **Calls are built twice in the analyzer and twice in codegen.** `analyzeFunctionCall` and `analyzePipe` build the builtin, extern and user-function plans and arity messages separately; so do `generateFunctionCall` and `generatePipe`. They have drifted: `3 | d.f()` falls through to calling the dict member while `d.f(3)` is "type has no method", and codegen differs in native-argument indexing and zero-argument direct calls. Fix: one `buildCallPlan(callee, prefixArgs, args)` in the analyzer and one `emitCall(plan, callee, prefixArgs, args)` in codegen, both used by call and pipe. The arity error text is also copied in about ten places in the analyzer.
+- **Loop bodies skip `generateBlock`.** The range loop (~2416-2424), `emitLoopBody` (~2444-2454) and `while` (~2576-2584) emit their statements directly, so loop bodies get no `fn` hoisting, no per-statement source location, and `while` gets no block scope. Known issues: `fn` inside a loop fails in clang, a variable first assigned in a `while` body fails in clang, runtime errors in a `for` body report the `for` line. Fix: every body goes through one block helper.
+- **Expression preludes.** Method-receiver temporaries (~1971-1981, ~2100-2110) and `if`/list temporaries are written to the output at the current position, i.e. before the statement, not inside the expression that needs them. Known issues: `and`/`or` and `x if c else y` run both sides, a `while` condition is evaluated once, `elseif` with a method call fails in clang, `f().m(g())` runs `g` first. Fix: expression generation returns `(prelude, expr)` and each conditional or repeated context (short-circuit, ternary, `while` condition, `elseif`) places the prelude itself, or wraps it in a lambda.
+- **Function values** are built in three places: `directFnValue`, `generateIdentifier` (~1458-1463) and `generateLambdaExpr` (~2773-2776).
+- **Native ↔ `QValue` conversion tables**: `nativeArgToQValue` (`codegen.go:217`) and `wrapExternReturn` (`codegen.go:511`) are the same table; `unboxToNative` is an alias of `adaptArgForExtern`.
+- **String escaping**: `generateLiteral` (~1416-1425) re-implements `escapeCppString` and escapes more characters than it, so the two can produce different C++ for the same string.
+- **Internal errors**: `panicICEf` calls `os.Exit(2)` from a library package, `panicMissingCallPlan` calls `panic`. Pick one (return an error, or panic and recover in the driver).
+- **Constant rules**: three functions decide what a constant is: `isConstantDefault` (`parser.go:325`, allows `null` and `-'s'`), `isLiteralDefault` (`parser.go:509`) and `isConstantValue` (`loader/files.go:450`).
+- **Loader definitions**: `topDef` and `memberDef` (`loader/files.go:641-722`) are near copies; `collect` now reports a nested `ModuleNode` in the main script (it used to be dropped silently, because `memberDef` ignores it). `collect` contains a hand-written insertion sort.
+- **Parser statement loop**: `parseBlock` (`parser.go:164-217`) repeats the statement loop of `Parse`.
+- **Duplicate analysis**: the target of `x.f = v` is analyzed twice (`analyzer_expressions.go:125` and `:168`), and the method-not-found path (`analyzer_calls.go:273`) and the pipe fallthrough (`:469`) re-analyze the receiver, so diagnostics, fixed-fn calls and call shapes can be recorded twice.
+- **Name mangling**: module members are joined as `module + "__" + name`, which is not unique when a name starts or ends with `_` (`m` + `_x` and `m_` + `x`), and main-script module names are not prefixed, so `module q1_a` can take the internal names of the first imported file. Since 2026-11-12 the loader rejects any two definitions with one internal name (`reportInternalClash`) instead of merging them, and renames a library's locals that share a name with the main script (`renameLocal`). Codegen's `newLambda` (`codegen.go:388`) still makes `quark__lambda1`, which a user variable `_lambda1` also becomes. Every generated name should come from one place that guarantees it can't be written by a user (rule 6 of the robustness bar).
+
+### 12.3 Dead code (Go)
+
+**Legacy `FunctionNode` path.** The parser never creates `ast.FunctionNode`; `fn f(...)` parses as `f = fn(...)` with `FnDecl` set. Everything that handles `FunctionNode` is dead:
+- types: `analyzeFunction` (`analyzer_functions.go:54-124`), `predeclareFunctions` / `declareFunctionSignature` (`analyzer_declarations.go`), the `FunctionNode` case in `analyze` (`analyzer.go:282`), the branch in `GetCapturedByFunction` (`analyzer_modules.go:363`), and the two "Legacy FunctionNode" `DispatchDirect` blocks (`analyzer_calls.go` ~351-360 and ~515-524), whose `nativeParamTypes` / `nativeReturnType` locals are never set.
+- `a.functions` (keyed by name, so it can't tell shadowed symbols apart) is read only by those legacy blocks. Because every `g = fn` lambda is added to it, a loop variable named like any function variable is called as `DispatchDirect quark_f` and fails in clang. Remove it with them.
+- invariants: the `FunctionNode` branch of `ValidateReturnAnnotations` (`callplan.go:173`).
+- codegen: the `FunctionNode` parts of `collectFunctions` and `generateNode`, `generateFunction`, `generateQValueFunction`, `generateModule` (a no-op), and `funcNames` with its branch in `generateIdentifier`.
+
+**Unreachable functions** (`deadcode`): `ast.Precedence.String`, `codegen.boxToQValue`, `loader.def.qualified`, `parser.Parser.peekPrecedence`, `parser.Parser.parseCallArguments`, `token.Keywords` (used only by tests), `types.isFunctionBindingAssignment`, `types.functionTypeFromLambdaNode`, `Analyzer.declareFunctionAssignmentSignature`, and the getters `Analyzer.GetModules`, `GetReturnValidation`, `GetExternFns`, `GetNativeFns`, `GetStructTypes` (plus `Errors`, `ErrorDiagnostics`, `WarningDiagnostics`, `GetCaptures`, `GetCallPlans`, used only by tests). The getters predate `types.Analysis`, which replaced them.
+
+**Unused or write-only state:**
+- `Analyzer.currentModule` (written, never read); `a.modules` / `Module` only back `GetModules` and a duplicate-module check the loader already does.
+- `ModuleLoader.loaded` (`loader.go:251`, written, never read).
+- `ast.StatementNode`, `ExpressionNode`, `ConditionNode`: never created.
+- `Generator.inFunction`, `Generator.currentFunc`: written, never read.
+- `CallPlan.Kind`: never read by codegen or invariants.
+- `CallPlan.ArgTypesChecked`: set to `true` at every site, so `INV-ARGCHECK` can't fail.
+- `_ = tok` (`parser.go:283`), `_ = externTok` (`parser.go:1039`); the unused first parameter of `generateExternThunk`; `boxResultToQValue` (no-op).
+
+**Nodes the loader removes but later stages still accept.** `InclNode` is handled in the analyzer (`analyzer.go:318`, returns `void`) and codegen (`codegen.go:642`, `1302`, `1381-1383`). After the loader drops every `incl`, these should be internal errors, not silent no-ops. The `incl ID` parse branch (`parser.go:1076`) exists only to produce the loader's "no incl needed" error, and the comment above it (`:1058-1063`) still documents the old form.
+
+### 12.4 Runtime (C++)
+
+The runtime has grown several helpers that do the same job and disagree with each other.
+
+**Error convention.** The real convention is `q_runtime_reportf(...)` then `exit(1)` (about 190 sites), not "return `qv_null()` on mismatch". A few places still return `null` on a type mismatch (`list.concat` with a non-list at `list.hpp:160`, string index with a non-int at `string.hpp:399`), which is a silent wrong result. There is no `[[noreturn]] q_fatalf`, so `types/dict.hpp` has dead `if (!q_require_dict(...)) return qv_null();` branches. Add `q_fatalf`, use it everywhere, and remove the `null` returns.
+
+**Seven type-name tables**, which disagree:
+
+| Where | Difference |
+|---|---|
+| `ops/arithmetic.hpp:31` `q_type_name_arith` | full list |
+| `builtins/math.hpp:13` `q_type_name_math` | stops at `result`, so `abs(struct)` says `unknown` |
+| `ops/member.hpp:33` (inline) | says `string`, not `str` |
+| `builtins/conversion.hpp:106` and `:137` (inline) | full list, twice |
+| `types/vector.hpp:983` (`to_vec` lambda) | switch |
+| `ext/api.hpp:377` `q_as_type_name` | stops at `resource` |
+
+Replace all of them with one `q_type_name(ValueType)` next to `q_type`.
+
+**Text formatting.** `print_qvalue` (`builtins/io.hpp:16`, also missing the `q_` prefix), `q_str`, `q_repr_into`, `q_fmt_cell` (formats lists differently from `print`), and `q_fmt_vec` / `q_fmt_vector_cells` (duplicates inside `stdlib/fmt.hpp`). `repr.hpp` should be the only renderer; the others call it with options.
+
+**Boxing helpers.** `qv_vector_from`, `qv_vector_ptr` and `qext::box(QVector*)` are the same; so are `qv_list_ptr` and `qext::box(QList*)`. `qext::box(int)` doesn't compile because the `int64_t`, `double` and `bool` overloads make it ambiguous. A native function returning `nullptr` for a `list`/`vec` is boxed as an empty container and a `null` `const char*` becomes `qv_null()`; the boxing helper is the place to reject both.
+
+**Index and size types.** Lists and strings index with 32-bit `int` (`list.hpp:59, 80, 126, 145, 186-188`, `string.hpp:402-403`, `strings.hpp:184-186`), vectors with `long long` (`q_vec_get_scalar`). `q_vec_size` and `q_list_size` return `int`. Use `int64_t` everywhere with one bounds-check helper.
+
+**Numeric conversions.** float→int casts are unchecked in `floor`, `round`, `ceil` (`math.hpp:133, 143, 153`), `to_int` (`conversion.hpp:89`), `fillna` (`vector.hpp:313`, `q_to_i64_scalar`) and `range` (`list.hpp:263, 285`); `astype('i64')` has the right range check (`vector.hpp:917`). `to_int(str)` ignores `strtoll`'s `ERANGE` (`conversion.hpp:98`), `abs` uses `llabs` (`math.hpp:29`), and `range` steps with an unchecked `i += st` (`list.hpp:371`). One `q_checked_f2i` and the existing `core/checked.hpp` helpers should cover all of these.
+
+**`vector.hpp`.** No macros; the complexity is nested reader lambdas (`with_*_reader` × `cmp_*`), which multiply template instantiations, and about eight hand-written per-dtype switches (`box_at`, `clone`, `mask_filter`, `vectors_identical`, `to_vec`, the fmt cells, `fillna`, `astype`). `q_vec_validate` is called by some entry points and not others (`get_scalar`, `mask_filter`, `to_list`, the reducers and repr skip it). Proposed split:
+1. `vector/layout.hpp`: the struct, validity bitmap, buffers, accessors and builders (the Arrow contract `ext/api.hpp` depends on).
+2. `vector/kernels.hpp`: arithmetic and comparison.
+3. `vector/reduce.hpp`: reductions, including `all`/`any` from `math.hpp`.
+4. `vector/convert.hpp`: `to_vec`, `to_list`, `astype`, `fillna`.
+5. `vector/index.hpp`: indexing and masks.
+
+A single `q_vec_visit_dtype(v, f)` would replace the per-dtype switches.
+
+**Not referenced by the compiler or stdlib:** `q_list_size`, `q_list_empty`, `q_list_clear`, `q_list_free`, `q_dict_has`, `q_dict_size`, `q_vec_dtype`, `q_vec_numeric_as_i64`, `q_vec_str_append_null`, `qv_list_init`, and the `q_malloc_tensor` / `q_realloc` macros (`core/gc.hpp`). `qv_list_from` is used only by the Go tests that compile C++ against the headers.
+
+**Tables.** `types/table.hpp` and the `VAL_TABLE` branches in `repr.hpp`, `conversion.hpp`, `truthy.hpp` and `value.hpp` are unreachable: no Quark program can create a table yet (`tables_v0_1_spec.md` is paused). Either keep them as the start of that work or remove them until it resumes.
+
+**Smaller items.** `builtins/repr.hpp` is only included indirectly through `conversion.hpp`, though every builtins header is supposed to be listed in `quark.hpp`. `QFilePayload` holds no pointers and could use `q_malloc_atomic`. No live GC hazards were found: container buffers use `q_allocator` or are short-lived copies, vector buffers are atomic, the resource registry uses `gc_allocator`.
+
+### 12.5 Tests
+
+- **`internal/testutil` repeats the pipeline instead of calling the driver.** `Analyze` (`testutil.go:58-68`) runs the analyzer even after loader errors, on a tree the loader didn't finish; the driver stops there (`driver.go:100-103`). Loader errors lose their code and location and are mixed into `ParserErrors`; it uses `analyzer.Errors()` where the driver uses `Diagnostics()`/`HasErrors()`; it always compiles as `test_input.qrk`. Only 5 tests use the driver path, so a test can pass while the CLI behaves differently. Fix: `testutil` calls `driver.CompileSource` and exposes its result.
+- **None of the known issues found in the review were caught by the suite.** The misuse paths that rule 2 of the robustness bar asks for are thin for: aliasing and mutation of containers, `any` values flowing into typed code, conditional and repeated expression contexts (short-circuit, ternary, `while` condition, `elseif`), definitions inside loop bodies, generated-name collisions, and numeric limits (int64 boundaries, float→int, NaN, indexes past 2^31).
+
+### 12.6 Open design question: element types
+
+The largest class of known issues is codegen reading a raw value based on an element type or narrowed type the analyzer got wrong (aliases, mutation through a function, index and key assignment, `any` values pushed into a list, narrowing inside a branch). There are three ways out, which trade execution speed against effort:
+
+1. **Checked reads.** Read every list/dict element and every narrowed `any` variable with a checked helper (`q_as_int`, ...). Simple and sound; one tag check per read.
+2. **Sound tracking.** Make the analyzer invalidate or widen element types on aliasing, calls and index/key assignment, and undo narrowing where branches merge. Reads stay unchecked, but it is the larger job and every new mutation path must keep it sound.
+3. **Both.** Checked reads now, and remove the check where tracking can prove the type.
+
+This needs a decision before the bugs in that group are fixed.
+
+### 12.7 Suggested order
+
+1. **Remove dead code** (12.3, and the unreferenced runtime functions in 12.4). No behavior change; the suite must stay green. This shrinks what the next steps have to touch.
+2. **Unify the duplicated decisions** in 12.2: tier selection, call building, block emission, expression preludes, name mangling. Each one fixes a group of known issues.
+3. **Split the large files** along those seams. Codegen: `codegen.go` (struct, `SetAnalysis`, `Generate`, emit helpers), `scope.go` (scopes, tiers, cells), `names.go` (all generated names), `abi.go` (native ↔ `QValue`), `functions.go` (fn infos, defaults, parameters, native functions, thunks, lambdas, `hoistScopes`), `calls.go`, `scalar.go`, `expr.go`, `assign.go`, `control.go`, `structs.go`. Analyzer: split `analyzeOperator` as in 12.1 and merge the call/pipe paths. Loader: split `walk` by node kind.
+4. **Consolidate the runtime** (12.4): one type-name table, one renderer, one error helper, one index type, checked conversions, the `vector.hpp` split.
+5. **Make `testutil` use the driver** and add the missing misuse tests (12.5).

@@ -353,16 +353,10 @@ func TestNeg_WhenResultPatternOnNonResult(t *testing.T) {
 // --- Module errors ---
 
 func TestNeg_ModuleUnknownSymbol(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("module math:\n    fn add(x, y) -> x + y\nincl math as m\nm.nonexistent()\n")
-	if len(parseErrs) > 0 {
-		t.Fatalf("unexpected parse errors: %v", parseErrs)
-	}
-	if len(typeErrs) == 0 {
-		t.Fatalf("expected error for unknown module symbol")
-	}
-	joined := strings.Join(typeErrs, "\n")
-	if !strings.Contains(joined, "no symbol") {
-		t.Fatalf("expected 'no symbol' error, got: %v", typeErrs)
+	_, _, loadErrs, _ := testutil.Analyze("module math:\n    fn add(x, y) -> x + y\nmath::nonexistent()\n")
+	joined := strings.Join(loadErrs, "\n")
+	if !strings.Contains(joined, "module 'math' has no 'nonexistent'") {
+		t.Fatalf("expected unknown member error, got: %v", loadErrs)
 	}
 }
 

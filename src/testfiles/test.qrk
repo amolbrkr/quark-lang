@@ -3,3 +3,7 @@ incl "std/random"
 fn pick1(max: int = 10) int -> randint(0, max)
 
 print(pick1())
+
+x = 1.5
+x = len(list [1, 2, 3])
+print(x)

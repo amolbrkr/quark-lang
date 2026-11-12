@@ -20,7 +20,7 @@ print(list [ok 5, err 'boom'])
 // More than 100 items: first and last 5, plus a count. 100 print in full.
 print(range(1000))
 print(len(to_str(range(100))))
-print(len(fmt.full(range(1000))))
+print(len(fmt::full(range(1000))))
 
 // A list that contains itself.
 xs = list [1]

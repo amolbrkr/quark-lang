@@ -8,7 +8,7 @@ Prelude builtins are globally available without imports. Additional stdlib modul
 
 - QEI extern declarations are part of the language surface:
     - `extern 'path.hpp'`
-    - `extern link 'name'` and `extern include_path 'dir'` (native libraries; see semantics.md §10.6)
+    - `extern link 'name'` and `extern include_path 'dir'` (native libraries; see semantics.md §10.8)
     - `extern fn name(...) Type as 'symbol'`
     - `extern fn type.name(...) Type as 'symbol'`
 - Extern call sites are analyzer/codegen lowered through `DispatchExtern` and native type adaptation.
@@ -43,9 +43,9 @@ d.get('a') | print()   // 1
 - `d.key` — dict key read/write (static key access)
 - `p.field` — struct field read/write
 - `d.method(args)` — method dispatch (when method name is known for the receiver type)
-- `module.fn(args)` — module-qualified call via `incl` alias
+- `module::fn(args)` — a member of an imported stdlib file (`incl 'std/io'` binds `io`; `as name` binds another name)
 
-**How values print:** `print` and `to_str` show values by their contents: lists and vectors as `[1, 'a', null]` (strings inside a collection are quoted), dicts as `{age: 36, 'first name': 'Ada'}` (keys sorted, quoted unless they read like names), structs as `Point {x: 1, y: 2}` and results as `ok 5` / `err 'boom'`. A collection with more than 100 items shows its first and last 5 and a count: `[0, 1, 2, 3, 4, ..., 995, 996, 997, 998, 999] (1000 items)`; `fmt.full(x)` gives every item. A container that contains itself prints `[...]` at the repeat. Floats print as the shortest text that reads back as the same number, with `.0` on whole values, as in Python: `4.0`, `0.1`, `1.4142135623730951`, `1e+16`, `inf`, `nan`. So `0.1 + 0.2` prints `0.30000000000000004`.
+**How values print:** `print` and `to_str` show values by their contents: lists and vectors as `[1, 'a', null]` (strings inside a collection are quoted), dicts as `{age: 36, 'first name': 'Ada'}` (keys sorted, quoted unless they read like names), structs as `Point {x: 1, y: 2}` and results as `ok 5` / `err 'boom'`. A collection with more than 100 items shows its first and last 5 and a count: `[0, 1, 2, 3, 4, ..., 995, 996, 997, 998, 999] (1000 items)`; `fmt::full(x)` gives every item. A container that contains itself prints `[...]` at the repeat. Floats print as the shortest text that reads back as the same number, with `.0` on whole values, as in Python: `4.0`, `0.1`, `1.4142135623730951`, `1e+16`, `inf`, `nan`. So `0.1 + 0.2` prints `0.30000000000000004`.
 
 ---
 
@@ -420,7 +420,7 @@ when safe_div(10, 0):
 
 ## Stdlib modules: what an import exposes
 
-Each module below is a `.qrk` file whose public API is its `module` block (`io.open`, `fmt.show_vec`, ...). The `extern fn` bindings it is built on (`io_open`, `fmt_vec`, `blas_dot`, ...) are declared at the file's top level, and every top-level name of an imported file is visible to the program, alias or not. They are callable, but they are implementation details: they take every argument explicitly (no defaults) and may change. Use the module functions.
+Each module below is a `.qrk` file whose public API is its `module` block, named like the file, so its functions are `io::open`, `fmt::show_vec`, ... Nothing from an import is visible unqualified, so a program's own names never clash with the stdlib's. The `extern fn` bindings a module is built on (`io_open`, `fmt_vec`, `blas_dot`, ...) are declared at the file's top level and are reachable too (`fmt::fmt_vec`), since Quark has no access modifiers, but they are implementation details: they take every argument explicitly (no defaults) and may change. Use the module functions.
 
 ---
 
@@ -443,23 +443,23 @@ Reading, writing or seeking a closed file, and invalid argument types, are runti
 ```quark
 incl 'std/io' as io
 
-f = unwrap(io.open('notes.txt', 'w'))
-print(unwrap(io.write(f, 'hello quark')))   // 11
-unwrap(io.close(f))
+f = unwrap(io::open('notes.txt', 'w'))
+print(unwrap(io::write(f, 'hello quark')))   // 11
+unwrap(io::close(f))
 
-g = unwrap(io.open('notes.txt'))
-unwrap(io.seek(g, 6, io.seek_set()))
-print(unwrap(io.read(g, 100)))              // quark
-unwrap(io.close(g))
+g = unwrap(io::open('notes.txt'))
+unwrap(io::seek(g, 6, io::seek_set()))
+print(unwrap(io::read(g, 100)))              // quark
+unwrap(io::close(g))
 
-a = unwrap(io.open('notes.txt', 'a'))         // append
-unwrap(io.write(a, '!'))
-unwrap(io.close(a))
-r = unwrap(io.open('notes.txt'))
-print(unwrap(io.read(r, 100)))              // hello quark!
-unwrap(io.close(r))
+a = unwrap(io::open('notes.txt', 'a'))         // append
+unwrap(io::write(a, '!'))
+unwrap(io::close(a))
+r = unwrap(io::open('notes.txt'))
+print(unwrap(io::read(r, 100)))              // hello quark!
+unwrap(io::close(r))
 
-when io.open('notes.txt', 'x'):
+when io::open('notes.txt', 'x'):
     ok h -> print('opened')
     err msg -> print(msg)                   // open: mode must be 'r', 'w' or 'a'
 ```
@@ -483,7 +483,7 @@ Text rendering of containers beyond what `print` shows. Each function returns a 
 ```quark
 incl 'std/fmt' as fmt
 
-print(fmt.show_list(list [10, 20, 30]))
+print(fmt::show_list(list [10, 20, 30]))
 // Output:
 //    value
 // --------
@@ -508,12 +508,12 @@ Program arguments, environment variables and exit status. Import it with `incl '
 ```quark
 incl 'std/sys' as sys
 
-args = sys.args()
+args = sys::args()
 if len(args) == 0:
     print('usage: tool <file>')
-    sys.exit(2)
+    sys::exit(2)
 print('reading ' + args[0])
-user = sys.env('USER')
+user = sys::env('USER')
 if user != null:
     print('hello ' + user)
 ```
@@ -536,13 +536,13 @@ Parsing follows RFC 4180: a field may be quoted with `"..."`, and a quoted field
 ```quark
 incl 'std/csv' as csv
 
-rows = csv.parse('name,city\n"Smith, J",NYC\n')
+rows = csv::parse('name,city\n"Smith, J",NYC\n')
 print(len(rows))                 // 2
 print(rows.get(1).get(0))        // Smith, J
 
-when csv.read('sales.csv'):
+when csv::read('sales.csv'):
     ok rows -> print(len(rows))
-    err e -> print(e)            // csv.read: sales.csv: No such file or directory
+    err e -> print(e)            // csv::read: sales.csv: No such file or directory
 ```
 
 ---
@@ -560,9 +560,9 @@ Wall-clock and monotonic time. Import it with `incl 'std/time' as time`.
 ```quark
 incl 'std/time' as time
 
-start = time.clock()
-time.sleep(0.1)
-print(time.clock() - start >= 0.1)   // true
+start = time::clock()
+time::sleep(0.1)
+print(time::clock() - start >= 0.1)   // true
 ```
 
 ---
@@ -582,11 +582,11 @@ Pseudo-random numbers (64-bit Mersenne Twister). The generator is seeded randoml
 ```quark
 incl 'std/random' as random
 
-random.seed(7)
-roll = random.randint(1, 6)
+random::seed(7)
+roll = random::randint(1, 6)
 print(roll >= 1 and roll <= 6)            // true
 deck = list ['a', 'b', 'c']
-print(random.shuffle(deck).sort().join(''))   // abc
+print(random::shuffle(deck).sort().join(''))   // abc
 ```
 
 ---
@@ -614,8 +614,8 @@ incl 'std/blas' as blas
 
 x = vec [1.0, 2.0, 3.0]
 y = vec [4.0, 5.0, 6.0]
-print(blas.dot(x, y))         // 32.0
-z = blas.axpy(2, x, y)          // [6, 9, 12]; y is unchanged
+print(blas::dot(x, y))         // 32.0
+z = blas::axpy(2, x, y)          // [6, 9, 12]; y is unchanged
 ```
 
 - BLAS reads the vectors' buffers in place; inputs are never modified.

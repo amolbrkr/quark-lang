@@ -24,7 +24,7 @@ Editor support for [Quark](https://github.com/amolbrkr/quark-lang) `.qrk` files.
 - **Completion**:
   - keywords and builtins, with their signatures;
   - methods for the receiver's type (`str`, `list`, `dict`, `vec`), from annotations like `s: str`, literals, and assignments;
-  - `alias.` lists the functions of an imported module (stdlib, another file, or a module in the same file);
+  - `name::` lists the functions of an imported file (stdlib or another file: its top-level functions and those of its primary module), of a module of an imported file (`file::module::`), or of a module in the same file;
   - `point.` lists a struct's fields;
   - `incl '` lists stdlib modules and `.qrk` files, as paths relative to the current file.
 - **Hover** shows builtin and module function signatures.

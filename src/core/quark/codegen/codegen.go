@@ -5,6 +5,7 @@ import (
 	"os"
 	"quark/ast"
 	"quark/ir"
+	"quark/names"
 	"quark/token"
 	"quark/types"
 	"sort"
@@ -90,8 +91,8 @@ type Generator struct {
 	externFns map[string]*ir.CallPlan
 	// structTypes maps struct name → StructType from the analyzer.
 	structTypes map[string]*types.StructType
-	// moduleMemberRefs marks `alias.member` nodes used as values.
-	moduleMemberRefs map[*ast.TreeNode]bool
+	// names maps internal names to the names users write (runtime messages).
+	names names.Table
 	// Fixed `fn` declarations, from the analyzer (types/analyzer_fixed.go).
 	fixedFns        map[*ast.TreeNode]*types.FixedFn
 	fnRefs          map[*ast.TreeNode]*types.FixedFn
@@ -154,7 +155,7 @@ func (g *Generator) SetAnalysis(an *types.Analysis) {
 	if an.StructTypes != nil {
 		g.structTypes = an.StructTypes
 	}
-	g.moduleMemberRefs = an.ModuleMemberRefs
+	g.names = an.Names
 	g.fixedFns = an.FixedFns
 	g.fnRefs = an.FnRefs
 	g.hoists = an.HoistScopes
@@ -738,7 +739,7 @@ func (g *Generator) collectFunctions(node *ast.TreeNode) {
 			name := node.Children[0].TokenLiteral()
 			argsNode := node.Children[1]
 			paramCount := len(argsNode.Children)
-			fd := funcDecl{name: name, paramCount: paramCount, params: argsNode, display: displayFuncName(name)}
+			fd := funcDecl{name: name, paramCount: paramCount, params: argsNode, display: g.displayFuncName(name)}
 			if proto, isNative := g.nativeFns[name]; isNative {
 				fd.nativeParamTypes = proto.NativeParamTypes
 				fd.nativeReturnType = proto.NativeReturnType
@@ -786,7 +787,7 @@ func (g *Generator) collectFunctions(node *ast.TreeNode) {
 				name:       f.CName,
 				paramCount: paramCount,
 				params:     lambdaParams(lambdaNode),
-				display:    displayFuncName(f.Name),
+				display:    g.displayFuncName(f.Name),
 			}
 			if f.Native != nil {
 				fd.nativeParamTypes = f.Native.NativeParamTypes
@@ -854,10 +855,10 @@ func (g *Generator) generateFunction(node *ast.TreeNode) {
 	}
 }
 
-// displayFuncName is how runtime messages name a function: module members
-// (renamed module__member by the loader) as module.member.
-func displayFuncName(name string) string {
-	return strings.Replace(name, "__", ".", 1)
+// displayFuncName is how runtime messages name a function: as written
+// (fmt::show_vec, mathx::square), not by its internal name.
+func (g *Generator) displayFuncName(name string) string {
+	return g.names.Display(name)
 }
 
 // lambdaParams is a lambda node's parameter list.
@@ -910,7 +911,7 @@ func (g *Generator) emitFnInfos() {
 		}
 		display := fd.display
 		if display == "" {
-			display = displayFuncName(fd.name)
+			display = g.displayFuncName(fd.name)
 		}
 		g.emitLine("static const QFnInfo %s = {\"%s\", %d, %d, %s};", fnInfoSymbol(fd.name), escapeCppString(display), minArity, maxArity, defaults)
 	}
@@ -926,7 +927,7 @@ func (g *Generator) emitFnInfos() {
 		}
 		seen["extern:"+proto.RuntimeSymbol] = true
 		n := len(proto.NativeParamTypes)
-		g.emitLine("static const QFnInfo %s = {\"%s\", %d, %d, nullptr};", externFnInfoSymbol(proto.RuntimeSymbol), escapeCppString(displayFuncName(name)), n, n)
+		g.emitLine("static const QFnInfo %s = {\"%s\", %d, %d, nullptr};", externFnInfoSymbol(proto.RuntimeSymbol), escapeCppString(g.displayFuncName(name)), n, n)
 	}
 	g.emit("\n")
 }
@@ -968,7 +969,7 @@ func (g *Generator) emitDefaultArgFns() {
 // to (`fn f(...)` is `f = fn(...)`), or "lambda".
 func (g *Generator) lambdaDisplayName(node *ast.TreeNode) string {
 	if name, ok := g.lambdaUserNames[node]; ok {
-		return displayFuncName(name)
+		return g.displayFuncName(name)
 	}
 	return "lambda"
 }
@@ -1019,7 +1020,7 @@ func (g *Generator) emitParamBindings(argsNode *ast.TreeNode, fnDisplay string) 
 		cName := sanitizeVarName(paramName)
 		argName := sanitizeArgName(paramName)
 		fn := escapeCppString(fnDisplay)
-		pn := escapeCppString(paramName)
+		pn := escapeCppString(g.names.Display(paramName))
 
 		value := argName // checked QValue expression
 		scalarExpr, tier := "", ""
@@ -1038,8 +1039,9 @@ func (g *Generator) emitParamBindings(argsNode *ast.TreeNode, fnDisplay string) 
 			if c, ok := paramTagChecks[ann]; ok {
 				value = fmt.Sprintf("q_param_check(%s, QValue::%s, %t, \"%s\", \"%s\", \"%s\")", argName, c.tag, c.allowNull, ann, fn, pn)
 			} else {
-				// A struct name (the checker rejects unknown type names).
-				value = fmt.Sprintf("q_param_struct(%s, \"%s\", \"%s\", \"%s\")", argName, escapeCppString(ann), fn, pn)
+				// A struct (the checker rejects unknown type names): checked
+				// by definition, so two structs with the same name differ.
+				value = fmt.Sprintf("q_param_struct(%s, &_sdef_%s, \"%s\", \"%s\")", argName, sanitizeVarName(ann), fn, pn)
 			}
 		}
 
@@ -1077,7 +1079,7 @@ func (g *Generator) generateQValueFunction(node *ast.TreeNode, funcName string, 
 	g.indentLevel++
 	g.emitLine("QSourceLocGuard _loc_guard;")
 
-	g.emitParamBindings(argsNode, displayFuncName(funcName))
+	g.emitParamBindings(argsNode, g.displayFuncName(funcName))
 
 	result := g.generateBlock(bodyNode)
 	g.emitLine("return %s;", g.boxResultToQValue(result, bodyNode))
@@ -1444,7 +1446,7 @@ func (g *Generator) generateIdentifier(node *ast.TreeNode) string {
 	if g.declaredVars[name] {
 		if g.isCell(name) {
 			if g.checkedCells[name] {
-				return fmt.Sprintf("q_cell_get(%s, \"%s\")", sanitizeVarName(name), escapeCppString(name))
+				return fmt.Sprintf("q_cell_get(%s, \"%s\")", sanitizeVarName(name), escapeCppString(g.names.Display(name)))
 			}
 			return fmt.Sprintf("%s->value", sanitizeVarName(name))
 		}
@@ -1706,10 +1708,6 @@ func (g *Generator) generateOperator(node *ast.TreeNode) string {
 
 	// Member access: struct field or dict key
 	if op == token.DOT && len(node.Children) >= 2 {
-		// alias.member used as a value: the member is a binding of its own.
-		if g.moduleMemberRefs[node] {
-			return g.generateIdentifier(node.Children[1])
-		}
 		obj := g.generateExpr(node.Children[0])
 		memberName := node.Children[1].TokenLiteral()
 
@@ -1953,7 +1951,7 @@ func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
 	plan := g.getCallPlanOrPanic(node)
 
 	// Dot-call syntax on values is rejected by analyzer unless it's a known method dispatch.
-	if funcNode.NodeType == ast.OperatorNode && funcNode.Token != nil && funcNode.Token.Type == token.DOT && plan.Dispatch == ir.DispatchClosure && !strings.Contains(plan.CalleeName, ".") {
+	if funcNode.NodeType == ast.OperatorNode && funcNode.Token != nil && funcNode.Token.Type == token.DOT && plan.Dispatch == ir.DispatchClosure {
 		panicICEf("INV-DOT-CALL", node, "dot-call syntax is not supported")
 		return "qv_null()"
 	}
@@ -2050,15 +2048,6 @@ func (g *Generator) generateFunctionCall(node *ast.TreeNode) string {
 	case ir.DispatchClosure:
 		// It is a closure/function value call by analyzer contract.
 		funcExpr := g.generateExpr(funcNode)
-		if funcNode.NodeType == ast.OperatorNode && funcNode.Token != nil && funcNode.Token.Type == token.DOT && strings.Contains(plan.CalleeName, ".") && len(funcNode.Children) >= 2 {
-			member := funcNode.Children[1].TokenLiteral()
-			cName := sanitizeVarName(member)
-			if g.isCell(member) {
-				funcExpr = fmt.Sprintf("%s->value", cName)
-			} else {
-				funcExpr = cName
-			}
-		}
 		return EmitClosureCall(funcExpr, args)
 	default:
 		panicICEf("INV-CALLPLAN-DISPATCH", node, "unknown dispatch for '%s'", funcName)
@@ -2183,15 +2172,6 @@ func (g *Generator) generatePipe(node *ast.TreeNode) string {
 		return wrapExternReturn(callExpr, plan.NativeReturnType)
 	case ir.DispatchClosure:
 		funcExpr := g.generateExpr(funcNode)
-		if funcNode.NodeType == ast.OperatorNode && funcNode.Token != nil && funcNode.Token.Type == token.DOT && strings.Contains(plan.CalleeName, ".") && len(funcNode.Children) >= 2 {
-			member := funcNode.Children[1].TokenLiteral()
-			cName := sanitizeVarName(member)
-			if g.isCell(member) {
-				funcExpr = fmt.Sprintf("%s->value", cName)
-			} else {
-				funcExpr = cName
-			}
-		}
 		return EmitClosureCall(funcExpr, args)
 	default:
 		panicICEf("INV-CALLPLAN-DISPATCH", rightNode, "unknown dispatch for '%s'", funcName)
@@ -2886,8 +2866,10 @@ func (g *Generator) emitStructDefs() {
 		g.emitLine("};")
 
 		// Emit QStructDef
+		// The runtime name is the display name (geo::Point); identity is the
+		// QStructDef's address, one per definition.
 		g.emitLine("static const QStructDef _sdef_%s = {\"%s\", _sfields_%s, %d};",
-			safeName, escapeCppString(st.Name), safeName, len(st.Fields))
+			safeName, escapeCppString(g.names.Display(st.Name)), safeName, len(st.Fields))
 	}
 	g.emit("\n")
 }
@@ -2908,7 +2890,7 @@ func (g *Generator) checkedFieldValue(st *types.StructType, field types.StructFi
 	if _, isUnion := vt.(*types.UnionType); isUnion {
 		proven = false
 	}
-	sname := escapeCppString(st.Name)
+	sname := escapeCppString(g.names.Display(st.Name))
 	fname := escapeCppString(field.Name)
 	switch {
 	case ft.Equals(types.TypeInt):
@@ -2934,7 +2916,7 @@ func (g *Generator) checkedFieldValue(st *types.StructType, field types.StructFi
 		if proven && vt.Equals(types.TypeNull) {
 			return value
 		}
-		return fmt.Sprintf("q_field_struct(%s, \"%s\", \"%s\", \"%s\")", value, escapeCppString(fst.Name), sname, fname)
+		return fmt.Sprintf("q_field_struct(%s, &_sdef_%s, \"%s\", \"%s\")", value, sanitizeVarName(fst.Name), sname, fname)
 	}
 	var key string
 	switch t := ft.(type) {

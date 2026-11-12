@@ -4,12 +4,12 @@ incl 'std/csv' as csv
 // Quoted fields may hold the separator, doubled quotes and newlines;
 // \r\n line endings and blank lines are handled.
 text = 'name,note\n"Smith, J","say ""hi"""\r\n\n"multi\nline",x\n'
-rows = csv.parse(text)
+rows = csv::parse(text)
 print(len(rows))
 for r in rows:
     print(r.join(' | '))
-print(csv.parse('a;b\n1;2', ';').get(1).join('+'))
+print(csv::parse('a;b\n1;2', ';').get(1).join('+'))
 
-when csv.read('definitely_missing_file.csv'):
+when csv::read('definitely_missing_file.csv'):
     ok r -> print('unexpected')
     err e -> print(e.startswith('csv.read: definitely_missing_file.csv'))

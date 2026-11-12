@@ -44,9 +44,9 @@ fn churn(path) ->
         e = err 'failed: ' + to_str(i)
     // files: open, write, close
     for j in range(50):
-        h = unwrap(io.open(path, 'w'))
-        io.write(h, 'some file contents') | unwrap()
-        io.close(h) | unwrap()
+        h = unwrap(io::open(path, 'w'))
+        io::write(h, 'some file contents') | unwrap()
+        io::close(h) | unwrap()
     null
 
 fn report(label) ->

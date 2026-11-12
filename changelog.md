@@ -8,19 +8,70 @@ Sections follow [Keep a Changelog](https://keepachangelog.com/): **Breaking**, *
 
 ---
 
-## Known issues (as of `4294dab` plus uncommitted changes)
+## Known issues (as of `b52660f` plus uncommitted changes)
 
-These were checked against the current compiler. They fail loudly, but with a C++ error, a wrong location or an unhelpful message, or by rejecting a valid program.
+These were checked against the current compiler on 2026-11-12, in a codebase health review; all of them predate modules v0.2. The structural causes and the plan for them are in `architecture.md` §12.
 
-- **A file included without an alias by two other files is rejected.** If `left.qrk` and `right.qrk` both do `incl './base.qrk'` and the main file includes both, the program fails with `symbol 'base__twice' from module 'base' conflicts with existing definition`. Including it with an alias (`incl './base.qrk' as b`) works.
-- A `struct` defined inside a `module` block fails with `internal: struct 'L' not pre-declared`. A qualified literal (`shapes.Sq { side: 1 }`) fails with `no prefix parse function for LBRACE`. Both are deferred to modules v0.2 (`modules_v0_2_spec.md` §2 and §7).
+### Wrong results with no error
+
+**A value is read with the wrong type.** The compiler trusts a type it inferred wrongly and reads the raw value (codegen `unboxForTier` and the `for` loop element read). Which fix to use is an open design question (`architecture.md` §12.6).
+- Reassigning an int to a variable that held a float: `x = 1.5`, then `x = len(list [1, 2, 3])`, `print(x)` prints `1.5e-323`. The same happens to a `float` parameter or loop variable.
+- A `float` variable declared with an int value is stored as an int: `x: float = len(l)` prints `3`, not `3.0`; `y: float = 3`, then `y = 2.5`, `print(y)` prints `2`, and `type(y)` is `int`.
+- A list or dict changed through another name keeps its old element type: `a = list [1, 2]`, `b = a`, `b.push('s')`, `for x in a: print(x)` prints `1`, `2`, then a number such as `139966802534384`. The same happens when the change goes through a function (`fn add(xs) -> xs.push('x')`, then `add(l)`), through `l[0] = 'str'` on a list of ints, through `d.b = 'hello'` on a dict of ints (only a warning), through `d.set` inside a function, and for the results of `l.concat(list ['a'])` and `l.push('x')`. In a loop, a read before a `push` gets garbage on the second iteration.
+- Pushing an int into a float list: `l = list [1.5]`, `l.push(2)`, `for e in l: print(e)` prints `1.5`, then `1e-323`. `d.b = 2` on a dict of floats does the same.
+- Pushing an `any` value into a list: `fn id(v) -> v`, `zs = list [1, 2]`, `zs.push(id('hello'))`, `w = zs[2]`, `print(w + 1)` prints a number.
+- An `any` variable that gets a typed value inside a branch keeps that type after it: `fn id(v) -> v`, `x = id('hello')`, `if false:` / `x = 5`, then `y = x`, `print(y + 1)` prints a number. With `x = id(2.5)`, `P { n: x }` stores `2.5` in an `int` field.
+- A list read past its end, stored in a variable: `w = list [1, 2][5]`, `print(w)` prints `0` (`null` is documented). The same for a list changed during a `for` loop over it (`for y in xs: xs.pop()`).
+- A `null` inside a vector read by a loop: `for x in list [1, null, 3].to_vec(): print(x)` prints `1`, `0`, `3` (`0.0` for floats, `false` for bools).
+- `when` on a vec compares elementwise and reads the first result: `fn g(a) -> when a:` / `1 -> 'one'` / `_ -> 'other'` returns `'other'` for `g(vec [1, 1])` with no error. `if a == 1` correctly fails with "vec used as a condition".
+
+**Return annotations of ordinary functions aren't checked.** Parameters are checked on entry; returns are checked only for fully annotated (native) functions.
+- `fn f(c) int ->` / `if c:` / `1`, then `print(f(false) + 10)` prints `10`: the `null` is read as `0`.
+- `fn f(k) int -> k()`, then `print(f(fn() -> 'str') + 1)` prints a number.
+
+**Part of an expression runs at the wrong time.** A method call's receiver is computed before the whole statement, not where the expression needs it.
+- `and`, `or` and `x if c else y` run both sides: `false and noisy().upper()` and `'x' if true else noisy().upper()` both call `noisy()`.
+- A `while` condition containing a method call is computed once: `while x.contains('a'):` / `x = x.replace('a', 'b')` never ends.
+- `f().contains(g().upper())` calls `g` before `f`.
+
+**Names.**
+- A variable named `_lambda1` collides with the compiler's first lambda: `_lambda1 = 5`, `f = fn(x) -> x + 1`, `print(f(_lambda1))` crashes with exit code 255 and no message. `fn _lambda1()` plus any lambda fails in clang (`redefinition`).
+
+**Runtime numbers and edge cases.**
+- List and string indexes are cut to 32 bits: `list [10, 20, 30].get(4294967296)` returns `10`, `xs.set(4294967297, 99)` writes element 1, `'abc'[4294967297]` is `'b'`.
+- `abs(-9223372036854775807 - 1)` returns `0`.
+- `to_int('99999999999999999999')` returns `9223372036854775807`. `to_int(1e19)`, `floor(1e30)`, `round(-1e300)` and `fillna(1e30)` on an int vec give arbitrary values; `fillna(2.7)` on an int vec stores `2`.
+- `range(0.5, 3.0)` is `[0, 1, 2]`. `range(9223372036854775800, 9223372036854775807, 5)` never ends, and a lowered `for` loop over it wraps to negative numbers.
+- `d.set(1, 'a')` and `d.set('1', 'b')` write the same key: `d` prints `{'1': 'b'}`.
+- `sys::exit(256)` exits with status 0.
+- `io::read` stops at a NUL byte: on a file containing `ab\0cd`, the first read returns `ab` and the next returns `''`.
+- `csv::parse('a,"b"x,c')` returns `[['a', 'bx', 'c']]` instead of an error.
+- `list [1].concat(x)`, with `x` an `any` holding `5`, returns `null`. `'abc'[i]` with a non-int `i` returns `null`; the list version is an error.
+- `sum(vec [9007199254740993, 1])` is `9007199254740992.0`: int vecs are summed in floating point.
+- `min(n, 1.0)` with `n = to_float('nan')` is `1.0`, but `min(1.0, n)` is `nan`. Sorting a list that contains NaN is undefined behavior in the C++ sort.
+- An `extern fn` declared to return `list` or `vec` that returns `nullptr` gives an empty container (`len` 0, `type()` `list`). One declared to return `str` that returns `nullptr` gives `null` where the compiler assumed a `str`.
+
+### Fails loudly, but with a C++ error, a wrong location or a misleading message
+
+- A `fn` declared inside a `for` or `while` body fails in clang: `for i in range(3):` / `fn f() -> i * 10` / `print(f())` gives `use of undeclared identifier 'quark_f'`. In an `if` body it works.
+- A variable first assigned in a `while` body and assigned again after the loop fails in clang: `while i < 1:` / `y = 5` / ..., then `y = 6` gives `use of undeclared identifier 'quark_y'`.
+- An `elseif` whose condition calls a method fails in clang: `elseif name().upper() == 'B':` gives `expected expression`.
+- A loop variable named like a `g = fn` variable defined elsewhere fails in clang: `f = fn(x) -> x + 1`, then inside a function `for f in list [fn(x) -> x * 10]: print(f(2))` gives `type 'QValue' does not provide a call operator`.
 - A runtime error inside a `for` loop body is reported at the `for` line, not at the statement that failed. For example, `print(r % 0)` on line 4 of a loop starting on line 2 reports `modulo by zero at file.qrk:2:1`.
+- `struct S` inside a `fn` body fails with `internal: struct 'S' not pre-declared`.
+- A call written above a `fn` declaration is checked less than one below it. `print(apply(fn(a, b) -> a + b))` above `fn apply(k) -> k(1)` is a runtime error, below it a compile error. The same for `print(f(5))` above `fn f(r: result)`.
+- `3 | d.f()` calls the dict member `f`, but `d.f(3)` is `type 'dict[...]' has no method 'f'`.
+- `zz.x = 1` with an undefined `zz` reports `undefined identifier 'zz'` twice.
+- Calling a function value with more than 12 arguments compiles and always fails at runtime (`function call supports up to 12 arguments, got 13`); it could be a compile error.
+- A struct field named with `__` (`a__b: int`) is accepted in the `struct` and rejected only where a literal uses it.
+- A syntax error in an imported file is reported inside a load error located at the importer's `incl` line. Load errors in the main file show its absolute path, while check errors show the path as written. Several messages name token kinds instead of source text (`operator 'PLUS'`, `expected identifier after OK`, `no prefix parse function for NEWLINE`), and a multi-line `g = fn(x) ->` body gives about ten cascading `DEDENT` errors.
+- `qext::box(int)` in native code doesn't compile (ambiguous between the `int64_t`, `double` and `bool` overloads); pass an `int64_t`.
 
 ---
 
-## 2026-11-12: Function values, `fn` type, call-shape checking, keyword renames, struct field checks, name clashes, `input()` result, fixed `fn` declarations
+## 2026-11-12: Function values, `fn` type, call-shape checking, keyword renames, struct field checks, name clashes, `input()` result, fixed `fn` declarations, modules v0.2
 
-Commits: `c0ac8cd`, `ac274c0`, `6dc11a0` (keyword renames), `2e62209` (struct fields, dict keys), `4294dab` (name clashes, shadowing, `input()`); fixed `fn` declarations (modules v0.2 step 1) not yet committed
+Commits: `c0ac8cd`, `ac274c0`, `6dc11a0` (keyword renames), `2e62209` (struct fields, dict keys), `4294dab` (name clashes, shadowing, `input()`), `b52660f` (fixed `fn` declarations, modules v0.2 step 1); the rest of modules v0.2 (`::` names, one scope per file) not yet committed
 
 ### Breaking
 - **`input()` returns a `result`.** It returns `ok(line)` (`ok('')` for an empty line), or `err('end of input')` once stdin is exhausted. It used to return a `str`, or `null` at end of input. Using the value as a string is now a compile error (`len(input())`, `input().upper()`, a `str` parameter), so code must unwrap it:
@@ -35,14 +86,8 @@ Commits: `c0ac8cd`, `ac274c0`, `6dc11a0` (keyword renames), `2e62209` (struct fi
       print(line)
   ```
 - **A `result` is never `null`.** `null` can no longer be passed, stored, returned or used as a default where a `result` is expected. This used to be allowed, as for `list` and `dict`. It is a compile error when the compiler can see it (`fn f(r: result)` called with `f(null)`, `r: result = null`, `r = ok(1)` then `r = null`, a `result` struct field, `fn f() result -> null`, `r: result = null` as a default). Otherwise it is a runtime error (`argument 'r' of 'f' expects result, got null`). Comparing a result with `null` is a compile error: `a result is never null, so this comparison is always false; use is_ok(r), is_err(r) or when to check it`. This catches the old `line == null` loop, which would otherwise never stop.
-- **A top-level name defined in two files is a compile error.** It used to resolve silently to one of them. The error names both places:
-  ```
-  incl 'std/fmt' as fmt
-  fn fmt_full(x) -> 'mine'
-  // 'fmt_full' is already defined as an extern fn (std/fmt.qrk:7); every top-level
-  // name of an included file is visible to the importer, so rename this one
-  ```
-  This covers `fn`s, variables, `struct`s and `extern fn`s, between the main file and an included file, between two included files, and in either order. An `extern fn` and another definition with the same name in one file is also an error. Before, an importer's `fn helper` hijacked a library's internal calls to its own `helper`, and an importer's `fn fmt_full` was ignored. A file included twice (directly and transitively) is spliced once and doesn't clash with itself.
+- **An `extern fn` and another definition with the same name in one file is a compile error**: `extern fn foo(x: int) int as 'q_foo'`, then `fn foo(x) -> 1` gives `'foo' is already defined on line 2`. It used to resolve silently to one of them. Names in different files no longer clash at all: each file has its own names (see Added, modules v0.2), so an importer's `fn helper` no longer hijacks a library's calls to its own `helper`, and an importer's `fn fmt_full` next to `incl 'std/fmt'` is no longer ignored. (Earlier the same day, a name defined in two files was briefly a compile error; modules v0.2 replaced that rule.)
+- **A `module` inside a `module` is a compile error** in the main script too: `module 'inner' is inside module 'outer'; modules can't be nested, so define it at the top level of the file`. It used to compile and silently drop the inner module: its statements never ran and its members couldn't be reached. In an imported file it was already an error.
 - **Redefining or assigning a builtin is a compile error**: `fn len(x) -> 42`, `len = fn(x) -> 42`, `fn print(x) -> 1`, `sum = 0`, and `max = 1` inside a function. All report `'len' is a builtin function and can't be redefined or assigned; choose another name`. The `fn` forms used to be silently ignored, so `len('ab')` still called the builtin. The value forms failed with a confusing type error.
 - A default of `null` for an annotated parameter it can't satisfy (`x: int = null`, `r: result = null`) is a compile error. It used to fail at runtime on every call that omitted the argument.
 
@@ -56,6 +101,24 @@ Commits: `c0ac8cd`, `ac274c0`, `6dc11a0` (keyword renames), `2e62209` (struct fi
   g = fn(x) -> x + 1
   g = fn(x) -> 0        // fine: g is a variable
   ```
+- **Modules v0.2: `::` names, one scope per file** (`modules_v0_2_spec.md`). Programs that use modules need these changes:
+
+  | Before | Now |
+  |---|---|
+  | `io.exists(p)`, `p \| io.exists()`, `f = io.exists` | `io::exists(p)`, `p \| io::exists()`, `f = io::exists`. `io.exists` is now an error: `'io' is an imported file; use io::exists` |
+  | `incl mathx as m`, then `m.square(9)` (a module in the same file) | `mathx::square(9)`; `incl mathx` is an error |
+  | `incl './lib/core'` (no alias), then `double(5)` | `core::helpers::double(5)`: an import binds the file's name and makes nothing visible unqualified. `incl 'std/fmt'` binds `fmt` (`fmt::show_vec`) |
+  | `incl './lib/geo.qrk'`, then `Point { x: 1 }`, `p: Point` | `geo::Point { x: 1 }`, `p: geo::Point`. An imported struct prints and has `type()` `geo::Point` (was `Point`) |
+  | A library calling a name its importer defines (`counter`), or its importer's struct | An error in the library: `undefined identifier 'counter'`, `unknown type 'P'` |
+
+  An imported file may now contain only definitions: `fn`, `struct`, `module`, `incl`, the `extern` forms, and constants (`X = 3.5`: int, float, str or bool literals and arithmetic on them). Any other statement is a load error, `'lib.qrk' is imported, so it can only contain definitions; line 3 is a statement (print(...))`; it used to run inside the importer. `CACHE = list []` in a library is rejected too. Neither the importer nor the library can assign an imported file's names or constants.
+
+  An imported file's name, and each directory written in a relative or `std/` import path, must be lowercase letters, digits and underscores, starting with a letter: `incl './My Lib/geo-utils'` is an error. The main script is exempt.
+
+  A name can't contain `__` (`'mathx__square': names can't contain '__', which is reserved for names the compiler generates`). Every generated name contains it, so user code can never reach or clash with one; before, `mathx__square` reached the module member and a function named `f__thunk` could clash with the C++ thunk of `f`.
+
+  Within one file these are now errors: a module member named like a top-level name (`module member 'csv::read' has the same name as the top-level function 'read' on line 4`), an import binding named like a definition or another import (`incl './geo'` and `fn geo()`; importing two files both called `geo.qrk` without `as`), two modules with one name, and a struct and a function with one name. So are two names the compiler can't tell apart in generated code, which only happens when a module name ends or a member name starts with `_`: `module m:` / `_x = 1` next to `module m_:` / `x = 2` is `'m_::x' and 'm::_x' (line 2) can't both be defined: the compiler would give them the same internal name; rename one of them` (the same for a main-script `module q1_a` next to `incl './a'`). Runtime messages name module functions with `::` (`function 'io::exists' expects 1 argument but got 0`, was `io.exists`).
+
 - **A function body can't name a `g = fn(...)` variable assigned below it.** `fn a() -> g(1)`, then `g = fn(x) -> x + 1`, used to work because such assignments were predeclared. It is now `undefined identifier 'g'`, as for any variable. Declare it with `fn g(x) -> x + 1` instead, which is hoisted.
 
 - **Renamed keywords and builtins.** The old spellings no longer compile:
@@ -111,6 +174,19 @@ Commits: `c0ac8cd`, `ac274c0`, `6dc11a0` (keyword renames), `2e62209` (struct fi
   - Omitted default arguments are built fresh on every call.
   - `qext::call` from native code gets the same checks.
 - A list of functions with different signatures can be indexed and called (`fs[0](9)`). This used to fail with "expression is not callable".
+- **Each file has its own names** (modules v0.2). Two imported files may both define `helper`, `Point` or `module utils`; a library's own calls to its `helper` reach it whatever the importer defines; and `geo::Point` and `other::Point` are different types. A library function's locals, parameters, loop variables and `when` bindings are unaffected by the importer's names too (`total = 5` in a library function works next to an importer's `fn total`). A file reached through a symbolic link and through its own path is one file, so its structs are one type. Before, top-level names of all files shared one scope, so these were errors (and before that, silent replacements), and `module utils` in two libraries was `module 'utils' already defined`.
+  ```
+  incl './lib/geo'
+  incl './lib/other'
+  fn helper() -> 'mine'                 // fine: geo and other have their own helper
+  p = geo::Point { x: 1.0, y: 2.0 }
+  print(geo::shapes::square(3))         // a member of module shapes in lib/geo.qrk
+  ```
+- **Any file of definitions is a library**; it no longer needs a `module` block (`does not define a module` is gone). Its top-level names are `file::name`. A module named like its file (the primary module) is also `file::name`, so the stdlib stays two-part (`fmt::show_vec`).
+- **Structs in module bodies**, written bare inside the module, `module::Sq` elsewhere in the file and `file::module::Sq` from an importer. This used to fail with `internal: struct 'L' not pre-declared`.
+- **Qualified struct literals, annotations and return types**: `geo::Point { x: 1 }`, `fn f(p: geo::Point) geo::Point -> p`. `shapes.Sq { side: 1 }` now says `a struct from a module or imported file is written shapes::Sq { ... }, with '::'` (was `no prefix parse function for LBRACE`).
+- Unknown qualified names suggest the closest match: `'fmt' (std/fmt) has no 'show_vector'; did you mean 'show_vec'?`. `geo::io::open` explains that imports are not re-exported.
+- Defining a name the stdlib also defines is fine now: `fn fmt_full(x)` or `fmt_vec = 3` next to `incl 'std/fmt'` used to be `'fmt_full' is already defined as an extern fn`. The stdlib's bindings are `fmt::fmt_full`.
 - **`fn` declarations are hoisted** (rule 22). Every `fn` of a scope (the file, a module body or a block) exists before the scope's first statement runs, so calls work in any order and mutual recursion needs no particular order. A statement calling a function defined further down used to be a compile error (`'f' is called before its definition on line N`); through another function it failed at runtime.
   ```
   print(is_even(10))   // true
@@ -132,6 +208,8 @@ Commits: `c0ac8cd`, `ac274c0`, `6dc11a0` (keyword renames), `2e62209` (struct fi
 - Tables spec (`tables_v0_1_spec.md`, still not implemented): the literal is `tbl { ... }` and the type annotation is `tbl` (`fn f(t: tbl)`). The runtime type name for a table is `tbl`. `fmt.table(...)` keeps its name.
 
 ### Fixed
+- **Struct parameter and field checks compared names**, so a struct from one file passed the runtime check of a same-named struct from another file once both could exist. They now compare definitions: a `geo2::Point` passed through `any` to a `geo::Point` parameter is `argument 'p' of 'f' expects geo::Point, got geo2::Point`.
+- **A file included without an alias by two other files was rejected** (`symbol 'base__twice' from module 'base' conflicts with existing definition`). Each file is loaded once and has one identity, however it is imported.
 - **Calling a fully annotated function declared below its caller failed in clang.** `fn a(n) -> b(n) + 1`, then `fn b(n: int) int -> n * 2`, stopped with `assigning to 'QCell *' from incompatible type 'int64_t (QClosure *, int64_t)'`. It now prints `11` for `a(5)`.
 - **Reassigning a fully annotated function failed in clang** (`redefinition of 'quark_f'`). It is now the Quark error above.
 - **Two functions that each declared a fully annotated helper of the same name failed in clang** (`redefinition of 'quark_helper'`). Each nested declaration now gets its own C++ name.
@@ -154,7 +232,7 @@ Commits: `c0ac8cd`, `ac274c0`, `6dc11a0` (keyword renames), `2e62209` (struct fi
 ### Internal
 - Renames: `token.USE`→`token.INCL`, `token.VECTOR`→`token.VEC`, `ast.UseNode`→`ast.InclNode` (`quark parse` prints `Incl`), `parseUse`→`parseIncl`. The catalog key `vector_any` is now `vec_any`.
 - Runtime: `q_println` removed; `q_to_vector`→`q_to_vec`, `q_fmt_vector`→`q_fmt_vec`. C++ type and tag names (`QVector`, `VAL_VECTOR`, `qv_vector*`, `qext::as_vector`) are unchanged.
-- Editor extension: `incl`/`vec` highlighting and completion, snippets `incl`, `inclf` and `vec`; `data/quark.json` regenerated.
+- Editor extension: `incl`/`vec` highlighting and completion, snippets `incl`, `inclf` and `vec`; `data/quark.json` regenerated. The `incl` snippet lists every stdlib module (it offered only `io`, `fmt` and `blas`), and the extension has its own changelog entry for the renames.
 - `TestNeg_RenamedSymbolsRejected` checks that the old spellings are rejected.
 - Struct field checks: codegen `checkedFieldValue` wraps each field value whose type isn't proven in a new `q_field_int/float/bool/check/struct` helper (`builtins/params.hpp`); proven values are stored unchanged.
 - Parser: the struct-name pre-pass (`collectStructNames`, `Parser.structNames`) is removed. `Name {` always parses as a struct literal and any name before `->` as a return type; the analyzer checks the name.
@@ -172,6 +250,15 @@ Commits: `c0ac8cd`, `ac274c0`, `6dc11a0` (keyword renames), `2e62209` (struct fi
 - `types.TypeFn`, `IsCallableType`, `Analysis.ModuleMemberRefs`.
 - `CLAUDE.md` gains the *Language Goals*, *Catch It at Compile Time* and *Robustness Bar* sections.
 - New `smoke_function_values.qrk`, about 24 new `TestSemanticsSafety_Rejected` cases, and `TestNativeCallback_Arity`.
+- **Modules v0.2 (Phase A of the spec's §5.1):**
+  - Lexer: `COLONCOLON` (`::`). Parser: `ast.QualifiedNameNode` (literal is the whole path) in expressions; qualified `TypeNode` and `StructLiteralNode` literals; `atReturnType` looks past `a::b` before `->`.
+  - New package `names`: `Table` (internal name → `Origin{File, Module, Name, Kind}`), `Display`, `DisplayText`.
+  - Loader rewritten: `loader/files.go` (loading by absolute path with file ids, rule 1, rule 15, per-file `def`/`modScope` tables and the clash rules) and `loader/resolve.go` (per-file renaming, `::` resolution with the primary-module rule, constant inlining, splice). `namespace.go`, `checkTopLevelClashes` and the synthetic `incl` nodes are removed. A file's identity is its path with symbolic links resolved (`realPath`). A local of an imported file named like any name of the main script is renamed `q<N>__<name>__l` (`renameLocal`, `names.Local`, displayed as written, also in runtime parameter and unassigned-variable messages). `record` rejects two definitions with one internal name (`reportInternalClash`). `driver.ResolveImports` returns the name table; `Unit.Names`, `Analyzer.SetNames`, `Analysis.Names`.
+  - Analyzer: the module-alias machinery (`moduleAliases`, `lookupModuleCall`, `analyzeUse`, `moduleMemberRefs`, `displayMember`, `displayName`) is removed. Module bodies are analyzed in the file scope; structs in module bodies are predeclared; diagnostics carry the node's `SourceFile` and go through `DisplayText`. Rule 23 orders statements per statement list (`symDef.list`).
+  - Codegen: `displayFuncName` uses the name table; `q_param_struct(v, &_sdef_X, ...)` and `q_field_struct(v, &_sdef_X, ...)`; `QStructDef.name` is the display name. The `alias.member` closure-call special cases are gone.
+  - Runtime: `q_param_struct` / `q_field_struct` take a `const QStructDef*` and compare pointers.
+  - Tests: `loader/modules_v02_test.go` (resolution, display names, primary modules, file identity, 31 rejected programs); `TestModuleNamespacing`, `TestNamesArePerFile` (replaces `TestTopLevelNameClashes`) and `TestStructsAcrossFiles` rewritten; smoke programs and inline test sources migrated to `::`. `modules_success` was always skipped (it checked for a `module core` that `lib/core.qrk` never had) and now runs.
+  - Editor extension: `::` completion and hover, namespace highlighting for `::` paths, snippets.
 - **Fixed `fn` declarations** (`types/analyzer_fixed.go`):
   - The parser still produces `name = fn(...)` for `fn name(...)`, with the new `ast.TreeNode.FnDecl` set.
   - `declareFixedFns` declares a scope's declarations as non-mutable symbols before its statements (replacing `predeclareFunctions` for them; plain `g = fn` assignments are no longer predeclared) and reports rules 18 and 20; rule 19 is checked in `analyzeOperator` and `analyzeVarDecl`. `checkCallsBeforeDefinition` is removed.

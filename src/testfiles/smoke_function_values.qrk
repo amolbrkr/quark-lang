@@ -10,49 +10,48 @@ module mathx:
     fn twice(f: fn, x) -> f(f(x))
     base = 100
 
-incl mathx as mx
 
 print('== smoke: function values ==')
 
 // Aliased module members used as values
-f = mx.inc
+f = mathx::inc
 print(f(1))                       // 2
-add = mx.add
-print(add(2, 3))                  // 5 (a native function, through its thunk)
-print(mx.twice(mx.inc, 5))        // 7
-print(mx.base)                    // 100
-exists = io.exists
+add2 = mathx::add
+print(add2(2, 3))                 // 5 (a native function, through its thunk)
+print(mathx::twice(mathx::inc, 5))        // 7
+print(mathx::base)                    // 100
+exists = io::exists
 print(exists('no_such_file.txt')) // false
-fs = list [mx.inc, io.exists]       // functions with different signatures
+fs = list [mathx::inc, io::exists]       // functions with different signatures
 print(fs[0](9))                   // 10
 print(type(f))                    // fn
 
 // ...inside lambdas and named functions
-plus = fn(v) -> mx.add(v, 1)
+plus = fn(v) -> mathx::add(v, 1)
 print(plus(1))                    // 2
-fn via_module(v) -> mx.twice(mx.inc, v)
+fn via_module(v) -> mathx::twice(mathx::inc, v)
 print(via_module(0))              // 2
 
 // `fn` parameters, return types, variables and struct fields
 fn apply(g: fn, x: int) -> g(x)
 print(apply(fn(v) -> v * 10, 2))  // 20
-print(apply(mx.inc, 2))           // 3
-cb: fn = mx.inc
+print(apply(mathx::inc, 2))           // 3
+cb: fn = mathx::inc
 print(cb | apply(3))              // 4
-fn pick(up: bool) fn -> mx.inc if up else fn(v) -> v - 1
+fn pick(up: bool) fn -> mathx::inc if up else fn(v) -> v - 1
 down = pick(false)
 print(down(10))                   // 9
 
 struct Handler:
     name: str
     run: fn
-h = Handler { name: 'inc', run: mx.inc }
+h = Handler { name: 'inc', run: mathx::inc }
 run = h.run
 print(run(4))                     // 5
 
 // A fully annotated function taking `fn` compiles to native C++
 fn apply_native(g: fn, x: int) int -> g(x)
-print(apply_native(mx.inc, 1))    // 2
+print(apply_native(mathx::inc, 1))    // 2
 k = 5
 print(apply_native(fn(v) -> v + k, 1)) // 6 (a capturing closure)
 

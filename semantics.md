@@ -40,7 +40,7 @@ Every string-producing operation allocates a **fresh copy**. Strings are never s
 
 Resources are opaque handles to external state managed outside the Quark value system. The runtime uses a generational slot-based registry: each resource handle carries a slot index, generation counter, and kind tag. Operations on a closed or stale handle produce a runtime error. Every handle has the single type `resource`: `type()` returns `"resource"`, and `to_str`/`print` show the kind, as in `<resource file>`.
 
-Resources are currently used exclusively by the `std/io` stdlib module for file handles. User code cannot construct resources directly — they are created by native functions (e.g., `io.open()`) and consumed by others (e.g., `io.read()`, `io.close()`).
+Resources are currently used exclusively by the `std/io` stdlib module for file handles. User code cannot construct resources directly — they are created by native functions (e.g., `io::open()`) and consumed by others (e.g., `io::read()`, `io::close()`).
 
 ---
 
@@ -343,13 +343,17 @@ Implementation details:
 
 ## 10) Module and Import System
 
-### 10.1 Three import forms
+The full rules are in `modules_v0_2_spec.md`; this section summarizes them.
 
-| Syntax | Resolution |
-|--------|------------|
-| `incl './path' as alias` | Relative to current file; auto-appends `.qrk` |
-| `incl 'std/module' as alias` | Stdlib path resolution (see below) |
-| `incl modulename` | Same-file module reference |
+### 10.1 Import forms
+
+| Syntax | Binds | Resolution |
+|--------|-------|------------|
+| `incl './path'` | the file's stem (`path`) | Relative to the importing file; auto-appends `.qrk` |
+| `incl './path' as name` | `name` | Same |
+| `incl 'std/module'` (or `as name`) | `module` (or `name`) | Stdlib path resolution (see below) |
+
+`incl` is only allowed at the top level of a file. A module in the same file needs no `incl`: it is written `module::name` directly (`incl m as mm` is an error). An imported file's name, and each directory written in a relative or `std/` import path, must match `[a-z][a-z0-9_]*`; the main script is exempt.
 
 ### 10.2 Path resolution
 
@@ -357,23 +361,39 @@ Relative imports (starting with `./`, `../`, `/`, or drive letter) resolve again
 
 Stdlib imports (starting with `std/`) resolve by searching: `QUARK_STDLIB_ROOT` env var → walking up from current file looking for a `stdlib/` directory → relative to the compiler executable.
 
-### 10.3 Module structure
+### 10.3 Scopes and qualified names
 
-Imported files must define at least one top-level `module` block. The loader parses the file, splices its AST into the importing file, and creates an alias binding. Module-qualified calls like `alias.function()` are resolved at analysis time and lowered to direct calls in codegen.
+A file is the import unit and the scope boundary. Inside a file, a bare name resolves, in order, to a local (parameter, loop variable, `when` binding, local variable), a member of the enclosing `module` block, a top-level name of the file (a definition, a module, or an import binding), then the prelude. Nothing from another file is visible unqualified.
 
-Each module's members have their own namespace. Two modules may define the same name (`io.read` and `csv.read`), and a user definition or variable with a member's name doesn't affect the member (`open = 5` leaves `io.open` working). Internally the loader renames member `x` of module `m` to `m__x`; messages show the original name. Without an alias, `incl m` makes `m`'s members usable as bare names; a bare name that two unaliased modules define, or that the program also defines at top level, is a `QK-LOAD-001` conflict.
+`::` names everything else:
 
-Module members can be called (`io.exists(p)`, `p | io.exists()`), including from inside functions, but not yet used as values (`f = io.exists` is an error).
+| Form | Meaning |
+|------|---------|
+| `module::name` | a member of a module of this file (`mathx::square`) |
+| `file::name` | a top-level name of an imported file, or a member of its primary module (the module named like the file): `fmt::show_vec`, `geo::Point` |
+| `file::module::name` | a member of another module of an imported file (`core::helpers::double`) |
 
-### 10.4 Cycle detection
+A qualified name works wherever a name does: as a value (`f = io::exists`), a call, a pipe target (`p | io::exists()`), a type annotation (`p: geo::Point`) and a struct literal (`geo::Point { x: 1 }`). `.` is only for fields, keys and methods of values: `io.exists` on an import binding, or `m.f` on a module, is a load error suggesting `::`. Imports are not re-exported: `geo::io::open` is an error even when `geo.qrk` imports `std/io`.
 
-The loader maintains a set of files currently being resolved. If a file appears twice in the resolution stack, a circular import error is reported with the full dependency chain.
+Names never collide silently. Within a file, a module member with the same name as a top-level name, an import binding equal to a top-level name or another binding, two modules with one name, and any name defined twice are `QK-LOAD-001` errors naming both definitions. Between files there is nothing to collide: each file's names are its own, and a library's own calls always reach its own definitions.
 
-### 10.5 Deduplication
+### 10.4 Imported files
 
-Files are loaded at most once per compilation. Subsequent imports of the same absolute path reuse the previously loaded AST.
+An imported file may only contain definitions, at the top level and in module bodies: `fn`, `struct`, `module`, `incl` (top level), the `extern` forms, and constants (`name = ` an int, float, str or bool literal, unary minus on a number, or `+ - * / %` over those). Anything else is a `QK-LOAD-001` error naming the statement, so importing a file never runs code. A constant's references are replaced by its value. An importer can read and call every name of an imported file (there are no access modifiers) but can't assign to any of them; a library's constants can't be assigned in the library either.
 
-### 10.6 Extern functions (native C++ interop)
+### 10.5 Structs across files
+
+A struct may be defined at a file's top level or in a module body. Its identity is its definition: `a::Point` and `b::Point` are different types at compile time, and at runtime the parameter and field checks compare struct definitions (`QStructDef` addresses), not names. `type()`, `print` and diagnostics show an imported struct as `stem::Point` (the defining file's stem, whatever alias imported it) and a main-script struct bare (`Point`).
+
+### 10.6 Cycles and deduplication
+
+The loader maintains a set of files currently being resolved. If a file appears twice in the resolution stack, a circular import error is reported with the full dependency chain. Each file is loaded once per compilation, keyed by its absolute path, so a file imported along several paths has one identity (one set of functions, one struct type).
+
+### 10.7 Internal names
+
+The loader gives each loaded file an id (the main script is 0, imports 1, 2, … in load order) and every definition of an imported file an internal name, `q<N>_<stem>__<name>` (`q2_fmt__fmt_vec`), or `q<N>_<stem>__<module>__<name>` for a module member. Main-script names keep their names, and its module members become `<module>__<name>`. It rewrites every reference to the internal name, so the analyzer and codegen see unique names; a name table (`names.Table`) maps them back for diagnostics and runtime messages.
+
+### 10.8 Extern functions (native C++ interop)
 
 Quark programs can call native C++ functions via `extern fn` declarations:
 
@@ -605,7 +625,7 @@ Dot syntax (`.`) serves five distinct purposes depending on context:
 
 For method calls, the receiver's type determines which method is resolved. See stdlib.md for available methods per type.
 
-When the receiver's type isn't known at compile time (for example the result of `unwrap`, or a parameter without an annotation), the method is resolved at runtime from the value's type: `unwrap(io.read(f, n)).split('\n')` works without an annotation. It is still a compile-time error if no type has the method or if no type's version accepts that many arguments, and a runtime error (`type 'int' has no method 'upper'`) if the value's type lacks it.
+When the receiver's type isn't known at compile time (for example the result of `unwrap`, or a parameter without an annotation), the method is resolved at runtime from the value's type: `unwrap(io::read(f, n)).split('\n')` works without an annotation. It is still a compile-time error if no type has the method or if no type's version accepts that many arguments, and a runtime error (`type 'int' has no method 'upper'`) if the value's type lacks it.
 
 ---
 

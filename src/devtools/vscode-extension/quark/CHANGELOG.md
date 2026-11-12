@@ -1,5 +1,15 @@
 # Change Log
 
+## [Unreleased] - 2026-11-12
+
+- Follows modules v0.2: members of modules and imported files are written with `::`. Completion after `name::` and `file::module::` (`:` is a trigger character), hover on `io::exists`, and `::` paths are highlighted as namespaces. Imported files without a `module` block (top-level functions) are completed too. `alias.` no longer offers module members, and the removed same-file `incl m as alias` form is no longer read.
+
+## [0.1.1] - 2026-11-12
+
+- Follows the 2026-11-12 keyword renames: `incl` replaces `use` (snippets `incl` and `inclf` replace `use` and `usef`; import-path and `alias.` completion follow `incl` lines), `vec` replaces `vector` (literal, annotation and return-type highlighting, the `vec` snippet, method completion on `vec [...]` and `.to_vec()`), and `print` replaces `println` in snippets. `fn` is highlighted as an annotation type.
+- Completion and hover data regenerated from the compiler (`to_vec`, `fmt_vec`, `input` returning `result`; `println` removed).
+- The `incl` stdlib snippet offers every stdlib module (`std/io`, `std/fmt`, `std/csv`, `std/sys`, `std/time`, `std/random`, `std/blas`).
+
 ## [0.1.0] - 2026-11-06
 
 - Install without Node or npm: `go run ./cmd/quark-vsix` (from `src/core/quark`) builds the `.vsix`. Install instructions fixed (the extension was never on a marketplace).

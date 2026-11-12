@@ -6,6 +6,7 @@ import (
 	"quark/builtins"
 	"quark/diagnostics"
 	"quark/ir"
+	"quark/names"
 )
 
 type builtinSignature struct {
@@ -33,7 +34,6 @@ type Analyzer struct {
 	errors          []diagnostics.Diagnostic
 	functions       map[string]*FunctionType // Track function signatures
 	modules         map[string]*Module       // Track defined modules
-	moduleAliases   map[string]string        // Alias -> module name mapping from incl statements
 	currentModule   string                   // Current module being defined (empty if global)
 	builtins        map[string]*builtinSignature
 	methods         map[builtins.TypeKey]map[string]*builtinSignature // receiver type -> method name -> sig
@@ -41,8 +41,6 @@ type Analyzer struct {
 	callPlans       map[*ast.TreeNode]*ir.CallPlan
 	returnValidated map[*ast.TreeNode]bool
 	nodeTypes       map[*ast.TreeNode]Type // Inferred type of every expression node
-	// moduleMemberRefs holds `alias.member` nodes used as values (not called).
-	moduleMemberRefs map[*ast.TreeNode]bool
 	// paramUsages collects call shapes of the parameters of the functions
 	// being analyzed (analyzer_callshapes.go).
 	paramUsages     map[*Symbol]*paramUsage
@@ -69,18 +67,22 @@ type Analyzer struct {
 
 	// Fixed `fn` declarations (analyzer_fixed.go).
 	rootScope       *Scope
-	moduleScopes    map[*Scope]bool
+	curList         *ast.TreeNode // statement list being analyzed, and the index in it
+	curIdx          int
 	fixedBySym      map[*Symbol]*FixedFn
 	fixedByLambda   map[*ast.TreeNode]*FixedFn
 	fixedList       []*FixedFn
 	fixedCalls      []fixedCall
-	fixedRefs       map[*ast.TreeNode]*FixedFn // identifier nodes naming a declaration
+	fixedRefs       map[*ast.TreeNode]*FixedFn  // identifier nodes naming a declaration
 	captureSyms     map[*ast.TreeNode][]*Symbol // lambda -> symbol of each captured name
 	fnScopes        []*fnScope
-	scopeStmt       map[*Scope]int
 	symDefs         map[*Symbol]symDef
 	hoistScopes     map[*ast.TreeNode]*HoistScope
 	checkedCaptures map[*ast.TreeNode]map[string]bool
+
+	// names maps the loader's internal names back to the names users write;
+	// every diagnostic goes through it.
+	names names.Table
 }
 
 func NewAnalyzer() *Analyzer {
@@ -115,35 +117,31 @@ func NewAnalyzer() *Analyzer {
 	}
 
 	return &Analyzer{
-		currentScope:     globalScope,
-		errors:           make([]diagnostics.Diagnostic, 0),
-		functions:        funcs,
-		modules:          make(map[string]*Module),
-		moduleAliases:    make(map[string]string),
-		currentModule:    "",
-		builtins:         builtinSigs,
-		methods:          methodSigs,
-		captures:         make(map[*ast.TreeNode][]string),
-		callPlans:        make(map[*ast.TreeNode]*ir.CallPlan),
-		returnValidated:  make(map[*ast.TreeNode]bool),
-		nodeTypes:        make(map[*ast.TreeNode]Type),
-		moduleMemberRefs: make(map[*ast.TreeNode]bool),
-		paramUsages:      make(map[*Symbol]*paramUsage),
-		externFns:        make(map[string]*ir.CallPlan),
-		externSources:    make([]string, 0),
-		nativeFns:        make(map[string]*ir.CallPlan),
-		structTypes:      make(map[string]*StructType),
-		builtinSyms:      builtinSyms,
-		rootScope:        globalScope,
-		moduleScopes:     make(map[*Scope]bool),
-		fixedBySym:       make(map[*Symbol]*FixedFn),
-		fixedByLambda:    make(map[*ast.TreeNode]*FixedFn),
-		fixedRefs:        make(map[*ast.TreeNode]*FixedFn),
-		captureSyms:      make(map[*ast.TreeNode][]*Symbol),
-		scopeStmt:        make(map[*Scope]int),
-		symDefs:          make(map[*Symbol]symDef),
-		hoistScopes:      make(map[*ast.TreeNode]*HoistScope),
-		checkedCaptures:  make(map[*ast.TreeNode]map[string]bool),
+		currentScope:    globalScope,
+		errors:          make([]diagnostics.Diagnostic, 0),
+		functions:       funcs,
+		modules:         make(map[string]*Module),
+		currentModule:   "",
+		builtins:        builtinSigs,
+		methods:         methodSigs,
+		captures:        make(map[*ast.TreeNode][]string),
+		callPlans:       make(map[*ast.TreeNode]*ir.CallPlan),
+		returnValidated: make(map[*ast.TreeNode]bool),
+		nodeTypes:       make(map[*ast.TreeNode]Type),
+		paramUsages:     make(map[*Symbol]*paramUsage),
+		externFns:       make(map[string]*ir.CallPlan),
+		externSources:   make([]string, 0),
+		nativeFns:       make(map[string]*ir.CallPlan),
+		structTypes:     make(map[string]*StructType),
+		builtinSyms:     builtinSyms,
+		rootScope:       globalScope,
+		fixedBySym:      make(map[*Symbol]*FixedFn),
+		fixedByLambda:   make(map[*ast.TreeNode]*FixedFn),
+		fixedRefs:       make(map[*ast.TreeNode]*FixedFn),
+		captureSyms:     make(map[*ast.TreeNode][]*Symbol),
+		symDefs:         make(map[*Symbol]symDef),
+		hoistScopes:     make(map[*ast.TreeNode]*HoistScope),
+		checkedCaptures: make(map[*ast.TreeNode]map[string]bool),
 	}
 }
 
@@ -201,21 +199,38 @@ func (a *Analyzer) Diagnostics() []diagnostics.Diagnostic {
 	return out
 }
 
+// SetNames passes the loader's name table (modules v0.2), used to show
+// internal names as users write them.
+func (a *Analyzer) SetNames(t names.Table) {
+	a.names = t
+}
+
+// display is the user-facing text of a message built from internal names.
+func (a *Analyzer) display(msg string) string {
+	return a.names.DisplayText(msg)
+}
+
+// nodeLocation is where a diagnostic about node is reported: its line and
+// column, and its file when it came from an imported file.
+func nodeLocation(node *ast.TreeNode) *diagnostics.Location {
+	if node == nil || node.Token == nil {
+		return nil
+	}
+	return &diagnostics.Location{File: node.SourceFile, Line: node.Token.Line, Column: node.Token.Column}
+}
+
 func (a *Analyzer) addError(format string, args ...interface{}) {
 	a.errors = append(a.errors, diagnostics.Diagnostic{
 		Code:     "QK-CHECK-001",
 		Stage:    diagnostics.StageCheck,
 		Severity: diagnostics.SeverityError,
-		Message:  fmt.Sprintf(format, args...),
+		Message:  a.display(fmt.Sprintf(format, args...)),
 	})
 }
 
 func (a *Analyzer) errorAt(node *ast.TreeNode, format string, args ...interface{}) {
-	msg := fmt.Sprintf(format, args...)
-	var loc *diagnostics.Location
-	if node != nil && node.Token != nil {
-		loc = &diagnostics.Location{Line: node.Token.Line, Column: node.Token.Column}
-	}
+	msg := a.display(fmt.Sprintf(format, args...))
+	loc := nodeLocation(node)
 	a.errors = append(a.errors, diagnostics.Diagnostic{
 		Code:     "QK-CHECK-001",
 		Stage:    diagnostics.StageCheck,
@@ -226,11 +241,8 @@ func (a *Analyzer) errorAt(node *ast.TreeNode, format string, args ...interface{
 }
 
 func (a *Analyzer) warnAt(node *ast.TreeNode, format string, args ...interface{}) {
-	msg := fmt.Sprintf(format, args...)
-	var loc *diagnostics.Location
-	if node != nil && node.Token != nil {
-		loc = &diagnostics.Location{Line: node.Token.Line, Column: node.Token.Column}
-	}
+	msg := a.display(fmt.Sprintf(format, args...))
+	loc := nodeLocation(node)
 	a.errors = append(a.errors, diagnostics.Diagnostic{
 		Code:     "QK-CHECK-002",
 		Stage:    diagnostics.StageCheck,
@@ -304,7 +316,7 @@ func (a *Analyzer) analyze(node *ast.TreeNode) Type {
 	case ast.ModuleNode:
 		return a.analyzeModule(node)
 	case ast.InclNode:
-		return a.analyzeUse(node)
+		return TypeVoid // resolved and removed by the loader
 	case ast.BreakNode:
 		if a.loopDepth == 0 {
 			a.errorAt(node, "[C-SCOPE] 'break' must be inside a for or while loop")

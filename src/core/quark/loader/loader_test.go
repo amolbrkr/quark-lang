@@ -68,7 +68,8 @@ func TestResolveImports_DedupsAlreadyLoadedModule(t *testing.T) {
 	entry := filepath.Join(tmp, "main.qrk")
 	a := filepath.Join(tmp, "a.qrk")
 
-	writeFile(t, entry, "incl './a'\nincl './a'\n")
+	// One file under two bindings is loaded once.
+	writeFile(t, entry, "incl './a'\nincl './a' as b\nprint(a::foo() + b::foo())\n")
 	writeFile(t, a, "module a:\n    fn foo() -> 1\n")
 
 	root := parseRoot(t, entry)
@@ -78,6 +79,22 @@ func TestResolveImports_DedupsAlreadyLoadedModule(t *testing.T) {
 	if len(ml.Errors()) > 0 {
 		t.Fatalf("unexpected loader errors: %v", ml.Errors())
 	}
+	if n := countModules(root, "q1_a__a"); n != 1 {
+		t.Fatalf("expected module a once, got %d", n)
+	}
+	if len(ml.files) != 2 {
+		t.Fatalf("expected 2 loaded files, got %d", len(ml.files))
+	}
+}
+
+func countModules(root *ast.TreeNode, internal string) int {
+	n := 0
+	for _, child := range root.Children {
+		if child.NodeType == ast.ModuleNode && len(child.Children) > 0 && child.Children[0].TokenLiteral() == internal {
+			n++
+		}
+	}
+	return n
 }
 
 func TestResolveImports_SupportsStdlibImport(t *testing.T) {
@@ -102,8 +119,8 @@ func TestResolveImports_SupportsStdlibImport(t *testing.T) {
 	if len(ml.Errors()) > 0 {
 		t.Fatalf("unexpected loader errors: %v", ml.Errors())
 	}
-	if len(root.Children) != 2 {
-		t.Fatalf("expected imported module and synthetic incl node, got %d children", len(root.Children))
+	if n := countModules(root, "q1_math__math"); n != 1 {
+		t.Fatalf("expected the stdlib module spliced once, got %d", n)
 	}
 }
 
@@ -124,33 +141,8 @@ func TestResolveImports_AllowsAbsoluteImportPath(t *testing.T) {
 	if len(ml.Errors()) > 0 {
 		t.Fatalf("unexpected loader errors: %v", ml.Errors())
 	}
-	if len(root.Children) != 2 {
-		t.Fatalf("expected imported module and synthetic incl node, got %d children", len(root.Children))
-	}
-}
-
-func TestResolveImports_PreservesInclAliasInSyntheticIncl(t *testing.T) {
-	tmp := t.TempDir()
-	entry := filepath.Join(tmp, "main.qrk")
-	lib := filepath.Join(tmp, "lib", "math.qrk")
-	writeFile(t, lib, "module math:\n    fn square(n) -> n * n\n")
-	writeFile(t, entry, "incl './lib/math' as m\n")
-
-	root := parseRoot(t, entry)
-	ml := NewModuleLoader()
-	ml.ResolveImports(root, entry)
-	if len(ml.Errors()) > 0 {
-		t.Fatalf("unexpected loader errors: %v", ml.Errors())
-	}
-	if len(root.Children) != 2 {
-		t.Fatalf("expected imported module and synthetic incl node, got %d children", len(root.Children))
-	}
-	inclNode := root.Children[1]
-	if inclNode.NodeType != ast.InclNode {
-		t.Fatalf("expected synthetic InclNode, got %v", inclNode)
-	}
-	if len(inclNode.Children) < 2 || inclNode.Children[1].TokenLiteral() != "m" {
-		t.Fatalf("expected synthetic alias 'm', got %#v", inclNode.Children)
+	if n := countModules(root, "q1_math__math"); n != 1 {
+		t.Fatalf("expected the imported module spliced once, got %d", n)
 	}
 }
 
@@ -171,21 +163,19 @@ func TestResolveImports_MissingFileError(t *testing.T) {
 	}
 }
 
-func TestResolveImports_ImportedFileWithNoModule(t *testing.T) {
+func TestResolveImports_ImportedFileWithNoModuleIsALibrary(t *testing.T) {
 	tmp := t.TempDir()
 	entry := filepath.Join(tmp, "main.qrk")
 	lib := filepath.Join(tmp, "lib.qrk")
-	// lib.qrk has no module declaration — just bare code
-	writeFile(t, lib, "x = 1\n")
-	writeFile(t, entry, "incl './lib'\n")
+	// A file of top-level definitions is a valid library (rule 5).
+	writeFile(t, lib, "x = 1\nfn f() -> x\n")
+	writeFile(t, entry, "incl './lib'\nprint(lib::f())\n")
 
 	root := parseRoot(t, entry)
 	ml := NewModuleLoader()
 	ml.ResolveImports(root, entry)
-
-	errs := strings.Join(ml.Errors(), "\n")
-	if !strings.Contains(errs, "does not define a module") {
-		t.Fatalf("expected 'does not define a module' error, got: %v", ml.Errors())
+	if len(ml.Errors()) > 0 {
+		t.Fatalf("unexpected loader errors: %v", ml.Errors())
 	}
 }
 
@@ -233,9 +223,8 @@ func TestResolveImports_TransitiveImports(t *testing.T) {
 	if len(ml.Errors()) > 0 {
 		t.Fatalf("unexpected errors for transitive imports: %v", ml.Errors())
 	}
-	// Should have: module b, module a, synthetic incl for a
-	if len(root.Children) < 3 {
-		t.Fatalf("expected at least 3 children (modules + synthetic use), got %d", len(root.Children))
+	if countModules(root, "q1_a__a") != 1 || countModules(root, "q2_b__b") != 1 {
+		t.Fatalf("expected modules a and b spliced once each, got %v", root.Children)
 	}
 }
 
@@ -261,14 +250,8 @@ func TestResolveImports_DiamondImportDeduplication(t *testing.T) {
 		t.Fatalf("unexpected errors for diamond import: %v", ml.Errors())
 	}
 
-	// Count how many times module c appears (should be exactly once as ModuleNode)
-	moduleCount := 0
-	for _, child := range root.Children {
-		if child.NodeType == ast.ModuleNode && len(child.Children) > 0 && child.Children[0].TokenLiteral() == "c" {
-			moduleCount++
-		}
-	}
-	if moduleCount != 1 {
+	// Module c is spliced exactly once (file 2: a is 1, c 2, b 3).
+	if moduleCount := countModules(root, "q2_c__c"); moduleCount != 1 {
 		t.Fatalf("expected module c to appear exactly once, got %d", moduleCount)
 	}
 }
@@ -335,8 +318,8 @@ func TestResolveImports_ParseErrorInImportedFile(t *testing.T) {
 	}
 }
 
-func TestResolveImports_IdentifierInclPassesThrough(t *testing.T) {
-	// `incl moduleName` (identifier, not string literal) should not be processed as file import
+func TestResolveImports_SameFileModuleInclRejected(t *testing.T) {
+	// `incl moduleName` of a same-file module was removed: write math::add.
 	tmp := t.TempDir()
 	entry := filepath.Join(tmp, "main.qrk")
 	writeFile(t, entry, "module math:\n    fn add(x, y) -> x + y\nincl math\n")
@@ -345,8 +328,9 @@ func TestResolveImports_IdentifierInclPassesThrough(t *testing.T) {
 	ml := NewModuleLoader()
 	ml.ResolveImports(root, entry)
 
-	if len(ml.Errors()) > 0 {
-		t.Fatalf("unexpected errors for identifier use: %v", ml.Errors())
+	errs := strings.Join(ml.Errors(), "\n")
+	if !strings.Contains(errs, "a module in the same file needs no incl; write math::name directly") {
+		t.Fatalf("expected same-file incl error, got: %v", ml.Errors())
 	}
 }
 

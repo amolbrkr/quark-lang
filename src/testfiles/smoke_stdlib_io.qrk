@@ -3,12 +3,12 @@ incl 'std/io' as io
 print('== smoke: stdlib io ==')
 p = './quark_stdlib_io_smoke_tmp.txt'
 
-f = unwrap(io.open(p, 'w'))
-io.write(f, 'hello world') | unwrap() | print()
-io.close(f) | unwrap()
-print(io.exists(p))
+f = unwrap(io::open(p, 'w'))
+io::write(f, 'hello world') | unwrap() | print()
+io::close(f) | unwrap()
+print(io::exists(p))
 
-r = unwrap(io.open(p, 'r'))
-io.seek(r, 6, io.seek_set()) | unwrap() | print()
-print(unwrap(io.read(r, 5)))
-io.close(r) | unwrap()
+r = unwrap(io::open(p, 'r'))
+io::seek(r, 6, io::seek_set()) | unwrap() | print()
+print(unwrap(io::read(r, 5)))
+io::close(r) | unwrap()

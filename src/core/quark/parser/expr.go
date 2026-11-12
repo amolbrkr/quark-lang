@@ -1,6 +1,8 @@
 package parser
 
 import (
+	"strings"
+
 	"quark/ast"
 	"quark/token"
 )
@@ -188,11 +190,24 @@ func (p *Parser) infixParseFn(t token.TokenType) func(*ast.TreeNode) *ast.TreeNo
 func (p *Parser) parseIdentifier() *ast.TreeNode {
 	tok := p.curToken
 
+	// A qualified name: io::exists, geo::Point { ... }, formats::csv::read.
+	if p.peek(1).Type == token.COLONCOLON {
+		qtok, ok := p.parseQualifiedPath()
+		if !ok {
+			return nil
+		}
+		if p.curToken.Type == token.LBRACE {
+			return p.parseStructLiteralBody(qtok)
+		}
+		return ast.NewNode(ast.QualifiedNameNode, &qtok)
+	}
+
 	// Struct literal: StructName { field: value, ... }. '{' after a name has no
 	// other meaning, so this doesn't depend on where the struct is defined; the
 	// checker reports a name that isn't a known struct.
 	if p.peek(1).Type == token.LBRACE {
-		return p.parseStructLiteral()
+		p.nextToken() // skip struct name
+		return p.parseStructLiteralBody(tok)
 	}
 
 	node := ast.NewNode(ast.IdentifierNode, &tok)
@@ -200,12 +215,30 @@ func (p *Parser) parseIdentifier() *ast.TreeNode {
 	return node
 }
 
-// parseStructLiteral parses: StructName { field: expr, ... }
-// Supports both inline (comma-separated) and multiline (newline-separated) forms.
-func (p *Parser) parseStructLiteral() *ast.TreeNode {
+// parseQualifiedPath reads `ID (:: ID)+` starting at the current ID and
+// returns one token for the whole path (Literal "a::b::c", position of a).
+func (p *Parser) parseQualifiedPath() (token.Token, bool) {
 	tok := p.curToken
+	parts := []string{tok.Literal}
+	p.nextToken()
+	for p.curToken.Type == token.COLONCOLON {
+		p.nextToken()
+		if p.curToken.Type != token.ID {
+			p.addError("expected a name after '::' in '%s::'", strings.Join(parts, "::"))
+			return tok, false
+		}
+		parts = append(parts, p.curToken.Literal)
+		p.nextToken()
+	}
+	tok.Literal = strings.Join(parts, "::")
+	return tok, true
+}
+
+// parseStructLiteralBody parses `{ field: expr, ... }` after the struct name
+// tok (bare or qualified). Supports both inline (comma-separated) and
+// multiline (newline-separated) forms.
+func (p *Parser) parseStructLiteralBody(tok token.Token) *ast.TreeNode {
 	node := ast.NewNode(ast.StructLiteralNode, &tok)
-	p.nextToken() // skip struct name
 
 	if !p.expect(token.LBRACE) {
 		return nil
@@ -518,6 +551,25 @@ func (p *Parser) parseMemberAccess(left *ast.TreeNode) *ast.TreeNode {
 	member := ast.NewNode(ast.IdentifierNode, &memberTok)
 	p.nextToken()
 
+	// `shapes.Sq { ... }`: a struct from a module or imported file is named
+	// with `::`.
+	if p.curToken.Type == token.LBRACE && left != nil && (left.NodeType == ast.IdentifierNode || left.NodeType == ast.QualifiedNameNode) {
+		p.addError("a struct from a module or imported file is written %s::%s { ... }, with '::'", left.TokenLiteral(), memberTok.Literal)
+		// Skip the literal so it isn't reported again.
+		for depth := 0; !p.isAtEnd(); p.nextToken() {
+			if p.curToken.Type == token.LBRACE {
+				depth++
+			} else if p.curToken.Type == token.RBRACE {
+				depth--
+				if depth == 0 {
+					p.nextToken()
+					break
+				}
+			}
+		}
+		return nil
+	}
+
 	node.AddChildren(left, member)
 	return node
 }
@@ -614,7 +666,7 @@ func (p *Parser) parseLambda() *ast.TreeNode {
 	node.AddChild(args)
 
 	// Optional return type annotation before ->
-	if p.isTypeToken() && p.peek(1).Type == token.ARROW {
+	if p.atReturnType() {
 		node.ReturnType = p.parseTypeExpr()
 	}
 

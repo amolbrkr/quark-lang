@@ -4,6 +4,7 @@ import (
 	"quark/ast"
 	"quark/builtins"
 	"quark/ir"
+	"quark/names"
 )
 
 func (a *Analyzer) analyzeModule(node *ast.TreeNode) Type {
@@ -18,64 +19,22 @@ func (a *Analyzer) analyzeModule(node *ast.TreeNode) Type {
 		a.errorAt(nameNode, "module '%s' already defined", moduleName)
 		return TypeVoid
 	}
-	moduleScope := NewScope(a.currentScope)
-	a.moduleScopes[moduleScope] = true
-	oldScope := a.currentScope
-	a.currentScope = moduleScope
+	if a.currentScope != a.rootScope {
+		a.errorAt(nameNode, "a module must be defined at the top level of a file")
+		return TypeVoid
+	}
+	// The loader gave every member a unique internal name (module__member),
+	// so the body is analyzed in the file scope, where code outside the
+	// module reaches members as module::member. Its declarations were
+	// declared with the top level's (analyzeCompilationUnit).
 	a.currentModule = moduleName
 	if bodyNode != nil && bodyNode.NodeType == ast.BlockNode {
-		a.predeclareFunctions(bodyNode.Children)
-		a.declareFixedFns(bodyNode, bodyNode.Children)
-		for i, child := range bodyNode.Children {
-			a.enterStatement(i)
-			a.Analyze(child)
-		}
+		a.analyzeStatements(bodyNode, bodyNode.Children)
 	} else {
 		a.Analyze(bodyNode)
 	}
-	module := &Module{Name: moduleName, Scope: moduleScope, Symbols: moduleScope.Symbols}
-	a.modules[moduleName] = module
-	a.currentScope = oldScope
+	a.modules[moduleName] = &Module{Name: moduleName, Scope: a.currentScope, Symbols: a.currentScope.Symbols}
 	a.currentModule = ""
-	return TypeVoid
-}
-
-func (a *Analyzer) analyzeUse(node *ast.TreeNode) Type {
-	if len(node.Children) < 1 {
-		a.errorAt(node, "invalid incl statement")
-		return TypeVoid
-	}
-	nameNode := node.Children[0]
-	moduleName := nameNode.TokenLiteral()
-	alias := moduleName
-	hasExplicitAlias := false
-	if len(node.Children) >= 2 && node.Children[1] != nil && node.Children[1].NodeType == ast.IdentifierNode {
-		alias = node.Children[1].TokenLiteral()
-		hasExplicitAlias = true
-	}
-	module, exists := a.modules[moduleName]
-	if !exists {
-		a.errorAt(nameNode, "undefined module '%s'", moduleName)
-		return TypeVoid
-	}
-	if alias != "" {
-		if existing, exists := a.moduleAliases[alias]; exists && existing != moduleName {
-			a.errorAt(node, "module alias '%s' already refers to module '%s'", alias, existing)
-		} else {
-			a.moduleAliases[alias] = moduleName
-		}
-	}
-	if hasExplicitAlias {
-		return TypeVoid
-	}
-	for name, sym := range module.Symbols {
-		if existing := a.currentScope.LookupLocal(name); existing != nil {
-			a.errorAt(node, "symbol '%s' from module '%s' conflicts with existing definition", name, moduleName)
-			continue
-		}
-		// The member's own symbol, so a `fn` member stays the same declaration.
-		a.currentScope.Symbols[name] = sym
-	}
 	return TypeVoid
 }
 
@@ -116,10 +75,8 @@ type Analysis struct {
 	NativeFns          map[string]*ir.CallPlan
 	ExternFns          map[string]*ir.CallPlan
 	StructTypes        map[string]*StructType
-	// ModuleMemberRefs marks `alias.member` nodes used as values; codegen
-	// emits the member (its right child, already renamed `module__member`)
-	// like an identifier.
-	ModuleMemberRefs map[*ast.TreeNode]bool
+	// Names maps the loader's internal names to the names users write.
+	Names names.Table
 
 	// Fixed `fn` declarations (analyzer_fixed.go). FixedFns is keyed by the
 	// declaration's lambda node. FnRefs maps identifier nodes that name a
@@ -146,7 +103,7 @@ func (a *Analyzer) Analysis(root *ast.TreeNode) *Analysis {
 		NativeFns:          a.nativeFns,
 		ExternFns:          a.externFns,
 		StructTypes:        a.structTypes,
-		ModuleMemberRefs:   a.moduleMemberRefs,
+		Names:              a.names,
 		FixedFns:           a.fixedByLambda,
 		FnRefs:             a.fixedRefs,
 		HoistScopes:        a.hoistScopes,

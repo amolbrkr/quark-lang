@@ -14,6 +14,7 @@ import (
 	"quark/invariants"
 	"quark/lexer"
 	"quark/loader"
+	"quark/names"
 	"quark/parser"
 	"quark/token"
 	"quark/types"
@@ -36,6 +37,7 @@ type Unit struct {
 	Analysis    *types.Analysis
 	CPP         string
 	Native      loader.NativeDeps        // libraries and include paths from extern directives
+	Names       names.Table              // internal name -> where it was defined (modules v0.2)
 	Diagnostics []diagnostics.Diagnostic // errors and warnings, in stage order
 	Err         error                    // I/O or invariant failure
 	failed      bool
@@ -73,8 +75,9 @@ func CompileSource(src, file string, upTo Stage) *Unit {
 		u.Err = fmt.Errorf("Error resolving path: %s", err)
 		return u
 	}
-	native, loadDiags := ResolveImports(u.AST, absPath)
+	native, table, loadDiags := ResolveImports(u.AST, absPath)
 	u.Native = native
+	u.Names = table
 	if len(loadDiags) > 0 {
 		u.addDiags(diagnostics.WithDefaultFile(loadDiags, absPath), true)
 		return u
@@ -84,6 +87,7 @@ func CompileSource(src, file string, upTo Stage) *Unit {
 	}
 
 	analyzer := types.NewAnalyzer()
+	analyzer.SetNames(u.Names)
 	analyzer.Analyze(u.AST)
 	u.addDiags(diagnostics.WithDefaultFile(analyzer.Diagnostics(), file), analyzer.HasErrors())
 	if analyzer.HasErrors() {
@@ -102,17 +106,19 @@ func CompileSource(src, file string, upTo Stage) *Unit {
 	return u
 }
 
-// ResolveImports splices `incl` imports into tree, resolves `extern` header
-// paths, and collects the native dependencies requested by `extern link` and
-// `extern include_path`. absPath is the absolute path of the file tree came
-// from.
-func ResolveImports(tree *ast.TreeNode, absPath string) (loader.NativeDeps, []diagnostics.Diagnostic) {
+// ResolveImports loads the files tree imports, resolves every name (bare and
+// `::`-qualified) to an internal name, splices the files into tree, resolves
+// `extern` header paths, and collects the native dependencies requested by
+// `extern link` and `extern include_path`. absPath is the absolute path of
+// the file tree came from. The table maps internal names back to the names
+// users write.
+func ResolveImports(tree *ast.TreeNode, absPath string) (loader.NativeDeps, names.Table, []diagnostics.Diagnostic) {
 	ml := loader.NewModuleLoader()
 	ml.ResolveImports(tree, absPath)
 	if len(ml.Errors()) > 0 {
-		return loader.NativeDeps{}, ml.Diagnostics()
+		return loader.NativeDeps{}, ml.Names(), ml.Diagnostics()
 	}
-	return ml.NativeDeps(), nil
+	return ml.NativeDeps(), ml.Names(), nil
 }
 
 // Validate checks the pre-codegen invariants on an analyzed tree.

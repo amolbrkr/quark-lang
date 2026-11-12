@@ -24,6 +24,16 @@ The goal is a language any developer can trust: a wrong program fails loudly and
 5. **Same rule everywhere.** New behavior must match the closest existing behavior (for example, if parameters widen int→float, so must struct fields and returns); if it can't, raise the inconsistency instead of adding another one.
 6. **Names never collide silently.** Every top-level symbol of a `use`d file is visible to the importer, by design (there are no access modifiers; stdlib `extern fn` bindings such as `fmt_vector` are visible too). A clash between such a name and a user definition must be a compile-time error, never one definition silently winning. Compiler-internal names (`module__member`, `q_`/`quark_` C++ symbols) must never be reachable from user code.
 
+## Changelog (update every day there are changes)
+
+`CHANGELOG.md` at the repo root has one section per day, newest first. On any day you change behavior (language, CLI, stdlib, runtime, toolchain, editor extension), update it as part of the work, not as a later cleanup:
+
+- Add today's section (`## YYYY-MM-DD: <short title>`) if it doesn't exist; otherwise add to it. Use the subsections in this order: Breaking, Added, Changed, Fixed, Removed, Internal. Put the commit hashes on a `Commits:` line once they exist.
+- Describe what the change actually does, from the diff and the tests, not the commit message. Write it for a Quark user, with a short code example where it helps; compiler and runtime details go under Internal.
+- Breaking means anything that makes a program that worked before fail to compile, fail at runtime, or print something different. Name each removed or renamed thing and what to use instead.
+- Keep the "Known issues" section at the top current: add soundness bugs you find but don't fix (with a reproduction), and remove the ones you fix.
+- If the user commits without you, check `git log` for commits since the last changelog entry and add them before starting new work.
+
 ## Build & Test Commands
 
 ```bash

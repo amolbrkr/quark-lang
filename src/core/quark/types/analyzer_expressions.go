@@ -42,347 +42,245 @@ func (a *Analyzer) analyzeLiteral(node *ast.TreeNode) Type {
 	}
 }
 
-func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
-	if node.Token == nil || len(node.Children) == 0 {
+// analyzeMember analyzes `object.name`: a dict key or a struct field. Method
+// calls (`object.name(...)`) are planned by resolveMethodCall instead.
+func (a *Analyzer) analyzeMember(node *ast.TreeNode) Type {
+	if len(node.Children) < 2 || node.Children[0] == nil || node.Children[1] == nil {
+		a.errorAt(node, "malformed dot access expression")
+		return TypeError
+	}
+	targetType := a.Analyze(node.Children[0])
+	if IsErrorType(targetType) {
+		return TypeError
+	}
+	member := node.Children[1].TokenLiteral()
+	if targetType.Equals(TypeNull) {
+		a.errorAt(node.Children[0], "cannot access member '%s' on null", member)
+		return TypeError
+	}
+	switch t := targetType.(type) {
+	case *DictType:
+		return t.ValueType
+	case *StructType:
+		field, _ := t.FieldByName(member)
+		if field == nil {
+			a.errorAt(node, "struct %s has no field '%s'", t.Name, member)
+			return TypeError
+		}
+		return field.Type
+	default:
+		if isUnknownType(targetType) {
+			return TypeAny
+		}
+		a.errorAt(node, "dot access is only supported on dict; use len(entity), upper(entity), etc. instead of entity.%s", member)
+		return TypeError
+	}
+}
+
+// analyzeUnary analyzes `-x` and `!x`.
+func (a *Analyzer) analyzeUnary(node *ast.TreeNode) Type {
+	if node.Token == nil || len(node.Children) != 1 || node.Children[0] == nil {
+		a.errorAt(node, "malformed operator expression")
+		return TypeError
+	}
+	operandType := a.Analyze(node.Children[0])
+	if IsErrorType(operandType) {
+		return TypeError
+	}
+	switch node.Token.Type {
+	case token.MINUS:
+		if IsNumeric(operandType) {
+			return operandType
+		}
+		if isUnknownType(operandType) {
+			return TypeAny
+		}
+		a.errorAt(node, "unary '-' expects numeric operand, got %s", operandType.String())
+		return TypeError
+	case token.BANG:
+		// Uses truthiness (§4.3). Always returns bool.
+		a.checkCondition(node.Children[0], operandType)
+		return TypeBool
+	}
+	a.errorAt(node, "unsupported operator '%s'", node.Token.Type.String())
+	return TypeError
+}
+
+// analyzeAssign analyzes `target = value`, dispatching on the target: a
+// name, a member (`d.key = v`; struct fields are immutable) or an index
+// (`l[i] = v`).
+func (a *Analyzer) analyzeAssign(node *ast.TreeNode) Type {
+	if len(node.Children) != 2 || node.Children[0] == nil || node.Children[1] == nil {
+		a.errorAt(node, "malformed assignment")
+		return TypeError
+	}
+	target, value := node.Children[0], node.Children[1]
+	switch target.NodeType {
+	case ast.IdentifierNode:
+		return a.assignName(target, value)
+	case ast.MemberNode:
+		return a.assignMember(target, value)
+	case ast.IndexNode:
+		return a.assignIndex(target, value)
+	case ast.AssignNode:
+		// `a = b = 1` parses as `(a = b) = 1`; say what is actually wrong.
+		rightType := a.Analyze(value)
+		a.errorAt(target, "chained assignment is not supported; assign each variable separately (a = 1, then b = 1)")
+		return rightType
+	default:
+		rightType := a.Analyze(value)
+		a.errorAt(target, "left side of assignment must be an identifier")
+		return rightType
+	}
+}
+
+// assignMember analyzes `object.name = value`.
+func (a *Analyzer) assignMember(target, value *ast.TreeNode) Type {
+	if len(target.Children) < 2 {
+		a.errorAt(target, "malformed dot access expression")
+		return TypeError
+	}
+	objectType := a.Analyze(target.Children[0])
+	if st, ok := objectType.(*StructType); ok {
+		a.errorAt(target, "cannot assign to field '%s' of immutable struct %s", target.Children[1].TokenLiteral(), st.Name)
+		a.Analyze(value) // still analyze the value for its own errors
+		return TypeError
+	}
+	rightType := a.Analyze(value)
+	if objectType.Equals(TypeNull) {
+		a.errorAt(target.Children[0], "cannot assign member on null")
+		return rightType
+	}
+	if dictType, ok := objectType.(*DictType); ok {
+		if !isUnknownType(rightType) && !IsErrorType(rightType) && !isUnknownType(dictType.ValueType) && !CanAssign(dictType.ValueType, rightType) {
+			a.warnAt(target, "assigning '%s' to dict with value type '%s'", rightType.String(), dictType.ValueType.String())
+		}
+		return rightType
+	}
+	if !isUnknownType(objectType) {
+		a.errorAt(target, "only dict members are assignable")
+	}
+	return rightType
+}
+
+// assignIndex analyzes `object[index] = value`.
+func (a *Analyzer) assignIndex(target, value *ast.TreeNode) Type {
+	rightType := a.Analyze(value)
+	if len(target.Children) < 2 {
+		return rightType
+	}
+	targetType := a.Analyze(target.Children[0])
+	indexType := a.Analyze(target.Children[1])
+	switch {
+	case targetType.Equals(TypeNull):
+		a.errorAt(target.Children[0], "cannot index null")
+	case targetType.Equals(TypeString):
+		a.errorAt(target, "strings are immutable")
+	default:
+		switch targetType.(type) {
+		case *ListType:
+			if !isIntLike(indexType) && !isUnknownType(indexType) {
+				a.errorAt(target.Children[1], "list index must be int, got %s", indexType.String())
+			}
+		case *DictType:
+			a.errorAt(target, "use dot access for dict assignment: d.key = value")
+		default:
+			if !isUnknownType(targetType) {
+				a.errorAt(target, "type '%s' is not index-assignable", targetType.String())
+			}
+		}
+	}
+	return rightType
+}
+
+// assignName analyzes `name = value`: the first assignment defines the
+// variable, later ones must fit its type.
+func (a *Analyzer) assignName(target, value *ast.TreeNode) Type {
+	varName := target.TokenLiteral()
+	// `fn len(x) -> ...` or `len = ...` would rebind a builtin or extern fn,
+	// but calls by that name always reach the builtin, so the new definition
+	// would be silently ignored. (Parameters, loop variables and nested
+	// functions can shadow one.)
+	if a.refersToBuiltin(a.currentScope, varName) {
+		if _, isExtern := a.externFns[varName]; isExtern {
+			a.errorAt(target, "'%s' is an extern fn and can't be redefined or assigned; choose another name", varName)
+		} else {
+			a.errorAt(target, "'%s' is a builtin function and can't be redefined or assigned; choose another name", varName)
+		}
+		a.Analyze(value)
+		return TypeError
+	}
+	// A declared function is fixed (rule 19).
+	if f := a.fixedFnOf(a.currentScope.Lookup(varName)); f != nil {
+		a.reassignedDeclError(target, f)
+		a.Analyze(value)
+		return TypeError
+	}
+	if value.NodeType == ast.LambdaNode {
+		// A variable holding a function: defined before the lambda is
+		// analyzed so the lambda can call itself through it.
+		if a.currentScope.LookupLocal(varName) == nil {
+			funcType := functionTypeFromLambdaNodeWithStructs(value, a.structTypes)
+			a.recordDef(a.currentScope.Define(varName, funcType, true), target)
+		}
+		a.pendingFuncName = varName
+	}
+	rightType := a.Analyze(value)
+	sym := a.currentScope.Lookup(varName)
+	if sym == nil {
+		a.recordDef(a.currentScope.Define(varName, rightType, true), target)
+		return rightType
+	}
+	a.markParamReassigned(sym)
+	if _, dstIsFunc := sym.Type.(*FunctionType); dstIsFunc {
+		if srcFunc, srcIsFunc := rightType.(*FunctionType); srcIsFunc {
+			sym.Type = srcFunc
+			return rightType
+		}
+	}
+	if isUnknownType(rightType) && !sym.Type.Equals(TypeAny) {
+		a.errorAt(target, "cannot assign value of unknown type to '%s'", sym.Type.String())
+		return rightType
+	}
+	if _, srcIsResult := rightType.(*ResultType); srcIsResult {
+		if _, dstIsResult := sym.Type.(*ResultType); !dstIsResult && !isUnknownType(sym.Type) {
+			a.errorAt(target, "[C-TYPE] cannot assign result to '%s'; use 'unwrap()' or 'when' to extract the value", sym.Type.String())
+			return rightType
+		}
+	}
+	if !CanAssign(sym.Type, rightType) && !isUnknownType(rightType) {
+		a.errorAt(target, "cannot assign value of type '%s' to '%s'", rightType.String(), sym.Type.String())
+		return rightType
+	}
+	if !isUnknownType(rightType) && sym.Type.Equals(TypeAny) {
+		sym.Type = rightType
+	}
+	return rightType
+}
+
+// analyzeBinary analyzes arithmetic, comparison and `and`/`or`.
+func (a *Analyzer) analyzeBinary(node *ast.TreeNode) Type {
+	if node.Token == nil || len(node.Children) != 2 || node.Children[0] == nil || node.Children[1] == nil {
 		a.errorAt(node, "malformed operator expression")
 		return TypeError
 	}
 	op := node.Token.Type
-	if len(node.Children) >= 2 {
-		if node.Children[0] == nil || node.Children[1] == nil {
-			a.errorAt(node, "malformed operator expression")
-			return TypeError
-		}
-	}
-	if op == token.DOT {
-		if len(node.Children) < 2 {
-			return TypeError
-		}
-		if node.Children[0] == nil || node.Children[1] == nil {
-			a.errorAt(node, "malformed dot access expression")
-			return TypeError
-		}
-		targetType := a.Analyze(node.Children[0])
-		if IsErrorType(targetType) {
-			return TypeError
-		}
-		member := node.Children[1].TokenLiteral()
-		if targetType.Equals(TypeNull) {
-			a.errorAt(node.Children[0], "cannot access member '%s' on null", member)
-			return TypeError
-		}
-		switch t := targetType.(type) {
-		case *DictType:
-			return t.ValueType
-		case *StructType:
-			field, _ := t.FieldByName(member)
-			if field == nil {
-				a.errorAt(node, "struct %s has no field '%s'", t.Name, member)
-				return TypeError
-			}
-			return field.Type
-		default:
-			if isUnknownType(targetType) {
-				return TypeAny
-			}
-			a.errorAt(node, "dot access is only supported on dict; use len(entity), upper(entity), etc. instead of entity.%s", member)
-			return TypeError
-		}
-	}
-	if len(node.Children) == 1 {
-		operandType := a.Analyze(node.Children[0])
-		if IsErrorType(operandType) {
-			return TypeError
-		}
-		switch op {
-		case token.MINUS:
-			if IsNumeric(operandType) {
-				return operandType
-			}
-			if isUnknownType(operandType) {
-				return TypeAny
-			}
-			a.errorAt(node, "unary '-' expects numeric operand, got %s", operandType.String())
-			return TypeError
-		case token.BANG:
-			// Uses truthiness (§4.3). Always returns bool.
-			a.checkCondition(node.Children[0], operandType)
-			return TypeBool
-		}
-		return operandType
-	}
-	if op == token.EQUALS && len(node.Children) == 2 && isFnDecl(node) {
-		return a.analyzeFnDecl(node)
-	}
-	if op == token.EQUALS && len(node.Children) == 2 {
-		target := node.Children[0]
-		if target == nil {
-			a.errorAt(node, "left side of assignment must be an identifier")
-			return TypeError
-		}
-		// Reject struct field assignment: obj.field = value
-		if target.NodeType == ast.OperatorNode && target.Token != nil && target.Token.Type == token.DOT && len(target.Children) >= 2 {
-			targetType := a.Analyze(target.Children[0])
-			if st, ok := targetType.(*StructType); ok {
-				fieldName := target.Children[1].TokenLiteral()
-				a.errorAt(target, "cannot assign to field '%s' of immutable struct %s", fieldName, st.Name)
-				a.Analyze(node.Children[1]) // still analyze RHS for completeness
-				return TypeError
-			}
-		}
-		// `fn len(x) -> ...` is `len = fn(x) -> ...`. Assigning a builtin or
-		// extern fn name would rebind it, but calls by that name always reach
-		// the builtin, so the new definition would be silently ignored.
-		// (Parameters, loop variables and nested functions can shadow one.)
-		if target.NodeType == ast.IdentifierNode && a.refersToBuiltin(a.currentScope, target.TokenLiteral()) {
-			name := target.TokenLiteral()
-			if _, isExtern := a.externFns[name]; isExtern {
-				a.errorAt(target, "'%s' is an extern fn and can't be redefined or assigned; choose another name", name)
-			} else {
-				a.errorAt(target, "'%s' is a builtin function and can't be redefined or assigned; choose another name", name)
-			}
-			a.Analyze(node.Children[1])
-			return TypeError
-		}
-		// A declared function is fixed (rule 19).
-		if target.NodeType == ast.IdentifierNode {
-			if f := a.fixedFnOf(a.currentScope.Lookup(target.TokenLiteral())); f != nil {
-				a.reassignedDeclError(target, f)
-				a.Analyze(node.Children[1])
-				return TypeError
-			}
-		}
-		if target.NodeType == ast.IdentifierNode && node.Children[1].NodeType == ast.LambdaNode {
-			// A variable holding a function: defined before the lambda is
-			// analyzed so the lambda can call itself through it.
-			varName := target.TokenLiteral()
-			if a.currentScope.LookupLocal(varName) == nil {
-				funcType := functionTypeFromLambdaNodeWithStructs(node.Children[1], a.structTypes)
-				a.recordDef(a.currentScope.Define(varName, funcType, true), target)
-				a.functions[varName] = funcType
-			}
-			a.pendingFuncName = varName
-		}
-		rightType := a.Analyze(node.Children[1])
-		if target.NodeType == ast.OperatorNode && target.Token != nil && target.Token.Type == token.DOT {
-			targetType := a.Analyze(target.Children[0])
-			if targetType.Equals(TypeNull) {
-				a.errorAt(target.Children[0], "cannot assign member on null")
-				return rightType
-			}
-			if dictType, ok := targetType.(*DictType); ok {
-				// Check value type compatibility
-				if !isUnknownType(rightType) && !IsErrorType(rightType) && !isUnknownType(dictType.ValueType) && !CanAssign(dictType.ValueType, rightType) {
-					a.warnAt(target, "assigning '%s' to dict with value type '%s'", rightType.String(), dictType.ValueType.String())
-				}
-				return rightType
-			}
-			if isUnknownType(targetType) {
-				return rightType
-			}
-			a.errorAt(target, "only dict members are assignable")
-			return rightType
-		}
-		if target.NodeType == ast.IndexNode {
-			if len(target.Children) >= 2 {
-				targetType := a.Analyze(target.Children[0])
-				indexType := a.Analyze(target.Children[1])
-				if targetType.Equals(TypeNull) {
-					a.errorAt(target.Children[0], "cannot index null")
-					return rightType
-				}
-				if _, ok := targetType.(*ListType); ok {
-					if !isIntLike(indexType) && !isUnknownType(indexType) {
-						a.errorAt(target.Children[1], "list index must be int, got %s", indexType.String())
-					}
-					return rightType
-				}
-				if targetType.Equals(TypeString) {
-					a.errorAt(target, "strings are immutable")
-					return rightType
-				}
-				if _, ok := targetType.(*DictType); ok {
-					a.errorAt(target, "use dot access for dict assignment: d.key = value")
-					return rightType
-				}
-				if !isUnknownType(targetType) {
-					a.errorAt(target, "type '%s' is not index-assignable", targetType.String())
-				}
-			}
-			return rightType
-		}
-		if target.NodeType != ast.IdentifierNode {
-			// `a = b = 1` parses as `(a = b) = 1`; say what is actually wrong.
-			if target.NodeType == ast.OperatorNode && target.Token != nil && target.Token.Type == token.EQUALS {
-				a.errorAt(target, "chained assignment is not supported; assign each variable separately (a = 1, then b = 1)")
-				return rightType
-			}
-			a.errorAt(target, "left side of assignment must be an identifier")
-			return rightType
-		}
-		varName := target.TokenLiteral()
-		sym := a.currentScope.Lookup(varName)
-		if sym == nil {
-			a.recordDef(a.currentScope.Define(varName, rightType, true), target)
-		} else {
-			a.markParamReassigned(sym)
-			if _, dstIsFunc := sym.Type.(*FunctionType); dstIsFunc {
-				if srcFunc, srcIsFunc := rightType.(*FunctionType); srcIsFunc {
-					sym.Type = srcFunc
-					a.functions[varName] = srcFunc
-					return rightType
-				}
-			}
-			if isUnknownType(rightType) && !sym.Type.Equals(TypeAny) {
-				a.errorAt(target, "cannot assign value of unknown type to '%s'", sym.Type.String())
-				return rightType
-			}
-			if _, srcIsResult := rightType.(*ResultType); srcIsResult {
-				if _, dstIsResult := sym.Type.(*ResultType); !dstIsResult && !isUnknownType(sym.Type) {
-					a.errorAt(target, "[C-TYPE] cannot assign result to '%s'; use 'unwrap()' or 'when' to extract the value", sym.Type.String())
-					return rightType
-				}
-			}
-			if !CanAssign(sym.Type, rightType) && !isUnknownType(rightType) {
-				a.errorAt(target, "cannot assign value of type '%s' to '%s'", rightType.String(), sym.Type.String())
-				return rightType
-			}
-			if isUnknownType(rightType) {
-				return rightType
-			}
-			if sym.Type.Equals(TypeAny) {
-				sym.Type = rightType
-			}
-		}
-		return rightType
-	}
-
 	leftType := a.Analyze(node.Children[0])
 	rightType := a.Analyze(node.Children[1])
 	// Propagate ErrorType silently
 	if IsErrorType(leftType) || IsErrorType(rightType) {
 		return TypeError
 	}
-	leftVec, leftIsVec := leftType.(*VectorType)
-	rightVec, rightIsVec := rightType.(*VectorType)
-	isNumericScalar := func(t Type) bool { return t.Equals(TypeInt) || t.Equals(TypeFloat) }
-
-	if op == token.PLUS || op == token.MINUS || op == token.MULTIPLY || op == token.DIVIDE {
-		if leftIsVec && rightIsVec {
-			if !IsNumeric(leftVec.ElementType) && !isUnknownType(leftVec.ElementType) {
-				a.errorAt(node, "operator '%s' requires numeric vec operands, got %s", node.Token.Type.String(), leftType.String())
-				return TypeError
-			}
-			if !IsNumeric(rightVec.ElementType) && !isUnknownType(rightVec.ElementType) {
-				a.errorAt(node, "operator '%s' requires numeric vec operands, got %s", node.Token.Type.String(), rightType.String())
-				return TypeError
-			}
-			if leftVec.ElementType.Equals(TypeFloat) || rightVec.ElementType.Equals(TypeFloat) {
-				return &VectorType{ElementType: TypeFloat}
-			}
-			if leftVec.ElementType.Equals(TypeInt) && rightVec.ElementType.Equals(TypeInt) {
-				if op == token.DIVIDE {
-					return &VectorType{ElementType: TypeFloat}
-				}
-				return &VectorType{ElementType: TypeInt}
-			}
-			return &VectorType{ElementType: TypeAny}
-		}
-		if leftIsVec && (isNumericScalar(rightType) || isUnknownType(rightType)) {
-			if !IsNumeric(leftVec.ElementType) && !isUnknownType(leftVec.ElementType) {
-				a.errorAt(node, "operator '%s' requires numeric vec operands, got %s", node.Token.Type.String(), leftType.String())
-				return TypeError
-			}
-			if op == token.DIVIDE && leftVec.ElementType.Equals(TypeInt) && rightType.Equals(TypeInt) {
-				return &VectorType{ElementType: TypeFloat}
-			}
-			return leftType
-		}
-		if rightIsVec && (isNumericScalar(leftType) || isUnknownType(leftType)) {
-			if !IsNumeric(rightVec.ElementType) && !isUnknownType(rightVec.ElementType) {
-				a.errorAt(node, "operator '%s' requires numeric vec operands, got %s", node.Token.Type.String(), rightType.String())
-				return TypeError
-			}
-			if op == token.DIVIDE && rightVec.ElementType.Equals(TypeInt) && leftType.Equals(TypeInt) {
-				return &VectorType{ElementType: TypeFloat}
-			}
-			return rightType
-		}
+	if t, ok := a.analyzeVectorArith(node, leftType, rightType); ok {
+		return t
 	}
-
 	switch op {
 	case token.PLUS, token.MINUS, token.MULTIPLY, token.DIVIDE, token.MODULO, token.DOUBLESTAR:
-		if op == token.MODULO {
-			if isIntLike(leftType) && isIntLike(rightType) {
-				return TypeInt
-			}
-			if isUnknownType(leftType) || isUnknownType(rightType) {
-				return TypeAny
-			}
-			a.errorAt(node, "operator '%%' requires integer operands, got %s and %s", leftType.String(), rightType.String())
-			return TypeError
-		}
-		if op == token.PLUS && isStringLike(leftType) && isStringLike(rightType) {
-			return TypeString
-		}
-		if IsNumeric(leftType) && IsNumeric(rightType) {
-			if op == token.DIVIDE {
-				return TypeFloat
-			}
-			if leftType.Equals(TypeFloat) || rightType.Equals(TypeFloat) {
-				return TypeFloat
-			}
-			if op == token.MODULO {
-				return TypeInt
-			}
-			return TypeInt
-		}
-		if isUnknownType(leftType) || isUnknownType(rightType) {
-			return TypeAny
-		}
-		a.errorAt(node, "operator '%s' requires numeric operands, got %s and %s", node.Token.Type.String(), leftType.String(), rightType.String())
-		return TypeError
+		return a.analyzeArith(node, leftType, rightType)
 	case token.LT, token.LTE, token.GT, token.GTE:
-		if leftIsVec || rightIsVec {
-			if leftIsVec && !IsNumeric(leftVec.ElementType) && !isUnknownType(leftVec.ElementType) {
-				a.errorAt(node, "ordering comparison requires numeric vec, got %s", leftType.String())
-			}
-			if rightIsVec && !IsNumeric(rightVec.ElementType) && !isUnknownType(rightVec.ElementType) {
-				a.errorAt(node, "ordering comparison requires numeric vec, got %s", rightType.String())
-			}
-			if leftIsVec && !rightIsVec && !isNumericScalar(rightType) && !isUnknownType(rightType) {
-				a.errorAt(node, "cannot compare vec with %s", rightType.String())
-			}
-			if rightIsVec && !leftIsVec && !isNumericScalar(leftType) && !isUnknownType(leftType) {
-				a.errorAt(node, "cannot compare vec with %s", leftType.String())
-			}
-			return &VectorType{ElementType: TypeBool}
-		}
-		if IsComparable(leftType) && IsComparable(rightType) {
-			return TypeBool
-		}
-		if isUnknownType(leftType) || isUnknownType(rightType) {
-			return TypeBool
-		}
-		a.errorAt(node, "comparison requires comparable operands, got %s and %s", leftType.String(), rightType.String())
-		return TypeBool
+		return a.analyzeOrdering(node, leftType, rightType)
 	case token.DEQ, token.NE:
-		if leftIsVec || rightIsVec {
-			return &VectorType{ElementType: TypeBool}
-		}
-		if a.checkStructEquality(node, leftType, rightType, op) {
-			return TypeError
-		}
-		// A result is never null (null can't be stored where a result is
-		// expected), so this comparison would be a constant: `r == null` never
-		// detects an err, e.g. the end of input() in a read loop.
-		_, leftIsResult := leftType.(*ResultType)
-		_, rightIsResult := rightType.(*ResultType)
-		if (leftIsResult && rightType.Equals(TypeNull)) || (rightIsResult && leftType.Equals(TypeNull)) {
-			a.errorAt(node, "a result is never null, so this comparison is always %t; use is_ok(r), is_err(r) or when to check it", op == token.NE)
-			return TypeError
-		}
-		return TypeBool
+		return a.analyzeEquality(node, leftType, rightType)
 	case token.AND, token.OR:
 		// Short-circuit via truthiness (Python semantics).
 		a.checkCondition(node.Children[0], leftType)
@@ -396,6 +294,137 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 	}
 	a.errorAt(node, "unsupported operator '%s'", node.Token.Type.String())
 	return TypeError
+}
+
+func isNumericScalar(t Type) bool { return t.Equals(TypeInt) || t.Equals(TypeFloat) }
+
+// analyzeVectorArith types `+ - * /` with a vec operand (elementwise, or
+// broadcast against a number). ok is false when the operation isn't one.
+func (a *Analyzer) analyzeVectorArith(node *ast.TreeNode, leftType, rightType Type) (Type, bool) {
+	op := node.Token.Type
+	if op != token.PLUS && op != token.MINUS && op != token.MULTIPLY && op != token.DIVIDE {
+		return nil, false
+	}
+	leftVec, leftIsVec := leftType.(*VectorType)
+	rightVec, rightIsVec := rightType.(*VectorType)
+	numericElems := func(v *VectorType, t Type) bool {
+		if !IsNumeric(v.ElementType) && !isUnknownType(v.ElementType) {
+			a.errorAt(node, "operator '%s' requires numeric vec operands, got %s", op.String(), t.String())
+			return false
+		}
+		return true
+	}
+	switch {
+	case leftIsVec && rightIsVec:
+		if !numericElems(leftVec, leftType) || !numericElems(rightVec, rightType) {
+			return TypeError, true
+		}
+		if leftVec.ElementType.Equals(TypeFloat) || rightVec.ElementType.Equals(TypeFloat) {
+			return &VectorType{ElementType: TypeFloat}, true
+		}
+		if leftVec.ElementType.Equals(TypeInt) && rightVec.ElementType.Equals(TypeInt) {
+			if op == token.DIVIDE {
+				return &VectorType{ElementType: TypeFloat}, true
+			}
+			return &VectorType{ElementType: TypeInt}, true
+		}
+		return &VectorType{ElementType: TypeAny}, true
+	case leftIsVec && (isNumericScalar(rightType) || isUnknownType(rightType)):
+		if !numericElems(leftVec, leftType) {
+			return TypeError, true
+		}
+		if op == token.DIVIDE && leftVec.ElementType.Equals(TypeInt) && rightType.Equals(TypeInt) {
+			return &VectorType{ElementType: TypeFloat}, true
+		}
+		return leftType, true
+	case rightIsVec && (isNumericScalar(leftType) || isUnknownType(leftType)):
+		if !numericElems(rightVec, rightType) {
+			return TypeError, true
+		}
+		if op == token.DIVIDE && rightVec.ElementType.Equals(TypeInt) && leftType.Equals(TypeInt) {
+			return &VectorType{ElementType: TypeFloat}, true
+		}
+		return rightType, true
+	}
+	return nil, false
+}
+
+// analyzeArith types `+ - * / % **` on scalars (and `+` on strings).
+func (a *Analyzer) analyzeArith(node *ast.TreeNode, leftType, rightType Type) Type {
+	op := node.Token.Type
+	if op == token.MODULO {
+		if isIntLike(leftType) && isIntLike(rightType) {
+			return TypeInt
+		}
+		if isUnknownType(leftType) || isUnknownType(rightType) {
+			return TypeAny
+		}
+		a.errorAt(node, "operator '%%' requires integer operands, got %s and %s", leftType.String(), rightType.String())
+		return TypeError
+	}
+	if op == token.PLUS && isStringLike(leftType) && isStringLike(rightType) {
+		return TypeString
+	}
+	if IsNumeric(leftType) && IsNumeric(rightType) {
+		if op == token.DIVIDE || leftType.Equals(TypeFloat) || rightType.Equals(TypeFloat) {
+			return TypeFloat
+		}
+		return TypeInt
+	}
+	if isUnknownType(leftType) || isUnknownType(rightType) {
+		return TypeAny
+	}
+	a.errorAt(node, "operator '%s' requires numeric operands, got %s and %s", op.String(), leftType.String(), rightType.String())
+	return TypeError
+}
+
+// analyzeOrdering types `< <= > >=`.
+func (a *Analyzer) analyzeOrdering(node *ast.TreeNode, leftType, rightType Type) Type {
+	leftVec, leftIsVec := leftType.(*VectorType)
+	rightVec, rightIsVec := rightType.(*VectorType)
+	if leftIsVec || rightIsVec {
+		if leftIsVec && !IsNumeric(leftVec.ElementType) && !isUnknownType(leftVec.ElementType) {
+			a.errorAt(node, "ordering comparison requires numeric vec, got %s", leftType.String())
+		}
+		if rightIsVec && !IsNumeric(rightVec.ElementType) && !isUnknownType(rightVec.ElementType) {
+			a.errorAt(node, "ordering comparison requires numeric vec, got %s", rightType.String())
+		}
+		if leftIsVec && !rightIsVec && !isNumericScalar(rightType) && !isUnknownType(rightType) {
+			a.errorAt(node, "cannot compare vec with %s", rightType.String())
+		}
+		if rightIsVec && !leftIsVec && !isNumericScalar(leftType) && !isUnknownType(leftType) {
+			a.errorAt(node, "cannot compare vec with %s", leftType.String())
+		}
+		return &VectorType{ElementType: TypeBool}
+	}
+	if (IsComparable(leftType) && IsComparable(rightType)) || isUnknownType(leftType) || isUnknownType(rightType) {
+		return TypeBool
+	}
+	a.errorAt(node, "comparison requires comparable operands, got %s and %s", leftType.String(), rightType.String())
+	return TypeBool
+}
+
+// analyzeEquality types `==` and `!=`.
+func (a *Analyzer) analyzeEquality(node *ast.TreeNode, leftType, rightType Type) Type {
+	op := node.Token.Type
+	_, leftIsVec := leftType.(*VectorType)
+	_, rightIsVec := rightType.(*VectorType)
+	if leftIsVec || rightIsVec {
+		return &VectorType{ElementType: TypeBool}
+	}
+	if a.checkStructEquality(node, leftType, rightType, op) {
+		return TypeError
+	}
+	// A result is never null (null can't be stored where a result is
+	// expected), so this comparison would be a constant: `r == null` never
+	// detects an err, e.g. the end of input() in a read loop.
+	_, leftIsResult := leftType.(*ResultType)
+	_, rightIsResult := rightType.(*ResultType)
+	if (leftIsResult && rightType.Equals(TypeNull)) || (rightIsResult && leftType.Equals(TypeNull)) {
+		a.errorAt(node, "a result is never null, so this comparison is always %t; use is_ok(r), is_err(r) or when to check it", op == token.NE)
+		return TypeError
+	}
+	return TypeBool
 }
 
 func (a *Analyzer) analyzeList(node *ast.TreeNode) Type {

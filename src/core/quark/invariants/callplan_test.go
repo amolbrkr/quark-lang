@@ -56,7 +56,7 @@ func TestValidateCallPlans_DefaultOverflow(t *testing.T) {
 	if call == nil {
 		t.Fatalf("expected call node")
 	}
-	plans := analyzer.GetCallPlans()
+	plans := analyzer.Analysis.CallPlans
 	plan := plans[call]
 	if plan == nil {
 		t.Fatalf("expected call plan")
@@ -85,7 +85,7 @@ func TestValidateCallPlans_DispatchUnknown(t *testing.T) {
 	if call == nil {
 		t.Fatalf("expected call node")
 	}
-	plans := analyzer.GetCallPlans()
+	plans := analyzer.Analysis.CallPlans
 	plan := plans[call]
 	if plan == nil {
 		t.Fatalf("expected call plan")
@@ -117,13 +117,11 @@ func TestValidateCallPlans_RuntimeSymbolMissing(t *testing.T) {
 	}
 	plans := map[*ast.TreeNode]*ir.CallPlan{
 		callNode: {
-			Kind:            ir.CallFunctionValue,
-			CalleeName:      "foo",
-			MinArity:        0,
-			MaxArity:        0,
-			Dispatch:        ir.DispatchDirect,
-			RuntimeSymbol:   "", // intentionally empty
-			ArgTypesChecked: true,
+			CalleeName:    "foo",
+			MinArity:      0,
+			MaxArity:      0,
+			Dispatch:      ir.DispatchDirect,
+			RuntimeSymbol: "", // intentionally empty
 		},
 	}
 
@@ -145,7 +143,7 @@ func TestValidateCallPlans_ValidPlansPass(t *testing.T) {
 	if len(typeErrs) > 0 {
 		t.Fatalf("unexpected type errors: %v", typeErrs)
 	}
-	err := invariants.ValidateCallPlans(tree, analyzer.GetCallPlans())
+	err := invariants.ValidateCallPlans(tree, analyzer.Analysis.CallPlans)
 	if err != nil {
 		t.Fatalf("expected no invariant errors for valid program, got: %v", err)
 	}

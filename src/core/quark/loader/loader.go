@@ -17,8 +17,7 @@ import (
 // resolves every reference (bare and `::`-qualified) per file, and splices
 // the files into one tree.
 type ModuleLoader struct {
-	loaded    map[string]bool // absolute paths fully processed (for dedup)
-	resolving map[string]int  // absolute paths currently in DFS stack (for cycle detection)
+	resolving map[string]int // absolute paths currently in DFS stack (for cycle detection)
 
 	// Every loaded file, main script first, and the internal-name table.
 	files  []*srcFile
@@ -65,7 +64,6 @@ type NativeDeps struct {
 // NewModuleLoader creates a new module loader.
 func NewModuleLoader() *ModuleLoader {
 	return &ModuleLoader{
-		loaded:       make(map[string]bool),
 		byPath:       make(map[string]*srcFile),
 		names:        make(names.Table),
 		resolving:    make(map[string]int),
@@ -251,7 +249,6 @@ func (ml *ModuleLoader) endResolve(absPath string) {
 		ml.stack = ml.stack[:len(ml.stack)-1]
 	}
 	delete(ml.resolving, realPath(absPath))
-	ml.loaded[absPath] = true
 }
 
 func formatImportChain(paths []string) string {

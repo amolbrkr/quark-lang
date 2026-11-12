@@ -32,12 +32,8 @@
     // GC allocation macros (expand to Boehm GC calls)
     #define q_malloc(n)         GC_MALLOC(n)
     #define q_malloc_atomic(n)  GC_MALLOC_ATOMIC(n)
-    #define q_realloc(p, n)     GC_REALLOC(p, n)
     #define q_free(p)           GC_FREE(p)
     #define q_strdup(s)         GC_STRDUP(s)
-
-    // For future tensor/array data (no pointer scanning needed)
-    #define q_malloc_tensor(n)  GC_MALLOC_ATOMIC(n)
 
     // GC-aware STL allocator.  gc_allocator dispatches to GC_MALLOC for
     // pointer-containing types and GC_MALLOC_ATOMIC for pointer-free
@@ -55,14 +51,11 @@
 
     #define q_malloc(n)         malloc(n)
     #define q_malloc_atomic(n)  malloc(n)
-    #define q_realloc(p, n)     realloc(p, n)
     #define q_free(p)           free(p)
 
     inline char* q_strdup(const char* s) {
         return strdup(s);
     }
-
-    #define q_malloc_tensor(n)  malloc(n)
 
     // No GC — fall back to the default STL allocator
     template<typename T>

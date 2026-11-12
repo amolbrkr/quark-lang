@@ -112,11 +112,7 @@ func isLiteralPattern(n *ast.TreeNode) bool {
 	if n.NodeType == ast.LiteralNode {
 		return true
 	}
-	if n.NodeType == ast.OperatorNode && n.Token != nil && n.Token.Type == token.MINUS && len(n.Children) == 1 {
-		lit := n.Children[0]
-		return lit.NodeType == ast.LiteralNode && lit.Token != nil && (lit.Token.Type == token.INT || lit.Token.Type == token.FLOAT)
-	}
-	return false
+	return ast.IsNegatedNumber(n)
 }
 
 func extractResultPatternBinding(pattern *ast.TreeNode) (string, bool, bool, *ast.TreeNode) {

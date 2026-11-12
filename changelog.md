@@ -8,7 +8,7 @@ Sections follow [Keep a Changelog](https://keepachangelog.com/): **Breaking**, *
 
 ---
 
-## Known issues (as of `b52660f` plus uncommitted changes)
+## Known issues (as of `5c3d662` plus uncommitted changes)
 
 These were checked against the current compiler on 2026-11-12, in a codebase health review; all of them predate modules v0.2. The structural causes and the plan for them are in `architecture.md` §12.
 
@@ -56,12 +56,10 @@ These were checked against the current compiler on 2026-11-12, in a codebase hea
 - A `fn` declared inside a `for` or `while` body fails in clang: `for i in range(3):` / `fn f() -> i * 10` / `print(f())` gives `use of undeclared identifier 'quark_f'`. In an `if` body it works.
 - A variable first assigned in a `while` body and assigned again after the loop fails in clang: `while i < 1:` / `y = 5` / ..., then `y = 6` gives `use of undeclared identifier 'quark_y'`.
 - An `elseif` whose condition calls a method fails in clang: `elseif name().upper() == 'B':` gives `expected expression`.
-- A loop variable named like a `g = fn` variable defined elsewhere fails in clang: `f = fn(x) -> x + 1`, then inside a function `for f in list [fn(x) -> x * 10]: print(f(2))` gives `type 'QValue' does not provide a call operator`.
+- A prelude builtin used as a value passes the checker and fails in clang: `f = len`, then `print(f('ab'))`, or `print(len)`, gives `use of undeclared identifier 'quark_len'`. Extern fns used as values work (they have thunks).
 - A runtime error inside a `for` loop body is reported at the `for` line, not at the statement that failed. For example, `print(r % 0)` on line 4 of a loop starting on line 2 reports `modulo by zero at file.qrk:2:1`.
 - `struct S` inside a `fn` body fails with `internal: struct 'S' not pre-declared`.
 - A call written above a `fn` declaration is checked less than one below it. `print(apply(fn(a, b) -> a + b))` above `fn apply(k) -> k(1)` is a runtime error, below it a compile error. The same for `print(f(5))` above `fn f(r: result)`.
-- `3 | d.f()` calls the dict member `f`, but `d.f(3)` is `type 'dict[...]' has no method 'f'`.
-- `zz.x = 1` with an undefined `zz` reports `undefined identifier 'zz'` twice.
 - Calling a function value with more than 12 arguments compiles and always fails at runtime (`function call supports up to 12 arguments, got 13`); it could be a compile error.
 - A struct field named with `__` (`a__b: int`) is accepted in the `struct` and rejected only where a literal uses it.
 - A syntax error in an imported file is reported inside a load error located at the importer's `incl` line. Load errors in the main file show its absolute path, while check errors show the path as written. Several messages name token kinds instead of source text (`operator 'PLUS'`, `expected identifier after OK`, `no prefix parse function for NEWLINE`), and a multi-line `g = fn(x) ->` body gives about ten cascading `DEDENT` errors.
@@ -69,11 +67,17 @@ These were checked against the current compiler on 2026-11-12, in a codebase hea
 
 ---
 
-## 2026-11-12: Function values, `fn` type, call-shape checking, keyword renames, struct field checks, name clashes, `input()` result, fixed `fn` declarations, modules v0.2
+## 2026-11-12: Function values, `fn` type, call-shape checking, keyword renames, struct field checks, name clashes, `input()` result, fixed `fn` declarations, modules v0.2, compiler cleanup
 
-Commits: `c0ac8cd`, `ac274c0`, `6dc11a0` (keyword renames), `2e62209` (struct fields, dict keys), `4294dab` (name clashes, shadowing, `input()`), `b52660f` (fixed `fn` declarations, modules v0.2 step 1); the rest of modules v0.2 (`::` names, one scope per file) not yet committed
+Commits: `c0ac8cd`, `ac274c0`, `6dc11a0` (keyword renames), `2e62209` (struct fields, dict keys), `4294dab` (name clashes, shadowing, `input()`), `b52660f` (fixed `fn` declarations, modules v0.2 step 1), `5c3d662` (the rest of modules v0.2: `::` names, one scope per file); the compiler cleanup (`architecture.md` §12.8 step 1) not yet committed
 
 ### Breaking
+- **A pipe is exactly the call it stands for.** `x | f(a)` is parsed as `f(x, a)` and `x | obj.m(a)` as `obj.m(x, a)`, so a pipe can no longer behave differently from the call. The one difference there was: `3 | d.f()` called a function stored under the dict key `f`, while `d.f(3)` was `type 'dict[...]' has no method 'f'`. Both are now that error. To call a function held in a dict, read it first:
+  ```
+  f = d.f
+  print(3 | f())           // was: print(3 | d.f())
+  ```
+- A pipe whose target isn't a call (`x | len`, `x | f() + 1`) is now a parse error (`pipe target must be a function call; use f(...) or obj.method(...)`, at the `|`). It was the same message as a check error.
 - **`input()` returns a `result`.** It returns `ok(line)` (`ok('')` for an empty line), or `err('end of input')` once stdin is exhausted. It used to return a `str`, or `null` at end of input. Using the value as a string is now a compile error (`len(input())`, `input().upper()`, a `str` parameter), so code must unwrap it:
   ```
   name = unwrap(input('Name: '))       // was: name = input('Name: ')
@@ -203,11 +207,14 @@ Commits: `c0ac8cd`, `ac274c0`, `6dc11a0` (keyword renames), `2e62209` (struct fi
 - **Struct literals and struct return types work in an importing file.** With `struct Point` defined at the top level of `lib/geo.qrk`, the importer can write `Point { x: 1 }` and `fn mk(a: int) Point -> ...`. Both used to be parse errors (`no prefix parse function for LBRACE`). A misspelled struct name is now a check error: `unknown struct type 'Pnt'` or `unknown type 'Pnt'`.
 
 ### Changed
+- **Compile-time arity messages read like the runtime ones**, with the function's name and a correct plural: `function 'f' expects 1 argument but got 2` (was `function expects 1 arguments but got 2`), `method 'split' expects 1 argument but got 0` (was `1 argument(s)`), `builtin 'len' expects 1 argument but got 2 (including piped input)`.
 - **A declared function that captures no variables is a plain C++ function.** Calls to it are direct (`quark_f(nullptr, ...)`), with no binding, closure allocation or indirect call. Before, every named function lived in a closure and was called through it, unless it was fully annotated. Whether a function is native (fully annotated) is now decided after the whole program is analyzed, so a fully annotated function that calls another non-capturing function is native too. A declared function that captures a variable stays a closure, held in a binding that never changes.
 - A fully annotated lambda assigned to a variable (`g = fn(x: int) int -> x`) is now a closure like any other variable. Only `fn` declarations compile to native C++ functions.
 - Tables spec (`tables_v0_1_spec.md`, still not implemented): the literal is `tbl { ... }` and the type annotation is `tbl` (`fn f(t: tbl)`). The runtime type name for a table is `tbl`. `fmt.table(...)` keeps its name.
 
 ### Fixed
+- **A loop variable named like a `g = fn` variable defined elsewhere failed in clang.** `f = fn(x) -> x + 1`, then inside a function `for f in list [fn(x) -> x * 10]: print(f(2))`, stopped with `type 'QValue' does not provide a call operator`. It now prints `20`: the loop variable was called as the C++ function of the outer `f`.
+- `zz.x = 1` with an undefined `zz` reports `undefined identifier 'zz'` once (it was reported twice).
 - **Struct parameter and field checks compared names**, so a struct from one file passed the runtime check of a same-named struct from another file once both could exist. They now compare definitions: a `geo2::Point` passed through `any` to a `geo::Point` parameter is `argument 'p' of 'f' expects geo::Point, got geo2::Point`.
 - **A file included without an alias by two other files was rejected** (`symbol 'base__twice' from module 'base' conflicts with existing definition`). Each file is loaded once and has one identity, however it is imported.
 - **Calling a fully annotated function declared below its caller failed in clang.** `fn a(n) -> b(n) + 1`, then `fn b(n: int) int -> n * 2`, stopped with `assigning to 'QCell *' from incompatible type 'int64_t (QClosure *, int64_t)'`. It now prints `11` for `a(5)`.
@@ -230,6 +237,12 @@ Commits: `c0ac8cd`, `ac274c0`, `6dc11a0` (keyword renames), `2e62209` (struct fi
 - `QClosure*` native arguments and returns are boxed with `qv_closure_ptr`. They used to be wrapped in a second closure.
 
 ### Internal
+- **Compiler cleanup, step 1 of the plan in `architecture.md` §12.8** (no other behavior changes than those above; the full suite passes):
+  - AST: `OperatorNode` is split into `AssignNode`, `MemberNode`, `UnaryNode`, `BinaryNode` and `PairNode` (dict literal entries). `fn name(...)` parses to a `FnDeclNode` `[name, lambda]` (`ast.IsFnDecl`) instead of an assignment with `TreeNode.FnDecl`, which is removed. `PipeNode` is removed: `parsePipe` builds the call and sets `TreeNode.Piped`. `quark parse` prints the new node names.
+  - Analyzer: `analyzeOperator` (cyclomatic complexity 159) is split into `analyzeMember`, `analyzeUnary`, `analyzeAssign` (`assignName`, `assignMember`, `assignIndex`) and `analyzeBinary` (`analyzeVectorArith`, `analyzeArith`, `analyzeOrdering`, `analyzeEquality`). `analyzePipe` is removed; `analyzeFunctionCall` is the one call path, with arity messages from `checkArity`. Codegen: `generateOperator` is split the same way (`generateAssign`/`assignVar`, `generateMember`, `generateUnary`, `generateBinary`/`scalarBinary`); `generatePipe` is removed. Loader: `walk` is split by node kind, `topDef`/`memberDef` share `defOf`. Lexer: operator tables replace the big switch in `nextRawToken`. Invariants: `ValidateCallPlans` is split per dispatch mode.
+  - Dead code removed: the legacy `FunctionNode` path (`analyzeFunction`, `predeclareFunctions`, `declareFunctionSignature`, `Analyzer.functions` and the "legacy" `DispatchDirect` call plans, codegen's `generateFunction`/`generateQValueFunction`/`generateModule`/`funcNames`), the `Analyzer.Get*`, `Errors`, `ErrorDiagnostics`, `WarningDiagnostics` getters, `Analyzer.modules`/`currentModule`, `ModuleLoader.loaded`, `ast.StatementNode`/`ExpressionNode`/`ConditionNode`, `CallPlan.Kind` and `CallPlan.ArgTypesChecked` (with the `INV-ARGCHECK` invariant, which couldn't fail), `Generator.inFunction`/`currentFunc`, `boxResultToQValue`, `boxToQValue`, `unboxToNative`, and several unreachable parser and loader helpers. An `incl` reaching the analyzer or codegen is now an internal error. `escapeCppString` is the only C++ string escaper; `boxNative` replaces `nativeArgToQValue` and `wrapExternReturn`.
+  - Runtime: the unreferenced `q_list_size`, `q_list_empty`, `q_list_clear`, `q_list_free`, `q_dict_has`, `q_dict_size`, `q_vec_dtype`, `q_vec_numeric_as_i64`, `q_vec_str_append_null`, `qv_list_init` and the `q_realloc` / `q_malloc_tensor` macros are removed.
+  - Tests: `internal/testutil` runs sources through `driver.CompileSource` (it used to repeat the pipeline and analyze trees the loader hadn't finished), and `Analyze` returns a `testutil.Result` with the `types.Analysis` and warnings. New parser tests for pipes and 11 `TestSemanticsSafety_Rejected` cases for pipe misuse (wrong arity, types, `null`, `any`, methods, a module's extern fn, dict members, callbacks), and a `smoke_shadowing.qrk` case for the loop-variable fix.
 - Renames: `token.USE`→`token.INCL`, `token.VECTOR`→`token.VEC`, `ast.UseNode`→`ast.InclNode` (`quark parse` prints `Incl`), `parseUse`→`parseIncl`. The catalog key `vector_any` is now `vec_any`.
 - Runtime: `q_println` removed; `q_to_vector`→`q_to_vec`, `q_fmt_vector`→`q_fmt_vec`. C++ type and tag names (`QVector`, `VAL_VECTOR`, `qv_vector*`, `qext::as_vector`) are unchanged.
 - Editor extension: `incl`/`vec` highlighting and completion, snippets `incl`, `inclf` and `vec`; `data/quark.json` regenerated. The `incl` snippet lists every stdlib module (it offered only `io`, `fmt` and `blas`), and the extension has its own changelog entry for the renames.

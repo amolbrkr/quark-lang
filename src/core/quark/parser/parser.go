@@ -59,6 +59,17 @@ func (p *Parser) addError(format string, args ...interface{}) {
 	})
 }
 
+// addErrorAt reports an error at tok instead of the current token.
+func (p *Parser) addErrorAt(tok *token.Token, format string, args ...interface{}) {
+	p.errors = append(p.errors, diagnostics.Diagnostic{
+		Code:     "QK-PARSE-001",
+		Stage:    diagnostics.StageParse,
+		Severity: diagnostics.SeverityError,
+		Message:  fmt.Sprintf(format, args...),
+		Location: &diagnostics.Location{Line: tok.Line, Column: tok.Column},
+	})
+}
+
 func (p *Parser) nextToken() {
 	p.pos++
 	if p.pos < len(p.tokens) {
@@ -234,7 +245,6 @@ func (p *Parser) parseContinue() *ast.TreeNode {
 //	    field1: Type
 //	    field2: Type = default
 func (p *Parser) parseStruct() *ast.TreeNode {
-	tok := p.curToken
 	p.nextToken() // skip 'struct'
 
 	if p.curToken.Type != token.ID {
@@ -279,8 +289,6 @@ func (p *Parser) parseStruct() *ast.TreeNode {
 	}
 
 	p.expect(token.DEDENT)
-
-	_ = tok
 	return node
 }
 
@@ -330,11 +338,11 @@ func (p *Parser) isConstantDefault(node *ast.TreeNode) bool {
 		return true
 	}
 	// Unary minus on numeric literal
-	if node.NodeType == ast.OperatorNode && node.Token != nil && node.Token.Type == token.MINUS && len(node.Children) == 1 {
+	if node.Op() == token.MINUS && len(node.Children) == 1 {
 		return p.isConstantDefault(node.Children[0])
 	}
 	// Binary constant expression (e.g. 60 * 60)
-	if node.NodeType == ast.OperatorNode && len(node.Children) == 2 {
+	if node.NodeType == ast.BinaryNode && len(node.Children) == 2 {
 		switch node.Token.Type {
 		case token.PLUS, token.MINUS, token.MULTIPLY, token.DIVIDE, token.MODULO:
 			return p.isConstantDefault(node.Children[0]) && p.isConstantDefault(node.Children[1])
@@ -369,9 +377,8 @@ func (p *Parser) parseFunction() *ast.TreeNode {
 		return nil
 	}
 
-	// A named function is parsed as an assignment-to-lambda marked FnDecl:
-	// fn name(params) [ReturnType] -> body  ==>  name = fn(params) [ReturnType] -> body
-	// The analyzer treats a FnDecl as a fixed, hoisted declaration.
+	// fn name(params) [ReturnType] -> body is a FnDeclNode [name, lambda]:
+	// a fixed, hoisted declaration whose function is the lambda.
 	fnTok := p.curToken
 	p.nextToken() // skip 'fn'
 
@@ -402,36 +409,9 @@ func (p *Parser) parseFunction() *ast.TreeNode {
 	lambdaNode.AddChildren(args, body)
 	lambdaNode.ReturnType = returnTypeNode
 
-	eqTok := token.Token{Type: token.EQUALS, Literal: "=", Line: fnTok.Line, Column: fnTok.Column}
-	assignNode := ast.NewNode(ast.OperatorNode, &eqTok)
-	assignNode.AddChildren(nameNode, lambdaNode)
-	assignNode.FnDecl = true
-
-	return assignNode
-}
-
-func (p *Parser) parseCallArguments() *ast.TreeNode {
-	node := ast.NewNode(ast.ArgumentsNode, nil)
-
-	for p.curToken.Type != token.ARROW &&
-		p.curToken.Type != token.NEWLINE &&
-		!p.isAtEnd() {
-
-		// Parse at PrecTernary to stop before comma (which has lower precedence)
-		// This ensures we get individual parameters, not comma expressions
-		expr := p.parseExpression(ast.PrecTernary)
-		if expr != nil {
-			node.AddChild(expr)
-		}
-
-		if p.curToken.Type == token.COMMA {
-			p.nextToken()
-		} else {
-			break
-		}
-	}
-
-	return node
+	declNode := ast.NewNode(ast.FnDeclNode, &fnTok)
+	declNode.AddChildren(nameNode, lambdaNode)
+	return declNode
 }
 
 func (p *Parser) parseParameters() *ast.TreeNode {
@@ -514,7 +494,7 @@ func (p *Parser) isLiteralDefault(node *ast.TreeNode) bool {
 		return true
 	}
 	// Allow unary minus on numeric literals: -5, -3.14
-	if node.NodeType == ast.OperatorNode && node.Token != nil && node.Token.Type == token.MINUS && len(node.Children) == 1 {
+	if node.Op() == token.MINUS && len(node.Children) == 1 {
 		return p.isNegatedNumericLiteral(node)
 	}
 	// Allow empty list: list []
@@ -532,7 +512,7 @@ func (p *Parser) isNumericLiteral(node *ast.TreeNode) bool {
 }
 
 func (p *Parser) isNegatedNumericLiteral(node *ast.TreeNode) bool {
-	if node == nil || node.NodeType != ast.OperatorNode || node.Token == nil || node.Token.Type != token.MINUS || len(node.Children) != 1 {
+	if node.Op() != token.MINUS || len(node.Children) != 1 {
 		return false
 	}
 	child := node.Children[0]
@@ -540,7 +520,7 @@ func (p *Parser) isNegatedNumericLiteral(node *ast.TreeNode) bool {
 		return true
 	}
 	// Allow nested unary minus forms like --5.
-	if child != nil && child.NodeType == ast.OperatorNode && child.Token != nil && child.Token.Type == token.MINUS {
+	if child.Op() == token.MINUS {
 		return p.isNegatedNumericLiteral(child)
 	}
 	return false
@@ -899,7 +879,7 @@ func (p *Parser) parseExtern() *ast.TreeNode {
 	case token.STRING:
 		return p.parseExternDirective(&tok, ast.ExternHeaderNode, "")
 	case token.FN:
-		return p.parseExternFn(&tok)
+		return p.parseExternFn()
 	case token.ID:
 		switch p.curToken.Literal {
 		case "link":
@@ -978,7 +958,7 @@ func checkLinkName(name string) string {
 //
 //	extern fn name(params) ReturnType as 'symbol'
 //	extern fn type.name(params) ReturnType as 'symbol'
-func (p *Parser) parseExternFn(externTok *token.Token) *ast.TreeNode {
+func (p *Parser) parseExternFn() *ast.TreeNode {
 	p.nextToken() // skip 'fn'
 
 	// Parse function name — may be 'name' or 'type.name'
@@ -1035,8 +1015,6 @@ func (p *Parser) parseExternFn(externTok *token.Token) *ast.TreeNode {
 	node.ReturnType = returnTypeNode
 	node.ExternSymbol = symbolLiteral
 	node.ExternReceiver = receiverType
-
-	_ = externTok
 	return node
 }
 
@@ -1057,10 +1035,11 @@ func (p *Parser) isBuiltinTypeKeyword() bool {
 
 // parseIncl parses:
 //
-//	incl module_name
-//	incl './path/to/module'
-//	incl module_name as alias
-//	incl './path/to/module' as alias
+//	incl './path/to/file'
+//	incl './path/to/file' as alias
+//
+// `incl name` (a bare name) is parsed too, only so the loader can report
+// that a module in the same file needs no incl (write name::member).
 func (p *Parser) parseIncl() *ast.TreeNode {
 	tok := p.curToken
 	node := ast.NewNode(ast.InclNode, &tok)
@@ -1074,13 +1053,13 @@ func (p *Parser) parseIncl() *ast.TreeNode {
 		node.AddChild(pathNode)
 		p.nextToken()
 	case token.ID:
-		// Same-file module reference: incl math
+		// incl math: rejected by the loader with a clearer message
 		nameTok := p.curToken
 		nameNode := ast.NewNode(ast.IdentifierNode, &nameTok)
 		node.AddChild(nameNode)
 		p.nextToken()
 	default:
-		p.addError("expected module path string or module name after 'incl'")
+		p.addError("expected a file path string after 'incl'")
 		return nil
 	}
 

@@ -8,7 +8,6 @@ import (
 	"quark/ast"
 	"quark/builtins"
 	"quark/names"
-	"quark/token"
 )
 
 // MemberSep joins a module's internal name and a member name into the
@@ -145,169 +144,194 @@ func (ml *ModuleLoader) walk(n *ast.TreeNode, c rctx) {
 	switch n.NodeType {
 	case ast.InclNode, ast.ExternHeaderNode, ast.ExternLinkNode, ast.ExternIncludePathNode:
 		return
-
 	case ast.ModuleNode:
-		if len(n.Children) < 2 || n.Children[1] == nil {
-			return
-		}
-		d := c.f.top[n.Children[0].TokenLiteral()]
-		if d == nil || d.mod == nil || d.node != n {
-			return
-		}
-		m := d.mod
-		setLiteral(n.Children[0], m.internal)
-		mc := c
-		mc.mod = m
-		for _, stmt := range n.Children[1].Children {
-			ml.walk(stmt, mc)
-		}
-		return
-
+		ml.walkModule(n, c)
 	case ast.ExternFnNode:
-		if n.ExternReceiver == "" {
-			if d := c.lookupBare(n.TokenLiteral()); d != nil && d.kind == kExtern && d.node == n {
-				setLiteral(n, d.internal)
-			}
-		}
-		for _, p := range n.Children {
-			ml.walk(p, c)
-		}
-		ml.walkType(n.ReturnType, c)
-		return
-
+		ml.walkExternFn(n, c)
 	case ast.StructDefNode:
-		if d := c.lookupBare(n.TokenLiteral()); d != nil && d.kind == kStruct && d.node == n {
-			setLiteral(n, d.internal)
-		}
-		for _, field := range n.Children {
-			if field == nil || field.NodeType != ast.StructFieldNode {
-				continue
-			}
-			for _, t := range field.Children {
-				ml.walkType(t, c)
-			}
-			ml.walk(field.DefaultValue, c)
-		}
-		return
-
+		ml.walkStructDef(n, c)
 	case ast.TypeNode:
 		ml.walkType(n, c)
-		return
-
 	case ast.ParameterNode:
 		for _, ch := range n.Children[min(1, len(n.Children)):] {
 			ml.walkType(ch, c)
 		}
 		ml.walk(n.DefaultValue, c)
-		return
-
 	case ast.IdentifierNode:
 		ml.resolveIdent(n, c)
-		return
-
 	case ast.QualifiedNameNode:
 		ml.resolveQualifiedValue(n, c)
-		return
-
 	case ast.StructLiteralNode:
-		ml.resolveStructName(n, c, "unknown struct type '%s'")
-		for _, field := range n.Children {
-			if field != nil && field.NodeType == ast.StructFieldNode {
-				for _, v := range field.Children[min(1, len(field.Children)):] {
-					ml.walk(v, c)
-				}
-				continue
-			}
-			ml.walk(field, c)
-		}
-		return
-
+		ml.walkStructLiteral(n, c)
 	case ast.LambdaNode:
-		if len(n.Children) < 2 {
-			return
-		}
-		params := paramNames(n.Children[0])
-		lc := c.with(params...)
-		lc.inFn = true
-		lc.locals = map[string]bool{}
-		for k := range c.locals {
-			lc.locals[k] = true
-		}
-		collectAssigned(n.Children[1], lc.locals)
-		for _, p := range n.Children[0].Children {
-			ml.walk(p, c) // annotation and default
-			ml.renameParam(p, lc)
-		}
-		ml.walkType(n.ReturnType, c)
-		ml.walk(n.Children[1], lc)
-		return
-
+		ml.walkLambda(n, c)
 	case ast.ForLoopNode:
-		if len(n.Children) >= 3 {
-			ml.walk(n.Children[1], c)
-			bc := c.with(n.Children[0].TokenLiteral())
-			ml.renameLocal(n.Children[0], bc)
-			ml.walk(n.Children[2], bc)
-			return
-		}
-
+		ml.walkFor(n, c)
 	case ast.PatternNode:
-		armCtx := c
-		for _, ch := range n.Children {
-			if ch != nil && ch.NodeType == ast.ResultPatternNode && len(ch.Children) > 0 {
-				armCtx = c.with(ch.Children[0].TokenLiteral())
-				ml.renameLocal(ch.Children[0], armCtx)
-			}
-		}
-		for _, ch := range n.Children {
-			if ch != nil && ch.NodeType == ast.ResultPatternNode {
-				continue
-			}
-			ml.walk(ch, armCtx)
-		}
-		return
-
+		ml.walkPattern(n, c)
 	case ast.VarDeclNode:
-		if len(n.Children) >= 3 {
-			ml.renameTarget(n.Children[0], n, c)
-			if lit := n.Children[0].TokenLiteral(); c.inFn && lit != n.TokenLiteral() {
-				setLiteral(n, lit) // a renamed local; the node carries the name too
-			}
-			ml.walkType(n.Children[1], c)
-			ml.walk(n.Children[2], c)
+		ml.walkVarDecl(n, c)
+	case ast.MemberNode:
+		ml.walkMember(n, c)
+	case ast.AssignNode, ast.FnDeclNode:
+		if len(n.Children) != 2 {
+			ml.walkChildren(n, c)
 			return
 		}
-
-	case ast.OperatorNode:
-		if n.Token != nil && n.Token.Type == token.DOT && len(n.Children) == 2 {
-			left := n.Children[0]
-			if left != nil && left.NodeType == ast.IdentifierNode && !c.shadow[left.TokenLiteral()] {
-				if d := c.lookupBare(left.TokenLiteral()); d != nil {
-					member := n.Children[1].TokenLiteral()
-					switch d.kind {
-					case kImport:
-						ml.errIn(c.f, left, "'%s' is an imported file; use %s::%s", d.name, d.name, member)
-						return
-					case kModule:
-						ml.errIn(c.f, left, "'%s' is a module; use %s::%s", d.name, d.name, member)
-						return
-					}
-				}
-			}
-			// The right side is a field, key or method name.
-			ml.walk(left, c)
-			return
-		}
-		if n.Token != nil && n.Token.Type == token.EQUALS && len(n.Children) == 2 {
-			ml.renameTarget(n.Children[0], n, c)
-			ml.walk(n.Children[1], c)
-			return
-		}
+		ml.renameTarget(n.Children[0], n, c)
+		ml.walk(n.Children[1], c)
+	default:
+		ml.walkChildren(n, c)
 	}
+}
+
+func (ml *ModuleLoader) walkChildren(n *ast.TreeNode, c rctx) {
 	for _, ch := range n.Children {
 		ml.walk(ch, c)
 	}
 	ml.walk(n.DefaultValue, c)
+}
+
+func (ml *ModuleLoader) walkModule(n *ast.TreeNode, c rctx) {
+	if len(n.Children) < 2 || n.Children[1] == nil {
+		return
+	}
+	d := c.f.top[n.Children[0].TokenLiteral()]
+	if d == nil || d.mod == nil || d.node != n {
+		return
+	}
+	m := d.mod
+	setLiteral(n.Children[0], m.internal)
+	mc := c
+	mc.mod = m
+	for _, stmt := range n.Children[1].Children {
+		ml.walk(stmt, mc)
+	}
+}
+
+func (ml *ModuleLoader) walkExternFn(n *ast.TreeNode, c rctx) {
+	if n.ExternReceiver == "" {
+		if d := c.lookupBare(n.TokenLiteral()); d != nil && d.kind == kExtern && d.node == n {
+			setLiteral(n, d.internal)
+		}
+	}
+	for _, p := range n.Children {
+		ml.walk(p, c)
+	}
+	ml.walkType(n.ReturnType, c)
+}
+
+func (ml *ModuleLoader) walkStructDef(n *ast.TreeNode, c rctx) {
+	if d := c.lookupBare(n.TokenLiteral()); d != nil && d.kind == kStruct && d.node == n {
+		setLiteral(n, d.internal)
+	}
+	for _, field := range n.Children {
+		if field == nil || field.NodeType != ast.StructFieldNode {
+			continue
+		}
+		for _, t := range field.Children {
+			ml.walkType(t, c)
+		}
+		ml.walk(field.DefaultValue, c)
+	}
+}
+
+func (ml *ModuleLoader) walkStructLiteral(n *ast.TreeNode, c rctx) {
+	ml.resolveStructName(n, c, "unknown struct type '%s'")
+	for _, field := range n.Children {
+		if field != nil && field.NodeType == ast.StructFieldNode {
+			for _, v := range field.Children[min(1, len(field.Children)):] {
+				ml.walk(v, c)
+			}
+			continue
+		}
+		ml.walk(field, c)
+	}
+}
+
+func (ml *ModuleLoader) walkLambda(n *ast.TreeNode, c rctx) {
+	if len(n.Children) < 2 {
+		return
+	}
+	params := paramNames(n.Children[0])
+	lc := c.with(params...)
+	lc.inFn = true
+	lc.locals = map[string]bool{}
+	for k := range c.locals {
+		lc.locals[k] = true
+	}
+	collectAssigned(n.Children[1], lc.locals)
+	for _, p := range n.Children[0].Children {
+		ml.walk(p, c) // annotation and default
+		ml.renameParam(p, lc)
+	}
+	ml.walkType(n.ReturnType, c)
+	ml.walk(n.Children[1], lc)
+}
+
+func (ml *ModuleLoader) walkFor(n *ast.TreeNode, c rctx) {
+	if len(n.Children) < 3 {
+		ml.walkChildren(n, c)
+		return
+	}
+	ml.walk(n.Children[1], c)
+	bc := c.with(n.Children[0].TokenLiteral())
+	ml.renameLocal(n.Children[0], bc)
+	ml.walk(n.Children[2], bc)
+}
+
+func (ml *ModuleLoader) walkPattern(n *ast.TreeNode, c rctx) {
+	armCtx := c
+	for _, ch := range n.Children {
+		if ch != nil && ch.NodeType == ast.ResultPatternNode && len(ch.Children) > 0 {
+			armCtx = c.with(ch.Children[0].TokenLiteral())
+			ml.renameLocal(ch.Children[0], armCtx)
+		}
+	}
+	for _, ch := range n.Children {
+		if ch != nil && ch.NodeType == ast.ResultPatternNode {
+			continue
+		}
+		ml.walk(ch, armCtx)
+	}
+}
+
+func (ml *ModuleLoader) walkVarDecl(n *ast.TreeNode, c rctx) {
+	if len(n.Children) < 3 {
+		ml.walkChildren(n, c)
+		return
+	}
+	ml.renameTarget(n.Children[0], n, c)
+	if lit := n.Children[0].TokenLiteral(); c.inFn && lit != n.TokenLiteral() {
+		setLiteral(n, lit) // a renamed local; the node carries the name too
+	}
+	ml.walkType(n.Children[1], c)
+	ml.walk(n.Children[2], c)
+}
+
+// walkMember resolves `left.name`. The right side is a field, key or method
+// name, never a variable; `io.exists` on an imported file or a module is an
+// error that suggests `::`.
+func (ml *ModuleLoader) walkMember(n *ast.TreeNode, c rctx) {
+	if len(n.Children) != 2 {
+		ml.walkChildren(n, c)
+		return
+	}
+	left := n.Children[0]
+	if left != nil && left.NodeType == ast.IdentifierNode && !c.shadow[left.TokenLiteral()] {
+		if d := c.lookupBare(left.TokenLiteral()); d != nil {
+			member := n.Children[1].TokenLiteral()
+			switch d.kind {
+			case kImport:
+				ml.errIn(c.f, left, "'%s' is an imported file; use %s::%s", d.name, d.name, member)
+				return
+			case kModule:
+				ml.errIn(c.f, left, "'%s' is a module; use %s::%s", d.name, d.name, member)
+				return
+			}
+		}
+	}
+	ml.walk(left, c)
 }
 
 // renameTarget handles the name an assignment or declaration writes to.
@@ -571,7 +595,7 @@ func collectAssigned(n *ast.TreeNode, out map[string]bool) {
 	if n == nil || n.NodeType == ast.LambdaNode {
 		return
 	}
-	if n.NodeType == ast.OperatorNode && n.Token != nil && n.Token.Type == token.EQUALS && len(n.Children) == 2 &&
+	if (n.NodeType == ast.AssignNode || n.NodeType == ast.FnDeclNode) && len(n.Children) == 2 &&
 		n.Children[0] != nil && n.Children[0].NodeType == ast.IdentifierNode {
 		out[n.Children[0].TokenLiteral()] = true
 	}

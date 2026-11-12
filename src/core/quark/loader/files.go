@@ -102,15 +102,6 @@ func (d *def) constant() bool {
 	return d.kind == kValue && !d.file.info.Main
 }
 
-// qualified is how d is written from outside its file (geo::Point).
-func (d *def) qualified() string {
-	o := &names.Origin{File: d.file.info, Name: d.name}
-	if d.module != nil {
-		o.Module = d.module.name
-	}
-	return o.Qualified()
-}
-
 type modScope struct {
 	name     string
 	internal string
@@ -438,12 +429,10 @@ func (ml *ModuleLoader) checkDefinitionsOnly(f *srcFile) {
 					check(stmt.Children[1].Children, true)
 					continue
 				}
-			case ast.OperatorNode:
-				if stmt.FnDecl {
-					continue
-				}
-				if stmt.Token != nil && stmt.Token.Type == token.EQUALS && len(stmt.Children) == 2 &&
-					stmt.Children[0] != nil && stmt.Children[0].NodeType == ast.IdentifierNode {
+			case ast.FnDeclNode:
+				continue
+			case ast.AssignNode:
+				if len(stmt.Children) == 2 && stmt.Children[0] != nil && stmt.Children[0].NodeType == ast.IdentifierNode {
 					if isConstantValue(stmt.Children[1]) {
 						continue
 					}
@@ -475,14 +464,9 @@ func isConstantValue(n *ast.TreeNode) bool {
 			return true
 		}
 		return false
-	case ast.OperatorNode:
-		if n.Token == nil {
-			return false
-		}
-		if len(n.Children) == 1 && n.Token.Type == token.MINUS {
-			c := n.Children[0]
-			return c != nil && c.NodeType == ast.LiteralNode && c.Token != nil && (c.Token.Type == token.INT || c.Token.Type == token.FLOAT)
-		}
+	case ast.UnaryNode:
+		return ast.IsNegatedNumber(n)
+	case ast.BinaryNode:
 		if len(n.Children) == 2 {
 			switch n.Token.Type {
 			case token.PLUS, token.MINUS, token.MULTIPLY, token.DIVIDE, token.MODULO:
@@ -498,13 +482,11 @@ func describeStatement(n *ast.TreeNode) string {
 	switch n.NodeType {
 	case ast.FunctionCallNode:
 		if len(n.Children) > 0 && n.Children[0] != nil {
-			if name := n.Children[0].TokenLiteral(); name != "" && n.Children[0].NodeType != ast.OperatorNode {
+			if name := n.Children[0].TokenLiteral(); name != "" && n.Children[0].NodeType != ast.MemberNode {
 				return name + "(...)"
 			}
 		}
 		return "a call"
-	case ast.PipeNode:
-		return "a pipe"
 	case ast.IfStatementNode:
 		return "if"
 	case ast.WhenStatementNode:
@@ -531,15 +513,9 @@ func lineOf(n *ast.TreeNode) int {
 	return 0
 }
 
-// isFnDecl reports whether stmt is a `fn name(...)` declaration.
-func isFnDecl(stmt *ast.TreeNode) bool {
-	return stmt != nil && stmt.FnDecl && len(stmt.Children) == 2 && stmt.Children[0] != nil && stmt.Children[0].NodeType == ast.IdentifierNode
-}
-
 // assignedName is the identifier a plain `name = value` statement assigns.
 func assignedName(stmt *ast.TreeNode) (*ast.TreeNode, bool) {
-	if stmt == nil || stmt.FnDecl || stmt.NodeType != ast.OperatorNode || stmt.Token == nil || stmt.Token.Type != token.EQUALS ||
-		len(stmt.Children) != 2 || stmt.Children[0] == nil || stmt.Children[0].NodeType != ast.IdentifierNode {
+	if stmt == nil || stmt.NodeType != ast.AssignNode || len(stmt.Children) != 2 || stmt.Children[0] == nil || stmt.Children[0].NodeType != ast.IdentifierNode {
 		return nil, false
 	}
 	return stmt.Children[0], true
@@ -687,12 +663,24 @@ func (ml *ModuleLoader) reportInternalClash(d *def, o, prev *names.Origin) {
 
 // topDef is the definition a top-level statement makes, if any.
 func (ml *ModuleLoader) topDef(f *srcFile, stmt *ast.TreeNode, prefix string) *def {
+	return ml.defOf(f, nil, stmt, prefix)
+}
+
+// memberDef is the definition a module-body statement makes, if any.
+func (ml *ModuleLoader) memberDef(f *srcFile, m *modScope, stmt *ast.TreeNode) *def {
+	return ml.defOf(f, m, stmt, "")
+}
+
+// defOf is the definition stmt makes at the top level of f (m == nil, names
+// prefixed with prefix) or in module m's body. A module inside a module is
+// reported by collect, so it makes no definition here.
+func (ml *ModuleLoader) defOf(f *srcFile, m *modScope, stmt *ast.TreeNode, prefix string) *def {
 	if stmt == nil {
 		return nil
 	}
-	d := &def{file: f, node: stmt, line: lineOf(stmt)}
+	d := &def{file: f, node: stmt, line: lineOf(stmt), module: m}
 	switch {
-	case isFnDecl(stmt):
+	case ast.IsFnDecl(stmt):
 		d.name, d.kind = stmt.Children[0].TokenLiteral(), kFunc
 		d.line = lineOf(stmt.Children[0])
 	case stmt.NodeType == ast.StructDefNode:
@@ -703,7 +691,7 @@ func (ml *ModuleLoader) topDef(f *srcFile, stmt *ast.TreeNode, prefix string) *d
 		}
 		d.name, d.kind = stmt.TokenLiteral(), kExtern
 	case stmt.NodeType == ast.ModuleNode:
-		if len(stmt.Children) < 2 || stmt.Children[1] == nil {
+		if m != nil || len(stmt.Children) < 2 || stmt.Children[1] == nil {
 			return nil
 		}
 		d.name, d.kind = stmt.Children[0].TokenLiteral(), kModule
@@ -720,52 +708,18 @@ func (ml *ModuleLoader) topDef(f *srcFile, stmt *ast.TreeNode, prefix string) *d
 			d.value = stmt.Children[1]
 		}
 	}
-	if d.name == "" {
-		return nil
-	}
-	d.internal = prefix + d.name
-	if f.info.Main {
-		d.internal = d.name
-	}
-	if d.kind == kModule {
-		d.internal = d.mod.internal
-	}
-	return d
-}
-
-// memberDef is the definition a module-body statement makes, if any.
-func (ml *ModuleLoader) memberDef(f *srcFile, m *modScope, stmt *ast.TreeNode) *def {
-	if stmt == nil {
-		return nil
-	}
-	d := &def{file: f, node: stmt, line: lineOf(stmt), module: m}
 	switch {
-	case isFnDecl(stmt):
-		d.name, d.kind = stmt.Children[0].TokenLiteral(), kFunc
-		d.line = lineOf(stmt.Children[0])
-	case stmt.NodeType == ast.StructDefNode:
-		d.name, d.kind = stmt.TokenLiteral(), kStruct
-	case stmt.NodeType == ast.ExternFnNode:
-		if stmt.ExternReceiver != "" || stmt.TokenLiteral() == "" {
-			return nil
-		}
-		d.name, d.kind = stmt.TokenLiteral(), kExtern
-	case stmt.NodeType == ast.VarDeclNode && f.info.Main:
-		d.name, d.kind = stmt.TokenLiteral(), kValue
-	default:
-		target, ok := assignedName(stmt)
-		if !ok {
-			return nil
-		}
-		d.name, d.kind = target.TokenLiteral(), kValue
-		if !f.info.Main {
-			d.value = stmt.Children[1]
-		}
-	}
-	if d.name == "" {
+	case d.name == "":
 		return nil
+	case m != nil:
+		d.internal = m.internal + MemberSep + d.name
+	case d.kind == kModule:
+		d.internal = d.mod.internal
+	case f.info.Main:
+		d.internal = d.name
+	default:
+		d.internal = prefix + d.name
 	}
-	d.internal = m.internal + MemberSep + d.name
 	return d
 }
 

@@ -252,6 +252,64 @@ func (l *Lexer) indentationFilter(tracked []trackedToken) []token.Token {
 	return result
 }
 
+// twoCharTokens are the operators spelled with two characters; they win over
+// the one-character token their first character would be.
+var twoCharTokens = map[[2]byte]token.TokenType{
+	{'=', '='}: token.DEQ,
+	{'-', '>'}: token.ARROW,
+	{'*', '*'}: token.DOUBLESTAR,
+	{'!', '='}: token.NE,
+	{'<', '='}: token.LTE,
+	{'>', '='}: token.GTE,
+	{':', ':'}: token.COLONCOLON,
+}
+
+var oneCharTokens = map[byte]token.TokenType{
+	'=': token.EQUALS,
+	'+': token.PLUS,
+	'-': token.MINUS,
+	'*': token.MULTIPLY,
+	'/': token.DIVIDE,
+	'%': token.MODULO,
+	'!': token.BANG,
+	'<': token.LT,
+	'>': token.GT,
+	'(': token.LPAR,
+	')': token.RPAR,
+	'[': token.LBRACKET,
+	']': token.RBRACKET,
+	'{': token.LBRACE,
+	'}': token.RBRACE,
+	'.': token.DOT,
+	',': token.COMMA,
+	'|': token.PIPE,
+	':': token.COLON,
+}
+
+// trackBracket counts open brackets: newlines inside them don't end a line.
+func (l *Lexer) trackBracket(ch byte) {
+	switch ch {
+	case '(':
+		l.parenCount++
+	case ')':
+		if l.parenCount > 0 {
+			l.parenCount--
+		}
+	case '[':
+		l.bracketCount++
+	case ']':
+		if l.bracketCount > 0 {
+			l.bracketCount--
+		}
+	case '{':
+		l.braceCount++
+	case '}':
+		if l.braceCount > 0 {
+			l.braceCount--
+		}
+	}
+}
+
 func (l *Lexer) nextRawToken() token.Token {
 	var tok token.Token
 
@@ -265,93 +323,22 @@ func (l *Lexer) nextRawToken() token.Token {
 	tok.Line = l.line
 	tok.Column = l.column
 
+	if tt, ok := twoCharTokens[[2]byte{l.ch, l.peekChar()}]; ok {
+		lit := string([]byte{l.ch, l.peekChar()})
+		l.readChar()
+		l.atLineStart = false
+		l.readChar()
+		return token.Token{Type: tt, Literal: lit, Line: tok.Line, Column: tok.Column}
+	}
+	if tt, ok := oneCharTokens[l.ch]; ok {
+		l.trackBracket(l.ch)
+		tok = newToken(tt, l.ch, tok.Line, tok.Column)
+		l.atLineStart = false
+		l.readChar()
+		return tok
+	}
+
 	switch l.ch {
-	case '=':
-		if l.peekChar() == '=' {
-			l.readChar()
-			tok = token.Token{Type: token.DEQ, Literal: "==", Line: tok.Line, Column: tok.Column}
-		} else {
-			tok = newToken(token.EQUALS, l.ch, tok.Line, tok.Column)
-		}
-	case '+':
-		tok = newToken(token.PLUS, l.ch, tok.Line, tok.Column)
-	case '-':
-		if l.peekChar() == '>' {
-			l.readChar()
-			tok = token.Token{Type: token.ARROW, Literal: "->", Line: tok.Line, Column: tok.Column}
-		} else {
-			tok = newToken(token.MINUS, l.ch, tok.Line, tok.Column)
-		}
-	case '*':
-		if l.peekChar() == '*' {
-			l.readChar()
-			tok = token.Token{Type: token.DOUBLESTAR, Literal: "**", Line: tok.Line, Column: tok.Column}
-		} else {
-			tok = newToken(token.MULTIPLY, l.ch, tok.Line, tok.Column)
-		}
-	case '/':
-		tok = newToken(token.DIVIDE, l.ch, tok.Line, tok.Column)
-	case '%':
-		tok = newToken(token.MODULO, l.ch, tok.Line, tok.Column)
-	case '!':
-		if l.peekChar() == '=' {
-			l.readChar()
-			tok = token.Token{Type: token.NE, Literal: "!=", Line: tok.Line, Column: tok.Column}
-		} else {
-			tok = newToken(token.BANG, l.ch, tok.Line, tok.Column)
-		}
-	case '<':
-		if l.peekChar() == '=' {
-			l.readChar()
-			tok = token.Token{Type: token.LTE, Literal: "<=", Line: tok.Line, Column: tok.Column}
-		} else {
-			tok = newToken(token.LT, l.ch, tok.Line, tok.Column)
-		}
-	case '>':
-		if l.peekChar() == '=' {
-			l.readChar()
-			tok = token.Token{Type: token.GTE, Literal: ">=", Line: tok.Line, Column: tok.Column}
-		} else {
-			tok = newToken(token.GT, l.ch, tok.Line, tok.Column)
-		}
-	case '(':
-		l.parenCount++
-		tok = newToken(token.LPAR, l.ch, tok.Line, tok.Column)
-	case ')':
-		if l.parenCount > 0 {
-			l.parenCount--
-		}
-		tok = newToken(token.RPAR, l.ch, tok.Line, tok.Column)
-	case '[':
-		l.bracketCount++
-		tok = newToken(token.LBRACKET, l.ch, tok.Line, tok.Column)
-	case ']':
-		if l.bracketCount > 0 {
-			l.bracketCount--
-		}
-		tok = newToken(token.RBRACKET, l.ch, tok.Line, tok.Column)
-	case '{':
-		l.braceCount++
-		tok = newToken(token.LBRACE, l.ch, tok.Line, tok.Column)
-	case '}':
-		if l.braceCount > 0 {
-			l.braceCount--
-		}
-		tok = newToken(token.RBRACE, l.ch, tok.Line, tok.Column)
-	case '.':
-		tok = newToken(token.DOT, l.ch, tok.Line, tok.Column)
-	case ',':
-		tok = newToken(token.COMMA, l.ch, tok.Line, tok.Column)
-	case '|':
-		tok = newToken(token.PIPE, l.ch, tok.Line, tok.Column)
-	case ':':
-		if l.peekChar() == ':' {
-			l.readChar()
-			tok.Type = token.COLONCOLON
-			tok.Literal = "::"
-		} else {
-			tok = newToken(token.COLON, l.ch, tok.Line, tok.Column)
-		}
 	case '_':
 		if isLetter(l.peekChar()) || isDigit(l.peekChar()) {
 			// Part of an identifier

@@ -30,13 +30,6 @@ var precedences = map[token.TokenType]ast.Precedence{
 	token.LPAR:       ast.PrecAccess,
 }
 
-func (p *Parser) peekPrecedence() ast.Precedence {
-	if prec, ok := precedences[p.curToken.Type]; ok {
-		return prec
-	}
-	return ast.PrecLowest
-}
-
 func (p *Parser) curPrecedence() ast.Precedence {
 	if prec, ok := precedences[p.curToken.Type]; ok {
 		return prec
@@ -432,7 +425,7 @@ func (p *Parser) parseDictLiteral() *ast.TreeNode {
 				return nil
 			}
 
-			pair := ast.NewNode(ast.OperatorNode, nil)
+			pair := ast.NewNode(ast.PairNode, nil)
 			pair.AddChildren(key, value)
 			node.AddChild(pair)
 
@@ -501,7 +494,7 @@ func (p *Parser) parseVectorLiteral() *ast.TreeNode {
 // prefix operator (`2 ** -1`).
 func (p *Parser) parseUnary() *ast.TreeNode {
 	tok := p.curToken
-	node := ast.NewNode(ast.OperatorNode, &tok)
+	node := ast.NewNode(ast.UnaryNode, &tok)
 	p.nextToken()
 	operand := p.parseExpression(ast.PrecExponent)
 	node.AddChild(operand)
@@ -510,7 +503,11 @@ func (p *Parser) parseUnary() *ast.TreeNode {
 
 func (p *Parser) parseBinaryOp(left *ast.TreeNode) *ast.TreeNode {
 	tok := p.curToken
-	node := ast.NewNode(ast.OperatorNode, &tok)
+	kind := ast.BinaryNode
+	if tok.Type == token.EQUALS {
+		kind = ast.AssignNode
+	}
+	node := ast.NewNode(kind, &tok)
 	precedence := p.curPrecedence()
 	p.nextToken()
 	right := p.parseExpression(precedence + 1)
@@ -521,25 +518,36 @@ func (p *Parser) parseBinaryOp(left *ast.TreeNode) *ast.TreeNode {
 func (p *Parser) parseExponent(left *ast.TreeNode) *ast.TreeNode {
 	// Right-associative: use same precedence instead of +1
 	tok := p.curToken
-	node := ast.NewNode(ast.OperatorNode, &tok)
+	node := ast.NewNode(ast.BinaryNode, &tok)
 	p.nextToken()
 	right := p.parseExpression(ast.PrecExponent)
 	node.AddChildren(left, right)
 	return node
 }
 
+// parsePipe parses `left | f(args)` straight into the call `f(left, args)`
+// (and `left | obj.m(args)` into `obj.m(left, args)`), marked Piped. No later
+// stage has a pipe path.
 func (p *Parser) parsePipe(left *ast.TreeNode) *ast.TreeNode {
 	tok := p.curToken
-	node := ast.NewNode(ast.PipeNode, &tok)
 	p.nextToken()
 	right := p.parseExpression(ast.PrecPipe + 1)
-	node.AddChildren(left, right)
-	return node
+	if right == nil || left == nil {
+		return nil
+	}
+	if right.NodeType != ast.FunctionCallNode || len(right.Children) < 2 || right.Children[1] == nil {
+		p.addErrorAt(&tok, "pipe target must be a function call; use f(...) or obj.method(...)")
+		return nil
+	}
+	args := right.Children[1]
+	args.Children = append([]*ast.TreeNode{left}, args.Children...)
+	right.Piped = true
+	return right
 }
 
 func (p *Parser) parseMemberAccess(left *ast.TreeNode) *ast.TreeNode {
 	tok := p.curToken
-	node := ast.NewNode(ast.OperatorNode, &tok)
+	node := ast.NewNode(ast.MemberNode, &tok)
 	p.nextToken()
 
 	if p.curToken.Type != token.ID {

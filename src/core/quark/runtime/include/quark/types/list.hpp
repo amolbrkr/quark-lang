@@ -88,31 +88,6 @@ inline QValue q_set(QValue list, QValue index, QValue value) {
     return value;
 }
 
-// Get list size
-inline int q_list_size(QValue list) {
-    if (list.type != QValue::VAL_LIST || !list.data.list_val) {
-        return 0;
-    }
-    return static_cast<int>(list.data.list_val->size());
-}
-
-// Check if list is empty
-inline bool q_list_empty(QValue list) {
-    if (list.type != QValue::VAL_LIST || !list.data.list_val) {
-        return true;
-    }
-    return list.data.list_val->empty();
-}
-
-// Clear all items from list
-inline QValue q_list_clear(QValue list) {
-    if (list.type != QValue::VAL_LIST || !list.data.list_val) {
-        return qv_null();
-    }
-    list.data.list_val->clear();
-    return list;
-}
-
 // Insert item at index
 inline QValue q_insert(QValue list, QValue index, QValue item) {
     if (list.type != QValue::VAL_LIST || !list.data.list_val) {
@@ -238,18 +213,6 @@ inline QValue q_enumerate(QValue seq) {
     return out;
 }
 
-// Free list memory for non-GC builds.
-// In GC mode, object lifetime is collector-owned; manual free is a no-op.
-inline void q_list_free(QValue list) {
-#ifndef QUARK_USE_GC
-    if (list.type == QValue::VAL_LIST && list.data.list_val) {
-        list.data.list_val->~QList();
-        q_free(list.data.list_val);
-    }
-#else
-    (void)list;
-#endif
-}
 
 // q_range_arg converts one argument of a lowered `for i in range(...)` loop to an
 // integer, with the same rules and messages as the q_range builtins: ints as is,

@@ -654,6 +654,7 @@ func TestSmokePrograms_Run(t *testing.T) {
 				"4", "5", "5", "8",
 				"1000", "20",
 				"42",
+				"20", "2",
 				"3", "2",
 			),
 		},
@@ -870,8 +871,21 @@ func TestSemanticsSafety_Rejected(t *testing.T) {
 		// has the method or the arity is wrong, at runtime when the value's type lacks it.
 		{"dynamic_method_wrong_type", "fn id(x) -> x\nprint(id(5).upper())\n", "type 'int' has no method 'upper'"},
 		{"dynamic_method_unknown", "fn id(x) -> x\nid(5).frobnicate()\n", "no type has a method 'frobnicate'"},
-		{"dynamic_method_arity", "fn id(x) -> x\nid('a').split()\n", "method 'split' expects 1 argument(s) but got 0"},
+		{"dynamic_method_arity", "fn id(x) -> x\nid('a').split()\n", "method 'split' expects 1 argument but got 0"},
 		{"dynamic_method_arg_type", "fn id(x) -> x\nid('a').split(5)\n", "argument 1 of 'split' expects str, got int"},
+		// A pipe is the call with the piped input as its first argument, and is
+		// checked like one.
+		{"pipe_target_not_call", "x = 1\nprint(x | len)\n", "pipe target must be a function call"},
+		{"pipe_builtin_arity", "print('a' | len(1))\n", "builtin 'len' expects 1 argument but got 2 (including piped input)"},
+		{"pipe_fn_arity", "fn f(a) -> a\nprint(1 | f(2))\n", "function 'f' expects 1 argument but got 2 (including piped input)"},
+		{"pipe_fn_arg_type", "fn f(a: str) -> a\nprint(1 | f())\n", "argument 1 of 'f' expects str, got int"},
+		{"pipe_fn_null_arg", "fn f(a: str) -> a\nprint(null | f())\n", "argument 1 of 'f' expects str, got null"},
+		{"pipe_fn_any_arg", "fn id(x) -> x\nfn f(a: str) -> a\nprint(id(5) | f())\n", "argument 'a' of 'f' expects str, got int"},
+		{"pipe_method_arity", "print(1 | 'x'.replace())\n", "method 'replace' expects 2 arguments but got 1 (including piped input)"},
+		{"pipe_dynamic_method_arity", "fn id(x) -> x\nprint('a' | id('b').split('c'))\n", "method 'split' expects 1 argument but got 2 (including piped input)"},
+		{"pipe_module_extern_arg_type", "incl 'std/io' as io\nprint(1 | io::exists())\n", "argument 1 of 'io::exists' expects str, got int"},
+		{"pipe_dict_member", "d = dict { f: fn(x) -> x }\nprint(3 | d.f())\n", "has no method 'f'"},
+		{"pipe_callback_arity", "fn h(a, b) -> b\nfn apply(k) -> 1 | k()\nprint(apply(h))\n", "but 'h' takes 2 arguments"},
 		// Ordering compares two numbers or two strings; mixes are runtime errors.
 		{"order_str_int", "print('a' < 1)\n", "operator '<' expects two numbers or two strings"},
 		{"csv_unterminated_quote", "incl 'std/csv' as csv\nprint(csv::parse('a,\"b\\n'))\n", "csv.parse: unterminated quoted field"},
@@ -905,7 +919,7 @@ func TestSemanticsSafety_Rejected(t *testing.T) {
 		// Variables are not hoisted: a body only sees what is assigned above it.
 		{"fn_uses_later_var", "fn report() -> print(total)\ntotal = 5\nreport()\n", "undefined identifier 'total'"},
 		// Wrong uses of declared functions are still checked at the call.
-		{"hoisted_forward_call_arity", "print(f(1, 2))\nfn f(x) -> x\n", "function expects 1 arguments but got 2"},
+		{"hoisted_forward_call_arity", "print(f(1, 2))\nfn f(x) -> x\n", "function 'f' expects 1 argument but got 2"},
 		{"hoisted_forward_call_type", "print(f('s'))\nfn f(x: int) int -> x\n", "argument 1 of 'f' expects int, got str"},
 		{"direct_fn_value_arity", "fn id(v) -> v\nfn h(a, b) -> b\nf = id(h)\nprint(f(1))\n", "function 'h' expects 2 arguments but got 1"},
 		{"direct_fn_param_dynamic", "fn id(v) -> v\nfn f(x: int) -> x\nprint(f(id('s')))\n", "argument 'x' of 'f' expects int, got str"},

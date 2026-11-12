@@ -153,12 +153,4 @@ inline QValue qv_list_from(int count, ...) {
     return q;
 }
 
-// List value constructor from initializer list (C++ style)
-inline QValue qv_list_init(std::initializer_list<QValue> items) {
-    QValue q;
-    q.type = QValue::VAL_LIST;
-    q.data.list_val = q_new<QList>(items);
-    return q;
-}
-
 #endif // QUARK_CORE_CONSTRUCTORS_HPP

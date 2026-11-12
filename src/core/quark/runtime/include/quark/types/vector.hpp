@@ -436,11 +436,6 @@ inline void q_vec_str_append(QVector& v, const char* s, size_t len) {
     v.count++;
 }
 
-inline void q_vec_str_append_null(QVector& v) {
-    q_vec_str_append(v, "", 0);
-    q_vec_mark_null(v, v.count - 1);
-}
-
 // Copies the validity of `src` onto `dst` (same length).
 inline void q_vec_copy_validity(QVector& dst, const QVector& src) {
     if (src.validity == nullptr || src.null_count == 0) {
@@ -509,14 +504,6 @@ inline int q_vec_size(QValue vec) {
     return static_cast<int>(vec.data.vector_val->count);
 }
 
-inline QValue q_vec_dtype(QValue vec) {
-    if (!q_vec_has_valid_handle(vec) || !q_vec_validate(*vec.data.vector_val)) {
-        q_runtime_reportf("runtime error: dtype query expects valid vec\n");
-        std::exit(1);
-    }
-    return qv_string(q_vec_dtype_name(*vec.data.vector_val));
-}
-
 inline bool q_vec_is_numeric_dtype(const QVector& vec) {
     return vec.type == QVector::Type::F64 || vec.type == QVector::Type::I64;
 }
@@ -526,10 +513,6 @@ inline double q_vec_numeric_as_f64(const QVector& vec, size_t index) {
         return q_vec_f64_data(vec)[index];
     }
     return static_cast<double>(q_vec_i64_data(vec)[index]);
-}
-
-inline int64_t q_vec_numeric_as_i64(const QVector& vec, size_t index) {
-    return q_vec_i64_data(vec)[index];
 }
 
 // Boxes element i (null-aware).

@@ -1,6 +1,7 @@
 package parser_test
 
 import (
+	"strings"
 	"testing"
 
 	"quark/ast"
@@ -19,14 +20,14 @@ func TestPrecedence_MultiplicationBindsTighterThanAddition(t *testing.T) {
 		t.Fatalf("expected 1 top-level statement, got %d", len(node.Children))
 	}
 	expr := node.Children[0]
-	if expr.NodeType != ast.OperatorNode || expr.Token == nil || expr.Token.Type != token.PLUS {
+	if expr.NodeType != ast.BinaryNode || expr.Token == nil || expr.Token.Type != token.PLUS {
 		t.Fatalf("expected top operator PLUS, got %v", expr)
 	}
 	if len(expr.Children) != 2 {
 		t.Fatalf("expected binary op children, got %d", len(expr.Children))
 	}
 	right := expr.Children[1]
-	if right.NodeType != ast.OperatorNode || right.Token == nil || right.Token.Type != token.MULTIPLY {
+	if right.NodeType != ast.BinaryNode || right.Token == nil || right.Token.Type != token.MULTIPLY {
 		t.Fatalf("expected right operator MULTIPLY, got %v", right)
 	}
 }
@@ -37,11 +38,11 @@ func TestPrecedence_ExponentIsRightAssociative(t *testing.T) {
 		t.Fatalf("unexpected parse errors: %v", errs)
 	}
 	expr := node.Children[0]
-	if expr.NodeType != ast.OperatorNode || expr.Token == nil || expr.Token.Type != token.DOUBLESTAR {
+	if expr.NodeType != ast.BinaryNode || expr.Token == nil || expr.Token.Type != token.DOUBLESTAR {
 		t.Fatalf("expected top operator DOUBLESTAR, got %v", expr)
 	}
 	right := expr.Children[1]
-	if right.NodeType != ast.OperatorNode || right.Token == nil || right.Token.Type != token.DOUBLESTAR {
+	if right.NodeType != ast.BinaryNode || right.Token == nil || right.Token.Type != token.DOUBLESTAR {
 		t.Fatalf("expected right operator DOUBLESTAR, got %v", right)
 	}
 }
@@ -289,7 +290,7 @@ func TestVectorLiteral_ParseNode(t *testing.T) {
 		t.Fatalf("expected 1 top-level node, got %d", len(node.Children))
 	}
 	assign := node.Children[0]
-	if assign.NodeType != ast.OperatorNode || assign.Token == nil || assign.Token.Type != token.EQUALS {
+	if assign.NodeType != ast.AssignNode || assign.Token == nil || assign.Token.Type != token.EQUALS {
 		t.Fatalf("expected assignment node, got %v", assign)
 	}
 	if len(assign.Children) != 2 {
@@ -342,14 +343,14 @@ func TestDictLiteral_Empty(t *testing.T) {
 // --- Functions ---
 
 func TestFunction_BasicNamedFunction(t *testing.T) {
-	// Named functions are desugared: fn add(x, y) -> body  =>  add = fn(x, y) -> body
+	// A named function is a FnDeclNode [name, lambda].
 	node, errs := testutil.Parse("fn add(x, y) -> x + y\n")
 	if len(errs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", errs)
 	}
 	assign := node.Children[0]
-	if assign.NodeType != ast.OperatorNode || assign.TokenLiteral() != "=" {
-		t.Fatalf("expected assignment (desugared fn), got %v", assign)
+	if !ast.IsFnDecl(assign) {
+		t.Fatalf("expected a fn declaration, got %v", assign)
 	}
 	// LHS is the name, RHS is the lambda
 	if assign.Children[0].TokenLiteral() != "add" {
@@ -378,8 +379,8 @@ func TestFunction_WithBlockBody(t *testing.T) {
 		t.Fatalf("unexpected parse errors: %v", errs)
 	}
 	assign := node.Children[0]
-	if assign.NodeType != ast.OperatorNode || assign.TokenLiteral() != "=" {
-		t.Fatalf("expected assignment (desugared fn), got %v", assign)
+	if !ast.IsFnDecl(assign) {
+		t.Fatalf("expected a fn declaration, got %v", assign)
 	}
 	if assign.Children[1].NodeType != ast.LambdaNode {
 		t.Fatalf("expected LambdaNode on RHS, got %v", assign.Children[1])
@@ -387,14 +388,14 @@ func TestFunction_WithBlockBody(t *testing.T) {
 }
 
 func TestFunction_DefaultParameters(t *testing.T) {
-	// Named function with defaults is also desugared to assignment
+	// A named function with defaults is a declaration too
 	node, errs := testutil.Parse("fn add(x, y = 0) -> x + y\n")
 	if len(errs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", errs)
 	}
 	assign := node.Children[0]
-	if assign.NodeType != ast.OperatorNode || assign.TokenLiteral() != "=" {
-		t.Fatalf("expected assignment (desugared fn), got %v", assign)
+	if !ast.IsFnDecl(assign) {
+		t.Fatalf("expected a fn declaration, got %v", assign)
 	}
 	lambda := assign.Children[1]
 	if lambda.NodeType != ast.LambdaNode {
@@ -503,28 +504,59 @@ func TestPipe_BasicParse(t *testing.T) {
 	if len(errs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", errs)
 	}
-	expr := node.Children[0]
-	if expr.NodeType != ast.PipeNode {
-		t.Fatalf("expected PipeNode, got %v", expr)
+	// A pipe is parsed into the call it stands for: print(1).
+	call := node.Children[0]
+	if call.NodeType != ast.FunctionCallNode || !call.Piped {
+		t.Fatalf("expected a piped FunctionCallNode, got %v", call)
 	}
-	if len(expr.Children) != 2 {
-		t.Fatalf("expected 2 children (input, call), got %d", len(expr.Children))
+	args := call.Children[1].Children
+	if call.Children[0].TokenLiteral() != "print" || len(args) != 1 || args[0].TokenLiteral() != "1" {
+		t.Fatalf("expected print(1), got callee %v and args %v", call.Children[0], args)
 	}
 }
 
 func TestPipe_ChainedParse(t *testing.T) {
-	node, errs := testutil.Parse("x | f() | g()\n")
+	node, errs := testutil.Parse("x | f(1) | g()\n")
 	if len(errs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", errs)
 	}
-	// Chained pipes should be left-associative: (x | f()) | g()
-	expr := node.Children[0]
-	if expr.NodeType != ast.PipeNode {
-		t.Fatalf("expected outer PipeNode, got %v", expr)
+	// Left-associative: (x | f(1)) | g() is g(f(x, 1)).
+	outer := node.Children[0]
+	if outer.NodeType != ast.FunctionCallNode || outer.Children[0].TokenLiteral() != "g" {
+		t.Fatalf("expected outer call g, got %v", outer)
 	}
-	left := expr.Children[0]
-	if left.NodeType != ast.PipeNode {
-		t.Fatalf("expected inner PipeNode on left, got %v", left)
+	inner := outer.Children[1].Children
+	if len(inner) != 1 || inner[0].NodeType != ast.FunctionCallNode || inner[0].Children[0].TokenLiteral() != "f" {
+		t.Fatalf("expected g's only argument to be the call f, got %v", inner)
+	}
+	fArgs := inner[0].Children[1].Children
+	if len(fArgs) != 2 || fArgs[0].TokenLiteral() != "x" || fArgs[1].TokenLiteral() != "1" {
+		t.Fatalf("expected f(x, 1), got args %v", fArgs)
+	}
+}
+
+func TestPipe_MethodTarget(t *testing.T) {
+	node, errs := testutil.Parse("x | s.replace('b')\n")
+	if len(errs) > 0 {
+		t.Fatalf("unexpected parse errors: %v", errs)
+	}
+	// The piped input is the method's first argument; s stays the receiver.
+	call := node.Children[0]
+	if call.NodeType != ast.FunctionCallNode || call.Children[0].NodeType != ast.MemberNode {
+		t.Fatalf("expected a method call, got %v", call)
+	}
+	args := call.Children[1].Children
+	if len(args) != 2 || args[0].TokenLiteral() != "x" {
+		t.Fatalf("expected s.replace(x, 'b'), got args %v", args)
+	}
+}
+
+func TestPipe_TargetMustBeCall(t *testing.T) {
+	for _, src := range []string{"x | f\n", "x | 1 + 2\n", "x | f() + 1\n"} {
+		_, errs := testutil.Parse(src)
+		if len(errs) == 0 || !strings.Contains(strings.Join(errs, "\n"), "pipe target must be a function call") {
+			t.Fatalf("%q: expected pipe target error, got %v", src, errs)
+		}
 	}
 }
 
@@ -542,8 +574,8 @@ func TestPipe_InsideFunctionArg(t *testing.T) {
 		t.Fatalf("expected 1 argument, got %d", len(args.Children))
 	}
 	arg := args.Children[0]
-	if arg.NodeType != ast.PipeNode {
-		t.Fatalf("expected PipeNode as argument, got %v", arg)
+	if arg.NodeType != ast.FunctionCallNode || !arg.Piped {
+		t.Fatalf("expected a piped call as argument, got %v", arg)
 	}
 }
 
@@ -555,7 +587,7 @@ func TestAssignment_Simple(t *testing.T) {
 		t.Fatalf("unexpected parse errors: %v", errs)
 	}
 	expr := node.Children[0]
-	if expr.NodeType != ast.OperatorNode || expr.Token == nil || expr.Token.Type != token.EQUALS {
+	if expr.NodeType != ast.AssignNode || expr.Token == nil || expr.Token.Type != token.EQUALS {
 		t.Fatalf("expected EQUALS assignment, got %v", expr)
 	}
 }
@@ -578,7 +610,7 @@ func TestMemberAccess_DotParse(t *testing.T) {
 		t.Fatalf("unexpected parse errors: %v", errs)
 	}
 	expr := node.Children[0]
-	if expr.NodeType != ast.OperatorNode || expr.Token == nil || expr.Token.Type != token.DOT {
+	if expr.NodeType != ast.MemberNode || expr.Token == nil || expr.Token.Type != token.DOT {
 		t.Fatalf("expected DOT operator, got %v", expr)
 	}
 	if len(expr.Children) != 2 {
@@ -823,7 +855,7 @@ func TestUnary_Bang(t *testing.T) {
 		t.Fatalf("unexpected parse errors: %v", errs)
 	}
 	expr := node.Children[0]
-	if expr.NodeType != ast.OperatorNode || expr.Token == nil || expr.Token.Type != token.BANG {
+	if expr.NodeType != ast.UnaryNode || expr.Token == nil || expr.Token.Type != token.BANG {
 		t.Fatalf("expected BANG operator, got %v", expr)
 	}
 	if len(expr.Children) != 1 {
@@ -837,7 +869,7 @@ func TestUnary_NegateNumber(t *testing.T) {
 		t.Fatalf("unexpected parse errors: %v", errs)
 	}
 	expr := node.Children[0]
-	if expr.NodeType != ast.OperatorNode || expr.Token == nil || expr.Token.Type != token.MINUS {
+	if expr.NodeType != ast.UnaryNode || expr.Token == nil || expr.Token.Type != token.MINUS {
 		t.Fatalf("expected unary MINUS, got %v", expr)
 	}
 	if len(expr.Children) != 1 {
@@ -947,9 +979,9 @@ func exprString(n *ast.TreeNode) string {
 		return "<nil>"
 	}
 	switch {
-	case n.NodeType == ast.OperatorNode && len(n.Children) == 1:
+	case n.NodeType == ast.UnaryNode && len(n.Children) == 1:
 		return "(" + n.Token.Literal + exprString(n.Children[0]) + ")"
-	case n.NodeType == ast.OperatorNode && len(n.Children) == 2:
+	case (n.NodeType == ast.BinaryNode || n.NodeType == ast.AssignNode) && len(n.Children) == 2:
 		return "(" + exprString(n.Children[0]) + " " + n.Token.Literal + " " + exprString(n.Children[1]) + ")"
 	case n.NodeType == ast.IndexNode && len(n.Children) == 2:
 		return exprString(n.Children[0]) + "[" + exprString(n.Children[1]) + "]"

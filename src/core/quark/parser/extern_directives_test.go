@@ -35,7 +35,7 @@ func TestExternDirectives_Parse(t *testing.T) {
 		}
 	}
 	// `link` is a contextual word: still usable as an identifier.
-	if node.Children[3].NodeType != ast.OperatorNode {
+	if node.Children[3].NodeType != ast.AssignNode {
 		t.Fatalf("expected 'link = 1' to parse as an assignment, got %s", node.Children[3].NodeType)
 	}
 }

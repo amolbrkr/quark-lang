@@ -14,11 +14,6 @@ func (a *Analyzer) analyzeModule(node *ast.TreeNode) Type {
 	}
 	nameNode := node.Children[0]
 	bodyNode := node.Children[1]
-	moduleName := nameNode.TokenLiteral()
-	if _, exists := a.modules[moduleName]; exists {
-		a.errorAt(nameNode, "module '%s' already defined", moduleName)
-		return TypeVoid
-	}
 	if a.currentScope != a.rootScope {
 		a.errorAt(nameNode, "a module must be defined at the top level of a file")
 		return TypeVoid
@@ -27,41 +22,12 @@ func (a *Analyzer) analyzeModule(node *ast.TreeNode) Type {
 	// so the body is analyzed in the file scope, where code outside the
 	// module reaches members as module::member. Its declarations were
 	// declared with the top level's (analyzeCompilationUnit).
-	a.currentModule = moduleName
 	if bodyNode != nil && bodyNode.NodeType == ast.BlockNode {
 		a.analyzeStatements(bodyNode, bodyNode.Children)
 	} else {
 		a.Analyze(bodyNode)
 	}
-	a.modules[moduleName] = &Module{Name: moduleName, Scope: a.currentScope, Symbols: a.currentScope.Symbols}
-	a.currentModule = ""
 	return TypeVoid
-}
-
-func (a *Analyzer) GetModules() map[string]*Module {
-	return a.modules
-}
-
-func (a *Analyzer) GetCaptures() map[*ast.TreeNode][]string {
-	return a.captures
-}
-
-func (a *Analyzer) GetCallPlans() map[*ast.TreeNode]*ir.CallPlan {
-	return a.callPlans
-}
-
-func (a *Analyzer) GetReturnValidation() map[*ast.TreeNode]bool {
-	return a.returnValidated
-}
-
-// GetExternFns returns the map of extern fn registration entries (for codegen).
-func (a *Analyzer) GetExternFns() map[string]*ir.CallPlan {
-	return a.externFns
-}
-
-// GetNativeFns returns the map of fully-annotated user-defined function entries (for codegen).
-func (a *Analyzer) GetNativeFns() map[string]*ir.CallPlan {
-	return a.nativeFns
 }
 
 // Analysis is everything the analyzer hands to the invariant checks and to
@@ -200,11 +166,9 @@ func (a *Analyzer) analyzeExternFn(node *ast.TreeNode) Type {
 		}
 		a.builtins[funcName] = sig
 		a.builtinSyms[funcName] = a.currentScope.Define(funcName, funcType, false)
-		a.functions[funcName] = funcType
 
 		// Record the extern registration so call sites can use DispatchExtern
 		a.externFns[funcName] = &ir.CallPlan{
-			Kind:             ir.CallBuiltin,
 			CalleeName:       funcName,
 			MinArity:         len(paramTypes),
 			MaxArity:         len(paramTypes),
@@ -233,7 +197,6 @@ func (a *Analyzer) analyzeExternFn(node *ast.TreeNode) Type {
 
 		methodKey := receiverTypeStr + "." + funcName
 		a.externFns[methodKey] = &ir.CallPlan{
-			Kind:               ir.CallBuiltin,
 			CalleeName:         funcName,
 			MinArity:           len(paramTypes) + 1,
 			MaxArity:           len(paramTypes) + 1,
@@ -355,12 +318,6 @@ func (a *Analyzer) GetCapturedByFunction(root *ast.TreeNode) map[*ast.TreeNode]m
 				}
 			}
 			// Children of this lambda are now enclosed by it.
-			for _, child := range n.Children {
-				walk(child, n)
-			}
-			return
-		}
-		if n.NodeType == ast.FunctionNode {
 			for _, child := range n.Children {
 				walk(child, n)
 			}

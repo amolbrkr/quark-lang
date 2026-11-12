@@ -2,7 +2,6 @@ package types
 
 import (
 	"quark/ast"
-	"quark/token"
 )
 
 func (a *Analyzer) analyzeCompilationUnit(node *ast.TreeNode) Type {
@@ -15,13 +14,11 @@ func (a *Analyzer) analyzeCompilationUnit(node *ast.TreeNode) Type {
 		}
 	}
 	a.predeclareStructTypes(structs)
-	a.predeclareFunctions(node.Children)
 	// Module bodies share the file scope: all of the program's top-level
 	// and module declarations are hoisted together.
 	a.declareFixedFns(node, node.Children)
 	for _, child := range node.Children {
 		if child != nil && child.NodeType == ast.ModuleNode && len(child.Children) >= 2 && child.Children[1] != nil {
-			a.predeclareFunctions(child.Children[1].Children)
 			a.declareFixedFns(child.Children[1], child.Children[1].Children)
 		}
 	}
@@ -33,7 +30,6 @@ func (a *Analyzer) analyzeCompilationUnit(node *ast.TreeNode) Type {
 func (a *Analyzer) analyzeBlock(node *ast.TreeNode) Type {
 	a.pushScope()
 	defer a.popScope()
-	a.predeclareFunctions(node.Children)
 	a.declareFixedFns(node, node.Children)
 	return a.analyzeStatements(node, node.Children)
 }
@@ -49,78 +45,6 @@ func (a *Analyzer) analyzeStatements(list *ast.TreeNode, stmts []*ast.TreeNode) 
 		lastType = a.Analyze(child)
 	}
 	return lastType
-}
-
-func (a *Analyzer) analyzeFunction(node *ast.TreeNode) Type {
-	savedLoopDepth := a.loopDepth
-	a.loopDepth = 0
-	defer func() { a.loopDepth = savedLoopDepth }()
-
-	if len(node.Children) < 3 {
-		a.addError("invalid function definition")
-		return TypeVoid
-	}
-
-	nameNode := node.Children[0]
-	argsNode := node.Children[1]
-	bodyNode := node.Children[2]
-	funcName := nameNode.TokenLiteral()
-
-	sym := a.currentScope.LookupLocal(funcName)
-	var funcType *FunctionType
-	if sym != nil {
-		var ok bool
-		funcType, ok = sym.Type.(*FunctionType)
-		if !ok {
-			a.errorAt(nameNode, "symbol '%s' already defined and is not a function", funcName)
-			return TypeVoid
-		}
-	} else {
-		funcType = a.declareFunctionSignature(node)
-		if funcType == nil {
-			return TypeVoid
-		}
-	}
-
-	paramSpecs := collectParamSpecs(argsNode)
-	if len(funcType.ParamTypes) != len(paramSpecs) {
-		funcType.ParamTypes = make([]Type, len(paramSpecs))
-	}
-	for i, spec := range paramSpecs {
-		if spec.typeNode != nil {
-			funcType.ParamTypes[i] = a.resolveTypeNode(spec.typeNode)
-		} else if spec.defaultValue != nil {
-			funcType.ParamTypes[i] = inferLiteralType(spec.defaultValue)
-		} else {
-			funcType.ParamTypes[i] = TypeAny
-		}
-	}
-
-	a.validateDefaultValues(paramSpecs, funcType, nameNode)
-
-	a.pushScope()
-	paramSyms := make([]*Symbol, len(paramSpecs))
-	owner := a.newParamOwner()
-	for i, spec := range paramSpecs {
-		if spec.name == "" {
-			continue
-		}
-		var paramType Type = TypeAny
-		if i < len(funcType.ParamTypes) {
-			paramType = funcType.ParamTypes[i]
-		}
-		paramSyms[i] = a.currentScope.Define(spec.name, paramType, true)
-		a.trackParam(paramSyms[i], owner, i)
-	}
-	returnType := a.Analyze(bodyNode)
-	a.popScope()
-	funcType.ParamCalls = a.paramCallsOf(paramSyms)
-
-	a.validateReturnType(funcType, returnType, funcName, nameNode)
-	if funcType.AnnotatedReturnType == nil {
-		funcType.ReturnType = returnType
-	}
-	return funcType
 }
 
 func (a *Analyzer) collectFreeVars(node *ast.TreeNode, lambdaScope *Scope, params map[string]bool, seen map[string]bool, result *[]string, syms *[]*Symbol) {
@@ -153,7 +77,7 @@ func (a *Analyzer) collectFreeVars(node *ast.TreeNode, lambdaScope *Scope, param
 	}
 	// Dot access: the right side is a field, key or method name, not a
 	// variable, so only the left side is walked.
-	if node.NodeType == ast.OperatorNode && node.Token != nil && node.Token.Type == token.DOT && len(node.Children) == 2 {
+	if node.NodeType == ast.MemberNode && len(node.Children) == 2 {
 		left := node.Children[0]
 		a.collectFreeVars(left, lambdaScope, params, seen, result, syms)
 		return

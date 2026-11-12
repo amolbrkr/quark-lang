@@ -158,11 +158,10 @@ func stdlibModules(t *testing.T) []Module {
 	return mods
 }
 
-// moduleFunction recognizes `name = fn(params) T -> ...` (what `fn name(...)`
-// desugars to) inside a module body.
+// moduleFunction recognizes a `fn name(params) T -> ...` declaration inside
+// a module body.
 func moduleFunction(stmt *ast.TreeNode, lines []string) (Function, bool) {
-	if stmt.NodeType != ast.OperatorNode || len(stmt.Children) != 2 ||
-		stmt.Children[0].NodeType != ast.IdentifierNode || stmt.Children[1].NodeType != ast.LambdaNode {
+	if !ast.IsFnDecl(stmt) {
 		return Function{}, false
 	}
 	name := stmt.Children[0].TokenLiteral()

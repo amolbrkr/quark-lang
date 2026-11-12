@@ -21,20 +21,10 @@ type paramSpec struct {
 	defaultValue *ast.TreeNode
 }
 
-// Module represents a defined module with its symbols
-type Module struct {
-	Name    string
-	Scope   *Scope
-	Symbols map[string]*Symbol
-}
-
 // Analyzer performs semantic analysis on the AST
 type Analyzer struct {
 	currentScope    *Scope
 	errors          []diagnostics.Diagnostic
-	functions       map[string]*FunctionType // Track function signatures
-	modules         map[string]*Module       // Track defined modules
-	currentModule   string                   // Current module being defined (empty if global)
 	builtins        map[string]*builtinSignature
 	methods         map[builtins.TypeKey]map[string]*builtinSignature // receiver type -> method name -> sig
 	captures        map[*ast.TreeNode][]string                        // Lambda node -> captured variable names
@@ -91,7 +81,6 @@ func NewAnalyzer() *Analyzer {
 
 	builtinSigs := make(map[string]*builtinSignature)
 	methodSigs := make(map[builtins.TypeKey]map[string]*builtinSignature)
-	funcs := make(map[string]*FunctionType)
 	for _, spec := range builtins.Catalog() {
 		paramTypes := make([]Type, 0, len(spec.ParamTypes))
 		for _, key := range spec.ParamTypes {
@@ -103,7 +92,6 @@ func NewAnalyzer() *Analyzer {
 		if spec.ReceiverType == "" {
 			if _, exists := builtinSigs[spec.Name]; !exists {
 				builtinSyms[spec.Name] = globalScope.Define(spec.Name, funcType, false)
-				funcs[spec.Name] = funcType
 				builtinSigs[spec.Name] = sig
 			}
 		} else {
@@ -119,9 +107,6 @@ func NewAnalyzer() *Analyzer {
 	return &Analyzer{
 		currentScope:    globalScope,
 		errors:          make([]diagnostics.Diagnostic, 0),
-		functions:       funcs,
-		modules:         make(map[string]*Module),
-		currentModule:   "",
 		builtins:        builtinSigs,
 		methods:         methodSigs,
 		captures:        make(map[*ast.TreeNode][]string),
@@ -155,15 +140,6 @@ func (a *Analyzer) refersToBuiltin(scope *Scope, name string) bool {
 	return sym == nil || sym == a.builtinSyms[name]
 }
 
-func (a *Analyzer) Errors() []string {
-	errDiags := a.ErrorDiagnostics()
-	out := make([]string, 0, len(errDiags))
-	for _, d := range errDiags {
-		out = append(out, d.String())
-	}
-	return out
-}
-
 func (a *Analyzer) HasErrors() bool {
 	for _, d := range a.errors {
 		if d.Severity == "" || d.Severity == diagnostics.SeverityError {
@@ -171,26 +147,6 @@ func (a *Analyzer) HasErrors() bool {
 		}
 	}
 	return false
-}
-
-func (a *Analyzer) ErrorDiagnostics() []diagnostics.Diagnostic {
-	out := make([]diagnostics.Diagnostic, 0, len(a.errors))
-	for _, d := range a.errors {
-		if d.Severity == "" || d.Severity == diagnostics.SeverityError {
-			out = append(out, d)
-		}
-	}
-	return out
-}
-
-func (a *Analyzer) WarningDiagnostics() []diagnostics.Diagnostic {
-	out := make([]diagnostics.Diagnostic, 0, len(a.errors))
-	for _, d := range a.errors {
-		if d.Severity == diagnostics.SeverityWarning {
-			out = append(out, d)
-		}
-	}
-	return out
 }
 
 func (a *Analyzer) Diagnostics() []diagnostics.Diagnostic {
@@ -279,8 +235,6 @@ func (a *Analyzer) analyze(node *ast.TreeNode) Type {
 		return a.analyzeCompilationUnit(node)
 	case ast.BlockNode:
 		return a.analyzeBlock(node)
-	case ast.FunctionNode:
-		return a.analyzeFunction(node)
 	case ast.FunctionCallNode:
 		return a.analyzeFunctionCall(node)
 	case ast.IfStatementNode:
@@ -295,10 +249,16 @@ func (a *Analyzer) analyze(node *ast.TreeNode) Type {
 		return a.analyzeIdentifier(node)
 	case ast.LiteralNode:
 		return a.analyzeLiteral(node)
-	case ast.OperatorNode:
-		return a.analyzeOperator(node)
-	case ast.PipeNode:
-		return a.analyzePipe(node)
+	case ast.AssignNode:
+		return a.analyzeAssign(node)
+	case ast.FnDeclNode:
+		return a.analyzeFnDecl(node)
+	case ast.MemberNode:
+		return a.analyzeMember(node)
+	case ast.UnaryNode:
+		return a.analyzeUnary(node)
+	case ast.BinaryNode:
+		return a.analyzeBinary(node)
 	case ast.TernaryNode:
 		return a.analyzeTernary(node)
 	case ast.ListNode:
@@ -316,7 +276,8 @@ func (a *Analyzer) analyze(node *ast.TreeNode) Type {
 	case ast.ModuleNode:
 		return a.analyzeModule(node)
 	case ast.InclNode:
-		return TypeVoid // resolved and removed by the loader
+		a.errorAt(node, "internal compiler error: 'incl' reached the analyzer (the loader removes every incl)")
+		return TypeVoid
 	case ast.BreakNode:
 		if a.loopDepth == 0 {
 			a.errorAt(node, "[C-SCOPE] 'break' must be inside a for or while loop")

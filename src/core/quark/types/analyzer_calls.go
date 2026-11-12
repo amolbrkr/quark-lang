@@ -30,38 +30,39 @@ func (a *Analyzer) checkArgTypes(calleeName string, paramTypes []Type, argTypes 
 	}
 }
 
-// methodCallResult holds the outcome of resolveMethodCall.
-type methodCallResult struct {
-	returnType Type
-	resolved   bool // true = method found/error propagated/union dispatched; false = not found
+// checkArity reports a call with the wrong number of arguments. what names
+// the callee ("builtin 'len'", "method 'split'", "function 'f'"); got counts
+// a piped input, which the message then mentions.
+func (a *Analyzer) checkArity(call *ast.TreeNode, what string, minArgs, maxArgs, got int) {
+	if got >= minArgs && got <= maxArgs {
+		return
+	}
+	ctx := ""
+	if call != nil && call.Piped {
+		ctx = " (including piped input)"
+	}
+	a.errorAt(call, "%s expects %s but got %d%s", what, arityText(minArgs, maxArgs), got, ctx)
 }
 
-// resolveMethodCall is the shared method dispatch logic for both direct calls (x.method(args))
-// and pipe calls (value | x.method(args)). It handles receiver analysis, method lookup,
-// arity/type validation, CallPlan creation, flow typing, and return type refinement.
+// methodCallResult holds the outcome of resolveMethodCall.
+type methodCallResult struct {
+	returnType   Type
+	receiverType Type
+	resolved     bool // true = method found/error propagated/union dispatched; false = not found
+}
+
+// resolveMethodCall plans the method call `receiver.method(args)` (a pipe
+// `x | receiver.method(args)` is parsed into the same call). It analyzes the
+// receiver, looks the method up, checks arity and argument types, records
+// the CallPlan on call, applies flow typing and refines the return type.
 //
-// Parameters:
-//   - planNode: the AST node that receives the CallPlan
-//   - errorNode: the AST node for arity error locations (planNode for direct calls, pipe node for pipes)
-//   - funcNode: the DOT operator node containing [receiverNode, methodIdentifier]
-//   - argCount: number of args the method receives (excludes receiver; includes piped input for pipes)
-//   - argTypes: types of those args
-//   - argNodes: AST nodes of those args
-//   - arityCtx: suffix for arity errors (e.g. " (including piped input)" or "")
-//
-// Returns resolved=false when no method was found, letting the caller decide whether to
-// report an error (direct calls) or fall through to other dispatch (pipe calls).
-func (a *Analyzer) resolveMethodCall(
-	planNode *ast.TreeNode,
-	errorNode *ast.TreeNode,
-	funcNode *ast.TreeNode,
-	argCount int,
-	argTypes []Type,
-	argNodes []*ast.TreeNode,
-	arityCtx string,
-) methodCallResult {
+// funcNode is the DOT node [receiver, method name]; argTypes and argNodes
+// are the call's arguments, without the receiver. It returns resolved=false
+// when no method was found, for the caller to report.
+func (a *Analyzer) resolveMethodCall(call, funcNode *ast.TreeNode, argTypes []Type, argNodes []*ast.TreeNode) methodCallResult {
+	argCount := len(argNodes)
 	if len(funcNode.Children) < 2 {
-		return methodCallResult{resolved: false}
+		return methodCallResult{resolved: false, returnType: TypeError, receiverType: TypeError}
 	}
 	receiverNode := funcNode.Children[0]
 	methodName := funcNode.Children[1].TokenLiteral()
@@ -69,8 +70,8 @@ func (a *Analyzer) resolveMethodCall(
 
 	// Propagate ErrorType silently — don't report "can't call method on <error>"
 	if IsErrorType(receiverType) {
-		a.callPlans[planNode] = &ir.CallPlan{Kind: ir.CallFunctionValue, CalleeName: calleeNameFromNode(funcNode), MinArity: argCount, MaxArity: argCount, Dispatch: ir.DispatchClosure, ArgTypesChecked: true}
-		return methodCallResult{returnType: TypeError, resolved: true}
+		a.callPlans[call] = &ir.CallPlan{CalleeName: calleeNameFromNode(funcNode), MinArity: argCount, MaxArity: argCount, Dispatch: ir.DispatchClosure}
+		return methodCallResult{returnType: TypeError, receiverType: receiverType, resolved: true}
 	}
 
 	receiverKey := typeToBuiltinTypeKey(receiverType)
@@ -92,45 +93,31 @@ func (a *Analyzer) resolveMethodCall(
 					plan.ReceiverTypeKey = methodKey
 					plan.MinArity = totalMin
 					plan.MaxArity = totalMax
-					if argCount < sig.MinArgs || argCount > sig.MaxArgs {
-						if sig.MinArgs == sig.MaxArgs {
-							a.errorAt(errorNode, "extern method '%s' expects %d argument(s) but got %d%s", methodName, sig.MaxArgs, argCount, arityCtx)
-						} else {
-							a.errorAt(errorNode, "extern method '%s' expects %d-%d arguments but got %d%s", methodName, sig.MinArgs, sig.MaxArgs, argCount, arityCtx)
-						}
-					}
+					a.checkArity(call, "extern method '"+methodName+"'", sig.MinArgs, sig.MaxArgs, argCount)
 					a.checkArgTypes(methodName, sig.Type.ParamTypes, argTypes, argNodes)
-					plan.ArgTypesChecked = true
-					a.callPlans[planNode] = &plan
-					return methodCallResult{returnType: sig.Type.ReturnType, resolved: true}
+					a.callPlans[call] = &plan
+					return methodCallResult{returnType: sig.Type.ReturnType, receiverType: receiverType, resolved: true}
 				}
 
 				runtimeSym := ""
 				if spec, ok := builtins.LookupMethod(receiverKey, methodName); ok {
 					runtimeSym = spec.Runtime
 				}
-				a.callPlans[planNode] = &ir.CallPlan{Kind: ir.CallBuiltin, CalleeName: methodName, MinArity: totalMin, MaxArity: totalMax, Dispatch: ir.DispatchBuiltin, RuntimeSymbol: runtimeSym, IsMethod: true, ReceiverNode: receiverNode, ReceiverTypeKey: string(receiverKey)}
-				if argCount < sig.MinArgs || argCount > sig.MaxArgs {
-					if sig.MinArgs == sig.MaxArgs {
-						a.errorAt(errorNode, "method '%s' expects %d argument(s) but got %d%s", methodName, sig.MaxArgs, argCount, arityCtx)
-					} else {
-						a.errorAt(errorNode, "method '%s' expects %d-%d arguments but got %d%s", methodName, sig.MinArgs, sig.MaxArgs, argCount, arityCtx)
-					}
-				}
+				a.callPlans[call] = &ir.CallPlan{CalleeName: methodName, MinArity: totalMin, MaxArity: totalMax, Dispatch: ir.DispatchBuiltin, RuntimeSymbol: runtimeSym, IsMethod: true, ReceiverNode: receiverNode, ReceiverTypeKey: string(receiverKey)}
+				a.checkArity(call, "method '"+methodName+"'", sig.MinArgs, sig.MaxArgs, argCount)
 				a.checkArgTypes(methodName, sig.Type.ParamTypes, argTypes, argNodes)
-				a.callPlans[planNode].ArgTypesChecked = true
 				// Flow typing: widen element type on mutation methods
 				a.widenReceiverOnMutation(receiverNode, receiverType, methodName, argTypes)
-				if methodName == "to_vec" {
-					return methodCallResult{returnType: a.inferToVectorType(receiverType, errorNode), resolved: true}
+				ret := refineMethodReturnType(sig.Type.ReturnType, receiverType, methodName)
+				switch methodName {
+				case "to_vec":
+					ret = a.inferToVectorType(receiverType, call)
+				case "astype":
+					ret = inferAstypeReturnType(receiverType, argNodes)
+				case "to_list":
+					ret = inferToListReturnType(receiverType)
 				}
-				if methodName == "astype" {
-					return methodCallResult{returnType: inferAstypeReturnType(receiverType, argNodes), resolved: true}
-				}
-				if methodName == "to_list" {
-					return methodCallResult{returnType: inferToListReturnType(receiverType), resolved: true}
-				}
-				return methodCallResult{returnType: refineMethodReturnType(sig.Type.ReturnType, receiverType, methodName), resolved: true}
+				return methodCallResult{returnType: ret, receiverType: receiverType, resolved: true}
 			}
 		}
 	}
@@ -138,19 +125,20 @@ func (a *Analyzer) resolveMethodCall(
 	// Receiver type unknown at compile time (e.g. the result of unwrap): dispatch on
 	// the runtime type over every builtin receiver type that has this method.
 	if isUnknownType(receiverType) {
-		if result, ok := a.resolveDynamicMethodCall(planNode, errorNode, funcNode, methodName, argCount, argTypes, argNodes, arityCtx); ok {
+		if result, ok := a.resolveDynamicMethodCall(call, funcNode, methodName, argTypes, argNodes); ok {
+			result.receiverType = receiverType
 			return result
 		}
 	}
 
 	// Try union type method dispatch — check if all union members support the method
 	if unionType, ok := receiverType.(*UnionType); ok {
-		retType := a.analyzeUnionMethodCall(planNode, unionType, methodName, argCount, argTypes, argNodes, funcNode)
-		return methodCallResult{returnType: retType, resolved: true}
+		retType := a.analyzeUnionMethodCall(call, unionType, methodName, argTypes, argNodes, funcNode)
+		return methodCallResult{returnType: retType, receiverType: receiverType, resolved: true}
 	}
 
-	// Method not found — caller decides whether to error or fall through
-	return methodCallResult{resolved: false, returnType: TypeError}
+	// Method not found: the caller reports it.
+	return methodCallResult{resolved: false, returnType: TypeError, receiverType: receiverType}
 }
 
 // dynamicReceivers lists the builtin receiver types a dynamic method call can
@@ -167,18 +155,10 @@ var dynamicReceivers = []struct {
 
 // resolveDynamicMethodCall plans a method call on a receiver of unknown type as a
 // runtime switch over the builtin receiver types that define methodName and accept
-// argCount arguments. It returns ok=false when no builtin type has the method, so
-// the caller can report it (direct calls) or fall through (pipe calls).
-func (a *Analyzer) resolveDynamicMethodCall(
-	planNode *ast.TreeNode,
-	errorNode *ast.TreeNode,
-	funcNode *ast.TreeNode,
-	methodName string,
-	argCount int,
-	argTypes []Type,
-	argNodes []*ast.TreeNode,
-	arityCtx string,
-) (methodCallResult, bool) {
+// that many arguments. It returns ok=false when no builtin type has the
+// method, for the caller to report.
+func (a *Analyzer) resolveDynamicMethodCall(call, funcNode *ast.TreeNode, methodName string, argTypes []Type, argNodes []*ast.TreeNode) (methodCallResult, bool) {
+	argCount := len(argNodes)
 	var candidates []ir.MethodCandidate
 	var sigs []*builtinSignature
 	var arityMismatch *builtinSignature
@@ -209,17 +189,13 @@ func (a *Analyzer) resolveDynamicMethodCall(
 	if len(candidates) == 0 {
 		switch {
 		case arityMismatch != nil:
-			if arityMismatch.MinArgs == arityMismatch.MaxArgs {
-				a.errorAt(errorNode, "method '%s' expects %d argument(s) but got %d%s", methodName, arityMismatch.MaxArgs, argCount, arityCtx)
-			} else {
-				a.errorAt(errorNode, "method '%s' expects %d-%d arguments but got %d%s", methodName, arityMismatch.MinArgs, arityMismatch.MaxArgs, argCount, arityCtx)
-			}
+			a.checkArity(call, "method '"+methodName+"'", arityMismatch.MinArgs, arityMismatch.MaxArgs, argCount)
 		case hasExtern:
 			a.errorAt(funcNode, "extern method '%s' needs a receiver of known type; add a type annotation", methodName)
 		default:
 			return methodCallResult{resolved: false, returnType: TypeError}, false
 		}
-		a.callPlans[planNode] = &ir.CallPlan{Kind: ir.CallFunctionValue, CalleeName: methodName, MinArity: argCount, MaxArity: argCount, Dispatch: ir.DispatchClosure, ArgTypesChecked: true}
+		a.callPlans[call] = &ir.CallPlan{CalleeName: methodName, MinArity: argCount, MaxArity: argCount, Dispatch: ir.DispatchClosure}
 		return methodCallResult{returnType: TypeError, resolved: true}, true
 	}
 
@@ -239,12 +215,11 @@ func (a *Analyzer) resolveDynamicMethodCall(
 			break
 		}
 	}
-	a.callPlans[planNode] = &ir.CallPlan{
-		Kind: ir.CallBuiltin, CalleeName: methodName,
-		MinArity: argCount + 1, MaxArity: argCount + 1,
+	a.callPlans[call] = &ir.CallPlan{
+		CalleeName: methodName,
+		MinArity:   argCount + 1, MaxArity: argCount + 1,
 		Dispatch: ir.DispatchDynamicMethod, IsMethod: true,
 		ReceiverNode: funcNode.Children[0], MethodCandidates: candidates,
-		ArgTypesChecked: true,
 	}
 	return methodCallResult{returnType: returnType, resolved: true}, true
 }
@@ -256,66 +231,57 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 	}
 
 	funcNode := node.Children[0]
-	argsNode := node.Children[1]
-	argCount := len(argsNode.Children)
+	argNodes := node.Children[1].Children
+	argCount := len(argNodes)
 	argTypes := make([]Type, 0, argCount)
-	for _, arg := range argsNode.Children {
+	for _, arg := range argNodes {
 		argTypes = append(argTypes, a.Analyze(arg))
 	}
-
-	// Method dispatch: x.method(args)
-	if funcNode.NodeType == ast.OperatorNode && funcNode.Token != nil && funcNode.Token.Type == token.DOT {
-		result := a.resolveMethodCall(node, node, funcNode, argCount, argTypes, argsNode.Children, "")
-		if result.resolved {
-			return result.returnType
-		}
-		// Method not found — report error
-		receiverType := a.Analyze(funcNode.Children[0])
-		receiverKey := typeToBuiltinTypeKey(receiverType)
-		if !isUnknownType(receiverType) && receiverKey != "" {
-			a.errorAt(funcNode, "type '%s' has no method '%s'", receiverType.String(), funcNode.Children[1].TokenLiteral())
-		} else if !isUnknownType(receiverType) {
-			a.errorAt(funcNode, "dot-call syntax is not supported on values of type '%s'", receiverType.String())
-		} else if !IsErrorType(receiverType) {
-			a.errorAt(funcNode, "no type has a method '%s'", funcNode.Children[1].TokenLiteral())
-		}
-		a.callPlans[node] = &ir.CallPlan{Kind: ir.CallFunctionValue, CalleeName: calleeNameFromNode(funcNode), MinArity: argCount, MaxArity: argCount, Dispatch: ir.DispatchClosure, ArgTypesChecked: true}
+	// A call that fails to resolve still gets a plan, so the invariant checks
+	// see every call; codegen never runs after an error.
+	unresolved := func() Type {
+		a.callPlans[node] = &ir.CallPlan{CalleeName: calleeNameFromNode(funcNode), MinArity: argCount, MaxArity: argCount, Dispatch: ir.DispatchClosure}
 		return TypeError
 	}
 
+	// Method dispatch: x.method(args)
+	if funcNode.NodeType == ast.MemberNode {
+		result := a.resolveMethodCall(node, funcNode, argTypes, argNodes)
+		if result.resolved {
+			return result.returnType
+		}
+		receiverType := result.receiverType
+		methodName := funcNode.Children[1].TokenLiteral()
+		switch {
+		case !isUnknownType(receiverType) && typeToBuiltinTypeKey(receiverType) != "":
+			a.errorAt(funcNode, "type '%s' has no method '%s'", receiverType.String(), methodName)
+		case !isUnknownType(receiverType):
+			a.errorAt(funcNode, "dot-call syntax is not supported on values of type '%s'", receiverType.String())
+		case !IsErrorType(receiverType):
+			a.errorAt(funcNode, "no type has a method '%s'", methodName)
+		}
+		return unresolved()
+	}
+
 	funcExprType := a.Analyze(funcNode)
-	a.recordParamCall(funcNode, argTypes, argsNode.Children)
+	a.recordParamCall(funcNode, argTypes, argNodes)
 	if funcNode.NodeType == ast.IdentifierNode {
 		name := funcNode.TokenLiteral()
 		if sig, ok := a.builtins[name]; ok && a.refersToBuiltin(a.currentScope, name) {
-			// Check if this builtin is actually an extern fn (DispatchExtern)
+			// An extern fn is registered as a builtin with a DispatchExtern prototype.
 			if proto, isExtern := a.externFns[name]; isExtern {
 				plan := *proto // copy prototype
 				plan.CalleeName = name
 				plan.MinArity = sig.MinArgs
 				plan.MaxArity = sig.MaxArgs
-				if argCount < sig.MinArgs || argCount > sig.MaxArgs {
-					if sig.MinArgs == sig.MaxArgs {
-						a.errorAt(node, "extern fn '%s' expects %d argument(s) but got %d", name, sig.MaxArgs, argCount)
-					} else {
-						a.errorAt(node, "extern fn '%s' expects %d-%d arguments but got %d", name, sig.MinArgs, sig.MaxArgs, argCount)
-					}
-				}
-				a.checkArgTypes(name, sig.Type.ParamTypes, argTypes, argsNode.Children)
-				plan.ArgTypesChecked = true
+				a.checkArity(node, "extern fn '"+name+"'", sig.MinArgs, sig.MaxArgs, argCount)
+				a.checkArgTypes(name, sig.Type.ParamTypes, argTypes, argNodes)
 				a.callPlans[node] = &plan
 				return sig.Type.ReturnType
 			}
-			a.callPlans[node] = &ir.CallPlan{Kind: ir.CallBuiltin, CalleeName: name, MinArity: sig.MinArgs, MaxArity: sig.MaxArgs, Dispatch: ir.DispatchBuiltin, RuntimeSymbol: builtinsRuntimeName(name)}
-			if argCount < sig.MinArgs || argCount > sig.MaxArgs {
-				if sig.MinArgs == sig.MaxArgs {
-					a.errorAt(node, "builtin '%s' expects %d argument(s) but got %d", name, sig.MaxArgs, argCount)
-				} else {
-					a.errorAt(node, "builtin '%s' expects %d-%d arguments but got %d", name, sig.MinArgs, sig.MaxArgs, argCount)
-				}
-			}
-			a.checkArgTypes(name, sig.Type.ParamTypes, argTypes, argsNode.Children)
-			a.callPlans[node].ArgTypesChecked = true
+			a.callPlans[node] = &ir.CallPlan{CalleeName: name, MinArity: sig.MinArgs, MaxArity: sig.MaxArgs, Dispatch: ir.DispatchBuiltin, RuntimeSymbol: builtinsRuntimeName(name)}
+			a.checkArity(node, "builtin '"+name+"'", sig.MinArgs, sig.MaxArgs, argCount)
+			a.checkArgTypes(name, sig.Type.ParamTypes, argTypes, argNodes)
 			return a.inferBuiltinReturnType(name, argTypes, node)
 		}
 	}
@@ -323,10 +289,9 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 	funcType, ok := funcExprType.(*FunctionType)
 	if !ok {
 		if IsErrorType(funcExprType) {
-			a.callPlans[node] = &ir.CallPlan{Kind: ir.CallFunctionValue, CalleeName: calleeNameFromNode(funcNode), MinArity: argCount, MaxArity: argCount, Dispatch: ir.DispatchClosure, ArgTypesChecked: true}
-			return TypeError
+			return unresolved()
 		}
-		a.callPlans[node] = &ir.CallPlan{Kind: ir.CallFunctionValue, CalleeName: calleeNameFromNode(funcNode), MinArity: argCount, MaxArity: argCount, Dispatch: ir.DispatchClosure, ArgTypesChecked: true}
+		unresolved()
 		// A value typed `fn` (or one of several signatures) is called as a
 		// closure; its arity and argument types are checked at runtime, but
 		// a call none of the possible signatures accepts is rejected now.
@@ -344,39 +309,17 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 
 	minArity := funcType.MinArity()
 	maxArity := len(funcType.ParamTypes)
-	defaultNodes := defaultNodesFromFunctionType(funcType, argCount)
-	dispatch := ir.DispatchClosure
-	runtimeSymbol := ""
-	var nativeParamTypes []string
-	var nativeReturnType string
-	if funcNode.NodeType == ast.IdentifierNode {
-		// Legacy FunctionNode declarations are immutable C++ functions.
-		name := funcNode.TokenLiteral()
-		if sym := a.currentScope.Lookup(name); sym != nil && !sym.Mutable && a.fixedFnOf(sym) == nil {
-			if _, exists := a.functions[name]; exists {
-				dispatch = ir.DispatchDirect
-				runtimeSymbol = "quark_" + name
-			}
-		}
-	}
-	a.callPlans[node] = &ir.CallPlan{Kind: ir.CallFunctionValue, CalleeName: calleeNameFromNode(funcNode), MinArity: minArity, MaxArity: maxArity, Dispatch: dispatch, RuntimeSymbol: runtimeSymbol, DefaultNodes: defaultNodes, NativeParamTypes: nativeParamTypes, NativeReturnType: nativeReturnType}
-	if funcNode.NodeType == ast.IdentifierNode {
-		a.deferFixedDispatch(a.callPlans[node], a.currentScope.Lookup(funcNode.TokenLiteral()))
-	}
-	if argCount < minArity || argCount > maxArity {
-		if minArity == maxArity {
-			a.errorAt(node, "function expects %d arguments but got %d", maxArity, argCount)
-		} else {
-			a.errorAt(node, "function expects %d-%d arguments but got %d", minArity, maxArity, argCount)
-		}
-	}
+	a.callPlans[node] = &ir.CallPlan{CalleeName: calleeNameFromNode(funcNode), MinArity: minArity, MaxArity: maxArity, Dispatch: ir.DispatchClosure, DefaultNodes: defaultNodesFromFunctionType(funcType, argCount)}
 	calleeName := "function"
+	what := "function"
 	if funcNode.NodeType == ast.IdentifierNode {
 		calleeName = funcNode.TokenLiteral()
+		what = "function '" + calleeName + "'"
+		a.deferFixedDispatch(a.callPlans[node], a.currentScope.Lookup(calleeName))
 	}
-	a.checkArgTypes(calleeName, funcType.ParamTypes, argTypes, argsNode.Children)
-	a.checkCallbackArgs(calleeName, funcType, argTypes, argsNode.Children)
-	a.callPlans[node].ArgTypesChecked = true
+	a.checkArity(node, what, minArity, maxArity, argCount)
+	a.checkArgTypes(calleeName, funcType.ParamTypes, argTypes, argNodes)
+	a.checkCallbackArgs(calleeName, funcType, argTypes, argNodes)
 	return funcType.ReturnType
 }
 
@@ -428,129 +371,6 @@ func inferAstypeReturnType(receiverType Type, argNodes []*ast.TreeNode) Type {
 	default:
 		return &VectorType{ElementType: TypeAny}
 	}
-}
-
-func (a *Analyzer) analyzePipe(node *ast.TreeNode) Type {
-	if len(node.Children) < 2 {
-		return TypeAny
-	}
-	inputNode := node.Children[0]
-	inputType := a.Analyze(inputNode)
-	rightNode := node.Children[1]
-	if rightNode.NodeType != ast.FunctionCallNode || len(rightNode.Children) < 2 {
-		a.errorAt(rightNode, "pipe target must be a function call; use f(...) or obj.method(...)")
-		return TypeAny
-	}
-
-	funcNode := rightNode.Children[0]
-	argsNode := rightNode.Children[1]
-	argTypes := make([]Type, 0, len(argsNode.Children))
-	for _, arg := range argsNode.Children {
-		argTypes = append(argTypes, a.Analyze(arg))
-	}
-	pipeArgCount := len(argsNode.Children) + 1
-
-	// Method dispatch in pipe: value | x.method(args)
-	if funcNode.NodeType == ast.OperatorNode && funcNode.Token != nil && funcNode.Token.Type == token.DOT {
-		pipeMethodArgCount := len(argsNode.Children) + 1
-		pipeMethodArgTypes := []Type{inputType}
-		pipeMethodArgTypes = append(pipeMethodArgTypes, argTypes...)
-		pipeMethodArgNodes := []*ast.TreeNode{inputNode}
-		pipeMethodArgNodes = append(pipeMethodArgNodes, argsNode.Children...)
-
-		result := a.resolveMethodCall(rightNode, node, funcNode, pipeMethodArgCount, pipeMethodArgTypes, pipeMethodArgNodes, " (including piped input)")
-		if result.resolved {
-			return result.returnType
-		}
-		// Not a known method — fall through to regular function dispatch
-		// (DOT could be dict property access returning a callable)
-	}
-
-	funcExprType := a.Analyze(funcNode)
-	a.recordParamCall(funcNode, append([]Type{inputType}, argTypes...), append([]*ast.TreeNode{inputNode}, argsNode.Children...))
-	if funcNode.NodeType == ast.IdentifierNode {
-		name := funcNode.TokenLiteral()
-		if sig, ok := a.builtins[name]; ok && a.refersToBuiltin(a.currentScope, name) {
-			pipeArgTypes := make([]Type, 0, pipeArgCount)
-			pipeArgTypes = append(pipeArgTypes, inputType)
-			pipeArgTypes = append(pipeArgTypes, argTypes...)
-			pipeArgNodes := make([]*ast.TreeNode, 0, pipeArgCount)
-			pipeArgNodes = append(pipeArgNodes, inputNode)
-			pipeArgNodes = append(pipeArgNodes, argsNode.Children...)
-			// Check if this builtin is actually an extern fn (DispatchExtern)
-			if proto, isExtern := a.externFns[name]; isExtern {
-				plan := *proto
-				plan.CalleeName = name
-				plan.MinArity = sig.MinArgs
-				plan.MaxArity = sig.MaxArgs
-				if pipeArgCount < sig.MinArgs || pipeArgCount > sig.MaxArgs {
-					if sig.MinArgs == sig.MaxArgs {
-						a.errorAt(node, "extern fn '%s' expects %d argument(s) but got %d (including piped input)", name, sig.MaxArgs, pipeArgCount)
-					} else {
-						a.errorAt(node, "extern fn '%s' expects %d-%d arguments but got %d (including piped input)", name, sig.MinArgs, sig.MaxArgs, pipeArgCount)
-					}
-				}
-				a.checkArgTypes(name, sig.Type.ParamTypes, pipeArgTypes, pipeArgNodes)
-				plan.ArgTypesChecked = true
-				a.callPlans[rightNode] = &plan
-				return sig.Type.ReturnType
-			}
-			a.callPlans[rightNode] = &ir.CallPlan{Kind: ir.CallBuiltin, CalleeName: name, MinArity: sig.MinArgs, MaxArity: sig.MaxArgs, Dispatch: ir.DispatchBuiltin, RuntimeSymbol: builtinsRuntimeName(name)}
-			if pipeArgCount < sig.MinArgs || pipeArgCount > sig.MaxArgs {
-				if sig.MinArgs == sig.MaxArgs {
-					a.errorAt(node, "builtin '%s' expects %d argument(s) but got %d (including piped input)", name, sig.MaxArgs, pipeArgCount)
-				} else {
-					a.errorAt(node, "builtin '%s' expects %d-%d arguments but got %d (including piped input)", name, sig.MinArgs, sig.MaxArgs, pipeArgCount)
-				}
-			}
-			a.checkArgTypes(name, sig.Type.ParamTypes, pipeArgTypes, pipeArgNodes)
-			a.callPlans[rightNode].ArgTypesChecked = true
-			return a.inferBuiltinReturnType(name, pipeArgTypes, node)
-		}
-	}
-	if funcType, ok := funcExprType.(*FunctionType); ok {
-		minArity := funcType.MinArity()
-		maxArity := len(funcType.ParamTypes)
-		defaultNodes := defaultNodesFromFunctionType(funcType, pipeArgCount)
-		dispatch := ir.DispatchClosure
-		runtimeSymbol := ""
-		var nativeParamTypes []string
-		var nativeReturnType string
-		if funcNode.NodeType == ast.IdentifierNode {
-			name := funcNode.TokenLiteral()
-			if sym := a.currentScope.Lookup(name); sym != nil && !sym.Mutable && a.fixedFnOf(sym) == nil {
-				if _, exists := a.functions[name]; exists {
-					dispatch = ir.DispatchDirect
-					runtimeSymbol = "quark_" + name
-				}
-			}
-		}
-		a.callPlans[rightNode] = &ir.CallPlan{Kind: ir.CallFunctionValue, CalleeName: calleeNameFromNode(funcNode), MinArity: minArity, MaxArity: maxArity, Dispatch: dispatch, RuntimeSymbol: runtimeSymbol, DefaultNodes: defaultNodes, NativeParamTypes: nativeParamTypes, NativeReturnType: nativeReturnType}
-		if funcNode.NodeType == ast.IdentifierNode {
-			a.deferFixedDispatch(a.callPlans[rightNode], a.currentScope.Lookup(funcNode.TokenLiteral()))
-		}
-		if pipeArgCount < minArity || pipeArgCount > maxArity {
-			if minArity == maxArity {
-				a.errorAt(node, "function expects %d arguments but got %d (including piped input)", maxArity, pipeArgCount)
-			} else {
-				a.errorAt(node, "function expects %d-%d arguments but got %d (including piped input)", minArity, maxArity, pipeArgCount)
-			}
-		}
-		pipeCallee := "function"
-		if funcNode.NodeType == ast.IdentifierNode {
-			pipeCallee = funcNode.TokenLiteral()
-		}
-		pipeArgTypes := []Type{inputType}
-		pipeArgTypes = append(pipeArgTypes, argTypes...)
-		pipeArgNodes := []*ast.TreeNode{inputNode}
-		pipeArgNodes = append(pipeArgNodes, argsNode.Children...)
-		a.checkArgTypes(pipeCallee, funcType.ParamTypes, pipeArgTypes, pipeArgNodes)
-		a.checkCallbackArgs(pipeCallee, funcType, pipeArgTypes, pipeArgNodes)
-		a.callPlans[rightNode].ArgTypesChecked = true
-		return funcType.ReturnType
-	}
-	a.callPlans[rightNode] = &ir.CallPlan{Kind: ir.CallFunctionValue, CalleeName: calleeNameFromNode(funcNode), MinArity: pipeArgCount, MaxArity: pipeArgCount, Dispatch: ir.DispatchClosure, ArgTypesChecked: true}
-	return TypeAny
 }
 
 // resolveReceiverSymbol resolves a receiver expression (e.g., an identifier node)
@@ -652,7 +472,8 @@ func refineMethodReturnType(catalogReturn Type, receiverType Type, methodName st
 
 // analyzeUnionMethodCall checks if all members of a union type support the given method,
 // and returns the merged return type. Falls back to TypeError if any member doesn't support it.
-func (a *Analyzer) analyzeUnionMethodCall(node *ast.TreeNode, unionType *UnionType, methodName string, argCount int, argTypes []Type, argNodes []*ast.TreeNode, funcNode *ast.TreeNode) Type {
+func (a *Analyzer) analyzeUnionMethodCall(node *ast.TreeNode, unionType *UnionType, methodName string, argTypes []Type, argNodes []*ast.TreeNode, funcNode *ast.TreeNode) Type {
+	argCount := len(argNodes)
 	returnTypes := make([]Type, 0, len(unionType.Options))
 	commonRuntimeSym := ""
 	runtimeSymSet := false
@@ -684,13 +505,7 @@ func (a *Analyzer) analyzeUnionMethodCall(node *ast.TreeNode, unionType *UnionTy
 			a.errorAt(funcNode, "method '%s' has incompatible runtime dispatch across union members (%s vs %s)", methodName, commonRuntimeSym, spec.Runtime)
 			return TypeError
 		}
-		if argCount < sig.MinArgs || argCount > sig.MaxArgs {
-			if sig.MinArgs == sig.MaxArgs {
-				a.errorAt(node, "method '%s' expects %d argument(s) but got %d", methodName, sig.MaxArgs, argCount)
-			} else {
-				a.errorAt(node, "method '%s' expects %d-%d arguments but got %d", methodName, sig.MinArgs, sig.MaxArgs, argCount)
-			}
-		}
+		a.checkArity(node, "method '"+methodName+"'", sig.MinArgs, sig.MaxArgs, argCount)
 		a.checkArgTypes(methodName, sig.Type.ParamTypes, argTypes, argNodes)
 		returnTypes = append(returnTypes, refineMethodReturnType(sig.Type.ReturnType, opt, methodName))
 	}
@@ -698,12 +513,11 @@ func (a *Analyzer) analyzeUnionMethodCall(node *ast.TreeNode, unionType *UnionTy
 	firstKey := typeToBuiltinTypeKey(unionType.Options[0])
 	firstSig := a.methods[firstKey][methodName]
 	a.callPlans[node] = &ir.CallPlan{
-		Kind: ir.CallBuiltin, CalleeName: methodName,
-		MinArity: firstSig.MinArgs + 1, MaxArity: firstSig.MaxArgs + 1,
+		CalleeName: methodName,
+		MinArity:   firstSig.MinArgs + 1, MaxArity: firstSig.MaxArgs + 1,
 		Dispatch: ir.DispatchBuiltin, RuntimeSymbol: commonRuntimeSym,
 		IsMethod: true, ReceiverNode: funcNode.Children[0], ReceiverTypeKey: string(firstKey),
 	}
-	a.callPlans[node].ArgTypesChecked = true
 	return MergeTypes(returnTypes...)
 }
 

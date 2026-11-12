@@ -36,6 +36,15 @@ module m:
     fn use(x) -> len(x)
 print(m::use('a'))
 
+// A loop variable named like a function variable defined elsewhere is
+// called as the loop variable.
+inc = fn(x) -> x + 1
+fn loop_shadow() ->
+    for inc in list [fn(x) -> x * 10]:
+        print(inc(2))
+loop_shadow()
+print(inc(1))
+
 // Outside the shadowing scopes, the originals are unaffected.
 print(len('abc'))
 print(nat(1))

@@ -12,7 +12,7 @@ The pipeline has seven stages. Each stage's output feeds the next.
 .qrk source → Lexer → Parser → Loader → Analyzer → Invariants → Codegen → C++ → clang++ → binary
 ```
 
-The front end (lexer through codegen) runs in `driver/`: `driver.CompileFile(path, stage)` runs every stage up to a cutoff (`StageParse`, `StageCheck`, `StageEmit`) and returns a `Unit` with the AST, the analyzer's `types.Analysis`, the C++ and all diagnostics. The `parse`, `check`, `emit`, `build` and `run` commands go through it; `quark lex` calls the lexer directly. `internal/testutil` runs its own lex/parse/analyze steps on in-memory source and reuses the driver's `ResolveImports`, `Validate` and `Generate`. The native back end (clang++, runtime headers, GC) lives in `toolchain/`.
+The front end (lexer through codegen) runs in `driver/`: `driver.CompileFile(path, stage)` runs every stage up to a cutoff (`StageParse`, `StageCheck`, `StageEmit`) and returns a `Unit` with the AST, the analyzer's `types.Analysis`, the C++ and all diagnostics. The `parse`, `check`, `emit`, `build` and `run` commands go through it; `quark lex` calls the lexer directly. `internal/testutil` runs in-memory test sources through `driver.CompileSource` too (only its `Lex` and `Parse` helpers stop before the loader), so tests see the same stage order, early stops and diagnostics as the CLI. The native back end (clang++, runtime headers, GC) lives in `toolchain/`.
 
 ### 1.1 Lexer → Token Stream
 
@@ -25,11 +25,12 @@ Inside brackets (`()`, `[]`, `{}`), indentation processing is suppressed — new
 
 ### 1.2 Parser → AST
 
-Recursive-descent parser producing a tree of `TreeNode`s. Uses Pratt parsing for expressions with 12 precedence levels. Named function definitions are immediately desugared to assignments (see semantics.md §6.4).
+Recursive-descent parser producing a tree of `TreeNode`s. Uses Pratt parsing for expressions with 12 precedence levels. Each construct has its own node kind: `AssignNode` (`target = value`, the target being an identifier, `MemberNode` or `IndexNode`), `MemberNode` (`object.name`), `UnaryNode`, `BinaryNode`, `PairNode` (a dict literal entry) and `FnDeclNode` (`fn name(...)`: `[name, LambdaNode]`).
 
 Key parser decisions:
-- `fn name(...)` at statement level → named function (desugared to assignment)
+- `fn name(...)` at statement level → `FnDeclNode`, a fixed, hoisted declaration (`ast.IsFnDecl`)
 - `fn(...)` in expression → lambda
+- `x | f(a)` → the call `f(x, a)` marked `Piped` (`x | obj.m(a)` → `obj.m(x, a)`); no later stage has a pipe path, and `Piped` only adds "(including piped input)" to arity messages. A pipe target that isn't a call is a parse error.
 - `list [...]` → list literal (keyword required, avoids ambiguity with indexing)
 - Dict keys in literals are bare identifiers, interpreted as string keys
 
@@ -121,7 +122,6 @@ If codegen encounters an unexpected dispatch/runtime-symbol invariant break, it 
 **Operator lowering**: `scalarExpr()` tries to emit arithmetic (`+`, `-`, `*`, `/`, `%`), unary `-`, and comparisons (`<`, `<=`, `>`, `>=`, `==`, `!=`) as native C++ when every operand is a scalar: a literal, a scalar-tiered local, or (recursively) another lowered expression. Int arithmetic uses overflow-checked helpers (`q_checked_add/sub/mul/mod`, `q_checked_neg`), and `/` uses `q_checked_fdiv`, which always yields `double`; float `+ - *` and comparisons use raw C++ operators. `**` is never lowered (it calls `q_pow`). Falls back to the boxed `q_add` etc. path whenever an operand is `QValue`/unknown. See §9.
 
 **Other lowerings**:
-- **Pipe**: `x | f(a)` → emits `f` call with `x` prepended to args
 - **Default injection**: Missing trailing args filled from DefaultNodes in the CallPlan
 - **Lambdas**: Emitted as top-level C++ functions with closure allocation at the capture site
 - **for loops**: Lowered to index-based iteration (`q_iter_get` with incrementing counter); loop variable uses scalar tier when the iterable's element type is statically known. `range()` calls are lowered to raw C++ loops unless the loop variable is captured. Vector iteration has a fast path (see §9).
@@ -289,13 +289,11 @@ The `CallPlan` (`ir/call.go`) freezes call semantics after analysis so codegen d
 
 ```go
 type CallPlan struct {
-    Kind              CallKind       // CallBuiltin | CallFunctionValue
     CalleeName        string
     MinArity          int
     MaxArity          int
     Dispatch          DispatchMode   // see below
     RuntimeSymbol     string         // C++ symbol (e.g., "q_upper", "quark_myfunc", "qei_sqrt")
-    ArgTypesChecked   bool           // Analyzer already checked argument types
     DefaultNodes      []*TreeNode    // Trailing default args to inject
     IsMethod          bool           // True for x.method(args)
     ReceiverNode      *ast.TreeNode  // The receiver expression
@@ -534,6 +532,7 @@ Each of these is a decision made in more than one place, with copies that alread
 
 - **Variable storage tier** (`QCell*` / `long long` / `double` / `bool` / `QValue`) is chosen in at least six places in codegen: the assignment branch of `generateOperator` (~1857-1876), `generateVarDecl` (~2716-2736), parameter bindings (~1048-1057), native parameters (~1143-1155), the `for` loop variable (three times inside `generateFor`), and `hoistScopes`. `generateVarDecl` picks the tier from the value instead of the annotation, and reassignment unboxes with the variable's tier whatever the value's type. Known issues: `x: float = len(l)` stays an int, an int assigned to a float variable reads garbage. Fix: one `declareVar(name, declaredType, rhs)` that is the only tier decision.
 - **Raw union reads.** `unboxForTier` (`codegen.go:264`) and the loop element read (`codegen.go:2486`) emit `.data.int_val` / `.data.float_val` with no tag check whenever the analyzer reports a scalar type, including element types of lists and dicts and the type of a narrowed `any` variable, which the analyzer does not keep sound (see 12.6). `unboxForTier` also ignores its type argument.
+- *Done in step 1:* calls are built once (pipes are parsed into calls), the arity messages come from one `checkArity`, `generateLiteral` uses `escapeCppString`, `nativeArgToQValue`/`wrapExternReturn` are one `boxNative` and `unboxToNative` is gone, `topDef`/`memberDef` share `defOf`, and the target of `x.f = v` and a receiver whose method isn't found are analyzed once.
 - **Calls are built twice in the analyzer and twice in codegen.** `analyzeFunctionCall` and `analyzePipe` build the builtin, extern and user-function plans and arity messages separately; so do `generateFunctionCall` and `generatePipe`. They have drifted: `3 | d.f()` falls through to calling the dict member while `d.f(3)` is "type has no method", and codegen differs in native-argument indexing and zero-argument direct calls. Fix: one `buildCallPlan(callee, prefixArgs, args)` in the analyzer and one `emitCall(plan, callee, prefixArgs, args)` in codegen, both used by call and pipe. The arity error text is also copied in about ten places in the analyzer.
 - **Loop bodies skip `generateBlock`.** The range loop (~2416-2424), `emitLoopBody` (~2444-2454) and `while` (~2576-2584) emit their statements directly, so loop bodies get no `fn` hoisting, no per-statement source location, and `while` gets no block scope. Known issues: `fn` inside a loop fails in clang, a variable first assigned in a `while` body fails in clang, runtime errors in a `for` body report the `for` line. Fix: every body goes through one block helper.
 - **Expression preludes.** Method-receiver temporaries (~1971-1981, ~2100-2110) and `if`/list temporaries are written to the output at the current position, i.e. before the statement, not inside the expression that needs them. Known issues: `and`/`or` and `x if c else y` run both sides, a `while` condition is evaluated once, `elseif` with a method call fails in clang, `f().m(g())` runs `g` first. Fix: expression generation returns `(prelude, expr)` and each conditional or repeated context (short-circuit, ternary, `while` condition, `elseif`) places the prelude itself, or wraps it in a lambda.
@@ -548,6 +547,8 @@ Each of these is a decision made in more than one place, with copies that alread
 - **Name mangling**: module members are joined as `module + "__" + name`, which is not unique when a name starts or ends with `_` (`m` + `_x` and `m_` + `x`), and main-script module names are not prefixed, so `module q1_a` can take the internal names of the first imported file. Since 2026-11-12 the loader rejects any two definitions with one internal name (`reportInternalClash`) instead of merging them, and renames a library's locals that share a name with the main script (`renameLocal`). Codegen's `newLambda` (`codegen.go:388`) still makes `quark__lambda1`, which a user variable `_lambda1` also becomes. Every generated name should come from one place that guarantees it can't be written by a user (rule 6 of the robustness bar).
 
 ### 12.3 Dead code (Go)
+
+*Removed in step 1 (12.8), 2026-11-12, except `token.Keywords`, which the editor-data generator uses. The unreferenced runtime functions of 12.4 are removed too (`qv_list_from` stays: the Go tests use it).*
 
 **Legacy `FunctionNode` path.** The parser never creates `ast.FunctionNode`; `fn f(...)` parses as `f = fn(...)` with `FnDecl` set. Everything that handles `FunctionNode` is dead:
 - types: `analyzeFunction` (`analyzer_functions.go:54-124`), `predeclareFunctions` / `declareFunctionSignature` (`analyzer_declarations.go`), the `FunctionNode` case in `analyze` (`analyzer.go:282`), the branch in `GetCapturedByFunction` (`analyzer_modules.go:363`), and the two "Legacy FunctionNode" `DispatchDirect` blocks (`analyzer_calls.go` ~351-360 and ~515-524), whose `nativeParamTypes` / `nativeReturnType` locals are never set.
@@ -625,10 +626,79 @@ The largest class of known issues is codegen reading a raw value based on an ele
 
 This needs a decision before the bugs in that group are fixed.
 
-### 12.7 Suggested order
+### 12.7 Target design: a lowering pass and a typed IR
 
-1. **Remove dead code** (12.3, and the unreferenced runtime functions in 12.4). No behavior change; the suite must stay green. This shrinks what the next steps have to touch.
-2. **Unify the duplicated decisions** in 12.2: tier selection, call building, block emission, expression preludes, name mangling. Each one fixes a group of known issues.
-3. **Split the large files** along those seams. Codegen: `codegen.go` (struct, `SetAnalysis`, `Generate`, emit helpers), `scope.go` (scopes, tiers, cells), `names.go` (all generated names), `abi.go` (native ↔ `QValue`), `functions.go` (fn infos, defaults, parameters, native functions, thunks, lambdas, `hoistScopes`), `calls.go`, `scalar.go`, `expr.go`, `assign.go`, `control.go`, `structs.go`. Analyzer: split `analyzeOperator` as in 12.1 and merge the call/pipe paths. Loader: split `walk` by node kind.
-4. **Consolidate the runtime** (12.4): one type-name table, one renderer, one error helper, one index type, checked conversions, the `vector.hpp` split.
-5. **Make `testutil` use the driver** and add the missing misuse tests (12.5).
+Decided 2026-11-12. The front half of the pipeline (lexer, parser, loader, the analyzer's type checking, the builtin catalog) stays. The back half changes: today the analyzer hands codegen 13 side tables keyed by AST node (`types.Analysis`), and codegen walks the AST again and builds C++ strings, consulting those tables and keeping its own scope stack by name (`declaredVars`, `varTiers`, `cellVars`, `scopeStack`). Decisions that belong to analysis (how a variable is stored, in what order an expression is evaluated, how sugar expands) are made while printing, in several places. That is the source of most of 12.2 and of three groups of known issues (expression timing, storage, loop bodies).
+
+Target pipeline:
+
+```
+.qrk → Lexer → Parser → Desugar → Loader → Analyzer → Lower → IR → Verify → Emit → C++ → clang++
+```
+
+- **Desugar** (after parsing): rewrites pipes `x | f(a)` into `f(x, a)` (the call node keeps a `Piped` flag for the pipe-specific messages), so no later stage has a pipe path. *Done in step 1, in the parser itself (`parsePipe`), so files the loader parses get it too.*
+- **Analyzer**: types, as today, plus **symbols**. Every declaration (variable, parameter, loop variable, `when` binding, `fn`, extern, struct) becomes one `*ir.Symbol`; every identifier node maps to its symbol; the analyzer decides each symbol's storage once, from its declared or inferred type and whether it is captured.
+- **Lower** (new package `lower/`): turns the analyzed AST into the IR. All lowering decisions live here and nowhere else: `for`/range/vector fast paths, `when` into tests and branches, method calls into calls with the receiver first, default arguments from the `CallPlan`, parameter and struct-field checks, fixed-`fn` hoisting, boxing and unboxing, and evaluation order.
+- **Verify**: the invariants pass, run on the IR instead of the AST (every reference has a symbol in scope, every unbox reads a value of the proven type or goes through a check, call arity matches its plan).
+- **Emit** (replaces `codegen/`): prints the IR as C++. It reads no AST, makes no type or storage decisions, and names every C++ symbol from the symbol's ID, so generated names can't collide with user names by construction.
+
+IR shape (sketch; the final types are settled in step 3 below):
+
+```go
+type Symbol struct {
+	ID      int
+	Name    string     // as written, for messages
+	Type    types.Type
+	Storage Storage    // Int64, Float64, Bool, Value, Cell
+	Kind    SymKind    // Local, Param, Global, Fn, Extern, Struct
+	Checked bool       // a captured cell that may be read before it is assigned
+}
+
+type Func struct {
+	Sym      *Symbol
+	Params   []*Symbol
+	Captures []*Symbol
+	Native   bool       // fully annotated, no captures: plain C++ signature
+	Body     *Block     // hoisted fns first
+}
+
+// Statements: Let{Sym, Value}, Assign{Sym, Value}, SetField, SetIndex, SetKey,
+// If{Cond, Then, Else}, Loop{Body} (while and for: the condition is tested
+// inside the body, then Break), Break, Continue, ExprStmt, Return.
+// Expressions: Const, Ref{Sym}, Call{Plan, Callee, Args}, Unary, Binary{Op,
+// Type}, Box, Unbox{Storage}, Check{Want, Value, What} (q_param_*/q_as_*),
+// Closure{Func}, list/dict/vec/struct literals, MemberGet, Index.
+```
+
+**Evaluation order** is explicit: lowering an expression yields statements plus a result, and any expression that needs a temporary is flattened into `Let`s placed before it in the same block. Conditional and repeated contexts (`and`, `or`, `x if c else y`, a `while` condition, `elseif`) lower to blocks, so their temporaries land inside the branch or loop that evaluates them. This removes the whole "part of an expression runs at the wrong time" group of known issues rather than patching each one.
+
+**Checks are IR nodes.** A raw read of a scalar is an `Unbox` only where the analyzer proved the type, otherwise a `Check`. Whichever answer 12.6 gets, it is implemented in one place (where lowering chooses `Unbox` or `Check`), and the verifier rejects an `Unbox` the analyzer didn't prove.
+
+**AST cleanup that goes with it.** `OperatorNode` currently covers assignment, member access and every operator, which is why `analyzeOperator` and `generateOperator` are single giant switches. The parser produces distinct node kinds instead: `AssignNode` (by target: name, field, key, index), `MemberNode`, `UnaryNode`, `BinaryNode`, and a `FnDeclNode` for `fn f(...)` (as `modules_v0_2_spec.md` §5.4 intended).
+
+What doesn't change: the runtime ABI (`QValue`, `QClosure`, `QCell`, `QFnInfo`, `q_call*`), the builtin catalog and `CallPlan`, the loader, the CLI and the test programs.
+
+### 12.8 Migration plan
+
+Each step ends with the full suite green and is committed on its own.
+
+1. **Simplify without new machinery.**
+   - Remove the dead code in 12.3 and the unreferenced runtime functions in 12.4.
+   - Add the desugar pass for pipes; delete `analyzePipe` and `generatePipe`.
+   - Split `OperatorNode` into the node kinds above and add `FnDeclNode`; split `analyzeOperator` by node kind; split the loader's `walk` by node kind.
+   - Make `internal/testutil` call the driver (12.5).
+
+   Exit: the call/pipe duplication is gone and no Go function scores above about 40 in `gocyclo`.
+
+   *Done 2026-11-12.* Highest scores after it: `inferBuiltinReturnType` 40, `CanAssign` 37, `loader.collect` 37, `checkDefiniteAssignment` 34, `codegen.scalarExpr` 34 (`analyzeOperator` 159 → split into `analyzeMember`, `analyzeUnary`, `analyzeAssign` with `assignName`/`assignMember`/`assignIndex`, `analyzeBinary` with `analyzeVectorArith`/`analyzeArith`/`analyzeOrdering`/`analyzeEquality`; loader `walk` 66 → 15; `nextRawToken` 48 → 21 with token tables; `ValidateCallPlans` 48 → split per dispatch mode). Behavior changes: `x | d.f()` is the same error as `d.f(x)`; a pipe target that isn't a call is a parse error; arity messages read `function 'f' expects 1 argument but got 2`.
+2. **Symbols.** The analyzer creates an `ir.Symbol` per declaration, maps identifier nodes to symbols, and decides storage once. Codegen reads storage and C++ names from symbols and drops `declaredVars`, `varTiers`, `cellVars` and its scope stack. Exit: the storage known issues are fixed (`x: float = len(l)`, an int assigned to a float variable, `_lambda1`, a variable first assigned in a `while` body).
+3. **Lower, IR, verify, emit.** Build `lower/` and the emitter next to `codegen/`, selected by a driver switch while in progress. Run the smoke and integration suites through both back ends and compare outputs; switch the default once they match, then delete `codegen/`. Exit: the expression-timing and loop-body known issues are fixed, and the verifier runs on every compile.
+4. **Element types** (12.6): implement the chosen answer in lowering as `Unbox`/`Check`, plus the analyzer changes it needs.
+
+In parallel with any step:
+- runtime consolidation (12.4): one type-name table, one renderer, `q_fatalf`, 64-bit indexes, checked float→int conversions, the `vector.hpp` split;
+- the runtime numeric known issues;
+- return-annotation checks for ordinary functions (an analyzer and runtime change, unaffected by the IR);
+- the missing misuse tests (12.5).
+
+Interim patches to the current codegen are limited to severe bugs that can't wait for step 3; today that is only the `while` condition evaluated once (an infinite loop). Other expression-timing and storage bugs are fixed by steps 2-3 rather than patched in code those steps replace.

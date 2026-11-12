@@ -83,7 +83,7 @@ All stages live under `src/core/quark/`:
 | Analyzer | `types/` | Semantic analysis, scope/symbol tables, closure capture computation, generates `CallPlan` IR |
 | Invariants | `invariants/` | Pre-codegen validation (call plans, return types) |
 | Codegen | `codegen/` | AST → C++17 source generation |
-| Driver | `driver/` | Runs the stages above in order (`CompileFile(path, stage)`); used by every CLI command except `lex`. `internal/testutil` runs its own lex/parse/analyze on in-memory source and reuses `driver.ResolveImports`/`Validate`/`Generate` |
+| Driver | `driver/` | Runs the stages above in order (`CompileFile(path, stage)`); used by every CLI command except `lex`. `internal/testutil` runs in-memory sources through `driver.CompileSource` (its `Lex`/`Parse` helpers stop before the loader) |
 | Toolchain | `toolchain/` | clang++/runtime/GC discovery, compile and link steps, precompiled runtime header cache |
 | Entry | `main.go` | CLI dispatch and flag parsing |
 
@@ -117,7 +117,7 @@ There are no runtime unit tests; the runtime is tested through the Go integratio
 ## Key Architecture Details
 
 - **All values are `QValue`** — a tagged union with type field. Runtime ops must check type before accessing union fields; return `qv_null()` on mismatch.
-- **All function values are `QClosure*`** — even non-capturing functions. Generated functions take `QClosure* _cl` as hidden first parameter. `fn f` parses as `f = fn(...)` with `FnDecl` set: a fixed, hoisted declaration (`types/analyzer_fixed.go`). Once analysis is done (`finalizeFixedFns`), a declaration that captures nothing (directly or through another declaration) is a plain C++ function `quark_<CName>`, called with `nullptr` (`DispatchDirect`, or `DispatchNative` when fully annotated) and never captured; one that captures stays a closure in a fixed binding, called through `q_callN`. Codegen creates every scope's closures at the scope's start (`hoistScopes`); variables they capture start as unassigned cells, read with `q_cell_get` inside those closures (`Analysis.CheckedCaptures`). Plain `g = fn(...)` variables are always closures.
+- **All function values are `QClosure*`** — even non-capturing functions. Generated functions take `QClosure* _cl` as hidden first parameter. `fn f` parses as a `FnDeclNode` `[f, lambda]` (`ast.IsFnDecl`): a fixed, hoisted declaration (`types/analyzer_fixed.go`). Once analysis is done (`finalizeFixedFns`), a declaration that captures nothing (directly or through another declaration) is a plain C++ function `quark_<CName>`, called with `nullptr` (`DispatchDirect`, or `DispatchNative` when fully annotated) and never captured; one that captures stays a closure in a fixed binding, called through `q_callN`. Codegen creates every scope's closures at the scope's start (`hoistScopes`); variables they capture start as unassigned cells, read with `q_cell_get` inside those closures (`Analysis.CheckedCaptures`). Plain `g = fn(...)` variables are always closures.
 - **Variable storage is type-and-capture-driven**: five tiers selected at first declaration — `QCell*` (captured), `long long` (static `int`, not captured), `double` (static `float`, not captured), `bool` (static `bool`, not captured), `QValue` (everything else). `Analysis.CapturedByFunction` and `Analysis.NodeTypes` (passed via `SetAnalysis`) drive this. Codegen tracks cells in `cellVars` and scalar tiers in `varTiers`. `generateIdentifier` boxes scalars back to `QValue` at read sites so all downstream codegen works uniformly with `QValue` expressions.
 - **Operator lowering**: `scalarExpr()` recursively lowers arithmetic, unary `-` and comparisons whose operands are all scalars (literals, scalar-tiered locals, or lowered sub-expressions). Int `+ - * %` use overflow-checked `q_checked_add/sub/mul/mod`, `/` uses `q_checked_fdiv` (always `double`), floats use raw C++ operators; `**` is never lowered (`q_pow`). The result stays unboxed when assigned to a scalar-tier variable or used as a condition, otherwise it's boxed to `QValue`.
 - **Conditions** (`if`/`while`/`and`/`or`/`!`) use `q_truthy()` truthiness rules (there is no `not` keyword); `and`/`or` are short-circuit lambdas that return an operand.
@@ -153,7 +153,7 @@ Smoke test programs in `src/testfiles/smoke_*.qrk`. Integration tests in `src/co
 - Indentation-based blocks (Python-like)
 - `list [1, 2, 3]` syntax (requires `list` keyword)
 - `dict { key: val }` syntax
-- Pipe operator: `x | foo() | bar()`
+- Pipe operator: `x | foo() | bar()` (parsed as `bar(foo(x))`; `x | obj.m(a)` is `obj.m(x, a)`)
 - Result types: `ok(val)` / `err(val)` with `unwrap()`
 - Type annotations: `fn add(x: int, y: int) int -> x + y`. Each annotated parameter is enforced on its own (partial annotation counts): checked at compile time when the argument type is known, on function entry otherwise (`emitParamBindings` → `q_param_*` in `builtins/params.hpp`), with int→float widening; same rules as `extern fn`. Fully annotated, non-capturing functions compile to native C++ (`DispatchNative`)
 - Default params: `fn foo(x: int, y: int = 0) -> x + y` (literals only)

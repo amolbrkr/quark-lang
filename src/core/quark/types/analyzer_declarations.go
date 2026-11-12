@@ -5,38 +5,6 @@ import (
 	"quark/token"
 )
 
-func (a *Analyzer) predeclareFunctions(nodes []*ast.TreeNode) {
-	for _, child := range nodes {
-		if child == nil {
-			continue
-		}
-		// `fn` declarations are declared by declareFixedFns; a plain
-		// `g = fn(...)` is a variable, defined when it is assigned.
-		if child.NodeType == ast.FunctionNode {
-			a.declareFunctionSignature(child)
-		}
-	}
-}
-
-func isFunctionBindingAssignment(node *ast.TreeNode) bool {
-	if node == nil || node.NodeType != ast.OperatorNode || node.Token == nil || node.Token.Type != token.EQUALS {
-		return false
-	}
-	if len(node.Children) != 2 {
-		return false
-	}
-	left := node.Children[0]
-	right := node.Children[1]
-	if left == nil || right == nil {
-		return false
-	}
-	return left.NodeType == ast.IdentifierNode && right.NodeType == ast.LambdaNode
-}
-
-func functionTypeFromLambdaNode(lambdaNode *ast.TreeNode) *FunctionType {
-	return functionTypeFromLambdaNodeWithStructs(lambdaNode, nil)
-}
-
 func functionTypeFromLambdaNodeWithStructs(lambdaNode *ast.TreeNode, structTypes map[string]*StructType) *FunctionType {
 	if lambdaNode == nil || len(lambdaNode.Children) < 1 {
 		return &FunctionType{ParamTypes: []Type{}, ReturnType: TypeAny}
@@ -173,85 +141,13 @@ func inferLiteralType(node *ast.TreeNode) Type {
 			return TypeAny
 		}
 	}
-	if node.NodeType == ast.OperatorNode && node.Token != nil && node.Token.Type == token.MINUS && len(node.Children) == 1 {
+	if node.Op() == token.MINUS && len(node.Children) == 1 {
 		return inferLiteralType(node.Children[0])
 	}
 	if node.NodeType == ast.ListNode {
 		return &ListType{ElementType: TypeAny}
 	}
 	return TypeAny
-}
-
-func (a *Analyzer) declareFunctionAssignmentSignature(node *ast.TreeNode) *FunctionType {
-	if !isFunctionBindingAssignment(node) {
-		return nil
-	}
-
-	nameNode := node.Children[0]
-	lambdaNode := node.Children[1]
-	funcName := nameNode.TokenLiteral()
-	if funcName == "" {
-		return nil
-	}
-
-	if existing := a.currentScope.LookupLocal(funcName); existing != nil {
-		if ft, ok := existing.Type.(*FunctionType); ok {
-			return ft
-		}
-		a.errorAt(nameNode, "symbol '%s' already defined and is not a function", funcName)
-		return nil
-	}
-
-	funcType := functionTypeFromLambdaNodeWithStructs(lambdaNode, a.structTypes)
-	a.currentScope.Define(funcName, funcType, true)
-	a.functions[funcName] = funcType
-	return funcType
-}
-
-func (a *Analyzer) declareFunctionSignature(node *ast.TreeNode) *FunctionType {
-	if len(node.Children) < 2 {
-		return nil
-	}
-	nameNode := node.Children[0]
-	argsNode := node.Children[1]
-	funcName := nameNode.TokenLiteral()
-	if funcName == "" {
-		return nil
-	}
-	if existing := a.currentScope.LookupLocal(funcName); existing != nil {
-		a.errorAt(nameNode, "symbol '%s' already defined in this scope", funcName)
-		if ft, ok := existing.Type.(*FunctionType); ok {
-			return ft
-		}
-		return nil
-	}
-	paramSpecs := collectParamSpecs(argsNode)
-	paramTypes := make([]Type, len(paramSpecs))
-	defaultCount := 0
-	defaultValues := make([]*DefaultValueInfo, len(paramSpecs))
-	for i, spec := range paramSpecs {
-		if spec.typeNode != nil {
-			paramTypes[i] = a.resolveTypeNode(spec.typeNode)
-		} else if spec.defaultValue != nil {
-			paramTypes[i] = inferLiteralType(spec.defaultValue)
-		} else {
-			paramTypes[i] = TypeAny
-		}
-		if spec.defaultValue != nil {
-			defaultCount++
-			defaultValues[i] = &DefaultValueInfo{Node: spec.defaultValue}
-		}
-	}
-
-	funcType := &FunctionType{
-		ParamTypes:    paramTypes,
-		ReturnType:    TypeAny,
-		DefaultCount:  defaultCount,
-		DefaultValues: defaultValues,
-	}
-	a.currentScope.Define(funcName, funcType, false)
-	a.functions[funcName] = funcType
-	return funcType
 }
 
 func collectParamSpecs(argsNode *ast.TreeNode) []paramSpec {

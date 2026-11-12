@@ -62,7 +62,7 @@ func TestCallPlans_DefaultsForAliasCall(t *testing.T) {
 	if call == nil {
 		t.Fatalf("expected to find function call node")
 	}
-	plan := analyzer.GetCallPlans()[call]
+	plan := analyzer.Analysis.CallPlans[call]
 	if plan == nil {
 		t.Fatalf("expected call plan for alias call")
 	}
@@ -120,7 +120,7 @@ func TestWarnings_DoNotFailTypeErrors(t *testing.T) {
 		t.Fatalf("warnings should not be treated as type errors, got: %v", typeErrs)
 	}
 
-	warnings := analyzer.WarningDiagnostics()
+	warnings := analyzer.Warnings
 	if len(warnings) == 0 {
 		t.Fatalf("expected at least one warning diagnostic")
 	}
@@ -131,7 +131,7 @@ func TestWarnings_DoNotFailTypeErrors(t *testing.T) {
 		t.Fatalf("expected warning code QK-CHECK-002, got: %s", warnings[0].Code)
 	}
 
-	if analyzer.HasErrors() {
+	if len(analyzer.TypeErrors) > 0 {
 		t.Fatalf("expected HasErrors=false when only warnings are present")
 	}
 }
@@ -158,7 +158,7 @@ func TestTernary_IncompatibleBranchesAreWarnings(t *testing.T) {
 	if len(typeErrs) > 0 {
 		t.Fatalf("ternary incompatibility should be a warning, got type errors: %v", typeErrs)
 	}
-	warnings := analyzer.WarningDiagnostics()
+	warnings := analyzer.Warnings
 	if len(warnings) == 0 {
 		t.Fatalf("expected warning diagnostics")
 	}
@@ -182,7 +182,7 @@ func TestFunctionReturnAnnotation_PreservedInFunctionType(t *testing.T) {
 	if len(node.Children) < 2 {
 		t.Fatalf("expected at least two top-level nodes, got %d", len(node.Children))
 	}
-	typ := analyzer.Analyze(node.Children[1])
+	typ := analyzer.Analysis.NodeTypes[node.Children[1]]
 	ft, ok := typ.(*qtypes.FunctionType)
 	if !ok {
 		t.Fatalf("expected function type, got %T (%v)", typ, typ)
@@ -230,7 +230,7 @@ func TestVectorLiteral_InfersVectorInt(t *testing.T) {
 	if len(node.Children) != 1 {
 		t.Fatalf("expected one top-level expression, got %d", len(node.Children))
 	}
-	typ := analyzer.Analyze(node.Children[0])
+	typ := analyzer.Analysis.NodeTypes[node.Children[0]]
 	vec, ok := typ.(*qtypes.VectorType)
 	if !ok {
 		t.Fatalf("expected VectorType, got %T (%v)", typ, typ)
@@ -251,7 +251,7 @@ func TestVectorLiteral_InfersVectorString(t *testing.T) {
 	if len(node.Children) != 1 {
 		t.Fatalf("expected one top-level expression, got %d", len(node.Children))
 	}
-	typ := analyzer.Analyze(node.Children[0])
+	typ := analyzer.Analysis.NodeTypes[node.Children[0]]
 	vec, ok := typ.(*qtypes.VectorType)
 	if !ok {
 		t.Fatalf("expected VectorType, got %T (%v)", typ, typ)
@@ -286,10 +286,10 @@ func TestVectorArithmetic_VectorAndScalar(t *testing.T) {
 	if len(node.Children) < 2 {
 		t.Fatalf("expected at least 2 top-level nodes, got %d", len(node.Children))
 	}
-	if node.Children[1].NodeType != ast.OperatorNode {
+	if node.Children[1].NodeType != ast.BinaryNode {
 		t.Fatalf("expected second expression to be operator, got %v", node.Children[1])
 	}
-	typ := analyzer.Analyze(node.Children[1])
+	typ := analyzer.Analysis.NodeTypes[node.Children[1]]
 	if _, ok := typ.(*qtypes.VectorType); !ok {
 		t.Fatalf("expected vector result type, got %T (%v)", typ, typ)
 	}
@@ -316,7 +316,7 @@ func TestToVector_InfersVectorIntType(t *testing.T) {
 	if len(node.Children) < 3 {
 		t.Fatalf("expected at least 3 top-level nodes, got %d", len(node.Children))
 	}
-	typ := analyzer.Analyze(node.Children[2])
+	typ := analyzer.Analysis.NodeTypes[node.Children[2]]
 	vec, ok := typ.(*qtypes.VectorType)
 	if !ok {
 		t.Fatalf("expected VectorType, got %T (%v)", typ, typ)
@@ -337,7 +337,7 @@ func TestToVector_InfersVectorFloatType(t *testing.T) {
 	if len(node.Children) < 3 {
 		t.Fatalf("expected at least 3 top-level nodes, got %d", len(node.Children))
 	}
-	typ := analyzer.Analyze(node.Children[2])
+	typ := analyzer.Analysis.NodeTypes[node.Children[2]]
 	vec, ok := typ.(*qtypes.VectorType)
 	if !ok {
 		t.Fatalf("expected VectorType, got %T (%v)", typ, typ)
@@ -372,7 +372,7 @@ func TestToVector_InfersVectorStringType(t *testing.T) {
 	if len(node.Children) < 3 {
 		t.Fatalf("expected at least 3 top-level nodes, got %d", len(node.Children))
 	}
-	typ := analyzer.Analyze(node.Children[2])
+	typ := analyzer.Analysis.NodeTypes[node.Children[2]]
 	vec, ok := typ.(*qtypes.VectorType)
 	if !ok {
 		t.Fatalf("expected VectorType, got %T (%v)", typ, typ)
@@ -466,7 +466,7 @@ func TestResultLiteral_InfersTypedResult(t *testing.T) {
 		t.Fatalf("expected two top-level expressions, got %d", len(node.Children))
 	}
 
-	okType := analyzer.Analyze(node.Children[0])
+	okType := analyzer.Analysis.NodeTypes[node.Children[0]]
 	okResult, ok := okType.(*qtypes.ResultType)
 	if !ok {
 		t.Fatalf("expected ResultType for ok literal, got %T (%v)", okType, okType)
@@ -475,7 +475,7 @@ func TestResultLiteral_InfersTypedResult(t *testing.T) {
 		t.Fatalf("expected ok payload int, got %s", okResult.OkType.String())
 	}
 
-	errType := analyzer.Analyze(node.Children[1])
+	errType := analyzer.Analysis.NodeTypes[node.Children[1]]
 	errResult, ok := errType.(*qtypes.ResultType)
 	if !ok {
 		t.Fatalf("expected ResultType for err literal, got %T (%v)", errType, errType)
@@ -498,7 +498,7 @@ func TestWhenResultPattern_RefinesBindingType(t *testing.T) {
 		t.Fatalf("expected at least 3 top-level expressions, got %d", len(node.Children))
 	}
 
-	finalType := analyzer.Analyze(node.Children[len(node.Children)-1])
+	finalType := analyzer.Analysis.NodeTypes[node.Children[len(node.Children)-1]]
 	if !finalType.Equals(qtypes.TypeInt) {
 		t.Fatalf("expected final type int from refined ok binding, got %s", finalType.String())
 	}
@@ -647,7 +647,7 @@ func TestCaptures_ShadowingBindingsAreLocal(t *testing.T) {
 		if len(parseErrs) > 0 || len(typeErrs) > 0 {
 			t.Fatalf("source %q: unexpected errors: parse=%v type=%v", tc.src, parseErrs, typeErrs)
 		}
-		for _, names := range analyzer.GetCaptures() {
+		for _, names := range analyzer.Analysis.Captures {
 			for _, n := range names {
 				if n == tc.name {
 					t.Fatalf("source %q: %q is a local binding but was captured", tc.src, tc.name)

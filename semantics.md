@@ -237,6 +237,8 @@ A call through a parameter or variable holding a function is checked in two laye
 
 Pipes are left-associative: `x | f() | g()` means `g(f(x))`.
 
+A pipe into a method call adds the piped value as the method's first argument; the receiver stays the receiver: `x | s.replace('b')` is `s.replace(x, 'b')`. A pipe is exactly the call it stands for and is checked like one, so `x | d.f()` is the same error as `d.f(x)` (a dict member can't be called with method syntax). Arity errors add "(including piped input)".
+
 The right side of `|` must be a function call expression. Piping to a bare identifier (e.g., `x | f`) is a compile-time error — use `x | f()`.
 
 A line that starts with `|` continues the previous line's expression, allowing multi-line pipe chains. The `|` line must be at the same indentation as the line it continues; indenting it is a syntax error.

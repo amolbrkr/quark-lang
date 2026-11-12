@@ -11,15 +11,16 @@ type NodeType int
 const (
 	CompilationUnitNode NodeType = iota
 	BlockNode
-	StatementNode
-	ExpressionNode
-	ConditionNode
-	FunctionNode
 	FunctionCallNode
 	ArgumentsNode
 	IdentifierNode
 	LiteralNode
-	OperatorNode
+	AssignNode // target = value: [target, value]; the target is an identifier, MemberNode or IndexNode
+	MemberNode // object.name: [object, IdentifierNode name] (a dict key, struct field or method name)
+	UnaryNode  // -x, !x: [operand]
+	BinaryNode // left op right (arithmetic, comparison, and, or): [left, right]
+	PairNode   // key: value in a dict literal: [key, value]
+	FnDeclNode // fn name(...) -> body: [IdentifierNode name, LambdaNode]; Token is 'fn'
 	IfStatementNode
 	WhenStatementNode
 	PatternNode
@@ -27,7 +28,6 @@ const (
 	WhileLoopNode
 	LambdaNode
 	TernaryNode
-	PipeNode
 	ListNode
 	VectorNode
 	DictNode
@@ -57,15 +57,16 @@ const (
 var nodeTypeNames = map[NodeType]string{
 	CompilationUnitNode:   "CompilationUnit",
 	BlockNode:             "Block",
-	StatementNode:         "Statement",
-	ExpressionNode:        "Expression",
-	ConditionNode:         "Condition",
-	FunctionNode:          "Function",
 	FunctionCallNode:      "FunctionCall",
 	ArgumentsNode:         "Arguments",
 	IdentifierNode:        "Identifier",
 	LiteralNode:           "Literal",
-	OperatorNode:          "Operator",
+	AssignNode:            "Assign",
+	MemberNode:            "Member",
+	UnaryNode:             "Unary",
+	BinaryNode:            "Binary",
+	PairNode:              "Pair",
+	FnDeclNode:            "FnDecl",
 	IfStatementNode:       "IfStatement",
 	WhenStatementNode:     "WhenStatement",
 	PatternNode:           "Pattern",
@@ -73,7 +74,6 @@ var nodeTypeNames = map[NodeType]string{
 	WhileLoopNode:         "WhileLoop",
 	LambdaNode:            "Lambda",
 	TernaryNode:           "Ternary",
-	PipeNode:              "Pipe",
 	ListNode:              "List",
 	VectorNode:            "Vector",
 	DictNode:              "Dict",
@@ -126,10 +126,10 @@ type TreeNode struct {
 	ExternSymbol   string // The 'as' symbol (C++ function name)
 	ExternReceiver string // The receiver type prefix (e.g. "list", "vec", "str") — empty for free functions
 
-	// FnDecl marks the `name = fn(...)` node a `fn name(...)` declaration is
-	// parsed into. A declaration is fixed (never reassigned) and hoisted to
-	// the start of its scope; a plain assignment of a lambda is neither.
-	FnDecl bool
+	// Piped marks a FunctionCallNode the parser made from a pipe: `x | f(a)`
+	// is parsed as `f(x, a)`, so the piped input is the first argument.
+	// Only messages use it ("including piped input").
+	Piped bool
 
 	// SourceFile is the display name of the file the node was parsed from, set
 	// by the loader for nodes spliced in from imported modules (empty for the
@@ -148,6 +148,33 @@ func SetSourceFile(n *TreeNode, file string) {
 	}
 	SetSourceFile(n.ReturnType, file)
 	SetSourceFile(n.DefaultValue, file)
+}
+
+// IsFnDecl reports whether n is a well-formed `fn name(...)` declaration. A
+// declaration is fixed (never reassigned) and hoisted to the start of its
+// scope; a plain `name = fn(...)` assignment is neither.
+func IsFnDecl(n *TreeNode) bool {
+	return n != nil && n.NodeType == FnDeclNode && len(n.Children) == 2 &&
+		n.Children[0] != nil && n.Children[0].NodeType == IdentifierNode &&
+		n.Children[1] != nil && n.Children[1].NodeType == LambdaNode
+}
+
+// Op is the operator token of a UnaryNode or BinaryNode (token.ILLEGAL
+// otherwise).
+func (n *TreeNode) Op() token.TokenType {
+	if n == nil || n.Token == nil || (n.NodeType != UnaryNode && n.NodeType != BinaryNode) {
+		return token.ILLEGAL
+	}
+	return n.Token.Type
+}
+
+// IsNegatedNumber reports whether n is a unary minus on a number literal.
+func IsNegatedNumber(n *TreeNode) bool {
+	if n.Op() != token.MINUS || len(n.Children) != 1 {
+		return false
+	}
+	c := n.Children[0]
+	return c != nil && c.NodeType == LiteralNode && c.Token != nil && (c.Token.Type == token.INT || c.Token.Type == token.FLOAT)
 }
 
 func NewNode(nodeType NodeType, tok *token.Token) *TreeNode {
@@ -216,26 +243,3 @@ const (
 	PrecExponent              // **
 	PrecAccess                // . [] ()
 )
-
-var precedenceNames = map[Precedence]string{
-	PrecLowest:     "Lowest",
-	PrecAssignment: "Assignment",
-	PrecPipe:       "Pipe",
-	PrecTernary:    "Ternary",
-	PrecOr:         "Or",
-	PrecAnd:        "And",
-	PrecEquality:   "Equality",
-	PrecComparison: "Comparison",
-	PrecTerm:       "Term",
-	PrecFactor:     "Factor",
-	PrecExponent:   "Exponent",
-	PrecUnary:      "Unary",
-	PrecAccess:     "Access",
-}
-
-func (p Precedence) String() string {
-	if name, ok := precedenceNames[p]; ok {
-		return name
-	}
-	return "Unknown"
-}

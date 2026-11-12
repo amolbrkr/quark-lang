@@ -10,7 +10,7 @@ import (
 
 // Fixed function declarations (modules v0.2 spec, rules 17-23).
 //
-// `fn f(...)` is parsed as `f = fn(...)` with FnDecl set. A declaration is a
+// `fn f(...)` is parsed as a FnDeclNode [f, lambda]. A declaration is a
 // fixed binding: declared once per scope, never reassigned, never shadowing a
 // visible name, and hoisted, so every declaration of a scope exists before
 // the scope's first statement runs.
@@ -25,7 +25,7 @@ import (
 // FixedFn is one `fn` declaration.
 type FixedFn struct {
 	Name   string        // declared name (after the loader's module renaming)
-	Decl   *ast.TreeNode // the `name = fn(...)` node
+	Decl   *ast.TreeNode // the FnDeclNode
 	Lambda *ast.TreeNode
 	Line   int
 	Type   *FunctionType // the analyzed type once its body has been analyzed
@@ -69,11 +69,6 @@ type symDef struct {
 	line int
 }
 
-func isFnDecl(n *ast.TreeNode) bool {
-	return n != nil && n.FnDecl && len(n.Children) == 2 && n.Children[0] != nil &&
-		n.Children[0].NodeType == ast.IdentifierNode && n.Children[1] != nil && n.Children[1].NodeType == ast.LambdaNode
-}
-
 func nodeLine(n *ast.TreeNode) int {
 	if n != nil && n.Token != nil {
 		return n.Token.Line
@@ -98,7 +93,7 @@ func (a *Analyzer) recordDef(sym *Symbol, at *ast.TreeNode) {
 func (a *Analyzer) declareFixedFns(scopeNode *ast.TreeNode, stmts []*ast.TreeNode) {
 	sc := &fnScope{node: scopeNode, scope: a.currentScope, stmts: stmts}
 	for _, stmt := range stmts {
-		if !isFnDecl(stmt) {
+		if !ast.IsFnDecl(stmt) {
 			continue
 		}
 		nameNode := stmt.Children[0]
@@ -226,7 +221,6 @@ func (a *Analyzer) finalizeFixedFns() {
 				nativeParams[i] = quarkTypeToNativeCType(pt)
 			}
 			f.Native = &ir.CallPlan{
-				Kind:             ir.CallFunctionValue,
 				CalleeName:       f.Name,
 				MinArity:         len(f.Type.ParamTypes),
 				MaxArity:         len(f.Type.ParamTypes),
@@ -336,7 +330,7 @@ func (a *Analyzer) checkDefiniteAssignment() {
 			}
 		}
 		for i, stmt := range sc.stmts {
-			if isFnDecl(stmt) {
+			if ast.IsFnDecl(stmt) {
 				continue
 			}
 			a.walkFixedCalls(stmt, false, func(call *ast.TreeNode, f *FixedFn) {

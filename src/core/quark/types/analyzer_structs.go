@@ -159,11 +159,6 @@ func (a *Analyzer) analyzeStructLiteral(node *ast.TreeNode) Type {
 	return st
 }
 
-// GetStructTypes returns the registered struct types for codegen.
-func (a *Analyzer) GetStructTypes() map[string]*StructType {
-	return a.structTypes
-}
-
 // isStructType returns true if t is a *StructType.
 func isStructType(t Type) bool {
 	_, ok := t.(*StructType)

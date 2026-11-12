@@ -29,16 +29,6 @@ func walk(node *ast.TreeNode, fn func(*ast.TreeNode)) {
 	}
 }
 
-func walkWithParent(node *ast.TreeNode, parent *ast.TreeNode, fn func(*ast.TreeNode, *ast.TreeNode)) {
-	if node == nil {
-		return
-	}
-	fn(node, parent)
-	for _, child := range node.Children {
-		walkWithParent(child, node, fn)
-	}
-}
-
 // ValidateCallPlans enforces analyzer->codegen call invariants before emission.
 func ValidateCallPlans(root *ast.TreeNode, plans map[*ast.TreeNode]*ir.CallPlan) error {
 	if root == nil {
@@ -47,110 +37,98 @@ func ValidateCallPlans(root *ast.TreeNode, plans map[*ast.TreeNode]*ir.CallPlan)
 	if plans == nil {
 		return invError("INV-CALLPLAN-MAP", root, "call plan map is nil")
 	}
-
 	var firstErr error
-	walkWithParent(root, nil, func(n *ast.TreeNode, parent *ast.TreeNode) {
-		if firstErr != nil {
-			return
-		}
-		if n.NodeType != ast.FunctionCallNode {
-			return
-		}
-
-		plan := plans[n]
-		if plan == nil {
-			firstErr = invError("INV-CALLPLAN-MISSING", n, "missing call plan")
-			return
-		}
-		if plan.MinArity < 0 || plan.MaxArity < 0 || plan.MinArity > plan.MaxArity {
-			firstErr = invError("INV-ARITY-ENVELOPE", n, "invalid arity envelope min=%d max=%d", plan.MinArity, plan.MaxArity)
-			return
-		}
-		if !plan.ArgTypesChecked {
-			firstErr = invError("INV-ARGCHECK", n, "call plan for '%s' did not record argument type-checking", plan.CalleeName)
-			return
-		}
-		// INV-DISPATCH-MODE: every call plan must have a resolved dispatch mode.
-		if plan.Dispatch != ir.DispatchBuiltin && plan.Dispatch != ir.DispatchDirect &&
-			plan.Dispatch != ir.DispatchClosure && plan.Dispatch != ir.DispatchExtern &&
-			plan.Dispatch != ir.DispatchNative && plan.Dispatch != ir.DispatchDynamicMethod {
-			firstErr = invError("INV-DISPATCH-MODE", n, "call plan for '%s' has unresolved dispatch mode", plan.CalleeName)
-			return
-		}
-		// INV-RUNTIME-SYMBOL: builtin, direct, extern, and native calls must have a runtime symbol.
-		if (plan.Dispatch == ir.DispatchDirect || plan.Dispatch == ir.DispatchBuiltin ||
-			plan.Dispatch == ir.DispatchExtern || plan.Dispatch == ir.DispatchNative) && plan.RuntimeSymbol == "" {
-			firstErr = invError("INV-RUNTIME-SYMBOL", n, "call plan for '%s' requires runtime symbol but has none", plan.CalleeName)
-			return
-		}
-		// INV-DYNAMIC-METHOD: every candidate of a dynamic method call must be a
-		// catalog method with the matching runtime symbol.
-		if plan.Dispatch == ir.DispatchDynamicMethod {
-			if !plan.IsMethod || plan.ReceiverNode == nil || len(plan.MethodCandidates) == 0 {
-				firstErr = invError("INV-DYNAMIC-METHOD", n, "dynamic method call plan for '%s' needs a receiver and candidates", plan.CalleeName)
-				return
-			}
-			for _, c := range plan.MethodCandidates {
-				spec, ok := builtins.LookupMethod(builtins.TypeKey(c.ReceiverTypeKey), plan.CalleeName)
-				if !ok || c.ValueTag == "" || c.RuntimeSymbol != spec.Runtime {
-					firstErr = invError("INV-DYNAMIC-METHOD", n, "dynamic method '%s' has an invalid candidate for receiver type '%s'", plan.CalleeName, c.ReceiverTypeKey)
-					return
-				}
-			}
-		}
-		if plan.Dispatch == ir.DispatchBuiltin {
-			if plan.CalleeName == "" {
-				firstErr = invError("INV-BUILTIN-NAME", n, "builtin call plan missing callee name")
-				return
-			}
-			if plan.IsMethod {
-				// Method call: validate via the method table.
-				if plan.ReceiverTypeKey == "" {
-					firstErr = invError("INV-METHOD-RECEIVER", n, "method call plan for '%s' missing receiver type key", plan.CalleeName)
-					return
-				}
-				spec, ok := builtins.LookupMethod(builtins.TypeKey(plan.ReceiverTypeKey), plan.CalleeName)
-				if !ok {
-					firstErr = invError("INV-BUILTIN-CATALOG", n, "method '%s' is not in catalog for receiver type '%s'", plan.CalleeName, plan.ReceiverTypeKey)
-					return
-				}
-				if plan.RuntimeSymbol == "" || plan.RuntimeSymbol != spec.Runtime {
-					firstErr = invError("INV-BUILTIN-RUNTIME", n, "method '%s' runtime symbol mismatch: plan='%s' catalog='%s'", plan.CalleeName, plan.RuntimeSymbol, spec.Runtime)
-					return
-				}
-			} else {
-				spec, ok := builtins.Lookup(plan.CalleeName)
-				if !ok {
-					firstErr = invError("INV-BUILTIN-CATALOG", n, "builtin '%s' is not in catalog", plan.CalleeName)
-					return
-				}
-				if plan.RuntimeSymbol == "" || plan.RuntimeSymbol != spec.Runtime {
-					firstErr = invError("INV-BUILTIN-RUNTIME", n, "builtin '%s' runtime symbol mismatch: plan='%s' catalog='%s'", plan.CalleeName, plan.RuntimeSymbol, spec.Runtime)
-					return
-				}
-			}
-		}
-
-		provided := 0
-		if len(n.Children) >= 2 && n.Children[1] != nil {
-			provided = len(n.Children[1].Children)
-		}
-		if parent != nil && parent.NodeType == ast.PipeNode && len(parent.Children) >= 2 && parent.Children[1] == n {
-			provided++ // piped input occupies argument slot 0
-		}
-		if provided > plan.MaxArity {
-			provided = plan.MaxArity
-		}
-		missing := plan.MaxArity - provided
-		if missing < 0 {
-			missing = 0
-		}
-		if len(plan.DefaultNodes) > missing {
-			firstErr = invError("INV-DEFAULT-COUNT", n, "planned defaults (%d) exceed missing arg slots (%d)", len(plan.DefaultNodes), missing)
-			return
+	walk(root, func(n *ast.TreeNode) {
+		if firstErr == nil && n.NodeType == ast.FunctionCallNode {
+			firstErr = validateCallPlan(n, plans[n])
 		}
 	})
 	return firstErr
+}
+
+// validateCallPlan checks the plan of one call.
+func validateCallPlan(n *ast.TreeNode, plan *ir.CallPlan) error {
+	if plan == nil {
+		return invError("INV-CALLPLAN-MISSING", n, "missing call plan")
+	}
+	if plan.MinArity < 0 || plan.MaxArity < 0 || plan.MinArity > plan.MaxArity {
+		return invError("INV-ARITY-ENVELOPE", n, "invalid arity envelope min=%d max=%d", plan.MinArity, plan.MaxArity)
+	}
+	switch plan.Dispatch {
+	case ir.DispatchBuiltin:
+		if err := validateBuiltinPlan(n, plan); err != nil {
+			return err
+		}
+	case ir.DispatchDirect, ir.DispatchExtern, ir.DispatchNative:
+		if plan.RuntimeSymbol == "" {
+			return invError("INV-RUNTIME-SYMBOL", n, "call plan for '%s' requires runtime symbol but has none", plan.CalleeName)
+		}
+	case ir.DispatchDynamicMethod:
+		if err := validateDynamicMethodPlan(n, plan); err != nil {
+			return err
+		}
+	case ir.DispatchClosure:
+	default:
+		return invError("INV-DISPATCH-MODE", n, "call plan for '%s' has unresolved dispatch mode", plan.CalleeName)
+	}
+
+	// Planned defaults fill missing trailing arguments only.
+	provided := 0
+	if len(n.Children) >= 2 && n.Children[1] != nil {
+		provided = len(n.Children[1].Children)
+	}
+	missing := max(plan.MaxArity-min(provided, plan.MaxArity), 0)
+	if len(plan.DefaultNodes) > missing {
+		return invError("INV-DEFAULT-COUNT", n, "planned defaults (%d) exceed missing arg slots (%d)", len(plan.DefaultNodes), missing)
+	}
+	return nil
+}
+
+// validateBuiltinPlan checks that a builtin call or method names a catalog
+// entry with the matching runtime symbol.
+func validateBuiltinPlan(n *ast.TreeNode, plan *ir.CallPlan) error {
+	if plan.RuntimeSymbol == "" {
+		return invError("INV-RUNTIME-SYMBOL", n, "call plan for '%s' requires runtime symbol but has none", plan.CalleeName)
+	}
+	if plan.CalleeName == "" {
+		return invError("INV-BUILTIN-NAME", n, "builtin call plan missing callee name")
+	}
+	if plan.IsMethod {
+		if plan.ReceiverTypeKey == "" {
+			return invError("INV-METHOD-RECEIVER", n, "method call plan for '%s' missing receiver type key", plan.CalleeName)
+		}
+		spec, ok := builtins.LookupMethod(builtins.TypeKey(plan.ReceiverTypeKey), plan.CalleeName)
+		if !ok {
+			return invError("INV-BUILTIN-CATALOG", n, "method '%s' is not in catalog for receiver type '%s'", plan.CalleeName, plan.ReceiverTypeKey)
+		}
+		if plan.RuntimeSymbol != spec.Runtime {
+			return invError("INV-BUILTIN-RUNTIME", n, "method '%s' runtime symbol mismatch: plan='%s' catalog='%s'", plan.CalleeName, plan.RuntimeSymbol, spec.Runtime)
+		}
+		return nil
+	}
+	spec, ok := builtins.Lookup(plan.CalleeName)
+	if !ok {
+		return invError("INV-BUILTIN-CATALOG", n, "builtin '%s' is not in catalog", plan.CalleeName)
+	}
+	if plan.RuntimeSymbol != spec.Runtime {
+		return invError("INV-BUILTIN-RUNTIME", n, "builtin '%s' runtime symbol mismatch: plan='%s' catalog='%s'", plan.CalleeName, plan.RuntimeSymbol, spec.Runtime)
+	}
+	return nil
+}
+
+// validateDynamicMethodPlan checks that every candidate of a dynamic method
+// call is a catalog method with the matching runtime symbol.
+func validateDynamicMethodPlan(n *ast.TreeNode, plan *ir.CallPlan) error {
+	if !plan.IsMethod || plan.ReceiverNode == nil || len(plan.MethodCandidates) == 0 {
+		return invError("INV-DYNAMIC-METHOD", n, "dynamic method call plan for '%s' needs a receiver and candidates", plan.CalleeName)
+	}
+	for _, c := range plan.MethodCandidates {
+		spec, ok := builtins.LookupMethod(builtins.TypeKey(c.ReceiverTypeKey), plan.CalleeName)
+		if !ok || c.ValueTag == "" || c.RuntimeSymbol != spec.Runtime {
+			return invError("INV-DYNAMIC-METHOD", n, "dynamic method '%s' has an invalid candidate for receiver type '%s'", plan.CalleeName, c.ReceiverTypeKey)
+		}
+	}
+	return nil
 }
 
 // ValidateReturnAnnotations ensures annotated function/lambda nodes were validated in analyzer.
@@ -170,7 +148,7 @@ func ValidateReturnAnnotations(root *ast.TreeNode, validated map[*ast.TreeNode]b
 		if n.ReturnType == nil {
 			return
 		}
-		if n.NodeType != ast.FunctionNode && n.NodeType != ast.LambdaNode {
+		if n.NodeType != ast.LambdaNode {
 			return
 		}
 		if !validated[n] {

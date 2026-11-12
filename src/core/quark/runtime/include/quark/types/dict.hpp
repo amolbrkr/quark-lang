@@ -93,29 +93,4 @@ inline QValue q_dict_set(QValue dict, QValue key, QValue value) {
     return dict;
 }
 
-inline QValue q_dict_has(QValue dict, QValue key) {
-    if (!q_require_dict(dict, "dict has")) {
-        return qv_bool(false);
-    }
-    if (!q_require_string_key(key)) {
-        return qv_bool(false);
-    }
-    if (!dict.data.dict_val) {
-        return qv_bool(false);
-    }
-    const char* raw_key = key.data.string_val ? key.data.string_val : "";
-    auto it = dict.data.dict_val->entries.find(QDictKey(raw_key));
-    return qv_bool(it != dict.data.dict_val->entries.end());
-}
-
-inline int q_dict_size(QValue dict) {
-    if (!q_require_dict(dict, "dict size")) {
-        return 0;
-    }
-    if (!dict.data.dict_val) {
-        return 0;
-    }
-    return static_cast<int>(dict.data.dict_val->entries.size());
-}
-
 #endif // QUARK_TYPES_DICT_HPP

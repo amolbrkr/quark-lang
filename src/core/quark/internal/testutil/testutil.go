@@ -1,12 +1,13 @@
+// Package testutil runs the compiler on inline test sources. Everything past
+// parsing goes through the driver, so a test sees exactly what the CLI does:
+// the same stage order, the same early stops and the same diagnostics.
 package testutil
 
 import (
-	"path/filepath"
-
 	"quark/ast"
+	"quark/diagnostics"
 	"quark/driver"
 	"quark/lexer"
-	"quark/names"
 	"quark/parser"
 	"quark/token"
 	"quark/types"
@@ -17,20 +18,30 @@ import (
 // the same way they would for a real file there.
 const sourceFile = "test_input.qrk"
 
-type PipelineResult struct {
-	Tokens       []token.Token
-	AST          *ast.TreeNode
+// Result is the outcome of running the driver on an inline source.
+type Result struct {
+	Unit *driver.Unit
+	AST  *ast.TreeNode
+	// Analysis is nil unless analysis succeeded.
+	Analysis *types.Analysis
+	// ParserErrors holds parse and load errors, TypeErrors the errors of
+	// semantic analysis and of the invariant checks. The driver stops at the
+	// first stage that fails, so at most one of them is non-empty.
 	ParserErrors []string
-	Analyzer     *types.Analyzer
 	TypeErrors   []string
+	Warnings     []diagnostics.Diagnostic
 	CPP          string
 }
+
+// PipelineResult is the name the codegen tests use for Result.
+type PipelineResult = Result
 
 func Lex(source string) []token.Token {
 	l := lexer.New(source)
 	return l.Tokenize()
 }
 
+// Parse lexes and parses source only (no imports are loaded).
 func Parse(source string) (*ast.TreeNode, []string) {
 	toks := Lex(source)
 	p := parser.New(toks)
@@ -38,55 +49,37 @@ func Parse(source string) (*ast.TreeNode, []string) {
 	return node, p.Errors()
 }
 
-// resolveImports runs the loader on a parsed test source, as the driver
-// does, and returns its errors and name table.
-func resolveImports(node *ast.TreeNode) ([]string, names.Table) {
-	absPath, err := filepath.Abs(sourceFile)
-	if err != nil {
-		return []string{err.Error()}, nil
-	}
-	var errs []string
-	_, table, diags := driver.ResolveImports(node, absPath)
-	for _, d := range diags {
-		errs = append(errs, d.Message)
-	}
-	return errs, table
-}
-
-// Analyze parses, resolves imports and analyzes source. Unlike the driver it
-// analyzes even when parsing failed, so tests can inspect both sets of
-// errors. Loader errors are reported with the parse errors.
-func Analyze(source string) (*types.Analyzer, *ast.TreeNode, []string, []string) {
-	node, parseErrs := Parse(source)
-	var table names.Table
-	if len(parseErrs) == 0 {
-		parseErrs, table = resolveImports(node)
-	}
-	analyzer := types.NewAnalyzer()
-	analyzer.SetNames(table)
-	analyzer.Analyze(node)
-	return analyzer, node, parseErrs, analyzer.Errors()
-}
-
-// GenerateCPP runs the full front end on source with the same invariant
-// checks and codegen setup as the compiler.
-func GenerateCPP(source string) PipelineResult {
-	analyzer, node, parseErrs, typeErrs := Analyze(source)
-	cpp := ""
-	if len(parseErrs) == 0 && len(typeErrs) == 0 {
-		an := analyzer.Analysis(node)
-		if err := driver.Validate(node, an); err != nil {
-			typeErrs = append(typeErrs, err.Error())
-		} else {
-			cpp = driver.Generate(node, an, sourceFile)
+// Compile runs the driver on source through stage upTo.
+func Compile(source string, upTo driver.Stage) *Result {
+	u := driver.CompileSource(source, sourceFile, upTo)
+	r := &Result{Unit: u, AST: u.AST, Analysis: u.Analysis, CPP: u.CPP}
+	for _, d := range u.Diagnostics {
+		if d.Severity == diagnostics.SeverityWarning {
+			r.Warnings = append(r.Warnings, d)
+			continue
+		}
+		switch d.Stage {
+		case diagnostics.StageLex, diagnostics.StageParse, diagnostics.StageLoad:
+			r.ParserErrors = append(r.ParserErrors, d.String())
+		default:
+			r.TypeErrors = append(r.TypeErrors, d.String())
 		}
 	}
-	return PipelineResult{
-		Tokens:       nil,
-		AST:          node,
-		ParserErrors: parseErrs,
-		Analyzer:     analyzer,
-		TypeErrors:   typeErrs,
-		CPP:          cpp,
+	if u.Err != nil {
+		r.TypeErrors = append(r.TypeErrors, u.Err.Error())
 	}
+	return r
+}
+
+// Analyze runs the driver through semantic analysis. It returns the result,
+// the tree, the parse and load errors, and the analysis errors.
+func Analyze(source string) (*Result, *ast.TreeNode, []string, []string) {
+	r := Compile(source, driver.StageCheck)
+	return r, r.AST, r.ParserErrors, r.TypeErrors
+}
+
+// GenerateCPP runs the driver through C++ generation, with the same invariant
+// checks and codegen setup as the compiler.
+func GenerateCPP(source string) Result {
+	return *Compile(source, driver.StageEmit)
 }

@@ -282,19 +282,8 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 		runtimeSymbol := ""
 		var nativeParamTypes []string
 		nativeReturnType := ""
-		if proto, isNative := a.nativeFns[member]; isNative {
-			// Fully annotated module functions are C++ functions; call them
-			// directly (inside other functions the name is the C++ function,
-			// not main's closure value).
-			dispatch = ir.DispatchNative
-			runtimeSymbol = proto.RuntimeSymbol
-			nativeParamTypes = proto.NativeParamTypes
-			nativeReturnType = proto.NativeReturnType
-		} else if _, exists := a.functions[member]; exists && !sym.Mutable {
-			dispatch = ir.DispatchDirect
-			runtimeSymbol = "quark_" + member
-		}
 		a.callPlans[node] = &ir.CallPlan{Kind: ir.CallFunctionValue, CalleeName: moduleName + "." + displayMember(moduleName, member), MinArity: minArity, MaxArity: maxArity, Dispatch: dispatch, RuntimeSymbol: runtimeSymbol, DefaultNodes: defaultNodes, NativeParamTypes: nativeParamTypes, NativeReturnType: nativeReturnType}
+		a.deferFixedDispatch(a.callPlans[node], sym)
 		if argCount < minArity || argCount > maxArity {
 			if minArity == maxArity {
 				a.errorAt(node, "function expects %d arguments but got %d", maxArity, argCount)
@@ -395,14 +384,9 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 	var nativeParamTypes []string
 	var nativeReturnType string
 	if funcNode.NodeType == ast.IdentifierNode {
+		// Legacy FunctionNode declarations are immutable C++ functions.
 		name := funcNode.TokenLiteral()
-		// Check nativeFns first — applies regardless of mutability.
-		if proto, isNative := a.nativeFns[name]; isNative && a.refersToNative(a.currentScope, name) {
-			dispatch = ir.DispatchNative
-			runtimeSymbol = proto.RuntimeSymbol
-			nativeParamTypes = proto.NativeParamTypes
-			nativeReturnType = proto.NativeReturnType
-		} else if sym := a.currentScope.Lookup(name); sym != nil && !sym.Mutable {
+		if sym := a.currentScope.Lookup(name); sym != nil && !sym.Mutable && a.fixedFnOf(sym) == nil {
 			if _, exists := a.functions[name]; exists {
 				dispatch = ir.DispatchDirect
 				runtimeSymbol = "quark_" + name
@@ -410,6 +394,9 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 		}
 	}
 	a.callPlans[node] = &ir.CallPlan{Kind: ir.CallFunctionValue, CalleeName: calleeNameFromNode(funcNode), MinArity: minArity, MaxArity: maxArity, Dispatch: dispatch, RuntimeSymbol: runtimeSymbol, DefaultNodes: defaultNodes, NativeParamTypes: nativeParamTypes, NativeReturnType: nativeReturnType}
+	if funcNode.NodeType == ast.IdentifierNode {
+		a.deferFixedDispatch(a.callPlans[node], a.currentScope.Lookup(funcNode.TokenLiteral()))
+	}
 	if argCount < minArity || argCount > maxArity {
 		if minArity == maxArity {
 			a.errorAt(node, "function expects %d arguments but got %d", maxArity, argCount)
@@ -546,16 +533,8 @@ func (a *Analyzer) analyzePipe(node *ast.TreeNode) Type {
 		runtimeSymbol := ""
 		var nativeParamTypes []string
 		nativeReturnType := ""
-		if proto, isNative := a.nativeFns[member]; isNative {
-			dispatch = ir.DispatchNative
-			runtimeSymbol = proto.RuntimeSymbol
-			nativeParamTypes = proto.NativeParamTypes
-			nativeReturnType = proto.NativeReturnType
-		} else if _, exists := a.functions[member]; exists && !sym.Mutable {
-			dispatch = ir.DispatchDirect
-			runtimeSymbol = "quark_" + member
-		}
 		a.callPlans[rightNode] = &ir.CallPlan{Kind: ir.CallFunctionValue, CalleeName: moduleName + "." + displayMember(moduleName, member), MinArity: minArity, MaxArity: maxArity, Dispatch: dispatch, RuntimeSymbol: runtimeSymbol, DefaultNodes: defaultNodes, NativeParamTypes: nativeParamTypes, NativeReturnType: nativeReturnType}
+		a.deferFixedDispatch(a.callPlans[rightNode], sym)
 		if pipeArgCount < minArity || pipeArgCount > maxArity {
 			if minArity == maxArity {
 				a.errorAt(node, "function expects %d arguments but got %d (including piped input)", maxArity, pipeArgCount)
@@ -641,13 +620,7 @@ func (a *Analyzer) analyzePipe(node *ast.TreeNode) Type {
 		var nativeReturnType string
 		if funcNode.NodeType == ast.IdentifierNode {
 			name := funcNode.TokenLiteral()
-			// Check nativeFns first — applies regardless of mutability.
-			if proto, isNative := a.nativeFns[name]; isNative && a.refersToNative(a.currentScope, name) {
-				dispatch = ir.DispatchNative
-				runtimeSymbol = proto.RuntimeSymbol
-				nativeParamTypes = proto.NativeParamTypes
-				nativeReturnType = proto.NativeReturnType
-			} else if sym := a.currentScope.Lookup(name); sym != nil && !sym.Mutable {
+			if sym := a.currentScope.Lookup(name); sym != nil && !sym.Mutable && a.fixedFnOf(sym) == nil {
 				if _, exists := a.functions[name]; exists {
 					dispatch = ir.DispatchDirect
 					runtimeSymbol = "quark_" + name
@@ -655,6 +628,9 @@ func (a *Analyzer) analyzePipe(node *ast.TreeNode) Type {
 			}
 		}
 		a.callPlans[rightNode] = &ir.CallPlan{Kind: ir.CallFunctionValue, CalleeName: calleeNameFromNode(funcNode), MinArity: minArity, MaxArity: maxArity, Dispatch: dispatch, RuntimeSymbol: runtimeSymbol, DefaultNodes: defaultNodes, NativeParamTypes: nativeParamTypes, NativeReturnType: nativeReturnType}
+		if funcNode.NodeType == ast.IdentifierNode {
+			a.deferFixedDispatch(a.callPlans[rightNode], a.currentScope.Lookup(funcNode.TokenLiteral()))
+		}
 		if pipeArgCount < minArity || pipeArgCount > maxArity {
 			if minArity == maxArity {
 				a.errorAt(node, "function expects %d arguments but got %d (including piped input)", maxArity, pipeArgCount)

@@ -318,6 +318,16 @@ func TestSmokePrograms_Run(t *testing.T) {
 			),
 		},
 		{
+			name: "fn_declarations",
+			file: filepath.Join(testfilesDir, "smoke_fn_declarations.qrk"),
+			expected: join(
+				"== smoke: fn declarations ==",
+				"true", "true", "11", "4", "211", "15", "4",
+				"11", "3", "42", "8", "4", "40", "0", "27",
+				"7", "8",
+			),
+		},
+		{
 			name: "return_types",
 			file: filepath.Join(testfilesDir, "smoke_return_types.qrk"),
 			expected: join(
@@ -638,7 +648,7 @@ func TestSmokePrograms_Run(t *testing.T) {
 			expected: join(
 				"== smoke: shadowing builtins and native functions ==",
 				"6", "42", "7", "11",
-				"99", "4", "5", "5", "8",
+				"4", "5", "5", "8",
 				"1000", "20",
 				"42",
 				"3", "2",
@@ -880,9 +890,40 @@ func TestSemanticsSafety_Rejected(t *testing.T) {
 		{"order_str_int", "print('a' < 1)\n", "operator '<' expects two numbers or two strings"},
 		{"csv_unterminated_quote", "incl 'std/csv' as csv\nprint(csv.parse('a,\"b\\n'))\n", "csv.parse: unterminated quoted field"},
 		{"csv_bad_separator", "incl 'std/csv' as csv\nprint(csv.parse('a', ';;'))\n", "separator must be a single character"},
-		// A statement can't call a function defined later in the same block.
-		{"call_before_definition", "print(later(2))\nfn later(x) -> x + 1\n", "'later' is called before its definition on line 2"},
-		{"call_before_definition_in_fn", "fn outer() ->\n    r = inner()\n    fn inner() -> 1\n    r\nprint(outer())\n", "'inner' is called before its definition on line 3"},
+		// `fn` declarations are fixed (modules v0.2, rules 18-20).
+		{"fn_declared_twice", "fn f(x) -> x\nfn f(x) -> x + 1\nprint(f(1))\n", "'f' is already defined on line 1"},
+		{"fn_declared_twice_in_fn", "fn outer() ->\n    fn g() -> 1\n    fn g() -> 2\n    g()\nprint(outer())\n", "'g' is already defined on line 2"},
+		{"fn_declared_twice_in_module", "module m:\n    fn g() -> 1\n    fn g() -> 2\nincl m as mm\nprint(mm.g())\n", "'m__g' is already defined on line 2"},
+		{"fn_reassigned", "fn f(x) -> x\nf = fn(x) -> 0\nprint(f(1))\n", "'f' is a function declaration (line 1) and can't be reassigned; use a variable: g = fn ..."},
+		{"fn_reassigned_value", "fn f(x) -> x\nf = 3\nprint(f)\n", "'f' is a function declaration (line 1) and can't be reassigned"},
+		{"fn_reassigned_native", "fn f(x: int) int -> x\nf = fn(x: int) int -> 0\nprint(f(1))\n", "'f' is a function declaration (line 1) and can't be reassigned"},
+		{"fn_reassigned_in_fn", "fn f(x) -> x\nfn g() ->\n    f = 1\n    f\nprint(g())\n", "'f' is a function declaration (line 1) and can't be reassigned"},
+		{"fn_reassigned_before_decl", "f = 1\nfn f() -> 2\nprint(f)\n", "'f' is a function declaration (line 2) and can't be reassigned"},
+		{"fn_var_decl_same_name", "fn f() -> 1\nf: int = 2\n", "'f' is a function declaration (line 1) and can't be reassigned"},
+		{"fn_shadows_outer_fn", "fn f(x) -> x\nfn g() ->\n    fn f() -> 2\n    f()\nprint(g())\n", "'f' is already a function in an enclosing scope (line 1); choose another name"},
+		{"fn_shadows_param", "fn g(f) ->\n    fn f() -> 2\n    f()\nprint(g(1))\n", "'f' is already defined in an enclosing scope; choose another name for this function"},
+		{"fn_shadows_outer_var", "x = 1\nfn g() ->\n    fn x() -> 2\n    x()\nprint(g())\n", "'x' is already defined in an enclosing scope"},
+		{"fn_shadows_builtin_nested", "fn g() ->\n    fn len(x) -> 2\n    len(1)\nprint(g())\n", "'len' is a builtin function and can't be redefined or assigned"},
+		// Hoisted functions can't run before a variable they use is assigned
+		// (rule 23): rejected when the call order is visible, a runtime error
+		// (never null) through a function value.
+		{"hoisted_call_before_var", "report()\ntotal = 5\nfn report() -> print(total)\n", "'report' uses 'total', which is assigned on line 2, after this call"},
+		{"hoisted_call_in_own_assignment", "total = report()\nfn report() -> total + 1\nprint(total)\n", "'report' uses 'total', which is assigned on line 1, after this call"},
+		{"hoisted_call_chain", "a()\ntotal = 5\nfn report() -> print(total)\nfn a() -> report()\n", "'a' uses 'total' (through 'report'), which is assigned on line 2, after this call"},
+		{"hoisted_call_pipe", "1 | show()\nmsg = 'm'\nfn show(x) -> print(msg)\n", "'show' uses 'msg', which is assigned on line 2, after this call"},
+		{"hoisted_call_in_if", "if true:\n    report()\ntotal = 5\nfn report() -> total\n", "'report' uses 'total', which is assigned on line 3, after this call"},
+		{"hoisted_call_in_fn_body", "fn outer() ->\n    show()\n    msg = 'hi'\n    fn show() -> print(msg)\nouter()\n", "'show' uses 'msg', which is assigned on line 3, after this call"},
+		{"hoisted_value_call_unassigned", "g = report\ng()\ntotal = 5\nfn report() -> print(total)\n", "'total' is used before it is assigned"},
+		{"hoisted_value_call_unassigned_in_fn", "fn outer() ->\n    g = show\n    g()\n    msg = 'hi'\n    fn show() -> print(msg)\nouter()\n", "'msg' is used before it is assigned"},
+		{"hoisted_value_call_unassigned_nested_lambda", "g = report\ng()\ntotal = 5\nfn report() -> (fn() -> total)()\n", "'total' is used before it is assigned"},
+		// Variables are not hoisted: a body only sees what is assigned above it.
+		{"fn_uses_later_var", "fn report() -> print(total)\ntotal = 5\nreport()\n", "undefined identifier 'total'"},
+		// Wrong uses of declared functions are still checked at the call.
+		{"hoisted_forward_call_arity", "print(f(1, 2))\nfn f(x) -> x\n", "function expects 1 arguments but got 2"},
+		{"hoisted_forward_call_type", "print(f('s'))\nfn f(x: int) int -> x\n", "argument 1 of 'f' expects int, got str"},
+		{"direct_fn_value_arity", "fn id(v) -> v\nfn h(a, b) -> b\nf = id(h)\nprint(f(1))\n", "function 'h' expects 2 arguments but got 1"},
+		{"direct_fn_param_dynamic", "fn id(v) -> v\nfn f(x: int) -> x\nprint(f(id('s')))\n", "argument 'x' of 'f' expects int, got str"},
+		{"direct_native_param_dynamic", "fn id(v) -> v\nfn f(x: int) int -> x\nprint(f(id('s')))\n", "expected int, got str"},
 		{"chained_assignment", "a = 0\nb = 0\na = b = 1\n", "chained assignment is not supported"},
 		// sort keys must be mutually comparable.
 		{"sort_mixed_types", "print(list [1, 'a'].sort())\n", "sort() can't compare str and int"},

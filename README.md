@@ -516,6 +516,47 @@ print(add_n(5))       // 6
 print(add_n(5, 10))   // 15
 ```
 
+**Declarations are fixed and hoisted.** Every `fn` of a scope (the file, a
+module body, or a block) exists before the scope's first statement runs, so
+functions can be called above their definition and can call each other in any
+order:
+
+```quark
+print(is_even(10))     // true
+
+fn is_even(n) ->
+    if n == 0:
+        true
+    else:
+        is_odd(n - 1)
+
+fn is_odd(n) ->
+    if n == 0:
+        false
+    else:
+        is_even(n - 1)
+```
+
+A declared name can't be declared again in the same scope, assigned
+(`f = fn(x) -> 0` or `f = 3`), or reused by a nested `fn` while it is visible
+(`'f' is already a function in an enclosing scope (line 1); choose another
+name`). To swap functions at runtime, use a variable: `g = fn(x) -> x + 1`,
+then `g = fn(x) -> 0`. Parameters, loop variables and `when` bindings may still
+shadow outer names.
+
+Variables are not hoisted: a function body only sees variables assigned above
+the function. Calling a hoisted function before a variable it uses has been
+assigned is an error, at compile time when the call is visible:
+
+```quark
+report()               // error: 'report' uses 'total', which is assigned on line 2, after this call
+total = 5
+fn report() -> print(total)
+```
+
+When the call goes through a function value (`g = report`, then `g()`), it is a
+runtime error instead: `'total' is used before it is assigned`.
+
 ### Lambdas and closures
 
 A lambda is `fn(params) -> expression`. Assign it to a variable to name it:
@@ -800,8 +841,9 @@ fn fmt_full(x) -> 'mine'   // error: 'fmt_full' is already defined as an extern 
 
 Builtin names work the same way. `fn len(x) -> ...` or `sum = 0` is an error
 (`'len' is a builtin function and can't be redefined or assigned`), but a
-parameter, loop variable, `when` binding or nested function may shadow a
-builtin, and calls inside that scope use it: `fn clamp(x, min, max)` is fine.
+parameter, loop variable or `when` binding may shadow a builtin, and calls
+inside that scope use it: `fn clamp(x, min, max)` is fine. A nested `fn len`
+is an error, like any `fn` that reuses a visible name.
 
 **Standard library import** (the `std/` prefix; see
 [stdlib modules](#standard-library-modules)):
@@ -1093,9 +1135,6 @@ verified by compiling and running the bundled examples.
   supported`); bind it first (`r = h.run`, then `r(4)`).
 - **A pipe continuation line** (`| f()` on the next line) must have the same
   indentation as the line before it.
-- **Calling a function before its definition** is a compile-time error when the
-  call is direct; through another function (`fn a() -> b()`, `a()`, then
-  `fn b`), it fails at runtime.
 - **Return annotations** are checked at compile time. At runtime only fully
   annotated functions (compiled to native C++) check their result: there,
   `fn f(g: fn) int -> g(1)` reports `expected int, got str` when `g` returns a

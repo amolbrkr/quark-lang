@@ -369,8 +369,9 @@ func (p *Parser) parseFunction() *ast.TreeNode {
 		return nil
 	}
 
-	// Normalize named function form into assignment-to-lambda:
+	// A named function is parsed as an assignment-to-lambda marked FnDecl:
 	// fn name(params) [ReturnType] -> body  ==>  name = fn(params) [ReturnType] -> body
+	// The analyzer treats a FnDecl as a fixed, hoisted declaration.
 	fnTok := p.curToken
 	p.nextToken() // skip 'fn'
 
@@ -404,6 +405,7 @@ func (p *Parser) parseFunction() *ast.TreeNode {
 	eqTok := token.Token{Type: token.EQUALS, Literal: "=", Line: fnTok.Line, Column: fnTok.Column}
 	assignNode := ast.NewNode(ast.OperatorNode, &eqTok)
 	assignNode.AddChildren(nameNode, lambdaNode)
+	assignNode.FnDecl = true
 
 	return assignNode
 }

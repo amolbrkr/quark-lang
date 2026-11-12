@@ -92,6 +92,14 @@ type Generator struct {
 	structTypes map[string]*types.StructType
 	// moduleMemberRefs marks `alias.member` nodes used as values.
 	moduleMemberRefs map[*ast.TreeNode]bool
+	// Fixed `fn` declarations, from the analyzer (types/analyzer_fixed.go).
+	fixedFns        map[*ast.TreeNode]*types.FixedFn
+	fnRefs          map[*ast.TreeNode]*types.FixedFn
+	hoists          map[*ast.TreeNode]*types.HoistScope
+	checkedCaptures map[*ast.TreeNode]map[string]bool
+	// checkedCells holds the captured variables of the lambda being generated
+	// that may still be unassigned; they are read with q_cell_get.
+	checkedCells map[string]bool
 }
 
 func New() *Generator {
@@ -147,6 +155,10 @@ func (g *Generator) SetAnalysis(an *types.Analysis) {
 		g.structTypes = an.StructTypes
 	}
 	g.moduleMemberRefs = an.ModuleMemberRefs
+	g.fixedFns = an.FixedFns
+	g.fnRefs = an.FnRefs
+	g.hoists = an.HoistScopes
+	g.checkedCaptures = an.CheckedCaptures
 }
 
 // nodeType returns the analyzer-inferred type for a given AST node, or nil if unknown.
@@ -606,7 +618,15 @@ func (g *Generator) Generate(node *ast.TreeNode) string {
 	g.currentFuncNode = node
 	g.emitLine("q_gc_init();")
 	g.emitLine("q_set_args(argc, argv);")
-	g.predeclareMainFunctionBindings(node)
+	// Hoist the declarations of the top level and of every module body: all
+	// of main's functions exist before its first statement runs.
+	hoisted := []*ast.TreeNode{node}
+	for _, child := range node.Children {
+		if child.NodeType == ast.ModuleNode && len(child.Children) >= 2 {
+			hoisted = append(hoisted, child.Children[1])
+		}
+	}
+	g.hoistScopes(hoisted...)
 
 	// Initialize module body bindings so imported symbols are available at runtime.
 	for _, child := range node.Children {
@@ -623,13 +643,8 @@ func (g *Generator) Generate(node *ast.TreeNode) string {
 			child.NodeType == ast.ExternFnNode || child.NodeType == ast.StructDefNode {
 			continue
 		}
-		// Skip `name = fn(...)` assignments for native functions — the function
-		// definition and thunk are already emitted by generateNativeFunction.
-		if isFunctionBindingAssignmentNode(child) {
-			name := child.Children[0].TokenLiteral()
-			if g.nativeFns[name] != nil {
-				continue
-			}
+		if child.FnDecl {
+			continue // hoisted
 		}
 		g.emitSourceLoc(child)
 		expr := g.generateExpr(child)
@@ -643,48 +658,77 @@ func (g *Generator) Generate(node *ast.TreeNode) string {
 	return g.output.String()
 }
 
-func (g *Generator) predeclareMainFunctionBindings(root *ast.TreeNode) {
-	if root == nil {
-		return
+// hoistScopes emits, at the start of one or more scopes, everything their
+// `fn` declarations need before the first statement runs: the cells of the
+// variables their closures capture (unassigned until the variable's first
+// assignment), a binding for each declaration that needs a closure, and then
+// the closures. Declarations that need no closure are C++ functions and get
+// nothing here.
+func (g *Generator) hoistScopes(nodes ...*ast.TreeNode) {
+	var scopes []*types.HoistScope
+	for _, n := range nodes {
+		if hs := g.hoists[n]; hs != nil {
+			scopes = append(scopes, hs)
+		}
 	}
-	declareBinding := func(name string) {
-		if name == "" || g.declaredVars[name] {
-			return
-		}
-		// Native functions already have a real C++ function definition;
-		// don't shadow them with a QValue variable.
-		if g.nativeFns[name] != nil {
-			return
-		}
-		cName := sanitizeVarName(name)
-		if g.isCaptured(name) {
-			g.emitLine("QCell* %s = q_new_cell(qv_null());", cName)
+	for _, hs := range scopes {
+		for _, name := range hs.Cells {
+			if g.declaredVars[name] {
+				continue
+			}
+			g.emitLine("QCell* %s = q_new_unassigned_cell();", sanitizeVarName(name))
 			g.declaredVars[name] = true
 			g.markCell(name)
-		} else {
-			g.emitLine("QValue %s = qv_null();", cName)
-			g.declaredVars[name] = true
+		}
+		for _, f := range hs.Fns {
+			if !f.Captures || g.declaredVars[f.Name] {
+				continue
+			}
+			cName := sanitizeVarName(f.Name)
+			if g.isCaptured(f.Name) {
+				g.emitLine("QCell* %s = q_new_cell(qv_null());", cName)
+				g.markCell(f.Name)
+			} else {
+				g.emitLine("QValue %s = qv_null();", cName)
+			}
+			g.declaredVars[f.Name] = true
 		}
 	}
-
-	for _, child := range root.Children {
-		if isFunctionBindingAssignmentNode(child) {
-			declareBinding(child.Children[0].TokenLiteral())
-			continue
-		}
-		if child.NodeType != ast.ModuleNode || len(child.Children) < 2 {
-			continue
-		}
-		body := child.Children[1]
-		if body == nil || body.NodeType != ast.BlockNode {
-			continue
-		}
-		for _, stmt := range body.Children {
-			if isFunctionBindingAssignmentNode(stmt) {
-				declareBinding(stmt.Children[0].TokenLiteral())
+	for _, hs := range scopes {
+		for _, f := range hs.Fns {
+			if !f.Captures {
+				continue
+			}
+			value := g.generateLambdaExpr(f.Lambda)
+			if g.isCell(f.Name) {
+				g.emitLine("%s->value = %s;", sanitizeVarName(f.Name), value)
+			} else {
+				g.emitLine("%s = %s;", sanitizeVarName(f.Name), value)
 			}
 		}
 	}
+}
+
+// fixedFnValue is the value of a `fn` declaration used as an expression (the
+// declaration statement itself, e.g. as a block's last statement).
+func (g *Generator) fixedFnValue(node *ast.TreeNode) string {
+	f := g.fixedFns[node.Children[1]]
+	if f == nil {
+		panicICEf("INV-FIXED-FN", node, "declaration '%s' was not analyzed", node.Children[0].TokenLiteral())
+		return "qv_null()"
+	}
+	if f.Captures {
+		return g.generateIdentifier(node.Children[0])
+	}
+	return directFnValue(f)
+}
+
+// directFnValue is a function value for a declaration that needs no closure.
+func directFnValue(f *types.FixedFn) string {
+	if f.Native != nil {
+		return fmt.Sprintf("qv_func((void*)quark_%s__thunk, &%s)", f.CName, fnInfoSymbol(f.CName))
+	}
+	return fmt.Sprintf("qv_func((void*)quark_%s, &%s)", f.CName, fnInfoSymbol(f.CName))
 }
 
 func (g *Generator) collectFunctions(node *ast.TreeNode) {
@@ -724,39 +768,36 @@ func (g *Generator) collectFunctions(node *ast.TreeNode) {
 		}
 		g.funcDecls = append(g.funcDecls, fd)
 	case ast.OperatorNode:
-		// Detect `name = fn(...)` function-binding assignments.
-		// For native functions, use the user-visible name as the C++ function name
-		// so call sites can emit `quark_name(nullptr, ...)` directly.
-		if node.Token != nil && node.Token.Type == token.EQUALS &&
-			len(node.Children) == 2 &&
-			node.Children[0] != nil && node.Children[0].NodeType == ast.IdentifierNode &&
-			node.Children[1] != nil && node.Children[1].NodeType == ast.LambdaNode {
-			userName := node.Children[0].TokenLiteral()
-			lambdaNode := node.Children[1]
-			g.lambdaUserNames[lambdaNode] = userName
-			if proto, isNative := g.nativeFns[userName]; isNative {
-				// Give the lambda the canonical user name so codegen emits quark_<name>.
-				g.lambdaNames[lambdaNode] = userName
-				g.lambdas = append(g.lambdas, lambdaNode)
-				g.funcNames[userName] = true
-				paramCount := 0
-				if len(lambdaNode.Children) >= 1 {
-					paramCount = len(lambdaNode.Children[0].Children)
-				}
-				g.funcDecls = append(g.funcDecls, funcDecl{
-					name:             userName,
-					paramCount:       paramCount,
-					params:           lambdaParams(lambdaNode),
-					display:          displayFuncName(userName),
-					nativeParamTypes: proto.NativeParamTypes,
-					nativeReturnType: proto.NativeReturnType,
-				})
-				// Recurse into children but the lambda itself will be skipped above.
-				for _, child := range node.Children {
-					g.collectFunctions(child)
-				}
-				return
+		if !isFunctionBindingAssignmentNode(node) {
+			break
+		}
+		lambdaNode := node.Children[1]
+		g.lambdaUserNames[lambdaNode] = node.Children[0].TokenLiteral()
+		// A `fn` declaration's function is quark_<CName>: the name calls use
+		// directly when it needs no closure.
+		if f := g.fixedFns[lambdaNode]; f != nil && node.FnDecl {
+			g.lambdaNames[lambdaNode] = f.CName
+			g.lambdas = append(g.lambdas, lambdaNode)
+			paramCount := 0
+			if len(lambdaNode.Children) >= 1 {
+				paramCount = len(lambdaNode.Children[0].Children)
 			}
+			fd := funcDecl{
+				name:       f.CName,
+				paramCount: paramCount,
+				params:     lambdaParams(lambdaNode),
+				display:    displayFuncName(f.Name),
+			}
+			if f.Native != nil {
+				fd.nativeParamTypes = f.Native.NativeParamTypes
+				fd.nativeReturnType = f.Native.NativeReturnType
+			}
+			g.funcDecls = append(g.funcDecls, fd)
+			// The lambda itself is registered; collect what is inside it.
+			for _, child := range lambdaNode.Children {
+				g.collectFunctions(child)
+			}
+			return
 		}
 	case ast.ModuleNode:
 		if len(node.Children) >= 2 {
@@ -1130,8 +1171,9 @@ func (g *Generator) generateNativeFunction(node *ast.TreeNode, funcName string, 
 			// Emit all but the last body statement, then return raw.
 			if bodyNode != nil && bodyNode.NodeType == ast.BlockNode {
 				g.pushBlockScope()
+				g.hoistScopes(bodyNode)
 				for i, child := range bodyNode.Children {
-					if i < len(bodyNode.Children)-1 {
+					if i < len(bodyNode.Children)-1 && !child.FnDecl {
 						g.emitSourceLoc(child)
 						g.emitLine("%s;", g.generateExpr(child))
 					}
@@ -1258,10 +1300,8 @@ func (g *Generator) generateModuleBindings(node *ast.TreeNode) {
 		if child == nil || child.NodeType == ast.InclNode || child.NodeType == ast.ModuleNode {
 			continue
 		}
-		// As at top level: a native function is a C++ function (plus thunk),
-		// so it gets no QValue binding that would hide it.
-		if isFunctionBindingAssignmentNode(child) && g.nativeFns[child.Children[0].TokenLiteral()] != nil {
-			continue
+		if child.FnDecl {
+			continue // hoisted
 		}
 		g.emitSourceLoc(child)
 		expr := g.generateExpr(child)
@@ -1275,6 +1315,7 @@ func (g *Generator) generateBlock(node *ast.TreeNode) string {
 	}
 	g.pushBlockScope()
 	defer g.popScope()
+	g.hoistScopes(node)
 	var lastExpr string = "qv_null()"
 	for idx, child := range node.Children {
 		g.emitSourceLoc(child)
@@ -1289,6 +1330,10 @@ func (g *Generator) generateBlock(node *ast.TreeNode) string {
 func (g *Generator) generateExpr(node *ast.TreeNode) string {
 	if node == nil {
 		return "qv_null()"
+	}
+
+	if node.FnDecl {
+		return g.fixedFnValue(node)
 	}
 
 	switch node.NodeType {
@@ -1393,8 +1438,14 @@ func (g *Generator) generateIdentifier(node *ast.TreeNode) string {
 	if name == "_" {
 		return "qv_null()"
 	}
+	if f := g.fnRefs[node]; f != nil {
+		return directFnValue(f)
+	}
 	if g.declaredVars[name] {
 		if g.isCell(name) {
+			if g.checkedCells[name] {
+				return fmt.Sprintf("q_cell_get(%s, \"%s\")", sanitizeVarName(name), escapeCppString(name))
+			}
 			return fmt.Sprintf("%s->value", sanitizeVarName(name))
 		}
 		cName := sanitizeVarName(name)
@@ -1720,6 +1771,20 @@ func (g *Generator) generateOperator(node *ast.TreeNode) string {
 		left := g.generateExpr(node.Children[0])
 		right := g.generateExpr(node.Children[1])
 		return fmt.Sprintf("([&]() -> QValue { auto _l = %s; return q_truthy(_l) ? _l : (%s); }())", left, right)
+	}
+
+	// The first assignment of a captured variable declares its cell before
+	// the value is built: a lambda assigned to it (`fib = fn(n) -> fib(n - 1)`)
+	// captures that cell.
+	if op == token.EQUALS && node.Children[0].NodeType == ast.IdentifierNode {
+		if varName := node.Children[0].TokenLiteral(); !g.declaredVars[varName] && g.isCaptured(varName) {
+			cName := sanitizeVarName(varName)
+			g.emitLine("QCell* %s = q_new_cell(qv_null());", cName)
+			g.declaredVars[varName] = true
+			g.markCell(varName)
+			g.emitLine("%s->value = %s;", cName, g.generateExpr(node.Children[1]))
+			return fmt.Sprintf("%s->value", cName)
+		}
 	}
 
 	left := g.generateExpr(node.Children[0])
@@ -2770,6 +2835,9 @@ func (g *Generator) generateLambdaFunc(node *ast.TreeNode) {
 	g.emitParamBindings(argsNode, g.lambdaDisplayName(node))
 
 	// Extract captured variables from closure — always QCell* (shared with outer scope)
+	savedChecked := g.checkedCells
+	g.checkedCells = g.checkedCaptures[node]
+	defer func() { g.checkedCells = savedChecked }()
 	if caps, ok := g.captures[node]; ok {
 		for i, capName := range caps {
 			cName := sanitizeVarName(capName)

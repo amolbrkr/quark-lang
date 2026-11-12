@@ -54,17 +54,33 @@ type Analyzer struct {
 	externFns map[string]*ir.CallPlan
 	// externSources holds resolved absolute paths from extern 'path' directives.
 	externSources []string
-	// nativeFns maps fully-annotated user-defined function names → prototype CallPlan
-	// with DispatchNative and populated NativeParamTypes/NativeReturnType.
+	// nativeFns maps the C++ name (FixedFn.CName) of each fully annotated,
+	// non-capturing declared function to its prototype CallPlan with
+	// DispatchNative and populated NativeParamTypes/NativeReturnType. Filled
+	// by finalizeFixedFns.
 	nativeFns map[string]*ir.CallPlan
 	// structTypes maps struct name → StructType for user-defined struct types.
 	structTypes map[string]*StructType
-	// builtinSyms and nativeSyms hold the symbol each builtin (prelude or
-	// extern fn) and native function was declared with. Calls and captures
-	// are resolved by name, so a name that looks up to a different symbol is
-	// a local (parameter, loop variable, nested function) shadowing it.
+	// builtinSyms holds the symbol each builtin (prelude or extern fn) was
+	// declared with. Calls and captures are resolved by name, so a name that
+	// looks up to a different symbol is a local (parameter, loop variable)
+	// shadowing it.
 	builtinSyms map[string]*Symbol
-	nativeSyms  map[string]*Symbol
+
+	// Fixed `fn` declarations (analyzer_fixed.go).
+	rootScope       *Scope
+	moduleScopes    map[*Scope]bool
+	fixedBySym      map[*Symbol]*FixedFn
+	fixedByLambda   map[*ast.TreeNode]*FixedFn
+	fixedList       []*FixedFn
+	fixedCalls      []fixedCall
+	fixedRefs       map[*ast.TreeNode]*FixedFn // identifier nodes naming a declaration
+	captureSyms     map[*ast.TreeNode][]*Symbol // lambda -> symbol of each captured name
+	fnScopes        []*fnScope
+	scopeStmt       map[*Scope]int
+	symDefs         map[*Symbol]symDef
+	hoistScopes     map[*ast.TreeNode]*HoistScope
+	checkedCaptures map[*ast.TreeNode]map[string]bool
 }
 
 func NewAnalyzer() *Analyzer {
@@ -118,7 +134,16 @@ func NewAnalyzer() *Analyzer {
 		nativeFns:        make(map[string]*ir.CallPlan),
 		structTypes:      make(map[string]*StructType),
 		builtinSyms:      builtinSyms,
-		nativeSyms:       make(map[string]*Symbol),
+		rootScope:        globalScope,
+		moduleScopes:     make(map[*Scope]bool),
+		fixedBySym:       make(map[*Symbol]*FixedFn),
+		fixedByLambda:    make(map[*ast.TreeNode]*FixedFn),
+		fixedRefs:        make(map[*ast.TreeNode]*FixedFn),
+		captureSyms:      make(map[*ast.TreeNode][]*Symbol),
+		scopeStmt:        make(map[*Scope]int),
+		symDefs:          make(map[*Symbol]symDef),
+		hoistScopes:      make(map[*ast.TreeNode]*HoistScope),
+		checkedCaptures:  make(map[*ast.TreeNode]map[string]bool),
 	}
 }
 
@@ -130,17 +155,6 @@ func (a *Analyzer) refersToBuiltin(scope *Scope, name string) bool {
 	}
 	sym := scope.Lookup(name)
 	return sym == nil || sym == a.builtinSyms[name]
-}
-
-// refersToNative reports whether name, read in scope, is the native function
-// of that name, not a local binding that shadows it.
-func (a *Analyzer) refersToNative(scope *Scope, name string) bool {
-	if _, ok := a.nativeFns[name]; !ok {
-		return false
-	}
-	decl, known := a.nativeSyms[name]
-	sym := scope.Lookup(name)
-	return sym == nil || !known || sym == decl
 }
 
 func (a *Analyzer) Errors() []string {

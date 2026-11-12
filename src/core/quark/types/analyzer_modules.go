@@ -19,12 +19,15 @@ func (a *Analyzer) analyzeModule(node *ast.TreeNode) Type {
 		return TypeVoid
 	}
 	moduleScope := NewScope(a.currentScope)
+	a.moduleScopes[moduleScope] = true
 	oldScope := a.currentScope
 	a.currentScope = moduleScope
 	a.currentModule = moduleName
 	if bodyNode != nil && bodyNode.NodeType == ast.BlockNode {
 		a.predeclareFunctions(bodyNode.Children)
-		for _, child := range bodyNode.Children {
+		a.declareFixedFns(bodyNode, bodyNode.Children)
+		for i, child := range bodyNode.Children {
+			a.enterStatement(i)
 			a.Analyze(child)
 		}
 	} else {
@@ -70,7 +73,8 @@ func (a *Analyzer) analyzeUse(node *ast.TreeNode) Type {
 			a.errorAt(node, "symbol '%s' from module '%s' conflicts with existing definition", name, moduleName)
 			continue
 		}
-		a.currentScope.Define(name, sym.Type, sym.Mutable)
+		// The member's own symbol, so a `fn` member stays the same declaration.
+		a.currentScope.Symbols[name] = sym
 	}
 	return TypeVoid
 }
@@ -116,6 +120,18 @@ type Analysis struct {
 	// emits the member (its right child, already renamed `module__member`)
 	// like an identifier.
 	ModuleMemberRefs map[*ast.TreeNode]bool
+
+	// Fixed `fn` declarations (analyzer_fixed.go). FixedFns is keyed by the
+	// declaration's lambda node. FnRefs maps identifier nodes that name a
+	// declaration needing no closure to it: codegen emits its C++ function
+	// (or thunk) instead of reading a binding. HoistScopes is keyed by the
+	// CompilationUnit, module body or block that declares functions.
+	// CheckedCaptures lists, per lambda, the captured variables whose cells
+	// may still be unassigned when the lambda runs.
+	FixedFns        map[*ast.TreeNode]*FixedFn
+	FnRefs          map[*ast.TreeNode]*FixedFn
+	HoistScopes     map[*ast.TreeNode]*HoistScope
+	CheckedCaptures map[*ast.TreeNode]map[string]bool
 }
 
 // Analysis returns the analyzer outputs for root, which must be the tree
@@ -131,6 +147,10 @@ func (a *Analyzer) Analysis(root *ast.TreeNode) *Analysis {
 		ExternFns:          a.externFns,
 		StructTypes:        a.structTypes,
 		ModuleMemberRefs:   a.moduleMemberRefs,
+		FixedFns:           a.fixedByLambda,
+		FnRefs:             a.fixedRefs,
+		HoistScopes:        a.hoistScopes,
+		CheckedCaptures:    a.checkedCaptures,
 	}
 }
 

@@ -319,9 +319,9 @@ func TestCodegen_ModuleQualifiedCallLowersDirectly(t *testing.T) {
 	if len(res.TypeErrors) > 0 {
 		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
 	}
-	// The alias m.myfloor resolves to the module's function symbol, which is
-	// a plain (uncaptured) QValue at top level, named module__member.
-	if !strings.Contains(res.CPP, "q_call1(quark_math__myfloor, qv_int(3))") {
+	// The alias m.myfloor resolves to the module's function declaration,
+	// named module__member; it captures nothing, so the call is direct.
+	if !strings.Contains(res.CPP, "quark_math__myfloor(nullptr, qv_int(3))") {
 		t.Fatalf("expected module-qualified call to lower to resolved module symbol value, cpp=\n%s", res.CPP)
 	}
 	if strings.Contains(res.CPP, "dot-call syntax is not supported") {
@@ -526,9 +526,9 @@ func TestCodegen_ClosureHiddenFirstParam(t *testing.T) {
 	}
 }
 
-func TestCodegen_DirectCallViaClosureDispatch(t *testing.T) {
-	// Named functions desugar to assignment of lambda: add = fn(x, y) -> x + y
-	// Calls go through closure dispatch on the function value.
+func TestCodegen_DirectCallOfDeclaredFunction(t *testing.T) {
+	// A `fn` declaration that captures nothing is a plain C++ function:
+	// calls are direct, and there is no binding or closure for it.
 	src := "fn add(x, y) -> x + y\nprint(add(1, 2))\n"
 	res := testutil.GenerateCPP(src)
 	if len(res.ParserErrors) > 0 {
@@ -537,8 +537,11 @@ func TestCodegen_DirectCallViaClosureDispatch(t *testing.T) {
 	if len(res.TypeErrors) > 0 {
 		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
 	}
-	if !strings.Contains(res.CPP, "q_call2(quark_add, qv_int(1), qv_int(2))") {
-		t.Fatalf("expected closure dispatch for named function call, cpp=\n%s", res.CPP)
+	if !strings.Contains(res.CPP, "quark_add(nullptr, qv_int(1), qv_int(2))") {
+		t.Fatalf("expected a direct call for a declared function, cpp=\n%s", res.CPP)
+	}
+	if strings.Contains(res.CPP, "QValue quark_add =") || strings.Contains(res.CPP, "QCell* quark_add") {
+		t.Fatalf("a declared function that captures nothing needs no binding, cpp=\n%s", res.CPP)
 	}
 }
 
@@ -858,9 +861,9 @@ func TestCodegen_PipeIntoUserFunction(t *testing.T) {
 	if len(res.TypeErrors) > 0 {
 		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
 	}
-	// Pipe into closure call
-	if !strings.Contains(res.CPP, "q_call") {
-		t.Fatalf("expected pipe into user fn to use q_call, cpp=\n%s", res.CPP)
+	// A declared function that captures nothing is called directly.
+	if !strings.Contains(res.CPP, "quark_double(nullptr, qv_int(5))") {
+		t.Fatalf("expected pipe into a declared fn to call it directly, cpp=\n%s", res.CPP)
 	}
 }
 
@@ -914,8 +917,8 @@ func TestCodegen_IncludesQuarkHeader(t *testing.T) {
 // --- Forward declarations ---
 
 func TestCodegen_ForwardDeclaresLambdas(t *testing.T) {
-	// Named fns desugar to lambdas. Forward declarations use quark__lambda names.
-	src := "fn add(x, y) -> x + y\nprint(add(1, 2))\n"
+	// Anonymous lambdas get generated quark__lambdaN names and forward declarations.
+	src := "add = fn(x, y) -> x + y\nprint(add(1, 2))\n"
 	res := testutil.GenerateCPP(src)
 	if len(res.ParserErrors) > 0 {
 		t.Fatalf("unexpected parse errors: %v", res.ParserErrors)

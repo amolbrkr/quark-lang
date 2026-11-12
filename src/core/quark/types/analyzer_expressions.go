@@ -15,6 +15,9 @@ func (a *Analyzer) analyzeIdentifier(node *ast.TreeNode) Type {
 		a.errorAt(node, "undefined identifier '%s'", name)
 		return TypeError
 	}
+	if f := a.fixedFnOf(sym); f != nil {
+		a.fixedRefs[node] = f
+	}
 	return sym.Type
 }
 
@@ -66,6 +69,9 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 					return TypeError
 				}
 				a.moduleMemberRefs[node] = true
+				if f := a.fixedFnOf(sym); f != nil {
+					a.fixedRefs[node.Children[1]] = f
+				}
 				return sym.Type
 			}
 		}
@@ -118,6 +124,9 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 		}
 		return operandType
 	}
+	if op == token.EQUALS && len(node.Children) == 2 && isFnDecl(node) {
+		return a.analyzeFnDecl(node)
+	}
 	if op == token.EQUALS && len(node.Children) == 2 {
 		target := node.Children[0]
 		if target == nil {
@@ -148,11 +157,21 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 			a.Analyze(node.Children[1])
 			return TypeError
 		}
+		// A declared function is fixed (rule 19).
+		if target.NodeType == ast.IdentifierNode {
+			if f := a.fixedFnOf(a.currentScope.Lookup(target.TokenLiteral())); f != nil {
+				a.reassignedDeclError(target, f)
+				a.Analyze(node.Children[1])
+				return TypeError
+			}
+		}
 		if target.NodeType == ast.IdentifierNode && node.Children[1].NodeType == ast.LambdaNode {
+			// A variable holding a function: defined before the lambda is
+			// analyzed so the lambda can call itself through it.
 			varName := target.TokenLiteral()
 			if a.currentScope.LookupLocal(varName) == nil {
 				funcType := functionTypeFromLambdaNodeWithStructs(node.Children[1], a.structTypes)
-				a.currentScope.Define(varName, funcType, true)
+				a.recordDef(a.currentScope.Define(varName, funcType, true), target)
 				a.functions[varName] = funcType
 			}
 			a.pendingFuncName = varName
@@ -217,7 +236,7 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 		varName := target.TokenLiteral()
 		sym := a.currentScope.Lookup(varName)
 		if sym == nil {
-			a.currentScope.Define(varName, rightType, true)
+			a.recordDef(a.currentScope.Define(varName, rightType, true), target)
 		} else {
 			a.markParamReassigned(sym)
 			if _, dstIsFunc := sym.Type.(*FunctionType); dstIsFunc {
@@ -541,9 +560,13 @@ func (a *Analyzer) analyzeVarDecl(node *ast.TreeNode) Type {
 		a.errorAt(nameNode, "cannot assign value of type '%s' to '%s'", valueType.String(), declType.String())
 	}
 	if existing := a.currentScope.LookupLocal(varName); existing != nil {
+		if f := a.fixedFnOf(existing); f != nil {
+			a.reassignedDeclError(nameNode, f)
+			return declType
+		}
 		a.errorAt(nameNode, "symbol '%s' already defined in this scope", varName)
 		return declType
 	}
-	a.currentScope.Define(varName, declType, true)
+	a.recordDef(a.currentScope.Define(varName, declType, true), nameNode)
 	return declType
 }

@@ -121,6 +121,11 @@ type TreeNode struct {
 	ExternSymbol   string // The 'as' symbol (C++ function name)
 	ExternReceiver string // The receiver type prefix (e.g. "list", "vec", "str") — empty for free functions
 
+	// FnDecl marks the `name = fn(...)` node a `fn name(...)` declaration is
+	// parsed into. A declaration is fixed (never reassigned) and hoisted to
+	// the start of its scope; a plain assignment of a lambda is neither.
+	FnDecl bool
+
 	// SourceFile is the display name of the file the node was parsed from, set
 	// by the loader for nodes spliced in from imported modules (empty for the
 	// root file). Codegen uses it for runtime error locations.

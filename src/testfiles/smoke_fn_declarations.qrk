@@ -1,0 +1,110 @@
+// `fn` declarations are fixed and hoisted (modules v0.2, rules 17-23).
+print('== smoke: fn declarations ==')
+
+// Calls in any order: a declaration exists before its scope's first statement.
+print(is_even(10))
+
+fn is_even(n) ->
+    if n == 0:
+        true
+    else:
+        is_odd(n - 1)
+
+fn is_odd(n) ->
+    if n == 0:
+        false
+    else:
+        is_even(n - 1)
+
+// Fully annotated (native) functions, in either order.
+fn nat_even(n: int) bool ->
+    if n == 0:
+        true
+    else:
+        nat_odd(n - 1)
+fn nat_odd(n: int) bool ->
+    if n == 0:
+        false
+    else:
+        nat_even(n - 1)
+print(nat_odd(7))
+
+// An unannotated function calling a native one declared after it.
+fn plus_one(n) -> twice(n) + 1
+fn twice(n: int) int -> n * 2
+print(plus_one(5))
+
+// Functions that capture a variable, mutually recursive, used before the
+// variable is assigned would be an error; after it, they see its value.
+limit = 3
+fn ping(n) ->
+    if n >= limit:
+        n
+    else:
+        pong(n + 1)
+fn pong(n) -> ping(n + 1)
+print(ping(0))
+
+// Nested declarations are hoisted within their block and capture locals.
+fn outer(x) ->
+    r = helper(1)
+    fn helper(y) -> y + x
+    r + helper(10)
+print(outer(100))
+
+// Sibling functions can each declare a helper of the same name.
+fn left() ->
+    fn helper(y: int) int -> y * 2
+    helper(3)
+fn right() ->
+    fn helper(y: int) int -> y * 3
+    helper(3)
+print(left() + right())
+
+// A declaration that recurses through a captured counter.
+fn countdown(n) ->
+    steps = 0
+    fn step() ->
+        steps = steps + 1
+        if steps < n:
+            step()
+        steps
+    step()
+print(countdown(4))
+
+// Declared functions are values: stored, passed, and called with defaults.
+fn add(a, b = 10) -> a + b
+f = add
+print(f(1))
+print(f(1, 2))
+fs = list [is_even, add, twice, ping]
+print(fs[2](21))
+fn apply(k, v) -> k(v)
+print(apply(twice, 4))
+print(apply(ping, 2))
+
+// A block's last statement may be a declaration: its value is the function.
+fn make() ->
+    fn inner(v) -> v * 10
+print(make()(4))
+
+// Variables holding functions are reassignable.
+g = fn(x) -> x + 1
+g = fn(x) -> x * 0
+print(g(5))
+
+// Module members are hoisted too.
+module mathx:
+    fn cube(x) -> x * sq(x)
+    fn sq(x) -> x * x
+incl mathx as mx
+print(mx.cube(3))
+
+// A module function can read a top-level variable assigned before it.
+counter = 7
+module cnt:
+    fn get() -> counter
+incl cnt as cn
+print(cn.get())
+counter = 8
+print(cn.get())

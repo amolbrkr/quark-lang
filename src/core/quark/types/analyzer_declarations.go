@@ -10,12 +10,10 @@ func (a *Analyzer) predeclareFunctions(nodes []*ast.TreeNode) {
 		if child == nil {
 			continue
 		}
+		// `fn` declarations are declared by declareFixedFns; a plain
+		// `g = fn(...)` is a variable, defined when it is assigned.
 		if child.NodeType == ast.FunctionNode {
 			a.declareFunctionSignature(child)
-			continue
-		}
-		if isFunctionBindingAssignment(child) {
-			a.declareFunctionAssignmentSignature(child)
 		}
 	}
 }

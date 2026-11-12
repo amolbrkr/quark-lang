@@ -3,17 +3,18 @@ package types
 import (
 	"quark/ast"
 	"quark/token"
-	"quark/ir"
 )
 
 func (a *Analyzer) analyzeCompilationUnit(node *ast.TreeNode) Type {
 	a.predeclareStructTypes(node.Children)
 	a.predeclareFunctions(node.Children)
-	a.checkCallsBeforeDefinition(node.Children)
+	a.declareFixedFns(node, node.Children)
 	var lastType Type = TypeVoid
-	for _, child := range node.Children {
+	for i, child := range node.Children {
+		a.enterStatement(i)
 		lastType = a.Analyze(child)
 	}
+	a.finalizeFixedFns()
 	return lastType
 }
 
@@ -21,9 +22,10 @@ func (a *Analyzer) analyzeBlock(node *ast.TreeNode) Type {
 	a.pushScope()
 	defer a.popScope()
 	a.predeclareFunctions(node.Children)
-	a.checkCallsBeforeDefinition(node.Children)
+	a.declareFixedFns(node, node.Children)
 	var lastType Type = TypeVoid
-	for _, child := range node.Children {
+	for i, child := range node.Children {
+		a.enterStatement(i)
 		lastType = a.Analyze(child)
 	}
 	return lastType
@@ -101,7 +103,7 @@ func (a *Analyzer) analyzeFunction(node *ast.TreeNode) Type {
 	return funcType
 }
 
-func (a *Analyzer) collectFreeVars(node *ast.TreeNode, lambdaScope *Scope, params map[string]bool, seen map[string]bool, result *[]string) {
+func (a *Analyzer) collectFreeVars(node *ast.TreeNode, lambdaScope *Scope, params map[string]bool, seen map[string]bool, result *[]string, syms *[]*Symbol) {
 	if node == nil {
 		return
 	}
@@ -118,34 +120,37 @@ func (a *Analyzer) collectFreeVars(node *ast.TreeNode, lambdaScope *Scope, param
 		if lambdaScope.LookupLocal(name) != nil {
 			return
 		}
-		// Native functions are C++ functions, called (and used as values,
-		// through their thunk) by name, so there is no binding to capture.
-		if a.refersToNative(lambdaScope, name) {
-			return
-		}
-		if lambdaScope.Parent != nil && lambdaScope.Parent.Lookup(name) != nil {
-			seen[name] = true
-			*result = append(*result, name)
+		// Declared functions that need no closure are dropped from the
+		// captures once that is known (finalizeFixedFns).
+		if lambdaScope.Parent != nil {
+			if sym := lambdaScope.Parent.Lookup(name); sym != nil {
+				seen[name] = true
+				*result = append(*result, name)
+				*syms = append(*syms, sym)
+			}
 		}
 		return
 	}
 	// Dot access: the right side is a member, key or method name, not a
 	// variable, so only the left side is walked. For alias.member (a module
-	// call), the member's binding lives in main, so it is captured unless it is
-	// a native function, which is called directly.
+	// call), the member's binding lives in main, so it is captured (and
+	// dropped again when it needs no closure, as for any declaration).
 	if node.NodeType == ast.OperatorNode && node.Token != nil && node.Token.Type == token.DOT && len(node.Children) == 2 {
 		left, right := node.Children[0], node.Children[1]
 		if left != nil && left.NodeType == ast.IdentifierNode && right != nil && right.NodeType == ast.IdentifierNode {
-			if _, isAlias := a.moduleAliases[left.TokenLiteral()]; isAlias && lambdaScope.Lookup(left.TokenLiteral()) == nil {
+			if moduleName, isAlias := a.moduleAliases[left.TokenLiteral()]; isAlias && lambdaScope.Lookup(left.TokenLiteral()) == nil {
 				member := right.TokenLiteral()
-				if _, isNative := a.nativeFns[member]; !isNative && member != "" && !params[member] && !seen[member] {
-					seen[member] = true
-					*result = append(*result, member)
+				if module := a.modules[moduleName]; module != nil && member != "" && !params[member] && !seen[member] {
+					if sym := module.Symbols[member]; sym != nil {
+						seen[member] = true
+						*result = append(*result, member)
+						*syms = append(*syms, sym)
+					}
 				}
 				return
 			}
 		}
-		a.collectFreeVars(left, lambdaScope, params, seen, result)
+		a.collectFreeVars(left, lambdaScope, params, seen, result, syms)
 		return
 	}
 	if node.NodeType == ast.LambdaNode {
@@ -162,7 +167,7 @@ func (a *Analyzer) collectFreeVars(node *ast.TreeNode, lambdaScope *Scope, param
 			}
 		}
 		if len(node.Children) >= 2 {
-			a.collectFreeVars(node.Children[1], lambdaScope, mergedParams, seen, result)
+			a.collectFreeVars(node.Children[1], lambdaScope, mergedParams, seen, result, syms)
 		}
 		return
 	}
@@ -170,9 +175,9 @@ func (a *Analyzer) collectFreeVars(node *ast.TreeNode, lambdaScope *Scope, param
 	// when an outer variable has the same name. Their scopes are already
 	// popped when this walk runs, so they must be tracked here explicitly.
 	if node.NodeType == ast.ForLoopNode && len(node.Children) >= 3 {
-		a.collectFreeVars(node.Children[1], lambdaScope, params, seen, result)
+		a.collectFreeVars(node.Children[1], lambdaScope, params, seen, result, syms)
 		loopParams := withParam(params, node.Children[0].TokenLiteral())
-		a.collectFreeVars(node.Children[2], lambdaScope, loopParams, seen, result)
+		a.collectFreeVars(node.Children[2], lambdaScope, loopParams, seen, result, syms)
 		return
 	}
 	if node.NodeType == ast.PatternNode && len(node.Children) > 0 {
@@ -184,12 +189,12 @@ func (a *Analyzer) collectFreeVars(node *ast.TreeNode, lambdaScope *Scope, param
 			if child.NodeType == ast.ResultPatternNode {
 				continue // the binding identifier itself is not a use
 			}
-			a.collectFreeVars(child, lambdaScope, armParams, seen, result)
+			a.collectFreeVars(child, lambdaScope, armParams, seen, result, syms)
 		}
 		return
 	}
 	for _, child := range node.Children {
-		a.collectFreeVars(child, lambdaScope, params, seen, result)
+		a.collectFreeVars(child, lambdaScope, params, seen, result, syms)
 	}
 }
 
@@ -259,10 +264,12 @@ func (a *Analyzer) analyzeLambda(node *ast.TreeNode) Type {
 	returnType := a.Analyze(bodyNode)
 
 	freeVars := []string{}
+	freeSyms := []*Symbol{}
 	seen := map[string]bool{}
-	a.collectFreeVars(bodyNode, lambdaScope, paramNames, seen, &freeVars)
+	a.collectFreeVars(bodyNode, lambdaScope, paramNames, seen, &freeVars, &freeSyms)
 	if len(freeVars) > 0 {
 		a.captures[node] = freeVars
+		a.captureSyms[node] = freeSyms
 	}
 
 	a.popScope()
@@ -285,89 +292,5 @@ func (a *Analyzer) analyzeLambda(node *ast.TreeNode) Type {
 	}
 	a.validateReturnType(funcType, returnType, funcName, node)
 
-	// If this lambda is a named top-level function binding with full scalar annotations,
-	// register it as a native fn so call sites can use DispatchNative. A native
-	// function is called without its closure, so one that captures outer
-	// variables stays a closure (its annotations are enforced on entry instead).
-	if funcName != "lambda" && isFullyAnnotated(funcType) && len(a.captures[node]) == 0 {
-		nativeParams := make([]string, len(funcType.ParamTypes))
-		for i, pt := range funcType.ParamTypes {
-			nativeParams[i] = quarkTypeToNativeCType(pt)
-		}
-		a.nativeSyms[funcName] = a.currentScope.Lookup(funcName)
-		a.nativeFns[funcName] = &ir.CallPlan{
-			Kind:             ir.CallFunctionValue,
-			CalleeName:       funcName,
-			MinArity:         len(funcType.ParamTypes),
-			MaxArity:         len(funcType.ParamTypes),
-			Dispatch:         ir.DispatchNative,
-			RuntimeSymbol:    "quark_" + funcName,
-			NativeParamTypes: nativeParams,
-			NativeReturnType: quarkTypeToNativeCType(funcType.AnnotatedReturnType),
-		}
-	}
-
 	return funcType
-}
-
-// checkCallsBeforeDefinition reports a statement that calls a function defined
-// later in the same statement list. Predeclaration makes the name visible, but
-// the function value is only bound when its definition runs, so such a call
-// fails at runtime. Calls inside function and lambda bodies are fine (they run
-// later) and are not checked; calls made indirectly through another function
-// are still caught at runtime.
-func (a *Analyzer) checkCallsBeforeDefinition(stmts []*ast.TreeNode) {
-	defIndex := map[string]int{}
-	defLine := map[string]int{}
-	for i, stmt := range stmts {
-		name := ""
-		var nameNode *ast.TreeNode
-		switch {
-		case stmt == nil:
-			continue
-		case stmt.NodeType == ast.FunctionNode && len(stmt.Children) > 0:
-			nameNode = stmt.Children[0]
-		case isFunctionBindingAssignment(stmt):
-			nameNode = stmt.Children[0]
-		default:
-			continue
-		}
-		name = nameNode.TokenLiteral()
-		if _, seen := defIndex[name]; name == "" || seen {
-			continue
-		}
-		defIndex[name] = i
-		if nameNode.Token != nil {
-			defLine[name] = nameNode.Token.Line
-		}
-	}
-	if len(defIndex) == 0 {
-		return
-	}
-	var walk func(n *ast.TreeNode, stmtIdx int)
-	walk = func(n *ast.TreeNode, stmtIdx int) {
-		if n == nil {
-			return
-		}
-		switch n.NodeType {
-		case ast.FunctionNode, ast.LambdaNode, ast.ModuleNode, ast.StructDefNode:
-			return
-		case ast.FunctionCallNode:
-			if len(n.Children) > 0 && n.Children[0] != nil && n.Children[0].NodeType == ast.IdentifierNode {
-				callee := n.Children[0].TokenLiteral()
-				if idx, ok := defIndex[callee]; ok && idx > stmtIdx {
-					a.errorAt(n.Children[0], "'%s' is called before its definition on line %d; move the definition above this call", callee, defLine[callee])
-				}
-			}
-		}
-		for _, c := range n.Children {
-			walk(c, stmtIdx)
-		}
-	}
-	for i, stmt := range stmts {
-		if stmt == nil || stmt.NodeType == ast.FunctionNode || isFunctionBindingAssignment(stmt) {
-			continue
-		}
-		walk(stmt, i)
-	}
 }

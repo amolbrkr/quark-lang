@@ -559,7 +559,7 @@ v: any = 1
 
 The annotated type constrains future assignments. Assigning a value of incompatible type is a compile-time error.
 
-Builtin function names (`sum`, `len`, `max`, ...) are bindings that can't be reassigned, so `sum = 0` is a compile-time error, also inside a function body. A parameter may reuse a builtin's name (`fn f(sum) -> sum`).
+Builtin function names (`sum`, `len`, `max`, ...) are bindings that can't be reassigned, so `sum = 0` is a compile-time error, also inside a function body. A parameter may reuse a builtin's name (`fn f(sum) -> sum`). Names declared with `fn` are fixed the same way: `f = ...` or `f: int = ...` after `fn f` is an error.
 
 The `any` annotation is significant: it forces the variable to use boxed `QValue` storage even when the initial value is a scalar. This allows the variable to hold values of different types over its lifetime:
 
@@ -619,8 +619,7 @@ When the receiver's type isn't known at compile time (for example the result of 
 | Results and vectors have no truthiness | `if r:` would silently discard errors; `if v == w:` would test emptiness, not equality |
 | Short-circuit and/or (Python semantics) | Enables guard patterns (`if x and x.foo:`); returns operand values, not bool |
 | Safe reads, fatal writes | `.get()` returning null is convenient; bad `.set()` is always a bug |
-| Named functions desugar to assignments | One representation for all function values |
-| Forward references via predeclaration | Two-pass analysis lets a function body call functions defined later in the file (mutual recursion works). Code that runs immediately must come after the definition: a statement that directly calls a function defined further down in the same block is a compile-time error ("'f' is called before its definition on line N"). A call made indirectly, through another function, before the definition runs fails at runtime |
+| `fn` declarations are fixed and hoisted | Every `fn` of a scope exists before the scope's first statement, so calls work in any order and mutual recursion needs no forward declaration. A declared name can't be declared twice in a scope, reassigned, or reused by a nested `fn` while visible; variables (`g = fn ...`) stay reassignable. A declaration that captures nothing compiles to a plain C++ function called directly; one that captures variables is a closure in a binding that never changes. Variables are not hoisted: a body only sees variables assigned above it, and a call that runs a hoisted function before a variable it uses is assigned is a compile-time error ("'report' uses 'total', which is assigned on line 9, after this call"), or, through a function value, a runtime error ("'total' is used before it is assigned") |
 | Dict keys are strings only | Simplifies hashing and serialisation; `.get`/`.set` convert other keys to strings |
 | No generic type annotations | Keeps the type system simple; runtime is dynamically typed |
 | Result assignment restrictions | Guides users toward explicit error handling |

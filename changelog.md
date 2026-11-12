@@ -8,21 +8,19 @@ Sections follow [Keep a Changelog](https://keepachangelog.com/): **Breaking**, *
 
 ---
 
-## Known issues (as of `2e62209` plus uncommitted changes)
+## Known issues (as of `4294dab` plus uncommitted changes)
 
-These were checked against the current compiler. The first is a silent wrong result, which breaks the robustness rules in `CLAUDE.md`. The others fail loudly, but with a C++ error, a wrong location or an unhelpful message, or by rejecting a valid program.
+These were checked against the current compiler. They fail loudly, but with a C++ error, a wrong location or an unhelpful message, or by rejecting a valid program.
 
-- **Declaring the same `fn` twice in one file silently keeps the second.** `fn f(x) -> x`, then `fn f(x) -> x + 1`, then `print(f(1))` prints `2` with no warning (`fn f` is parsed as `f = fn ...`, a reassignment). The same name in two *different* files is a compile error. Modules v0.2 (rule 18) makes this an error.
-- **A module function that reads a top-level variable fails in clang.** For example, `counter = 7`, then `module cnt:` with `fn get() -> counter`, then `incl cnt as c` and `print(c.get())` stops with `use of undeclared identifier 'quark_counter'`. The same happens when the variable and module are in an included file.
 - **A file included without an alias by two other files is rejected.** If `left.qrk` and `right.qrk` both do `incl './base.qrk'` and the main file includes both, the program fails with `symbol 'base__twice' from module 'base' conflicts with existing definition`. Including it with an alias (`incl './base.qrk' as b`) works.
 - A `struct` defined inside a `module` block fails with `internal: struct 'L' not pre-declared`. A qualified literal (`shapes.Sq { side: 1 }`) fails with `no prefix parse function for LBRACE`. Both are deferred to modules v0.2 (`modules_v0_2_spec.md` §2 and §7).
 - A runtime error inside a `for` loop body is reported at the `for` line, not at the statement that failed. For example, `print(r % 0)` on line 4 of a loop starting on line 2 reports `modulo by zero at file.qrk:2:1`.
 
 ---
 
-## 2026-11-12: Function values, `fn` type, call-shape checking, keyword renames, struct field checks, name clashes, `input()` result
+## 2026-11-12: Function values, `fn` type, call-shape checking, keyword renames, struct field checks, name clashes, `input()` result, fixed `fn` declarations
 
-Commits: `c0ac8cd`, `ac274c0`, `6dc11a0` (keyword renames), `2e62209` (struct fields, dict keys); name clashes, shadowing and `input()` not yet committed
+Commits: `c0ac8cd`, `ac274c0`, `6dc11a0` (keyword renames), `2e62209` (struct fields, dict keys), `4294dab` (name clashes, shadowing, `input()`); fixed `fn` declarations (modules v0.2 step 1) not yet committed
 
 ### Breaking
 - **`input()` returns a `result`.** It returns `ok(line)` (`ok('')` for an empty line), or `err('end of input')` once stdin is exhausted. It used to return a `str`, or `null` at end of input. Using the value as a string is now a compile error (`len(input())`, `input().upper()`, a `str` parameter), so code must unwrap it:
@@ -47,6 +45,18 @@ Commits: `c0ac8cd`, `ac274c0`, `6dc11a0` (keyword renames), `2e62209` (struct fi
   This covers `fn`s, variables, `struct`s and `extern fn`s, between the main file and an included file, between two included files, and in either order. An `extern fn` and another definition with the same name in one file is also an error. Before, an importer's `fn helper` hijacked a library's internal calls to its own `helper`, and an importer's `fn fmt_full` was ignored. A file included twice (directly and transitively) is spliced once and doesn't clash with itself.
 - **Redefining or assigning a builtin is a compile error**: `fn len(x) -> 42`, `len = fn(x) -> 42`, `fn print(x) -> 1`, `sum = 0`, and `max = 1` inside a function. All report `'len' is a builtin function and can't be redefined or assigned; choose another name`. The `fn` forms used to be silently ignored, so `len('ab')` still called the builtin. The value forms failed with a confusing type error.
 - A default of `null` for an annotated parameter it can't satisfy (`x: int = null`, `r: result = null`) is a compile error. It used to fail at runtime on every call that omitted the argument.
+
+- **`fn` declarations are fixed** (modules v0.2 spec, rules 17-21). Each of these used to compile and is now an error:
+  - Declaring a name twice in one scope. The second definition used to win silently: `fn f(x) -> x`, then `fn f(x) -> x + 1`, then `print(f(1))` printed `2`. Now: `'f' is already defined on line 1`.
+  - Assigning to a declared name, as a function or any other value (`f = fn(x) -> 0`, `f = 3`, `f: int = 2`, also from inside another function): `'f' is a function declaration (line 1) and can't be reassigned; use a variable: g = fn ...`.
+  - A nested `fn` reusing a name that is visible there: an outer function, variable or parameter (`'f' is already a function in an enclosing scope (line 1); choose another name`), or a builtin (`fn len` inside a function used to shadow `len`; it is now `'len' is a builtin function and can't be redefined or assigned`). Parameters, loop variables and `when` bindings may still shadow.
+
+  To swap a function at runtime, hold it in a variable:
+  ```
+  g = fn(x) -> x + 1
+  g = fn(x) -> 0        // fine: g is a variable
+  ```
+- **A function body can't name a `g = fn(...)` variable assigned below it.** `fn a() -> g(1)`, then `g = fn(x) -> x + 1`, used to work because such assignments were predeclared. It is now `undefined identifier 'g'`, as for any variable. Declare it with `fn g(x) -> x + 1` instead, which is hoisted.
 
 - **Renamed keywords and builtins.** The old spellings no longer compile:
 
@@ -101,13 +111,32 @@ Commits: `c0ac8cd`, `ac274c0`, `6dc11a0` (keyword renames), `2e62209` (struct fi
   - Omitted default arguments are built fresh on every call.
   - `qext::call` from native code gets the same checks.
 - A list of functions with different signatures can be indexed and called (`fs[0](9)`). This used to fail with "expression is not callable".
+- **`fn` declarations are hoisted** (rule 22). Every `fn` of a scope (the file, a module body or a block) exists before the scope's first statement runs, so calls work in any order and mutual recursion needs no particular order. A statement calling a function defined further down used to be a compile error (`'f' is called before its definition on line N`); through another function it failed at runtime.
+  ```
+  print(is_even(10))   // true
+  fn is_even(n) -> ...is_odd(n - 1)...
+  fn is_odd(n) -> ...is_even(n - 1)...
+  ```
+- **Use-before-assignment checks for hoisted functions** (rule 23). Variables are not hoisted: a body only sees variables assigned above it. A call that would run a function before a variable it uses is assigned is rejected when the order is visible, including through other declared functions and pipes:
+  ```
+  report()             // error: 'report' uses 'total', which is assigned on line 2, after this call
+  total = 5
+  fn report() -> print(total)
+  ```
+  Through a function value (`g = report`, then `g()`), it is a runtime error: `'total' is used before it is assigned`, never `null`.
 - **Struct literals and struct return types work in an importing file.** With `struct Point` defined at the top level of `lib/geo.qrk`, the importer can write `Point { x: 1 }` and `fn mk(a: int) Point -> ...`. Both used to be parse errors (`no prefix parse function for LBRACE`). A misspelled struct name is now a check error: `unknown struct type 'Pnt'` or `unknown type 'Pnt'`.
 
 ### Changed
+- **A declared function that captures no variables is a plain C++ function.** Calls to it are direct (`quark_f(nullptr, ...)`), with no binding, closure allocation or indirect call. Before, every named function lived in a closure and was called through it, unless it was fully annotated. Whether a function is native (fully annotated) is now decided after the whole program is analyzed, so a fully annotated function that calls another non-capturing function is native too. A declared function that captures a variable stays a closure, held in a binding that never changes.
+- A fully annotated lambda assigned to a variable (`g = fn(x: int) int -> x`) is now a closure like any other variable. Only `fn` declarations compile to native C++ functions.
 - Tables spec (`tables_v0_1_spec.md`, still not implemented): the literal is `tbl { ... }` and the type annotation is `tbl` (`fn f(t: tbl)`). The runtime type name for a table is `tbl`. `fmt.table(...)` keeps its name.
 
 ### Fixed
-- **A parameter, loop variable, lambda parameter, `when` binding or nested function named like a builtin now shadows it.** Calls used to go to the builtin:
+- **Calling a fully annotated function declared below its caller failed in clang.** `fn a(n) -> b(n) + 1`, then `fn b(n: int) int -> n * 2`, stopped with `assigning to 'QCell *' from incompatible type 'int64_t (QClosure *, int64_t)'`. It now prints `11` for `a(5)`.
+- **Reassigning a fully annotated function failed in clang** (`redefinition of 'quark_f'`). It is now the Quark error above.
+- **Two functions that each declared a fully annotated helper of the same name failed in clang** (`redefinition of 'quark_helper'`). Each nested declaration now gets its own C++ name.
+- **A module function that read a top-level variable failed in clang.** `counter = 7`, then `module cnt:` with `fn get() -> counter`, then `print(c.get())` after `incl cnt as c`, stopped with `use of undeclared identifier 'quark_counter'`. It now prints `7`, and sees later assignments to `counter`.
+- **A parameter, loop variable, lambda parameter or `when` binding named like a builtin now shadows it.** (A nested `fn` named like a builtin is an error since the fixed-declaration change above.) Calls used to go to the builtin:
   - `fn f(len) -> len('abc')` called the builtin `len`.
   - `fn g(len) -> 'x' | len()` did the same through a pipe.
   - `fn adder(max) -> (fn(x) -> x + max)` failed in clang (`use of undeclared identifier 'quark_max'`).
@@ -143,6 +172,15 @@ Commits: `c0ac8cd`, `ac274c0`, `6dc11a0` (keyword renames), `2e62209` (struct fi
 - `types.TypeFn`, `IsCallableType`, `Analysis.ModuleMemberRefs`.
 - `CLAUDE.md` gains the *Language Goals*, *Catch It at Compile Time* and *Robustness Bar* sections.
 - New `smoke_function_values.qrk`, about 24 new `TestSemanticsSafety_Rejected` cases, and `TestNativeCallback_Arity`.
+- **Fixed `fn` declarations** (`types/analyzer_fixed.go`):
+  - The parser still produces `name = fn(...)` for `fn name(...)`, with the new `ast.TreeNode.FnDecl` set.
+  - `declareFixedFns` declares a scope's declarations as non-mutable symbols before its statements (replacing `predeclareFunctions` for them; plain `g = fn` assignments are no longer predeclared) and reports rules 18 and 20; rule 19 is checked in `analyzeOperator` and `analyzeVarDecl`. `checkCallsBeforeDefinition` is removed.
+  - Call plans to declarations are recorded with `deferFixedDispatch` and resolved by `finalizeFixedFns` once the program is analyzed. It computes which declarations need a closure (least fixpoint over captured symbols, now recorded per lambda in `captureSyms`), assigns C++ names (`FixedFn.CName`: the name for a non-capturing top-level or module declaration, `name__N` otherwise), registers native functions (`nativeFns` is now keyed by `CName`), drops captures of declarations that need no closure, and sets each plan to `DispatchNative`, `DispatchDirect` or `DispatchClosure`. `refersToNative` and `nativeSyms` are removed.
+  - `checkDefiniteAssignment` implements rule 23 per scope and records `HoistScope`s: the cells codegen creates unassigned and the closures it creates at the scope's start. The top level and module bodies are one hoisting unit, since they all run in `main`.
+  - New `Analysis` fields: `FixedFns`, `FnRefs`, `HoistScopes`, `CheckedCaptures`.
+  - Codegen: `hoistScopes` (replaces `predeclareMainFunctionBindings`) runs at the start of `main`, of every block and of the native-function fast path; `fixedFnValue`/`directFnValue` for declarations used as values; `generateIdentifier` reads `FnRefs` and uses `q_cell_get` for checked captures. The first assignment of a captured variable declares its cell before building the value, so `fib = fn(n) -> fib(n - 1)` captures it.
+  - Runtime (`core/cell.hpp`): `q_new_unassigned_cell` and `q_cell_get`. `qv_null()` now zeroes its payload so no real null matches the unassigned marker.
+  - Tests: new `smoke_fn_declarations.qrk`; 28 `TestSemanticsSafety_Rejected` cases replace the two `call_before_definition` ones; `smoke_shadowing.qrk` drops its nested `fn len`; four codegen tests now expect direct calls.
 
 ---
 

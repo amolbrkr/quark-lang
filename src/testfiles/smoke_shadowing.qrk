@@ -12,11 +12,8 @@ print(pipe_len(fn(s) -> 7))
 fn adder(max) -> (fn(x) -> x + max)
 print(adder(10)(1))
 
-// A nested function, a loop variable, a lambda parameter and a `when` binding.
-fn outer(s) ->
-    fn len(x) -> 99
-    len(s)
-print(outer('ab'))
+// A loop variable, a lambda parameter and a `when` binding. (A nested `fn`
+// can't reuse a visible name, builtins included.)
 for max in list [4, 5]:
     print(max)
 g = fn(len) -> len('abc')

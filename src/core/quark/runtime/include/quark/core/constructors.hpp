@@ -26,12 +26,19 @@ inline QValue qv_float(double v) {
     return q;
 }
 
+// Null value constructor
+inline QValue qv_null() {
+    QValue q;
+    q.type = QValue::VAL_NULL;
+    q.data.int_val = 0; // distinguishes it from an unassigned cell (cell.hpp)
+    return q;
+}
+
 // String value constructor (makes a copy using GC)
 inline QValue qv_string(const char* v) {
     QValue q;
     if (!v) {
-        q.type = QValue::VAL_NULL;
-        return q;
+        return qv_null();
     }
     q.type = QValue::VAL_STRING;
     q.data.string_val = q_strdup(v);
@@ -43,8 +50,7 @@ inline QValue qv_string(const char* v) {
 inline QValue qv_string_own(char* v) {
     QValue q;
     if (!v) {
-        q.type = QValue::VAL_NULL;
-        return q;
+        return qv_null();
     }
     q.type = QValue::VAL_STRING;
     q.data.string_val = v;
@@ -56,13 +62,6 @@ inline QValue qv_bool(bool v) {
     QValue q;
     q.type = QValue::VAL_BOOL;
     q.data.bool_val = v;
-    return q;
-}
-
-// Null value constructor
-inline QValue qv_null() {
-    QValue q;
-    q.type = QValue::VAL_NULL;
     return q;
 }
 

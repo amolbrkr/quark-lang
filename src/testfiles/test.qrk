@@ -1,15 +1,5 @@
-incl "std/fmt" as fmt
-incl "std/blas"
-incl "std/time"
+incl "std/random"
 
-x = vec [1, 2, 3, 4]
-y = vec [4, 3, 2, 3]
+fn pick1(max: int = 10) int -> randint(0, max)
 
-print(fmt.show_vec(x, len(x)))
-
-start = time.clock()
-xdoty = blas_dot(x.astype("f64"), y.astype("f64"))
-end = time.clock()
-
-print(xdoty)
-print("Estimated time: " + to_str(end - start))
+print(pick1())

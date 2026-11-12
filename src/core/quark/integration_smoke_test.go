@@ -587,6 +587,7 @@ func TestSmokePrograms_Run(t *testing.T) {
 				"2",
 				"20",
 				"2",
+				"8",
 			),
 		},
 		{
@@ -623,6 +624,7 @@ func TestSmokePrograms_Run(t *testing.T) {
 				"2", "6",
 				"3", "7",
 				"1.0",
+				"11", "3", "[1]", "[2]",
 			),
 		},
 		{
@@ -872,6 +874,29 @@ func TestSemanticsSafety_Rejected(t *testing.T) {
 		{"fn_struct_field", "struct H:\n    run: fn\nh = H { run: 1 }\n", "to field 'run' of type 'fn'"},
 		{"native_return_checked", "fn nat(f: fn) int -> f(1)\nprintln(nat(fn(a) -> 'x'))\n", "expected int, got str"},
 		{"module_member_value_unknown", "use 'std/io' as io\nf = io.nope\n", "module 'io' has no symbol 'nope'"},
+		// Calls through function parameters are checked at compile time against
+		// the function passed: arity, argument types (including arguments the
+		// body passes on from its own parameters), across pipes, modules and
+		// functions that hand the parameter on.
+		{"callback_arity", "fn h(a, b) -> b\nfn apply(k) -> k(1)\nprintln(apply(h))\n", "argument 1 of 'apply' is called with 1 argument (line 2), but 'h' takes 2 arguments"},
+		{"callback_arity_passed_on", "fn h(a, b) -> b\nfn apply(k: fn) -> k(1)\nfn wrap(k) -> apply(k)\nprintln(wrap(h))\n", "argument 1 of 'wrap' is called with 1 argument (line 2), but 'h' takes 2 arguments"},
+		{"callback_arity_pipe", "fn h(a, b) -> b\nfn apply(k) -> 1 | k()\nprintln(apply(h))\n", "argument 1 of 'apply' is called with 1 argument (line 2), but 'h' takes 2 arguments"},
+		{"callback_arity_lambda", "fn apply(k) -> k(1)\nprintln(apply(fn(a, b) -> b))\n", "but the lambda passed takes 2 arguments"},
+		{"callback_arity_module_member", "use 'std/io' as io\nfn apply(k) -> k()\nprintln(apply(io.exists))\n", "but 'io.exists' takes 1 argument"},
+		{"callback_arity_in_closure", "fn h(a, b) -> b\nfn apply(k) ->\n    g = fn() -> k(1)\n    g()\nprintln(apply(h))\n", "is called with 1 argument (line 3), but 'h' takes 2 arguments"},
+		{"callback_arg_type", "fn inc(x: int) -> x + 1\nfn apply(k) -> k('s')\nprintln(apply(inc))\n", "argument 1 of 'apply' is called with str as argument 1 (line 2), but 'inc' expects int"},
+		{"callback_arg_type_from_param", "fn apply(k, v) -> k(v)\nprintln(apply(fn(x: int) -> x, 'str'))\n", "is called with str as argument 1 (line 1), but the lambda passed expects int"},
+		{"callback_arg_type_two_levels", "fn inc(x: int) -> x + 1\nfn apply(k, v) -> k(v)\nfn wrap(g, w) -> apply(g, w)\nprintln(wrap(inc, 'oops'))\n", "argument 1 of 'wrap' is called with str as argument 1 (line 2), but 'inc' expects int"},
+		{"callback_arg_type_default", "fn inc(x: int) -> x + 1\nfn apply(k, v = 'd') -> k(v)\nprintln(apply(inc))\n", "is called with str as argument 1 (line 2), but 'inc' expects int"},
+		{"callback_not_a_function", "fn apply(k) -> k(1)\nprintln(apply(5))\n", "argument 1 of 'apply' is called as a function (line 1), but gets int"},
+		{"callback_union_arity", "fn a1(x) -> x\nfn a2(x, y) -> y\nfs = list [a1, a2]\nprintln(fs[0](1, 2, 3))\n", "none of the functions this value can be accepts 3 arguments"},
+		// Function values the compiler can't see through check the argument
+		// count when called.
+		{"dynamic_arity_too_few", "fn id(v) -> v\nfn h(a, b) -> b\nf = id(h)\nprintln(f(1))\n", "function 'h' expects 2 arguments but got 1"},
+		{"dynamic_arity_too_many", "fn id(v) -> v\nf = id(fn(a) -> a)\nprintln(f(1, 2))\n", "function expects 1 argument but got 2"},
+		{"dynamic_arity_default_range", "fn id(v) -> v\nfn g(a, b = 1) -> a\nf = id(g)\nprintln(f())\n", "function 'g' expects 1-2 arguments but got 0"},
+		{"dynamic_arity_struct_field", "struct H:\n    run: fn\nfn h(a, b) -> b\nx = H { run: h }\nr = x.run\nprintln(r(1))\n", "function 'h' expects 2 arguments but got 1"},
+		{"dynamic_arity_module_member", "use 'std/io' as io\nfn id(v) -> v\nf = id(io.exists)\nprintln(f())\n", "function 'io.exists' expects 1 argument but got 0"},
 		{"when_literal_or_result", "n = 1\nwhen n:\n    1 or ok x -> println(1)\n    _ -> println(2)\n", "ok patterns cannot be combined with other patterns using 'or'"},
 	}
 
@@ -1056,7 +1081,8 @@ int main() {
 	CHECK_ALIGNED("vector_str_validity", vs.data.vector_val->validity);
 
     /* --- closure --- */
-    QClosure* cl = q_alloc_closure(nullptr, 0);
+    static const QFnInfo info = {"selfcheck", 0, 0, nullptr};
+    QClosure* cl = q_alloc_closure(nullptr, &info, 0);
     CHECK("closure", cl);
 
     /* --- cell --- */
@@ -1272,6 +1298,41 @@ func TestExternTypedArg_RuntimeTypeGuard(t *testing.T) {
 	}
 	if !strings.Contains(combined, "expected int, got str") {
 		t.Fatalf("expected type mismatch detail in runtime error, got:\n%s", combined)
+	}
+}
+
+// TestNativeCallback_Arity checks that native code calling a Quark function
+// value through qext::call gets the same argument-count check and default
+// filling as a call in Quark.
+func TestNativeCallback_Arity(t *testing.T) {
+	tmp := t.TempDir()
+	hpp := strings.Join([]string{
+		"#pragma once",
+		"#include <cstdint>",
+		"inline QValue qei_call1(QClosure* f, QValue x) { return qext::call(f, x); }",
+		"",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(tmp, "cb.hpp"), []byte(hpp), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	header := "extern './cb.hpp'\nextern fn call1(f: fn, x: any) any as 'qei_call1'\n"
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(tmp, name), []byte(header+body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	write("ok.qrk", "println(call1(fn(v, step = 2) -> v * step, 5))\n")
+	if got := strings.TrimSpace(normalizeNewlines(runQuarkIn(t, tmp, "run", "ok.qrk"))); got != "10" {
+		t.Fatalf("default filled by a native call: got %q, want 10", got)
+	}
+
+	write("bad.qrk", "println(call1(fn(a, b) -> b, 1))\n")
+	cmd := exec.Command(quarkExePath, "run", "bad.qrk")
+	cmd.Dir = tmp
+	out, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "function expects 2 arguments but got 1") {
+		t.Fatalf("expected an arity error from the native call, got (err=%v):\n%s", err, out)
 	}
 }
 

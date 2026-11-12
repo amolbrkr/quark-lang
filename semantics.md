@@ -215,11 +215,19 @@ The parser immediately desugars `fn foo(x) -> body` into the assignment `foo = f
 
 ### 6.5 Default parameters
 
-Default values must be **literals only** (int, float, string, bool, null, or empty list). Required parameters must come before defaulted parameters. Defaults are filled at the **call site** — omitted trailing arguments are replaced with their default values before the function is called.
+Default values must be **literals only** (int, float, string, bool, null, or empty list). Required parameters must come before defaulted parameters. Defaults are filled at the **call site** when the compiler knows the function being called — omitted trailing arguments are replaced with their default values before the function is called. A call through a function value it can't see through fills them in at runtime instead (§6.7). Either way a default is built fresh for every call, so an empty-list default is never shared between calls.
 
 ### 6.6 Return type annotations
 
 Return types are checked at compile time — no runtime cost. The analyzer infers the body's return type and checks it against the annotation. Mismatch produces a compile-time error. A body whose type can't be inferred (it returns an `any` value) is checked at runtime only in a fully annotated function, which is compiled to native C++ and converts its result with the checked `q_as_*` helpers (an `int` result widens to a `float` return type); other functions don't check it yet.
+
+### 6.7 Calls through function values
+
+A call through a parameter or variable holding a function is checked in two layers.
+
+**At compile time (call shapes).** While analyzing a function body, the compiler records every call made through one of the function's parameters (`k(1)`, `x | k()`): the number of arguments, their types, and which of them are the function's own parameters passed on unchanged (`fn apply(k, v) -> k(v)`). Passing a parameter on to another function's parameter that is called inherits that function's calls, through any number of levels. At each call of the function, an argument whose signature is known (a named function, a lambda, an `extern fn`, a module member) is checked against those calls: too few or too many arguments, or an argument type that conflicts with an annotated parameter, is a compile-time error naming the call inside the body (`argument 1 of 'apply' is called with 1 argument (line 2), but 'h' takes 2 arguments`). A known non-function (`apply(5)`) is rejected the same way; `null` is allowed, as an optional callback the body may test before calling. A parameter that the body reassigns isn't tracked. Calling a list element whose type is one of several function signatures is rejected when none of them accepts the argument count.
+
+**At runtime (the backstop).** Every function value carries a static descriptor (`QFnInfo` in `types/closure.hpp`: its name, minimum and maximum argument count, and how to build its defaults). A call whose callee the compiler couldn't resolve, because the value came from `any`, a list, a struct field or native code, checks the argument count (`function 'h' expects 2 arguments but got 1`, at the call's location) and fills in omitted defaults. A call with an argument for every parameter takes a direct path, with one comparison. Argument types are then checked by the callee on entry, as for any call (§13.2).
 
 ---
 
@@ -386,7 +394,7 @@ This registers a new method on the `list` type, callable via `my_list.shuffle(42
 
 Parameter types map to C++ types: `int`, `float`, `bool` and `str` become `int64_t`, `double`, `bool` and `const char*`; `list`, `dict` and `vector` become `QList*`, `QDict*` and `QVector*`; `fn` becomes `QClosure*`; every other annotation (`any`, `result`, `resource`, struct names) is passed as a boxed `QValue`. An `int` argument to a `float` parameter is widened; a `float` argument to an `int` parameter is a runtime error. Return types use the same mapping; the result is automatically boxed back to `QValue`.
 
-**Callbacks.** An `fn` parameter arrives as `QClosure*`. Native code calls it with `qext::call(f, args...)` (up to three `QValue` arguments; the result is a `QValue`) and can return it, or store it in a Quark value, with `qext::box(f)`. Any Quark function value can be passed: a lambda, a capturing closure, a named function, an `extern fn` or a module member. A closure carries no arity, so calling it with the wrong number of arguments isn't detected.
+**Callbacks.** An `fn` parameter arrives as `QClosure*`. Native code calls it with `qext::call(f, args...)` (up to three `QValue` arguments; the result is a `QValue`) and can return it, or store it in a Quark value, with `qext::box(f)`. Any Quark function value can be passed: a lambda, a capturing closure, a named function, an `extern fn` or a module member. `qext::call` checks the argument count and fills in defaults like a call in Quark (§6.7), so a callback called with too few arguments is a runtime error, not a missing argument.
 
 See `runtime/include/quark/ext/api.hpp` for the `qext` namespace available to extension authors.
 
@@ -506,7 +514,7 @@ The analyzer prevents assigning a `result`-typed value to a variable with a non-
 
 ### 13.1 Available types
 
-Variable, parameter and struct field annotations: `int`, `float`, `str`, `bool`, `list`, `dict`, `vector`, `result`, `resource`, `fn`, `any`, and struct names. `fn` accepts any function value (named function, lambda, `extern fn`, module member); it has no signature, so arity and argument types are checked only when the function runs.
+Variable, parameter and struct field annotations: `int`, `float`, `str`, `bool`, `list`, `dict`, `vector`, `result`, `resource`, `fn`, `any`, and struct names. `fn` accepts any function value (named function, lambda, `extern fn`, module member). It has no signature; how the body calls the parameter is checked against the function passed instead (§6.7).
 
 Return type annotations accept the same list.
 

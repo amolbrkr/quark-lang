@@ -27,6 +27,7 @@
 #include "../types/vector.hpp"
 #include "../types/dict.hpp"
 #include "../types/closure.hpp"
+#include "../types/function.hpp"
 
 #include <cstdint>
 #include <cstdlib>
@@ -338,24 +339,26 @@ inline bool dict_has(const QDict* d, const char* key) {
 // Closure call helpers — call a Quark fn value from native code
 // ------------------------------------------------------------
 
+// Each call checks the argument count against the function's parameters
+// (filling omitted defaults), like a call through a fn value in Quark.
 inline QValue call(QClosure* fn) {
-    if (!fn || !fn->func) panic("call: null closure");
-    return reinterpret_cast<QClFunc0>(fn->func)(fn);
+    if (!fn) panic("call: null closure");
+    return q_call0(box(fn));
 }
 
 inline QValue call(QClosure* fn, QValue a0) {
-    if (!fn || !fn->func) panic("call: null closure");
-    return reinterpret_cast<QClFunc1>(fn->func)(fn, a0);
+    if (!fn) panic("call: null closure");
+    return q_call1(box(fn), a0);
 }
 
 inline QValue call(QClosure* fn, QValue a0, QValue a1) {
-    if (!fn || !fn->func) panic("call: null closure");
-    return reinterpret_cast<QClFunc2>(fn->func)(fn, a0, a1);
+    if (!fn) panic("call: null closure");
+    return q_call2(box(fn), a0, a1);
 }
 
 inline QValue call(QClosure* fn, QValue a0, QValue a1, QValue a2) {
-    if (!fn || !fn->func) panic("call: null closure");
-    return reinterpret_cast<QClFunc3>(fn->func)(fn, a0, a1, a2);
+    if (!fn) panic("call: null closure");
+    return q_call3(box(fn), a0, a1, a2);
 }
 
 } // namespace qext

@@ -77,6 +77,8 @@ func (a *Analyzer) analyzeFunction(node *ast.TreeNode) Type {
 	a.validateDefaultValues(paramSpecs, funcType, nameNode)
 
 	a.pushScope()
+	paramSyms := make([]*Symbol, len(paramSpecs))
+	owner := a.newParamOwner()
 	for i, spec := range paramSpecs {
 		if spec.name == "" {
 			continue
@@ -85,10 +87,12 @@ func (a *Analyzer) analyzeFunction(node *ast.TreeNode) Type {
 		if i < len(funcType.ParamTypes) {
 			paramType = funcType.ParamTypes[i]
 		}
-		a.currentScope.Define(spec.name, paramType, true)
+		paramSyms[i] = a.currentScope.Define(spec.name, paramType, true)
+		a.trackParam(paramSyms[i], owner, i)
 	}
 	returnType := a.Analyze(bodyNode)
 	a.popScope()
+	funcType.ParamCalls = a.paramCallsOf(paramSyms)
 
 	a.validateReturnType(funcType, returnType, funcName, nameNode)
 	if funcType.AnnotatedReturnType == nil {
@@ -217,6 +221,8 @@ func (a *Analyzer) analyzeLambda(node *ast.TreeNode) Type {
 	paramSpecs := collectParamSpecs(argsNode)
 	paramTypes := make([]Type, 0, len(paramSpecs))
 	paramNames := make(map[string]bool)
+	paramSyms := make([]*Symbol, 0, len(paramSpecs))
+	owner := a.newParamOwner()
 	defaultCount := 0
 	defaultValues := make([]*DefaultValueInfo, len(paramSpecs))
 	for i, spec := range paramSpecs {
@@ -231,7 +237,9 @@ func (a *Analyzer) analyzeLambda(node *ast.TreeNode) Type {
 		} else {
 			paramType = TypeAny
 		}
-		a.currentScope.Define(spec.name, paramType, true)
+		sym := a.currentScope.Define(spec.name, paramType, true)
+		a.trackParam(sym, owner, len(paramSyms))
+		paramSyms = append(paramSyms, sym)
 		paramTypes = append(paramTypes, paramType)
 		paramNames[spec.name] = true
 		if spec.defaultValue != nil {
@@ -263,6 +271,7 @@ func (a *Analyzer) analyzeLambda(node *ast.TreeNode) Type {
 		AnnotatedReturnType: annotatedReturnType,
 		DefaultCount:        defaultCount,
 		DefaultValues:       defaultValues,
+		ParamCalls:          a.paramCallsOf(paramSyms),
 	}
 
 	a.validateDefaultValues(paramSpecs, funcType, node)

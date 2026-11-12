@@ -4,6 +4,7 @@
 
 #include "value.hpp"
 #include "gc.hpp"
+#include "../types/closure.hpp"
 #include <cstring>
 #include <cstdarg>
 #include <cstdio>
@@ -66,8 +67,8 @@ inline QValue qv_null() {
 }
 
 // Function value constructor - wraps raw pointer in a QClosure with 0 captures
-inline QValue qv_func(void* f) {
-    QClosure* cl = q_alloc_closure(f, 0);
+inline QValue qv_func(void* f, const QFnInfo* info) {
+    QClosure* cl = q_alloc_closure(f, info, 0);
     QValue q;
     q.type = QValue::VAL_FUNC;
     q.data.func_val = cl;

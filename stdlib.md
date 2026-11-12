@@ -418,6 +418,12 @@ when safe_div(10, 0):
 
 ---
 
+## Stdlib modules: what an import exposes
+
+Each module below is a `.qrk` file whose public API is its `module` block (`io.open`, `fmt.show_vec`, ...). The `extern fn` bindings it is built on (`io_open`, `fmt_vector`, `blas_dot`, ...) are declared at the file's top level, and every top-level name of an imported file is visible to the program, alias or not. They are callable, but they are implementation details: they take every argument explicitly (no defaults) and may change. Use the module functions.
+
+---
+
 ## `std/io`
 
 File I/O. Import it with `use 'std/io' as io`. The module is `extern fn` bindings over `src/core/stdlib/io.hpp`, like the other stdlib modules; there are no file builtins in the prelude. An open file is a `resource` (`type(f)` is `'resource'`; it prints as `<resource file>`).

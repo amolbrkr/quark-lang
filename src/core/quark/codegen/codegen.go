@@ -37,8 +37,10 @@ func panicICEf(code string, node *ast.TreeNode, format string, args ...interface
 type funcDecl struct {
 	name             string
 	paramCount       int
-	nativeParamTypes []string // nil = QValue params; non-nil = native-typed
-	nativeReturnType string   // "" = QValue return
+	params           *ast.TreeNode // parameter list (for arity and defaults in its QFnInfo)
+	display          string        // name in runtime messages
+	nativeParamTypes []string      // nil = QValue params; non-nil = native-typed
+	nativeReturnType string        // "" = QValue return
 }
 
 // Generator generates C code from an AST
@@ -580,9 +582,11 @@ func (g *Generator) Generate(node *ast.TreeNode) string {
 		g.emitLine("QValue _thunk_%s(%s);", proto.RuntimeSymbol, strings.Join(thunkParams, ", "))
 	}
 	g.emit("\n")
+	g.emitFnInfos()
 
 	// Emit struct definitions (QStructDef statics)
 	g.emitStructDefs()
+	g.emitDefaultArgFns()
 
 	// Generate function definitions
 	g.generateNode(node)
@@ -690,7 +694,7 @@ func (g *Generator) collectFunctions(node *ast.TreeNode) {
 			name := node.Children[0].TokenLiteral()
 			argsNode := node.Children[1]
 			paramCount := len(argsNode.Children)
-			fd := funcDecl{name: name, paramCount: paramCount}
+			fd := funcDecl{name: name, paramCount: paramCount, params: argsNode, display: displayFuncName(name)}
 			if proto, isNative := g.nativeFns[name]; isNative {
 				fd.nativeParamTypes = proto.NativeParamTypes
 				fd.nativeReturnType = proto.NativeReturnType
@@ -715,6 +719,8 @@ func (g *Generator) collectFunctions(node *ast.TreeNode) {
 		fd := funcDecl{
 			name:       lambdaName,
 			paramCount: paramCount,
+			params:     lambdaParams(node),
+			display:    g.lambdaDisplayName(node),
 		}
 		g.funcDecls = append(g.funcDecls, fd)
 	case ast.OperatorNode:
@@ -740,6 +746,8 @@ func (g *Generator) collectFunctions(node *ast.TreeNode) {
 				g.funcDecls = append(g.funcDecls, funcDecl{
 					name:             userName,
 					paramCount:       paramCount,
+					params:           lambdaParams(lambdaNode),
+					display:          displayFuncName(userName),
 					nativeParamTypes: proto.NativeParamTypes,
 					nativeReturnType: proto.NativeReturnType,
 				})
@@ -809,6 +817,110 @@ func (g *Generator) generateFunction(node *ast.TreeNode) {
 // (renamed module__member by the loader) as module.member.
 func displayFuncName(name string) string {
 	return strings.Replace(name, "__", ".", 1)
+}
+
+// lambdaParams is a lambda node's parameter list.
+func lambdaParams(node *ast.TreeNode) *ast.TreeNode {
+	if node == nil || len(node.Children) == 0 {
+		return nil
+	}
+	return node.Children[0]
+}
+
+// fnInfoSymbol is the QFnInfo describing generated function quark_<name>
+// (and its native thunk); externFnInfoSymbol describes extern thunk
+// _thunk_<symbol>.
+func fnInfoSymbol(name string) string         { return "_qfi_" + name }
+func externFnInfoSymbol(symbol string) string { return "_qfi__thunk_" + symbol }
+
+// defaultArgFnName is the function that builds quark_<name>'s default
+// arguments for calls through a function value.
+func defaultArgFnName(name string) string { return "quark_" + name + "__default_arg" }
+
+// paramArity is the number of parameters without a default and the total.
+func paramArity(params *ast.TreeNode, paramCount int) (int, int) {
+	if params == nil {
+		return paramCount, paramCount
+	}
+	required := 0
+	for _, p := range params.Children {
+		if p != nil && p.DefaultValue == nil {
+			required++
+		}
+	}
+	return required, len(params.Children)
+}
+
+// emitFnInfos emits the QFnInfo of every function that can become a value, so
+// calls through a function value can check their argument count and fill in
+// defaults (see types/closure.hpp).
+func (g *Generator) emitFnInfos() {
+	seen := map[string]bool{}
+	for _, fd := range g.funcDecls {
+		if seen[fd.name] {
+			continue
+		}
+		seen[fd.name] = true
+		minArity, maxArity := paramArity(fd.params, fd.paramCount)
+		defaults := "nullptr"
+		if minArity < maxArity {
+			g.emitLine("static QValue %s(int index);", defaultArgFnName(fd.name))
+			defaults = defaultArgFnName(fd.name)
+		}
+		display := fd.display
+		if display == "" {
+			display = displayFuncName(fd.name)
+		}
+		g.emitLine("static const QFnInfo %s = {\"%s\", %d, %d, %s};", fnInfoSymbol(fd.name), escapeCppString(display), minArity, maxArity, defaults)
+	}
+	names := make([]string, 0, len(g.externFns))
+	for name := range g.externFns {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		proto := g.externFns[name]
+		if proto.IsMethod || seen["extern:"+proto.RuntimeSymbol] {
+			continue
+		}
+		seen["extern:"+proto.RuntimeSymbol] = true
+		n := len(proto.NativeParamTypes)
+		g.emitLine("static const QFnInfo %s = {\"%s\", %d, %d, nullptr};", externFnInfoSymbol(proto.RuntimeSymbol), escapeCppString(displayFuncName(name)), n, n)
+	}
+	g.emit("\n")
+}
+
+// emitDefaultArgFns emits, for each function with default parameters, the
+// function its QFnInfo uses to build an omitted default (a fresh value per
+// call, so an empty-list default isn't shared between calls).
+func (g *Generator) emitDefaultArgFns() {
+	seen := map[string]bool{}
+	for _, fd := range g.funcDecls {
+		if seen[fd.name] || fd.params == nil {
+			continue
+		}
+		seen[fd.name] = true
+		if minArity, maxArity := paramArity(fd.params, fd.paramCount); minArity == maxArity {
+			continue
+		}
+		g.emit("static QValue %s(int index) {\n", defaultArgFnName(fd.name))
+		g.indentLevel++
+		g.emitLine("switch (index) {")
+		for i, p := range fd.params.Children {
+			if p == nil || p.DefaultValue == nil {
+				continue
+			}
+			g.emitLine("case %d: {", i)
+			g.indentLevel++
+			g.emitLine("return %s;", g.generateExpr(p.DefaultValue))
+			g.indentLevel--
+			g.emitLine("}")
+		}
+		g.emitLine("}")
+		g.emitLine("return qv_null();")
+		g.indentLevel--
+		g.emit("}\n\n")
+	}
 }
 
 // lambdaDisplayName names a lambda for runtime messages: the name it is bound
@@ -1291,13 +1403,13 @@ func (g *Generator) generateIdentifier(node *ast.TreeNode) string {
 	}
 	if g.funcNames[name] {
 		if _, isNative := g.nativeFns[name]; isNative {
-			return fmt.Sprintf("qv_func((void*)quark_%s__thunk)", name)
+			return fmt.Sprintf("qv_func((void*)quark_%s__thunk, &%s)", name, fnInfoSymbol(name))
 		}
-		return fmt.Sprintf("qv_func((void*)quark_%s)", name)
+		return fmt.Sprintf("qv_func((void*)quark_%s, &%s)", name, fnInfoSymbol(name))
 	}
 	// Extern fn free functions used as first-class values: wrap the thunk.
 	if proto, isExtern := g.externFns[name]; isExtern && !proto.IsMethod {
-		return fmt.Sprintf("qv_func((void*)_thunk_%s)", proto.RuntimeSymbol)
+		return fmt.Sprintf("qv_func((void*)_thunk_%s, &%s)", proto.RuntimeSymbol, externFnInfoSymbol(proto.RuntimeSymbol))
 	}
 	return sanitizeVarName(name)
 }
@@ -2593,7 +2705,7 @@ func (g *Generator) generateLambdaExpr(node *ast.TreeNode) string {
 		if len(node.Children) >= 1 {
 			paramCount = len(node.Children[0].Children)
 		}
-		g.funcDecls = append(g.funcDecls, funcDecl{name: lambdaName, paramCount: paramCount})
+		g.funcDecls = append(g.funcDecls, funcDecl{name: lambdaName, paramCount: paramCount, params: lambdaParams(node), display: g.lambdaDisplayName(node)})
 	}
 
 	// Check if this lambda captures any variables
@@ -2601,7 +2713,7 @@ func (g *Generator) generateLambdaExpr(node *ast.TreeNode) string {
 	if hasCaps && len(caps) > 0 {
 		// Emit closure allocation with captured values
 		clTemp := g.newTemp()
-		g.emitLine("QClosure* %s = q_alloc_closure((void*)quark_%s, %d);", clTemp, lambdaName, len(caps))
+		g.emitLine("QClosure* %s = q_alloc_closure((void*)quark_%s, &%s, %d);", clTemp, lambdaName, fnInfoSymbol(lambdaName), len(caps))
 		for i, capName := range caps {
 			g.emitLine("%s->captures[%d] = %s;", clTemp, i, sanitizeVarName(capName))
 		}
@@ -2613,9 +2725,9 @@ func (g *Generator) generateLambdaExpr(node *ast.TreeNode) string {
 	// No captures — use qv_func (allocates QClosure with 0 captures).
 	// For native functions, point to the thunk so the QValue call convention works.
 	if _, isNative := g.nativeFns[lambdaName]; isNative {
-		return fmt.Sprintf("qv_func((void*)quark_%s__thunk)", lambdaName)
+		return fmt.Sprintf("qv_func((void*)quark_%s__thunk, &%s)", lambdaName, fnInfoSymbol(lambdaName))
 	}
-	return fmt.Sprintf("qv_func((void*)quark_%s)", lambdaName)
+	return fmt.Sprintf("qv_func((void*)quark_%s, &%s)", lambdaName, fnInfoSymbol(lambdaName))
 }
 
 func (g *Generator) generateLambdaFunc(node *ast.TreeNode) {

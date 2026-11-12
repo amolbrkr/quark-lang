@@ -554,9 +554,27 @@ down = pick(false)
 println(down(10))                // 9
 ```
 
-`fn` says nothing about the signature (`fn(int) int` isn't a type): passing a
-non-function is an error, but the number and types of arguments are only
-checked when the function runs.
+`fn` says nothing about the signature (`fn(int) int` isn't a type), but the
+compiler works out how a function uses its parameters and checks every call
+against that. Passing a function that can't be called the way the body calls
+it is a compile-time error, also when the parameter is passed on to another
+function first:
+
+```quark
+fn h(a, b) -> a + b
+fn apply1(k) -> k(1)
+apply1(h)
+// error: argument 1 of 'apply1' is called with 1 argument (line 2), but 'h' takes 2 arguments
+
+fn apply(k, v) -> k(v)
+apply(fn(x: int) -> x, 'one')
+// error: argument 1 of 'apply' is called with str as argument 1 (line 1), but the lambda passed expects int
+```
+
+When the compiler can't know which function a value is (it came from `any`, a
+list, a struct field or native code), the call checks the argument count when
+it runs (`function 'h' expects 2 arguments but got 1`) and fills in omitted
+default arguments.
 
 ### Pipes
 
@@ -770,6 +788,15 @@ exists = io.exists                      // a module member as a value
 > With aliases there are no conflicts: each module's members are separate from
 > other modules' and from your own names (`io.read` and `csv.read` coexist, and
 > a variable named `open` doesn't affect `io.open`).
+
+**Everything at the top level of an imported file is visible.** The alias only
+qualifies the `module` block's members. Functions, variables, `struct`s and
+`extern fn`s defined outside the `module` block (in your own libraries and in
+the stdlib) become global names in the importing program, alias or not. The
+stdlib's native bindings are an example: after `use 'std/fmt' as fmt`,
+`fmt_vector(v, 10, true)` is callable, although the intended API is
+`fmt.show_vec(v)`. Quark has no access modifiers; put a library's public API in
+its `module` block and treat its other top-level names as internal.
 
 ## Standard library reference
 
@@ -1016,6 +1043,13 @@ verified by compiling and running the bundled examples.
   fields don't). Because the compiler trusts the declared field type, reading
   such a field into a typed variable gives a wrong value:
   `s: float = r.score` then `s * 1.5` prints `1.5e-323`.
+- **A clash with an imported file's top-level name isn't reported**, and how it
+  resolves depends on the kind of name. Redefining an imported top-level
+  function replaces it for the library too (with `fn helper` in the library and
+  in your program, the library's own calls to `helper` run yours); assigning an
+  imported top-level variable changes the library's variable; defining a
+  function with the name of an imported `extern fn` is ignored, and calls go to
+  the extern.
 - **Structs aren't namespaced.** They must be defined at a file's top level,
   not inside a `module` block (there, `Point { ... }` reports
   `unknown struct type 'Point'`). Struct names are global, so two imported
@@ -1030,11 +1064,6 @@ verified by compiling and running the bundled examples.
 - **Field access on a struct of unknown type** reports a misleading error for a
   missing field: `dot access is only supported on dict; got type 'struct'`.
 - **`null` can't be written as an annotation.**
-- **Calling a function value with the wrong number of arguments isn't
-  detected.** A value typed `fn` (or unannotated) carries no arity at runtime,
-  so `fn apply(f: fn) -> f(1)` with `apply(fn(a, b) -> b)` reads a missing
-  argument instead of failing; the same holds for native code calling a
-  callback through `qext::call`.
 - **A struct field holding a function can't be called directly:** with
   `run: fn`, `h.run(4)` is a compile-time error (`dot-call syntax is not
   supported`); bind it first (`r = h.run`, then `r(4)`).

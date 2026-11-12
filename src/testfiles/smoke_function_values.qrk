@@ -69,3 +69,17 @@ println(outer())                    // 7
 // A native function's result is checked; an int result widens to float
 fn as_float(g: fn) float -> g(1)
 println(as_float(fn(v) -> v))       // 1.0
+
+// Calls through function values the compiler can't see through check the
+// argument count and fill in defaults (built fresh on every call)
+fn id(v) -> v
+fn with_default(a, b = 10) -> a + b
+dyn = id(with_default)
+println(dyn(1))                     // 11
+println(dyn(1, 2))                  // 3
+fn collect(x, acc = list []) ->
+    acc.push(x)
+    acc
+c = id(collect)
+println(c(1))                       // [1]
+println(c(2))                       // [2]

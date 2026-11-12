@@ -38,3 +38,4 @@ k = 10
 println(apply_n(fn(v) -> v + k, 2, 0))  // 20 (a capturing closure)
 g = same_fn(add1)
 println(g(1))                           // 2
+println(apply_n(fn(v, step = 2) -> v * step, 3, 1)) // 8 (native calls fill in defaults)

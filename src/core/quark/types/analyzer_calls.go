@@ -303,6 +303,7 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 			}
 		}
 		a.checkArgTypes(moduleName+"."+displayMember(moduleName, member), funcType.ParamTypes, argTypes, argsNode.Children)
+		a.checkCallbackArgs(moduleName+"."+displayMember(moduleName, member), funcType, argTypes, argsNode.Children)
 		a.callPlans[node].ArgTypesChecked = true
 		return funcType.ReturnType
 	}
@@ -328,6 +329,7 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 	}
 
 	funcExprType := a.Analyze(funcNode)
+	a.recordParamCall(funcNode, argTypes, argsNode.Children)
 	if funcNode.NodeType == ast.IdentifierNode {
 		name := funcNode.TokenLiteral()
 		if sig, ok := a.builtins[name]; ok {
@@ -370,9 +372,13 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 			return TypeError
 		}
 		a.callPlans[node] = &ir.CallPlan{Kind: ir.CallFunctionValue, CalleeName: calleeNameFromNode(funcNode), MinArity: argCount, MaxArity: argCount, Dispatch: ir.DispatchClosure, ArgTypesChecked: true}
-		// A value typed `fn` (or a mix of signatures) is called as a
-		// closure; its arity and argument types are checked at runtime.
+		// A value typed `fn` (or one of several signatures) is called as a
+		// closure; its arity and argument types are checked at runtime, but
+		// a call none of the possible signatures accepts is rejected now.
 		if IsCallableType(funcExprType) {
+			if u, isUnion := funcExprType.(*UnionType); isUnion && !anyOptionAccepts(u, argCount) {
+				a.errorAt(node, "none of the functions this value can be accepts %s", pluralArgs(argCount))
+			}
 			return TypeAny
 		}
 		if !isUnknownType(funcExprType) {
@@ -416,6 +422,7 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 		calleeName = funcNode.TokenLiteral()
 	}
 	a.checkArgTypes(calleeName, funcType.ParamTypes, argTypes, argsNode.Children)
+	a.checkCallbackArgs(displayName(calleeName), funcType, argTypes, argsNode.Children)
 	a.callPlans[node].ArgTypesChecked = true
 	return funcType.ReturnType
 }
@@ -561,6 +568,7 @@ func (a *Analyzer) analyzePipe(node *ast.TreeNode) Type {
 		pipeArgNodes := []*ast.TreeNode{inputNode}
 		pipeArgNodes = append(pipeArgNodes, argsNode.Children...)
 		a.checkArgTypes(moduleName+"."+displayMember(moduleName, member), funcType.ParamTypes, pipeArgTypes, pipeArgNodes)
+		a.checkCallbackArgs(moduleName+"."+displayMember(moduleName, member), funcType, pipeArgTypes, pipeArgNodes)
 		a.callPlans[rightNode].ArgTypesChecked = true
 		return funcType.ReturnType
 	}
@@ -582,6 +590,7 @@ func (a *Analyzer) analyzePipe(node *ast.TreeNode) Type {
 	}
 
 	funcExprType := a.Analyze(funcNode)
+	a.recordParamCall(funcNode, append([]Type{inputType}, argTypes...), append([]*ast.TreeNode{inputNode}, argsNode.Children...))
 	if funcNode.NodeType == ast.IdentifierNode {
 		name := funcNode.TokenLiteral()
 		if sig, ok := a.builtins[name]; ok {
@@ -662,6 +671,7 @@ func (a *Analyzer) analyzePipe(node *ast.TreeNode) Type {
 		pipeArgNodes := []*ast.TreeNode{inputNode}
 		pipeArgNodes = append(pipeArgNodes, argsNode.Children...)
 		a.checkArgTypes(pipeCallee, funcType.ParamTypes, pipeArgTypes, pipeArgNodes)
+		a.checkCallbackArgs(displayName(pipeCallee), funcType, pipeArgTypes, pipeArgNodes)
 		a.callPlans[rightNode].ArgTypesChecked = true
 		return funcType.ReturnType
 	}

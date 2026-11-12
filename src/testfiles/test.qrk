@@ -1,11 +1,11 @@
-use "std/fmt"
+use "std/fmt" as fmt
 use "std/blas"
 use "std/time"
 
 x = vector [1, 2, 3, 4]
 y = vector [4, 3, 2, 3]
 
-println(fmt_vector(x, len(x), true))
+println(fmt.show_vec(x, len(x)))
 
 start = time.clock()
 xdoty = blas_dot(x.astype("f64"), y.astype("f64"))

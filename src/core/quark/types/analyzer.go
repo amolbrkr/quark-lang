@@ -43,8 +43,12 @@ type Analyzer struct {
 	nodeTypes       map[*ast.TreeNode]Type // Inferred type of every expression node
 	// moduleMemberRefs holds `alias.member` nodes used as values (not called).
 	moduleMemberRefs map[*ast.TreeNode]bool
-	loopDepth        int
-	pendingFuncName  string
+	// paramUsages collects call shapes of the parameters of the functions
+	// being analyzed (analyzer_callshapes.go).
+	paramUsages     map[*Symbol]*paramUsage
+	paramOwnerSeq   int
+	loopDepth       int
+	pendingFuncName string
 	// externFns maps extern fn registrations: free function name or "type.method" key
 	// → prototype CallPlan used to build per-call-site plans with DispatchExtern.
 	externFns map[string]*ir.CallPlan
@@ -101,6 +105,7 @@ func NewAnalyzer() *Analyzer {
 		returnValidated:  make(map[*ast.TreeNode]bool),
 		nodeTypes:        make(map[*ast.TreeNode]Type),
 		moduleMemberRefs: make(map[*ast.TreeNode]bool),
+		paramUsages:      make(map[*Symbol]*paramUsage),
 		externFns:        make(map[string]*ir.CallPlan),
 		externSources:    make([]string, 0),
 		nativeFns:        make(map[string]*ir.CallPlan),

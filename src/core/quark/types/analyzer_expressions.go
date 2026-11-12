@@ -205,6 +205,7 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 		if sym == nil {
 			a.currentScope.Define(varName, rightType, true)
 		} else {
+			a.markParamReassigned(sym)
 			if _, dstIsFunc := sym.Type.(*FunctionType); dstIsFunc {
 				if srcFunc, srcIsFunc := rightType.(*FunctionType); srcIsFunc {
 					sym.Type = srcFunc

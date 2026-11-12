@@ -115,6 +115,9 @@ type FunctionType struct {
 	AnnotatedReturnType Type                // Declared return type (nil = not annotated)
 	DefaultCount        int                 // Number of parameters with default values (always trailing)
 	DefaultValues       []*DefaultValueInfo // Default value info per parameter (nil = no default)
+	// ParamCalls holds, per parameter, the calls the body makes through it
+	// (see analyzer_callshapes.go); nil when none are known.
+	ParamCalls [][]*CallShape
 }
 
 // DefaultValueInfo stores info about a default parameter value for codegen

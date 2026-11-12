@@ -33,7 +33,7 @@ type Analyzer struct {
 	errors          []diagnostics.Diagnostic
 	functions       map[string]*FunctionType // Track function signatures
 	modules         map[string]*Module       // Track defined modules
-	moduleAliases   map[string]string        // Alias -> module name mapping from use statements
+	moduleAliases   map[string]string        // Alias -> module name mapping from incl statements
 	currentModule   string                   // Current module being defined (empty if global)
 	builtins        map[string]*builtinSignature
 	methods         map[builtins.TypeKey]map[string]*builtinSignature // receiver type -> method name -> sig
@@ -259,7 +259,7 @@ func (a *Analyzer) analyze(node *ast.TreeNode) Type {
 		return a.analyzeVarDecl(node)
 	case ast.ModuleNode:
 		return a.analyzeModule(node)
-	case ast.UseNode:
+	case ast.InclNode:
 		return a.analyzeUse(node)
 	case ast.BreakNode:
 		if a.loopDepth == 0 {

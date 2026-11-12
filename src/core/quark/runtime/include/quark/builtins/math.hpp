@@ -11,7 +11,7 @@
 
 // Helper: type name lookup for error messages
 inline const char* q_type_name_math(QValue::ValueType t) {
-    static const char* names[] = {"int", "float", "str", "bool", "null", "list", "vector", "dict", "fn", "result"};
+    static const char* names[] = {"int", "float", "str", "bool", "null", "list", "vec", "dict", "fn", "result"};
     return (t >= 0 && t <= 9) ? names[t] : "unknown";
 }
 
@@ -49,7 +49,7 @@ inline QValue q_min(QValue v) {
     if (v.type == QValue::VAL_VECTOR) {
         return q_vec_min(v);
     }
-    q_runtime_reportf("runtime error: single-argument min() expects numeric vector, got %s\n", q_type_name_math(v.type));
+    q_runtime_reportf("runtime error: single-argument min() expects numeric vec, got %s\n", q_type_name_math(v.type));
     std::exit(1);
 }
 
@@ -73,7 +73,7 @@ inline QValue q_max(QValue v) {
     if (v.type == QValue::VAL_VECTOR) {
         return q_vec_max(v);
     }
-    q_runtime_reportf("runtime error: single-argument max() expects numeric vector, got %s\n", q_type_name_math(v.type));
+    q_runtime_reportf("runtime error: single-argument max() expects numeric vec, got %s\n", q_type_name_math(v.type));
     std::exit(1);
 }
 
@@ -82,16 +82,16 @@ inline QValue q_sum(QValue v) {
     if (v.type == QValue::VAL_VECTOR) {
         return q_vec_sum(v);
     }
-    q_runtime_reportf("runtime error: sum() expects numeric or bool vector, got %s\n", q_type_name_math(v.type));
+    q_runtime_reportf("runtime error: sum() expects numeric or bool vec, got %s\n", q_type_name_math(v.type));
     std::exit(1);
 }
 
-// all(v) / any(v) for vector[bool]. Null entries are skipped, matching the
+// all(v) / any(v) for vec[bool]. Null entries are skipped, matching the
 // other vector reductions. all() of an empty vector is true; any() is false.
 inline QValue q_vec_bool_reduce(QValue v, bool want_all, const char* name) {
     if (v.type != QValue::VAL_VECTOR || !v.data.vector_val ||
         v.data.vector_val->type != QVector::Type::BOOL) {
-        q_runtime_reportf("runtime error: %s() expects vector[bool], got %s\n",
+        q_runtime_reportf("runtime error: %s() expects vec[bool], got %s\n",
                           name, q_type_name_math(v.type));
         std::exit(1);
     }

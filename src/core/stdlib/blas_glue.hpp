@@ -37,10 +37,10 @@ namespace qblas {
 // check_f64 validates a vector argument and returns its length as a CBLAS int.
 inline int check_f64(const char* fn, const char* arg, const QVector* v) {
     if (v == nullptr) {
-        fail(fn, "%s is not a valid vector", arg);
+        fail(fn, "%s is not a valid vec", arg);
     }
     if (qext::vec_dtype(v) != QVector::Type::F64) {
-        fail(fn, "%s must be an f64 vector, got %s; convert it with %s.astype('f64')",
+        fail(fn, "%s must be an f64 vec, got %s; convert it with %s.astype('f64')",
              arg, qext::vec_dtype_name(v), arg);
     }
     if (qext::vec_has_nulls(v)) {
@@ -55,7 +55,7 @@ inline int check_f64(const char* fn, const char* arg, const QVector* v) {
 
 inline void check_same_length(const char* fn, int nx, int ny) {
     if (nx != ny) {
-        fail(fn, "vector size mismatch: x has %d elements, y has %d", nx, ny);
+        fail(fn, "vec size mismatch: x has %d elements, y has %d", nx, ny);
     }
 }
 

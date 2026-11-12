@@ -20,7 +20,7 @@ Measured problems in the current modules (2026-11-11, Linux x86_64):
 
 ## 2. Design Principles
 
-1. **Modules, not prelude.** New functionality goes in `std/` modules. Prelude builtin names can't be used as variable names, so every new builtin takes a name away from users. The one exception proposed is multi-argument `println` (§3.2, decision 1).
+1. **Modules, not prelude.** New functionality goes in `std/` modules. Prelude builtin names can't be used as variable names, so every new builtin takes a name away from users. The one exception proposed is multi-argument `print` (§3.2, decision 1).
 2. **Results for things that can fail because of the environment** (missing file, bad date string). Programming errors (a negative count, an unknown format code) are runtime errors.
 3. **Convenience first, then control.** Each module gets one-call helpers for the common case (`io.read_text(path)`) next to the handle-based API (`io.open`, `io.read_line`).
 4. **Dicts, not structs, for compound returns.** A struct can't be defined inside a `module` block yet, so stdlib functions return dicts (`time.parts(ts)` gives `{year: ..., month: ...}`).
@@ -34,17 +34,17 @@ Measured problems in the current modules (2026-11-11, Linux x86_64):
 Without interpolation, building a line of output means chaining `+` and `to_str`:
 
 ```quark
-println('Processed ' + to_str(n) + ' rows in ' + to_str(elapsed) + 's')
+print('Processed ' + to_str(n) + ' rows in ' + to_str(elapsed) + 's')
 ```
 
 There is no number formatting either: a float prints all its digits (`0.30000000000000004`), and there is no padding, rounding or thousands separator except `print`'s width argument.
 
 ### 3.2 Proposal
 
-**(a) Multi-argument `println` (prelude).** `println(a, b, c, ...)` prints its arguments separated by one space, like Python's `print`:
+**(a) Multi-argument `print` (prelude).** `print(a, b, c, ...)` prints its arguments separated by one space, like Python's `print`:
 
 ```quark
-println('Processed', n, 'rows in', elapsed, 's')    // Processed 1000 rows in 1.25 s
+print('Processed', n, 'rows in', elapsed, 's')    // Processed 1000 rows in 1.25 s
 ```
 
 This removes most `to_str` calls in everyday output. It's a prelude change because Quark functions can't take a variable number of arguments, while builtins can (the catalog has `MinArgs`/`MaxArgs`). `print` keeps its current signature (value, end, width, align, pad): its extra positional arguments already mean something, so it can't become variadic without breaking calls.
@@ -52,16 +52,16 @@ This removes most `to_str` calls in everyday output. It's a prelude change becau
 **(b) `fmt.format(template, args)`**, a subset of Python's format mini-language:
 
 ```quark
-use 'std/fmt' as fmt
-println(fmt.format('{} scored {:.1f} ({:>5}%)', list [name, score, pct]))
-println(fmt.format('{0} vs {1}, {0} wins', list ['A', 'B']))
+incl 'std/fmt' as fmt
+print(fmt.format('{} scored {:.1f} ({:>5}%)', list [name, score, pct]))
+print(fmt.format('{0} vs {1}, {0} wins', list ['A', 'B']))
 ```
 
 Arguments are a list, since Quark functions have no varargs (decision 2 covers the alternative).
 
 | Spec | Meaning | Example |
 |---|---|---|
-| `{}`, `{0}` | next or numbered argument, rendered like `println` | `{}` with `[1, 2]` → `[1, 2]` |
+| `{}`, `{0}` | next or numbered argument, rendered like `print` | `{}` with `[1, 2]` → `[1, 2]` |
 | `{:.Nf}` | fixed point, N decimals | `{:.2f}` with `3.14159` → `3.14` |
 | `{:.Ne}` | scientific | `{:.1e}` with `12345.0` → `1.2e+04` |
 | `{:,}` / `{:,.2f}` | thousands separator | `1234567` → `1,234,567` |
@@ -109,7 +109,7 @@ The existing `show_list`, `show_vec`, `show_dict`, `table`, `head`, `tail` and `
 | `arch() str` | `'x86_64'` or `'arm64'` |
 | `pid() int` | process id |
 | `cpu_count() int` | logical CPUs |
-| `eprint(x)`, `eprintln(x)` | write to stderr, rendered like `println` (multi-argument if decision 1 is accepted) |
+| `eprint(x)`, `eprintln(x)` | write to stderr, rendered like `print` (multi-argument if decision 1 is accepted) |
 
 Filesystem operations (listing directories, making them, removing files) go in `std/fs` (§7), not `sys`: Python split these between `os`, `os.path`, `shutil` and `pathlib`, and one place for them is easier to find. `cwd` and `chdir` stay in `sys` because the working directory is process state; `fs` functions accept relative paths against it.
 
@@ -172,7 +172,7 @@ Compared with Python's `open()`:
 | `read_lines(path: str) result` | `ok(list of lines)` without line endings (`\n` or `\r\n`) |
 | `write_text(path: str, text: str) result` | create or replace |
 | `append_text(path: str, text: str) result` | create or append |
-| `write_lines(path: str, lines: list) result` | each element rendered like `println`, one per line |
+| `write_lines(path: str, lines: list) result` | each element rendered like `print`, one per line |
 
 **Handles** (for large files and streaming):
 
@@ -249,13 +249,13 @@ Measured on 2026-11-11 (clang 22, `-O2`; compile time of a file that only includ
 | `parse(text, sep = ',') list` | existing: rows of strings |
 | `read(path, sep = ',') result` | existing: `ok(rows)` |
 | `read_records(path, sep = ',') result` | `ok(list of dicts)` keyed by the header row |
-| `read_columns(path, sep = ',', types: bool = true) result` | `ok(dict)` from header name to column. With `types`, a column whose non-empty cells are all integers becomes `vector[i64]`, all numbers `vector[f64]`, all `true`/`false` `vector[bool]`, otherwise `vector[str]`; empty cells become `null`. `fmt.table` already renders this shape. |
+| `read_columns(path, sep = ',', types: bool = true) result` | `ok(dict)` from header name to column. With `types`, a column whose non-empty cells are all integers becomes `vec[i64]`, all numbers `vec[f64]`, all `true`/`false` `vec[bool]`, otherwise `vec[str]`; empty cells become `null`. `fmt.table` already renders this shape. |
 | `each(path, f, sep = ',') result` | calls `f(row)` for every row without loading the file; `ok(row count)`. A callback rather than an iterator, since Quark has no iterator protocol. |
 | `format(rows, sep = ',') str` | quotes fields that contain `sep`, quotes or newlines |
 | `write(path, rows, sep = ',') result` | `rows` is a list of lists, or a list of dicts (header from the first dict's sorted keys) |
 | options | `quote: str = '"'` on every reader and writer; `comment: str = ''` skips lines starting with it |
 
-Duplicate or empty header names are an `err` for `read_records` and `read_columns`. Type inference reads the whole column before choosing a type, so one stray string makes the column `vector[str]` (decision 7).
+Duplicate or empty header names are an `err` for `read_records` and `read_columns`. Type inference reads the whole column before choosing a type, so one stray string makes the column `vec[str]` (decision 7).
 
 ## 9. Other Gaps
 
@@ -283,7 +283,7 @@ Measured 2026-11-11 (`quark build`, PCH warm, Linux x86_64): a one-line program 
 - **P3 (extension handles), at least its finalizers**, should come before the `std/io` rework (§6.2). Closing forgotten files is P3 item 3; doing it for files alone first means writing it twice. P3's dynamic kinds also give `stdin()`/`stdout()`/`stderr()` and later SQLite and DuckDB handles one mechanism. Parent references aren't needed by the stdlib.
 - **P4 (result helpers) and `QK-FFI-004`** are small and help every new function that returns a result or checks a handle; do them alongside.
 
-Not dependent on Phase 2: multi-argument `println` (prelude), `std/sys` and `std/time` additions (small headers), `std/random`, and the in-house CSV logic. These can proceed first or in parallel.
+Not dependent on Phase 2: multi-argument `print` (prelude), `std/sys` and `std/time` additions (small headers), `std/random`, and the in-house CSV logic. These can proceed first or in parallel.
 
 FFI Phase 2 as specified ends with `std/sqlite`; the stdlib needs only P2, P3 and P4 from it, so the order can be P2, P3, P4, then stdlib phase 1, then SQLite.
 
@@ -291,7 +291,7 @@ FFI Phase 2 as specified ends with `std/sqlite`; the stdlib needs only P2, P3 an
 
 | Phase | Contents | Done when |
 |---|---|---|
-| 1. Daily friction | multi-argument `println` (if decision 1 is accepted), `sys.eprintln`, `fmt.format` and helpers, `io` whole-file and line helpers, buffering, file finalizers and flush at exit | the CSV report and a log-writing script need no `to_str` chains, guessed sizes or manual flushing; `io` write benchmark within 2× of Python |
+| 1. Daily friction | multi-argument `print` (if decision 1 is accepted), `sys.eprintln`, `fmt.format` and helpers, `io` whole-file and line helpers, buffering, file finalizers and flush at exit | the CSV report and a log-writing script need no `to_str` chains, guessed sizes or manual flushing; `io` write benchmark within 2× of Python |
 | 2. Scripting | `sys` additions, `std/fs`, `std/time` dates and durations | a script can find files, check modification times and print readable dates and durations |
 | 3. Data in and out | `csv` records, columns with types, writer, streaming; `random` additions | a CSV file with a header loads into a dict of typed vectors and writes back unchanged |
 | 4. Formats | JSON, subprocesses | — |
@@ -302,8 +302,8 @@ Every function gets a smoke test, an entry in `stdlib.md`, and editor data (`go 
 
 ### 12.1 Open
 
-1. **Multi-argument `println`.** Accept the prelude change (§3.2a), or keep `println` single-argument and rely on `fmt.format`? Recommended: accept. It's the change that removes the most `to_str` calls, and it adds no new name.
-2. **`fmt.format` arguments.** A list (`fmt.format(t, list [a, b])`, proposed), or a prelude builtin `format(t, a, b, ...)` that can be variadic like `println`? The builtin reads better but takes the name `format` from users.
+1. **Multi-argument `print`.** Accept the prelude change (§3.2a), or keep `print` single-argument and rely on `fmt.format`? Recommended: accept. It's the change that removes the most `to_str` calls, and it adds no new name.
+2. **`fmt.format` arguments.** A list (`fmt.format(t, list [a, b])`, proposed), or a prelude builtin `format(t, a, b, ...)` that can be variadic like `print`? The builtin reads better but takes the name `format` from users.
 3. **`fs.join` arity.** Quark functions have no varargs: `fs.join(a, b)` with two arguments (nest for more), or `fs.join(list [a, b, c])`?
 4. **`std/fs` vs. more in `std/io`.** A separate module (proposed), or put directory and path functions in `std/io`?
 5. **Timing helpers.** Is `time.since(start)` plus `time.duration(s)` enough, or do you want a named stopwatch (`stopwatch('load')` … `lap('load')` printing `load: 1.25s`)? The named form needs module-level state.

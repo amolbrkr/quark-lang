@@ -618,7 +618,7 @@ func (g *Generator) Generate(node *ast.TreeNode) string {
 	// Generate top-level statements that aren't function/module/extern definitions
 	for _, child := range node.Children {
 		if child.NodeType == ast.FunctionNode || child.NodeType == ast.ModuleNode ||
-			child.NodeType == ast.UseNode || child.NodeType == ast.ExternHeaderNode ||
+			child.NodeType == ast.InclNode || child.NodeType == ast.ExternHeaderNode ||
 			child.NodeType == ast.ExternLinkNode || child.NodeType == ast.ExternIncludePathNode ||
 			child.NodeType == ast.ExternFnNode || child.NodeType == ast.StructDefNode {
 			continue
@@ -954,7 +954,7 @@ var paramTagChecks = map[string]struct {
 	"str":      {"VAL_STRING", false},
 	"list":     {"VAL_LIST", true},
 	"dict":     {"VAL_DICT", true},
-	"vector":   {"VAL_VECTOR", true},
+	"vec":      {"VAL_VECTOR", true},
 	"result":   {"VAL_RESULT", true},
 	"resource": {"VAL_RESOURCE", true},
 	"fn":       {"VAL_FUNC", true},
@@ -1254,7 +1254,7 @@ func (g *Generator) generateModuleBindings(node *ast.TreeNode) {
 		return
 	}
 	for _, child := range bodyNode.Children {
-		if child == nil || child.NodeType == ast.UseNode || child.NodeType == ast.ModuleNode {
+		if child == nil || child.NodeType == ast.InclNode || child.NodeType == ast.ModuleNode {
 			continue
 		}
 		// As at top level: a native function is a C++ function (plus thunk),
@@ -1330,7 +1330,7 @@ func (g *Generator) generateExpr(node *ast.TreeNode) string {
 	case ast.ModuleNode:
 		// Module definitions are handled at top level
 		return "qv_null()"
-	case ast.UseNode:
+	case ast.InclNode:
 		// Use statements are handled at compile time (imports are resolved by analyzer)
 		return "qv_null()"
 	case ast.StructDefNode:
@@ -2414,7 +2414,7 @@ func (g *Generator) generateFor(node *ast.TreeNode) string {
 		}
 	}
 
-	// Handle iterable iteration (list/string/vector).
+	// Handle iterable iteration (list/string/vec).
 	listExpr := g.generateExpr(rangeNode)
 	listTemp := g.newTemp()
 	g.emitLine("QValue %s = %s;", listTemp, listExpr)
@@ -2604,7 +2604,7 @@ func (g *Generator) generateVector(node *ast.TreeNode) string {
 		g.emitLine("%s = q_push(%s, %s);", tempList, tempList, elem)
 	}
 
-	return fmt.Sprintf("q_to_vector(%s)", tempList)
+	return fmt.Sprintf("q_to_vec(%s)", tempList)
 }
 
 func (g *Generator) generateDict(node *ast.TreeNode) string {

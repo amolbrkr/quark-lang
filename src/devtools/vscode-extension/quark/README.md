@@ -4,7 +4,7 @@ Editor support for [Quark](https://github.com/amolbrkr/quark-lang) `.qrk` files.
 
 ## Features
 
-- **Highlighting** for the current language: `fn`, `struct`, `module`, `when`, `extern link`, type annotations, struct literals, `list [...]` / `dict {...}` / `vector [...]`.
+- **Highlighting** for the current language: `fn`, `struct`, `module`, `when`, `extern link`, type annotations, struct literals, `list [...]` / `dict {...}` / `vec [...]`.
 - **Python and R habits are flagged.** `def`, `elif`, `return`, `True` / `False` / `None`, `TRUE` / `FALSE` / `NULL`, `function(`, `&&`, `||` and `#` comments are shown as errors. Hover one to see what Quark uses instead.
 - **Snippets** that show the Quark form of each construct. Type the prefix and press Tab:
 
@@ -15,18 +15,18 @@ Editor support for [Quark](https://github.com/amolbrkr/quark-lang) `.qrk` files.
   | `if`, `ife`, `ifel`, `tern` | if, if/else, if/elseif/else, `a if cond else b` |
   | `when`, `whenr` | pattern match; match `ok` / `err` results |
   | `for`, `forr`, `fore`, `while` | loops over items, `range(...)`, `.enumerate()` |
-  | `list`, `dict`, `vector` | collection literals |
+  | `list`, `dict`, `vec` | collection literals |
   | `struct`, `new` | struct type, struct value |
-  | `module`, `use`, `usef` | module block, stdlib import, file import |
+  | `module`, `incl`, `inclf` | module block, stdlib import, file import |
   | `okerr`, `pipe` | function returning `ok` / `err`, pipe chain |
   | `extern`, `externlib` | call C++, link a native library |
 
 - **Completion**:
   - keywords and builtins, with their signatures;
-  - methods for the receiver's type (`str`, `list`, `dict`, `vector`), from annotations like `s: str`, literals, and assignments;
+  - methods for the receiver's type (`str`, `list`, `dict`, `vec`), from annotations like `s: str`, literals, and assignments;
   - `alias.` lists the functions of an imported module (stdlib, another file, or a module in the same file);
   - `point.` lists a struct's fields;
-  - `use '` lists stdlib modules and `.qrk` files, as paths relative to the current file.
+  - `incl '` lists stdlib modules and `.qrk` files, as paths relative to the current file.
 - **Hover** shows builtin and module function signatures.
 - **Run** the current file with `Ctrl+F5` (`Cmd+F5` on macOS) or the ▶ button in the editor title.
 

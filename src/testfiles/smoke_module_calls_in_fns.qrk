@@ -1,7 +1,7 @@
-println('== smoke: module calls inside functions ==')
-use 'std/io' as io
-use 'std/fmt' as fmt
-use 'std/random' as random
+print('== smoke: module calls inside functions ==')
+incl 'std/io' as io
+incl 'std/fmt' as fmt
+incl 'std/random' as random
 
 // Module functions called from inside user functions (closures and native
 // functions alike), directly and through pipes.
@@ -22,9 +22,9 @@ fn first_two(xs) -> fmt.head(xs, 2)
 fn roll() -> random.randint(1, 6)
 
 save('module_calls_tmp.txt', 'a,b\n1,2\n')
-println(load('module_calls_tmp.txt').trim())
-println(file_exists('module_calls_tmp.txt'))
-println(file_exists_piped('no_such_file.txt'))
-println(first_two(list [1, 2, 3]).contains('list'))
+print(load('module_calls_tmp.txt').trim())
+print(file_exists('module_calls_tmp.txt'))
+print(file_exists_piped('no_such_file.txt'))
+print(first_two(list [1, 2, 3]).contains('list'))
 r = roll()
-println(r >= 1 and r <= 6)
+print(r >= 1 and r <= 6)

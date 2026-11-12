@@ -1,32 +1,32 @@
 // == smoke: return type annotations ==
-println('== smoke: return type annotations ==')
+print('== smoke: return type annotations ==')
 
 // Basic return type on named function
 fn add(x: int, y: int) int ->
     x + y
 
-println(add(3, 4))
+print(add(3, 4))
 
 // Return type on single-line function
 fn double(n: int) int -> n * 2
 
-println(double(5))
+print(double(5))
 
 // Float return type
 fn pi() float -> 3.14
 
-println(pi())
+print(pi())
 
 // String return type
 fn greet(name: str) str -> 'Hello, ' + name
 
-println(greet('World'))
+print(greet('World'))
 
 // Bool return type
 fn is_positive(n: int) bool -> n > 0
 
-println(is_positive(5))
-println(is_positive(0 - 1))
+print(is_positive(5))
+print(is_positive(0 - 1))
 
 // Result return type
 fn safe_div(a: int, b: int) result ->
@@ -36,17 +36,17 @@ fn safe_div(a: int, b: int) result ->
         ok a / b
 
 when safe_div(10, 2):
-    ok v -> println(v)
-    err e -> println(e)
+    ok v -> print(v)
+    err e -> print(e)
 
 when safe_div(10, 0):
-    ok v -> println(v)
-    err e -> println(e)
+    ok v -> print(v)
+    err e -> print(e)
 
 // Return type on lambda
 square = fn(x: int) int -> x * x
 
-println(square(6))
+print(square(6))
 
 // Return type with pattern matching
 fn describe(n: int) str ->
@@ -55,23 +55,23 @@ fn describe(n: int) str ->
         1 -> 'one'
         _ -> 'other'
 
-println(describe(0))
-println(describe(1))
-println(describe(42))
+print(describe(0))
+print(describe(1))
+print(describe(42))
 
 // Return type with ternary
 fn abs_val(n: int) int -> n if n > 0 else 0 - n
 
-println(abs_val(5))
-println(abs_val(0 - 3))
+print(abs_val(5))
+print(abs_val(0 - 3))
 
 // List return type
 fn make_list() list -> list [1, 2, 3]
 
-println(len(make_list()))
+print(len(make_list()))
 
 // Return type used in pipe
-5 | double() | println()
+5 | double() | print()
 
 // Recursive function with return type
 fn fact(n: int) int ->
@@ -79,4 +79,4 @@ fn fact(n: int) int ->
         0 or 1 -> 1
         _ -> n * fact(n - 1)
 
-println(fact(5))
+print(fact(5))

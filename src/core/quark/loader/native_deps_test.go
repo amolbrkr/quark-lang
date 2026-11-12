@@ -21,10 +21,10 @@ func TestNativeDeps_LinkOrderFollowsImportGraph(t *testing.T) {
 	// main -> a, c; a -> b (imported before a's own link); c -> b.
 	// Every file's libraries must come before those of the files it imports,
 	// and b's library must come after both a's and c's.
-	writeFile(t, entry, "extern link 'zmain'\nuse './a'\nuse './c'\n")
-	writeFile(t, filepath.Join(tmp, "a.qrk"), "use './b'\nextern link 'la'\nmodule a:\n    fn fa() -> 1\n")
+	writeFile(t, entry, "extern link 'zmain'\nincl './a'\nincl './c'\n")
+	writeFile(t, filepath.Join(tmp, "a.qrk"), "incl './b'\nextern link 'la'\nmodule a:\n    fn fa() -> 1\n")
 	writeFile(t, filepath.Join(tmp, "b.qrk"), "extern link 'lb'\nmodule b:\n    fn fb() -> 2\n")
-	writeFile(t, filepath.Join(tmp, "c.qrk"), "use './b'\nextern link 'lc'\nextern link 'zmain'\nmodule c:\n    fn fc() -> 3\n")
+	writeFile(t, filepath.Join(tmp, "c.qrk"), "incl './b'\nextern link 'lc'\nextern link 'zmain'\nmodule c:\n    fn fc() -> 3\n")
 
 	ml := NewModuleLoader()
 	ml.ResolveImports(parseRoot(t, entry), entry)
@@ -52,7 +52,7 @@ func TestNativeDeps_IncludePathsAndHeaders(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(tmp, "include"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, entry, "extern include_path 'include'\nuse './sub/m'\n")
+	writeFile(t, entry, "extern include_path 'include'\nincl './sub/m'\n")
 	// Relative to the declaring file (sub/), not the entry file.
 	writeFile(t, filepath.Join(sub, "m.qrk"), "extern include_path 'include'\nextern include_path 'include'\nextern 'glue.hpp'\nmodule m:\n    fn f() -> 1\n")
 
@@ -74,7 +74,7 @@ func TestNativeDeps_IncludePathsAndHeaders(t *testing.T) {
 func TestNativeDeps_MissingIncludePath(t *testing.T) {
 	tmp := t.TempDir()
 	entry := filepath.Join(tmp, "main.qrk")
-	writeFile(t, entry, "println(1)\nextern include_path 'missing'\n")
+	writeFile(t, entry, "print(1)\nextern include_path 'missing'\n")
 
 	ml := NewModuleLoader()
 	ml.ResolveImports(parseRoot(t, entry), entry)

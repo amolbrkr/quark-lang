@@ -8,13 +8,13 @@ import (
 // checkCondition reports an error when a value with no truthiness is used
 // where a condition is expected (if, elseif, while, ternary, !, and, or).
 // Results would silently discard errors, and vector comparisons yield a
-// vector[bool] whose emptiness says nothing about its elements.
+// vec[bool] whose emptiness says nothing about its elements.
 func (a *Analyzer) checkCondition(node *ast.TreeNode, t Type) {
 	switch t.(type) {
 	case *ResultType:
 		a.errorAt(node, "result cannot be used as a condition; use is_ok(r), is_err(r) or when")
 	case *VectorType:
-		a.errorAt(node, "vector cannot be used as a condition; use all(v), any(v) or len(v) > 0")
+		a.errorAt(node, "vec cannot be used as a condition; use all(v), any(v) or len(v) > 0")
 	}
 }
 
@@ -165,7 +165,7 @@ func (a *Analyzer) analyzeForLoop(node *ast.TreeNode) Type {
 		if _, isVector := iterType.(*VectorType); !isVector {
 			if !iterType.Equals(TypeString) {
 				if !isUnknownType(iterType) {
-					a.errorAt(iterNode, "for loop expects list, vector, or str iterable, got %s", iterType.String())
+					a.errorAt(iterNode, "for loop expects list, vec, or str iterable, got %s", iterType.String())
 					return TypeVoid
 				}
 			}

@@ -74,7 +74,7 @@ type VectorType struct {
 }
 
 func (t *VectorType) String() string {
-	return fmt.Sprintf("vector[%s]", t.ElementType.String())
+	return fmt.Sprintf("vec[%s]", t.ElementType.String())
 }
 
 func (t *VectorType) Equals(other Type) bool {
@@ -387,7 +387,7 @@ func CanAssign(dstType, srcType Type) bool {
 			}
 		}
 	}
-	// Vector covariance: vector[any] accepts vector[T]
+	// Vector covariance: vec[any] accepts vec[T]
 	if dstVec, ok := dstType.(*VectorType); ok {
 		if srcVec, ok := srcType.(*VectorType); ok {
 			if dstVec.ElementType.Equals(TypeAny) || srcVec.ElementType.Equals(TypeAny) {
@@ -517,7 +517,7 @@ func typeKey(t Type) string {
 	case *DictType:
 		return "dict[" + typeKey(v.KeyType) + "," + typeKey(v.ValueType) + "]"
 	case *VectorType:
-		return "vector[" + typeKey(v.ElementType) + "]"
+		return "vec[" + typeKey(v.ElementType) + "]"
 	case *FunctionType:
 		params := make([]string, len(v.ParamTypes))
 		for i, p := range v.ParamTypes {

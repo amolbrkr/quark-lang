@@ -343,45 +343,45 @@ func normalizeStdlibImportPath(importPath, currentFilePath string) (string, erro
 	return resolved, nil
 }
 
-func extractUseAlias(useNode *ast.TreeNode) string {
-	if useNode == nil || len(useNode.Children) < 2 {
+func extractInclAlias(inclNode *ast.TreeNode) string {
+	if inclNode == nil || len(inclNode.Children) < 2 {
 		return ""
 	}
-	aliasNode := useNode.Children[1]
+	aliasNode := inclNode.Children[1]
 	if aliasNode == nil || aliasNode.NodeType != ast.IdentifierNode {
 		return ""
 	}
 	return aliasNode.TokenLiteral()
 }
 
-func buildSyntheticUseNode(moduleName string, alias string, useLine int) *ast.TreeNode {
-	syntheticUseTok := token.Token{
-		Type:    token.USE,
-		Literal: "use",
-		Line:    useLine,
+func buildSyntheticInclNode(moduleName string, alias string, inclLine int) *ast.TreeNode {
+	syntheticInclTok := token.Token{
+		Type:    token.INCL,
+		Literal: "incl",
+		Line:    inclLine,
 		Column:  0,
 	}
-	syntheticUse := ast.NewNode(ast.UseNode, &syntheticUseTok)
+	syntheticIncl := ast.NewNode(ast.InclNode, &syntheticInclTok)
 	syntheticNameTok := token.Token{
 		Type:    token.ID,
 		Literal: moduleName,
-		Line:    useLine,
+		Line:    inclLine,
 		Column:  0,
 	}
 	syntheticName := ast.NewNode(ast.IdentifierNode, &syntheticNameTok)
-	syntheticUse.AddChild(syntheticName)
+	syntheticIncl.AddChild(syntheticName)
 
 	if alias != "" {
-		aliasTok := token.Token{Type: token.ID, Literal: alias, Line: useLine, Column: 0}
-		syntheticUse.AddChild(ast.NewNode(ast.IdentifierNode, &aliasTok))
+		aliasTok := token.Token{Type: token.ID, Literal: alias, Line: inclLine, Column: 0}
+		syntheticIncl.AddChild(ast.NewNode(ast.IdentifierNode, &aliasTok))
 	}
 
-	return syntheticUse
+	return syntheticIncl
 }
 
-// ResolveImports walks the AST rooted at `root`, finds UseNode children that
+// ResolveImports walks the AST rooted at `root`, finds InclNode children that
 // reference file paths (string literals), loads and parses those files, and
-// splices their ModuleNode + a synthetic UseNode back into the tree.
+// splices their ModuleNode + a synthetic InclNode back into the tree.
 //
 // currentFilePath is the absolute path of the file that produced `root`.
 func (ml *ModuleLoader) ResolveImports(root *ast.TreeNode, currentFilePath string) {
@@ -399,9 +399,9 @@ func (ml *ModuleLoader) ResolveImports(root *ast.TreeNode, currentFilePath strin
 	ml.namespaceModules(root)
 }
 
-// resolveImportsInNode processes all UseNode children of `node`.
-// It modifies node.Children in place, replacing file-based UseNodes with
-// [ModuleNode, UseNode(identifier)] pairs.
+// resolveImportsInNode processes all InclNode children of `node`.
+// It modifies node.Children in place, replacing file-based InclNodes with
+// [ModuleNode, InclNode(identifier)] pairs.
 func (ml *ModuleLoader) resolveImportsInNode(node *ast.TreeNode, currentFilePath string) {
 	currentDir := filepath.Dir(currentFilePath)
 
@@ -426,11 +426,11 @@ func (ml *ModuleLoader) resolveImportsInNode(node *ast.TreeNode, currentFilePath
 				if isStdlibImportPath(importPath) {
 					stdResolved, err := normalizeStdlibImportPath(importPath, currentFilePath)
 					if err != nil {
-						useLine := 0
+						inclLine := 0
 						if child.Token != nil {
-							useLine = child.Token.Line
+							inclLine = child.Token.Line
 						}
-						ml.addErrorAt(useLine, 0, "%s", err)
+						ml.addErrorAt(inclLine, 0, "%s", err)
 						newChildren = append(newChildren, child)
 						continue
 					}
@@ -440,11 +440,11 @@ func (ml *ModuleLoader) resolveImportsInNode(node *ast.TreeNode, currentFilePath
 				}
 				absResolved, err := filepath.Abs(resolvedPath)
 				if err != nil {
-					useLine := 0
+					inclLine := 0
 					if child.Token != nil {
-						useLine = child.Token.Line
+						inclLine = child.Token.Line
 					}
-					ml.addErrorAt(useLine, 0, "cannot resolve extern path '%s': %s", importPath, err)
+					ml.addErrorAt(inclLine, 0, "cannot resolve extern path '%s': %s", importPath, err)
 					newChildren = append(newChildren, child)
 					continue
 				}
@@ -462,25 +462,25 @@ func (ml *ModuleLoader) resolveImportsInNode(node *ast.TreeNode, currentFilePath
 			continue
 		}
 
-		if child.NodeType != ast.UseNode || len(child.Children) == 0 {
+		if child.NodeType != ast.InclNode || len(child.Children) == 0 {
 			newChildren = append(newChildren, child)
 			continue
 		}
 
-		useChild := child.Children[0]
+		inclChild := child.Children[0]
 
-		// Only process string-literal use nodes (file imports).
-		// Identifier use nodes (same-file modules) pass through unchanged.
-		if useChild.NodeType != ast.LiteralNode || useChild.Token == nil || useChild.Token.Type != token.STRING {
+		// Only process string-literal incl nodes (file imports).
+		// Identifier incl nodes (same-file modules) pass through unchanged.
+		if inclChild.NodeType != ast.LiteralNode || inclChild.Token == nil || inclChild.Token.Type != token.STRING {
 			newChildren = append(newChildren, child)
 			continue
 		}
 
-		importPath := useChild.Token.Literal
-		alias := extractUseAlias(child)
-		useLine := 0
+		importPath := inclChild.Token.Literal
+		alias := extractInclAlias(child)
+		inclLine := 0
 		if child.Token != nil {
-			useLine = child.Token.Line
+			inclLine = child.Token.Line
 		}
 
 		resolvedPath := ""
@@ -492,25 +492,25 @@ func (ml *ModuleLoader) resolveImportsInNode(node *ast.TreeNode, currentFilePath
 			// Tier 2: stdlib import
 			stdResolved, err := normalizeStdlibImportPath(importPath, currentFilePath)
 			if err != nil {
-				ml.addErrorAt(useLine, 0, "%s", err)
+				ml.addErrorAt(inclLine, 0, "%s", err)
 				continue
 			}
 			resolvedPath = stdResolved
 		} else {
-			ml.addErrorAt(useLine, 0, "unsupported import path '%s'; use relative, absolute, or std/... path", importPath)
+			ml.addErrorAt(inclLine, 0, "unsupported import path '%s'; use relative, absolute, or std/... path", importPath)
 			continue
 		}
 
 		absResolved, err := filepath.Abs(resolvedPath)
 		if err != nil {
-			ml.addErrorAt(useLine, 0, "cannot resolve import path '%s': %s", importPath, err)
+			ml.addErrorAt(inclLine, 0, "cannot resolve import path '%s': %s", importPath, err)
 			continue
 		}
 
 		// Check for circular import (current DFS path)
 		if idx, inProgress := ml.resolving[absResolved]; inProgress {
 			chain := append(append([]string{}, ml.stack[idx:]...), absResolved)
-			ml.addErrorAt(useLine, 0, "circular import detected: %s", formatImportChain(chain))
+			ml.addErrorAt(inclLine, 0, "circular import detected: %s", formatImportChain(chain))
 			continue
 		}
 
@@ -520,21 +520,21 @@ func (ml *ModuleLoader) resolveImportsInNode(node *ast.TreeNode, currentFilePath
 		// Check for duplicate import (dedup after successful load)
 		if ml.loaded[absResolved] {
 			if moduleName, ok := ml.loadedModules[absResolved]; ok && moduleName != "" {
-				newChildren = append(newChildren, buildSyntheticUseNode(moduleName, alias, useLine))
+				newChildren = append(newChildren, buildSyntheticInclNode(moduleName, alias, inclLine))
 			}
 			continue
 		}
 
 		// Check file exists
 		if _, err := os.Stat(absResolved); os.IsNotExist(err) {
-			ml.addErrorAt(useLine, 0, "cannot find module '%s': file '%s' does not exist", importPath, absResolved)
+			ml.addErrorAt(inclLine, 0, "cannot find module '%s': file '%s' does not exist", importPath, absResolved)
 			continue
 		}
 
 		// Read and parse the imported file
 		content, err := os.ReadFile(absResolved)
 		if err != nil {
-			ml.addErrorAt(useLine, 0, "cannot read '%s': %s", absResolved, err)
+			ml.addErrorAt(inclLine, 0, "cannot read '%s': %s", absResolved, err)
 			continue
 		}
 
@@ -546,7 +546,7 @@ func (ml *ModuleLoader) resolveImportsInNode(node *ast.TreeNode, currentFilePath
 
 		if len(p.Errors()) > 0 {
 			for _, pErr := range p.Errors() {
-				ml.addErrorAt(useLine, 0, "in '%s': %s", importPath, pErr)
+				ml.addErrorAt(inclLine, 0, "in '%s': %s", importPath, pErr)
 			}
 			continue
 		}
@@ -566,30 +566,30 @@ func (ml *ModuleLoader) resolveImportsInNode(node *ast.TreeNode, currentFilePath
 		ml.endResolve(absResolved)
 
 		if len(directModules) == 0 {
-			ml.addErrorAt(useLine, 0, "imported file '%s' does not define a module", importPath)
+			ml.addErrorAt(inclLine, 0, "imported file '%s' does not define a module", importPath)
 			continue
 		}
 
 		// Splice all children from the imported AST into our tree.
-		// This includes transitively-resolved ModuleNodes/UseNodes from sub-imports
+		// This includes transitively-resolved ModuleNodes/InclNodes from sub-imports
 		// as well as the file's own ModuleNode.
 		for _, importedChild := range importedAST.Children {
 			newChildren = append(newChildren, importedChild)
 		}
 
 		// Use only the primary direct module from the imported file.
-		// Additional modules can still be imported explicitly via `use moduleName`.
+		// Additional modules can still be imported explicitly via `incl moduleName`.
 		moduleName := ""
 		if len(directModules[0].Children) > 0 {
 			moduleName = directModules[0].Children[0].TokenLiteral()
 		}
 		if moduleName == "" {
-			ml.addErrorAt(useLine, 0, "module in '%s' has no name", importPath)
+			ml.addErrorAt(inclLine, 0, "module in '%s' has no name", importPath)
 			continue
 		}
 		ml.loadedModules[absResolved] = moduleName
 
-		newChildren = append(newChildren, buildSyntheticUseNode(moduleName, alias, useLine))
+		newChildren = append(newChildren, buildSyntheticInclNode(moduleName, alias, inclLine))
 	}
 
 	node.Children = newChildren

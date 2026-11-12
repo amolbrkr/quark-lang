@@ -2,7 +2,7 @@
 
 This document describes the built-in prelude functions and methods available in Quark.
 
-Prelude builtins are globally available without imports. Additional stdlib modules are imported via `use 'std/...'`, and extension modules may declare native bindings via QEI (`extern` / `extern fn`).
+Prelude builtins are globally available without imports. Additional stdlib modules are imported via `incl 'std/...'`, and extension modules may declare native bindings via QEI (`extern` / `extern fn`).
 
 ## QEI and Lowering Notes
 
@@ -25,27 +25,27 @@ Quark builtins use two invocation styles:
 
 ```quark
 // Free function
-println('hello')
+print('hello')
 
 // Method on str
-'hello world'.upper() | println()
+'hello world'.upper() | print()
 
 // Method on list
 xs = list [1, 2, 3]
-xs.push(4).join(', ') | println()   // 1, 2, 3, 4
+xs.push(4).join(', ') | print()   // 1, 2, 3, 4
 
 // Method on dict
 d = dict { a: 1 }
-d.get('a') | println()   // 1
+d.get('a') | print()   // 1
 ```
 
 **Dot-call vs dot-access:** Dot syntax has four uses:
 - `d.key` — dict key read/write (static key access)
 - `p.field` — struct field read/write
 - `d.method(args)` — method dispatch (when method name is known for the receiver type)
-- `module.fn(args)` — module-qualified call via `use` alias
+- `module.fn(args)` — module-qualified call via `incl` alias
 
-**How values print:** `println`, `print` and `to_str` show values by their contents: lists and vectors as `[1, 'a', null]` (strings inside a collection are quoted), dicts as `{age: 36, 'first name': 'Ada'}` (keys sorted, quoted unless they read like names), structs as `Point {x: 1, y: 2}` and results as `ok 5` / `err 'boom'`. A collection with more than 100 items shows its first and last 5 and a count: `[0, 1, 2, 3, 4, ..., 995, 996, 997, 998, 999] (1000 items)`; `fmt.full(x)` gives every item. A container that contains itself prints `[...]` at the repeat. Floats print as the shortest text that reads back as the same number, with `.0` on whole values, as in Python: `4.0`, `0.1`, `1.4142135623730951`, `1e+16`, `inf`, `nan`. So `0.1 + 0.2` prints `0.30000000000000004`.
+**How values print:** `print` and `to_str` show values by their contents: lists and vectors as `[1, 'a', null]` (strings inside a collection are quoted), dicts as `{age: 36, 'first name': 'Ada'}` (keys sorted, quoted unless they read like names), structs as `Point {x: 1, y: 2}` and results as `ok 5` / `err 'boom'`. A collection with more than 100 items shows its first and last 5 and a count: `[0, 1, 2, 3, 4, ..., 995, 996, 997, 998, 999] (1000 items)`; `fmt.full(x)` gives every item. A container that contains itself prints `[...]` at the repeat. Floats print as the shortest text that reads back as the same number, with `.0` on whole values, as in Python: `4.0`, `0.1`, `1.4142135623730951`, `1e+16`, `inf`, `nan`. So `0.1 + 0.2` prints `0.30000000000000004`.
 
 ---
 
@@ -55,14 +55,13 @@ d.get('a') | println()   // 1
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `print` | `value[, end: str[, width: int[, align: str[, pad: str]]]] -> void` | Print value with configurable line ending and optional width/alignment |
-| `println` | `value -> void` | Print value with newline |
+| `print` | `value[, end: str[, width: int[, align: str[, pad: str]]]] -> void` | Print value followed by `end` (default `'\n'`, so each call prints its own line); optional width/alignment |
 | `input` | `[prompt: str] -> str` | Read a line from stdin, without its `\n` or `\r\n` ending; any length. Returns `null` at end of input (an empty line gives `''`). Optional prompt must be a string |
 
 ```quark
-println('Hello, World!')
+print('Hello, World!')
 name = input('Name: ')
-println(name)
+print(name)
 
 print('row', '|', 8, 'left', '.')
 print('42', '\n', 8, 'right', '0')
@@ -77,7 +76,7 @@ while true:
     if line == null:
         break
     count = count + 1
-println(count)
+print(count)
 ```
 
 `print` alignment values: `left` (default), `right`, `center`. If `width` is 0 or smaller than the rendered text, no padding is applied.
@@ -91,18 +90,18 @@ println(count)
 | `to_float` | `int\|float\|str\|bool -> float` | Convert to float. **Runtime error on invalid input.** |
 | `to_bool` | `any -> bool` | Convert to boolean (truthiness) |
 | `type` | `any -> str` | Return runtime type name |
-| `len` | `str\|list\|dict\|vector -> int` | Get length |
+| `len` | `str\|list\|dict\|vec -> int` | Get length |
 | `is_ok` | `result -> bool` | Returns `true` if the result is `ok` |
 | `is_err` | `result -> bool` | Returns `true` if the result is `err` |
 | `unwrap` | `result -> any` | Extract the `ok` value. **Runtime error if result is `err`.** |
 
 ```quark
-to_str(42) | println()        // '42'
-to_int('123') | println()     // 123
-to_float('3.14') | println()  // 3.14
-to_bool(0) | println()        // false
-type(42) | println()          // int
-len('hello') | println()      // 5
+to_str(42) | print()        // '42'
+to_int('123') | print()     // 123
+to_float('3.14') | print()  // 3.14
+to_bool(0) | print()        // false
+type(42) | print()          // int
+len('hello') | print()      // 5
 ```
 
 ### Range
@@ -114,10 +113,10 @@ len('hello') | println()      // 5
 | `range` | `number, number, number -> list` | Generate `[start, start+step, ...]`; `step` of `0` is a runtime error |
 
 ```quark
-range(5).join(', ') | println()          // 0, 1, 2, 3, 4
-range(2, 5).join(', ') | println()       // 2, 3, 4
-range(5, 2).join(', ') | println()       // 5, 4, 3
-range(10, 0, -2).join(', ') | println()  // 10, 8, 6, 4, 2
+range(5).join(', ') | print()          // 0, 1, 2, 3, 4
+range(2, 5).join(', ') | print()       // 2, 3, 4
+range(5, 2).join(', ') | print()       // 5, 4, 3
+range(10, 0, -2).join(', ') | print()  // 10, 8, 6, 4, 2
 ```
 
 ### Math
@@ -127,18 +126,18 @@ range(10, 0, -2).join(', ') | println()  // 10, 8, 6, 4, 2
 | `abs` | `int\|float -> int\|float` | Absolute value (preserves type) |
 | `min` | `number, number -> number` | Minimum of two values |
 | `max` | `number, number -> number` | Maximum of two values |
-| `sum` | `vector -> float` | Sum of all vector elements |
+| `sum` | `vec -> float` | Sum of all vector elements |
 | `sqrt` | `float -> float` | Square root |
 | `floor` | `float -> int` | Round down |
 | `ceil` | `float -> int` | Round up |
 | `round` | `float -> int` | Round to nearest |
 
 ```quark
-abs(0 - 5) | println()       // 5
-min(10, 5) | println()       // 5
-max(10, 5) | println()       // 10
-sqrt(16) | println()         // 4.0
-floor(3.7) | println()       // 3
+abs(0 - 5) | print()       // 5
+min(10, 5) | print()       // 5
+max(10, 5) | print()       // 10
+sqrt(16) | print()         // 4.0
+floor(3.7) | print()       // 3
 ```
 
 `min`, `max` and `sum` also take a single vector; see [Vector free functions](#vector-free-functions-reductions).
@@ -163,36 +162,36 @@ All string methods leave the original string unchanged and return a new string (
 
 ```quark
 // Case
-'hello world'.upper() | println()     // HELLO WORLD
-'HELLO WORLD'.lower() | println()     // hello world
+'hello world'.upper() | print()     // HELLO WORLD
+'HELLO WORLD'.lower() | print()     // hello world
 
 // Whitespace
-'  hello  '.trim() | println()        // hello
+'  hello  '.trim() | print()        // hello
 
 // Searching
-'hello world'.contains('world') | println()    // true
-'hello world'.startswith('hello') | println()  // true
-'hello world'.endswith('world') | println()    // true
+'hello world'.contains('world') | print()    // true
+'hello world'.startswith('hello') | print()  // true
+'hello world'.endswith('world') | print()    // true
 
 // Manipulation
-'hello world'.replace('world', 'quark') | println()  // hello quark
-'hello ' + 'world' | println()                        // hello world
+'hello world'.replace('world', 'quark') | print()  // hello quark
+'hello ' + 'world' | print()                        // hello world
 
 // Split
 parts = 'a,b,c'.split(',')
-len(parts) | println()                // 3
-parts.get(1) | println()              // b
+len(parts) | print()                // 3
+parts.get(1) | print()              // b
 
 // Slice
-'hello world'.slice(6, 11) | println()  // world
-'hello'.slice(-3, 5) | println()        // llo   (negative start)
-'hello'.slice(0, -2) | println()        // hel   (negative end)
+'hello world'.slice(6, 11) | print()  // world
+'hello'.slice(-3, 5) | print()        // llo   (negative start)
+'hello'.slice(0, -2) | print()        // hel   (negative end)
 
 // Chaining
-'hello world'.slice(6, 11).upper() | println()  // WORLD
+'hello world'.slice(6, 11).upper() | print()  // WORLD
 
 // Chain with pipe
-'  HELLO world  '.trim().lower().replace('world', 'quark') | println()
+'  HELLO world  '.trim().lower().replace('world', 'quark') | print()
 // Output: hello quark
 ```
 
@@ -220,41 +219,41 @@ parts.get(1) | println()              // b
 | `.sort_by(key)` | `key: fn -> list` | Sort in place by `key(item)`, calling `key` once per item, and return the list. Stable, so items with equal keys keep their order. Keys follow the same rules as `.sort()` |
 | `.concat(other)` | `list -> list` | Concatenate two lists |
 | `.join(sep)` | `str -> str` | Join elements with separator (non-strings are coerced) |
-| `.enumerate()` | `-> list` | Build list of `{ index, value }` records: `for e in xs.enumerate(): println(e.index)` |
-| `.to_vector()` | `-> vector` | Convert to typed vector (requires homogeneous elements; nulls allowed) |
+| `.enumerate()` | `-> list` | Build list of `{ index, value }` records: `for e in xs.enumerate(): print(e.index)` |
+| `.to_vec()` | `-> vec` | Convert to typed vector (requires homogeneous elements; nulls allowed) |
 
 ```quark
 xs = list [10, 20, 30]
 xs.push(40)                    // changes xs in place
-xs.get(0) | println()          // 10
-xs.get(-1) | println()         // 40 (last element)
-xs.get(999) | println()        // null (out of bounds)
+xs.get(0) | print()          // 10
+xs.get(-1) | print()         // 40 (last element)
+xs.get(999) | print()        // null (out of bounds)
 
-xs.pop() | println()           // 40
-xs.set(1, 99) | println()      // 99 (the value set)
+xs.pop() | print()           // 40
+xs.set(1, 99) | print()      // 99 (the value set)
 xs.insert(1, 55)
 
-xs.slice(0, 2).join(', ') | println()   // 10, 55
-xs.reverse().join(', ') | println()     // 30, 99, 55, 10
-xs.sort().join(', ') | println()        // 10, 30, 55, 99
+xs.slice(0, 2).join(', ') | print()   // 10, 55
+xs.reverse().join(', ') | print()     // 30, 99, 55, 10
+xs.sort().join(', ') | print()        // 10, 30, 55, 99
 
 rows = list [dict {name: 'b', n: 2}, dict {name: 'a', n: 1}]
 rows.sort_by(fn(r) -> r.n)
-rows.get(0).name | println()            // a
+rows.get(0).name | print()            // a
 
 xs2 = list [1, 2]
-xs.concat(xs2).join(', ') | println()   // 10, 30, 55, 99, 1, 2
+xs.concat(xs2).join(', ') | print()   // 10, 30, 55, 99, 1, 2
 
 // Join
-list ['a', 'b', 'c'].join(',') | println()  // a,b,c
-list [1, 2, 3].join('+') | println()        // 1+2+3
+list ['a', 'b', 'c'].join(',') | print()  // a,b,c
+list [1, 2, 3].join('+') | print()        // 1+2+3
 
 // Split then rejoin
-'a,b,c'.split(',').join('-') | println()    // a-b-c
+'a,b,c'.split(',').join('-') | print()    // a-b-c
 
 // Convert to vector
-v = list [1, 2, 3].to_vector()
-println(type(v))  // vector[i64]
+v = list [1, 2, 3].to_vec()
+print(type(v))  // vec[i64]
 ```
 
 **Notes:**
@@ -262,7 +261,7 @@ println(type(v))  // vector[i64]
 - `.get` out-of-bounds returns `null`; `.set` and `.remove` out of bounds are runtime errors
 - `.insert` clamps the index: a negative index counts from the end, and anything past the end appends (`list [1, 2, 3].insert(99, 7)` gives `1, 2, 3, 7`); a non-int index is a runtime error
 - `.join` coerces non-string elements via `to_str`
-- `.to_vector` requires all non-null elements to be the same type (`int`, `float`, `bool`, or `str`); nulls become null entries, and an empty list gives a `vector[i64]`
+- `.to_vec` requires all non-null elements to be the same type (`int`, `float`, `bool`, or `str`); nulls become null entries, and an empty list gives a `vec[i64]`
 
 ---
 
@@ -274,9 +273,9 @@ Dicts are key-value maps backed by `std::unordered_map<std::string, QValue>`.
 
 ```quark
 info = dict { name: 'Alex', role: 'dev' }
-println(info.name)      // Alex
+print(info.name)      // Alex
 info.city = 'NYC'
-len(info) | println()   // 3
+len(info) | print()   // 3
 ```
 
 The analyzer infers a value type from the literal. Assigning a value of another type (here, `info.age = 30` on a dict of strings) is allowed but produces a `QK-CHECK-002` warning.
@@ -298,40 +297,40 @@ mydict = dict { a: 1, b: 2 }
 
 // Dynamic key read
 for item in list ['a', 'b', 'missing']:
-    mydict.get(item) | println()    // 1, 2, null
+    mydict.get(item) | print()    // 1, 2, null
 
 // Dynamic key write
 mydict.set('x', 99)
-println(mydict.x)   // 99
+print(mydict.x)   // 99
 
 // Enumerate
 for item in mydict.items():
-    println(item.key)
-    println(item.value)
+    print(item.key)
+    print(item.value)
 
 // Keys/values (order is not guaranteed)
-len(mydict.keys()) | println()     // 3
-len(mydict.values()) | println()   // 3
+len(mydict.keys()) | print()     // 3
+len(mydict.values()) | print()   // 3
 ```
 
 Keys are always strings. `.get` and `.set` convert a non-string key with `to_str`, so `mydict.set(1, 2)` stores the key `'1'`, and `mydict.get(1)` reads it back.
 
 ---
 
-## Vector Methods (`vector`)
+## Vector Methods (`vec`)
 
 Typed vector operations for data-oriented workloads.
 
 ### Construction
 
 ```quark
-vi = vector [1, 2, 3, 4]       // vector[i64]  (from literal)
-vf = vector [1.0, 2.0, 3.0]    // vector[f64]  (from literal)
-vs = vector ['a', 'b', 'c']    // vector[str]  (from literal)
+vi = vec [1, 2, 3, 4]       // vec[i64]  (from literal)
+vf = vec [1.0, 2.0, 3.0]    // vec[f64]  (from literal)
+vs = vec ['a', 'b', 'c']    // vec[str]  (from literal)
 
 // From a homogeneous list
-v2 = list [10, 20, 30].to_vector()
-println(type(v2))              // vector[i64]
+v2 = list [10, 20, 30].to_vec()
+print(type(v2))              // vec[i64]
 ```
 
 ### Vector methods
@@ -339,8 +338,8 @@ println(type(v2))              // vector[i64]
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `.get(idx)` | `int -> any` | Get scalar value at index. **Runtime error out of bounds** (unlike list `.get`, which returns `null`) |
-| `.fillna(val)` | `any -> vector` | New vector with null entries replaced |
-| `.astype(dtype)` | `str -> vector` | Cast vector dtype (`f64`, `i64`, `bool`) |
+| `.fillna(val)` | `any -> vec` | New vector with null entries replaced |
+| `.astype(dtype)` | `str -> vec` | Cast vector dtype (`f64`, `i64`, `bool`) |
 | `.to_list()` | `-> list` | Convert vector back to list |
 | `.enumerate()` | `-> list` | Build list of `{ index, value }` records, as for lists |
 
@@ -348,42 +347,42 @@ println(type(v2))              // vector[i64]
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `sum` | `vector -> float` | Sum all elements |
-| `min` | `vector -> float` | Minimum element |
-| `max` | `vector -> float` | Maximum element |
-| `all` | `vector[bool] -> bool` | True if every non-null element is true (true for empty) |
-| `any` | `vector[bool] -> bool` | True if any non-null element is true (false for empty) |
+| `sum` | `vec -> float` | Sum all elements |
+| `min` | `vec -> float` | Minimum element |
+| `max` | `vec -> float` | Maximum element |
+| `all` | `vec[bool] -> bool` | True if every non-null element is true (true for empty) |
+| `any` | `vec[bool] -> bool` | True if any non-null element is true (false for empty) |
 
 ```quark
-vi = vector [1, 2, 3, 4]
-println(sum(vi))              // 10.0 (reductions return a float)
-println(min(vi))              // 1.0
-println(max(vi))              // 4.0
+vi = vec [1, 2, 3, 4]
+print(sum(vi))              // 10.0 (reductions return a float)
+print(min(vi))              // 1.0
+print(max(vi))              // 4.0
 
 // Arithmetic (numeric vectors only)
-a = vector [10, 20, 30, 40]
-b = vector [1, 2, 3, 4]
+a = vec [10, 20, 30, 40]
+b = vec [1, 2, 3, 4]
 z = a - b
-println(sum(z))
+print(sum(z))
 
 // Cast
 vf = vi.astype('f64')
-println(type(vf))             // vector[f64]
+print(type(vf))             // vec[f64]
 
 // Fill nulls
 filled = vf.fillna(0.0)
 
 // Convert back to list
 back = vi.to_list()
-println(type(back))           // list
-println(back.get(0))          // 1
+print(type(back))           // list
+print(back.get(0))          // 1
 ```
 
 **Notes:**
 - Vector literals must be homogeneous (`int`, `float`, `bool`, or `str`)
-- `.to_vector()` on a list applies the same homogeneity rule
+- `.to_vec()` on a list applies the same homogeneity rule
 - Numeric vector arithmetic (`+`, `-`, `*`, `/`) requires numeric vectors
-- `sum` supports `vector[bool]` (true=1, false=0)
+- `sum` supports `vec[bool]` (true=1, false=0)
 - `sum`, `min`, and `max` skip null entries in vectors; all-null reductions return `null`
 - On an empty vector, `sum` returns `0.0`, while `min` and `max` are runtime errors
 
@@ -407,26 +406,26 @@ fn safe_div(a, b) ->
         ok a / b
 
 r = safe_div(10, 2)
-is_ok(r) | println()       // true
-unwrap(r) | println()      // 5.0
+is_ok(r) | print()       // true
+unwrap(r) | print()      // 5.0
 
 // Pattern matching (preferred)
 when safe_div(10, 0):
-    ok value -> println(value)
-    err msg -> println(msg)      // division by zero
+    ok value -> print(value)
+    err msg -> print(msg)      // division by zero
 ```
 
 ---
 
 ## Stdlib modules: what an import exposes
 
-Each module below is a `.qrk` file whose public API is its `module` block (`io.open`, `fmt.show_vec`, ...). The `extern fn` bindings it is built on (`io_open`, `fmt_vector`, `blas_dot`, ...) are declared at the file's top level, and every top-level name of an imported file is visible to the program, alias or not. They are callable, but they are implementation details: they take every argument explicitly (no defaults) and may change. Use the module functions.
+Each module below is a `.qrk` file whose public API is its `module` block (`io.open`, `fmt.show_vec`, ...). The `extern fn` bindings it is built on (`io_open`, `fmt_vec`, `blas_dot`, ...) are declared at the file's top level, and every top-level name of an imported file is visible to the program, alias or not. They are callable, but they are implementation details: they take every argument explicitly (no defaults) and may change. Use the module functions.
 
 ---
 
 ## `std/io`
 
-File I/O. Import it with `use 'std/io' as io`. The module is `extern fn` bindings over `src/core/stdlib/io.hpp`, like the other stdlib modules; there are no file builtins in the prelude. An open file is a `resource` (`type(f)` is `'resource'`; it prints as `<resource file>`).
+File I/O. Import it with `incl 'std/io' as io`. The module is `extern fn` bindings over `src/core/stdlib/io.hpp`, like the other stdlib modules; there are no file builtins in the prelude. An open file is a `resource` (`type(f)` is `'resource'`; it prints as `<resource file>`).
 
 Reading, writing or seeking a closed file, and invalid argument types, are runtime errors. `close` on an already closed file instead returns `err('close: resource is closed')`.
 
@@ -441,49 +440,49 @@ Reading, writing or seeking a closed file, and invalid argument types, are runti
 | `seek_set`, `seek_cur`, `seek_end` | `-> int` | `whence` values `0`, `1`, `2` |
 
 ```quark
-use 'std/io' as io
+incl 'std/io' as io
 
 f = unwrap(io.open('notes.txt', 'w'))
-println(unwrap(io.write(f, 'hello quark')))   // 11
+print(unwrap(io.write(f, 'hello quark')))   // 11
 unwrap(io.close(f))
 
 g = unwrap(io.open('notes.txt'))
 unwrap(io.seek(g, 6, io.seek_set()))
-println(unwrap(io.read(g, 100)))              // quark
+print(unwrap(io.read(g, 100)))              // quark
 unwrap(io.close(g))
 
 a = unwrap(io.open('notes.txt', 'a'))         // append
 unwrap(io.write(a, '!'))
 unwrap(io.close(a))
 r = unwrap(io.open('notes.txt'))
-println(unwrap(io.read(r, 100)))              // hello quark!
+print(unwrap(io.read(r, 100)))              // hello quark!
 unwrap(io.close(r))
 
 when io.open('notes.txt', 'x'):
-    ok h -> println('opened')
-    err msg -> println(msg)                   // open: mode must be 'r', 'w' or 'a'
+    ok h -> print('opened')
+    err msg -> print(msg)                   // open: mode must be 'r', 'w' or 'a'
 ```
 
 ---
 
 ## `std/fmt`
 
-Text rendering of containers beyond what `println` shows. Each function returns a `str`. Import it with `use 'std/fmt' as fmt`.
+Text rendering of containers beyond what `print` shows. Each function returns a `str`. Import it with `incl 'std/fmt' as fmt`.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `show_list` | `lst: list, n: int = 10, show_index: bool = true -> str` | Render a list as a column, up to `n` items |
-| `show_vec` | `vec: vector, n: int = 10, show_index: bool = true -> str` | Render a vector as a column, up to `n` items |
+| `show_vec` | `v: vec, n: int = 10, show_index: bool = true -> str` | Render a vector as a column, up to `n` items |
 | `show_dict` | `dct: dict, n: int = 10, show_index: bool = true -> str` | Render a dict as key/value columns |
 | `table` | `df: any, n: int = 20, show_index: bool = true -> str` | Render a table, or a dict of equal-length lists/vectors, as a boxed table |
 | `head` | `lst: list, n: int = 5 -> str` | Render the first `n` items of a list |
 | `tail` | `lst: list, n: int = 5 -> str` | Render the last `n` items of a list |
-| `full` | `x: any -> str` | `x` as `println` shows it, but with every item of long collections |
+| `full` | `x: any -> str` | `x` as `print` shows it, but with every item of long collections |
 
 ```quark
-use 'std/fmt' as fmt
+incl 'std/fmt' as fmt
 
-println(fmt.show_list(list [10, 20, 30]))
+print(fmt.show_list(list [10, 20, 30]))
 // Output:
 //    value
 // --------
@@ -497,7 +496,7 @@ println(fmt.show_list(list [10, 20, 30]))
 
 ## `std/sys`
 
-Program arguments, environment variables and exit status. Import it with `use 'std/sys' as sys`.
+Program arguments, environment variables and exit status. Import it with `incl 'std/sys' as sys`.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
@@ -506,16 +505,16 @@ Program arguments, environment variables and exit status. Import it with `use 's
 | `exit` | `code: int = 0` | Exit immediately with status `code`, after flushing output. `0` means success |
 
 ```quark
-use 'std/sys' as sys
+incl 'std/sys' as sys
 
 args = sys.args()
 if len(args) == 0:
-    println('usage: tool <file>')
+    print('usage: tool <file>')
     sys.exit(2)
-println('reading ' + args[0])
+print('reading ' + args[0])
 user = sys.env('USER')
 if user != null:
-    println('hello ' + user)
+    print('hello ' + user)
 ```
 
 Run it with `quark run tool.qrk -- data.csv`, or build it once with `quark build tool.qrk -o tool` and run `./tool data.csv`.
@@ -524,7 +523,7 @@ Run it with `quark run tool.qrk -- data.csv`, or build it once with `quark build
 
 ## `std/csv`
 
-Reading CSV data. Every field is returned as a `str`; convert with `to_int` / `to_float`. Import it with `use 'std/csv' as csv`.
+Reading CSV data. Every field is returned as a `str`; convert with `to_int` / `to_float`. Import it with `incl 'std/csv' as csv`.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
@@ -534,22 +533,22 @@ Reading CSV data. Every field is returned as a `str`; convert with `to_int` / `t
 Parsing follows RFC 4180: a field may be quoted with `"..."`, and a quoted field can contain the separator, newlines and doubled quotes (`""` is one `"`). Lines end with `\n` or `\r\n`; fully blank lines are skipped. `sep` must be a single character (`';'`, `'\t'`, ...). The first row is returned like any other, so skip it when it's a header.
 
 ```quark
-use 'std/csv' as csv
+incl 'std/csv' as csv
 
 rows = csv.parse('name,city\n"Smith, J",NYC\n')
-println(len(rows))                 // 2
-println(rows.get(1).get(0))        // Smith, J
+print(len(rows))                 // 2
+print(rows.get(1).get(0))        // Smith, J
 
 when csv.read('sales.csv'):
-    ok rows -> println(len(rows))
-    err e -> println(e)            // csv.read: sales.csv: No such file or directory
+    ok rows -> print(len(rows))
+    err e -> print(e)            // csv.read: sales.csv: No such file or directory
 ```
 
 ---
 
 ## `std/time`
 
-Wall-clock and monotonic time. Import it with `use 'std/time' as time`.
+Wall-clock and monotonic time. Import it with `incl 'std/time' as time`.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
@@ -558,18 +557,18 @@ Wall-clock and monotonic time. Import it with `use 'std/time' as time`.
 | `sleep` | `seconds: float` | Pause for `seconds` (fractions allowed) |
 
 ```quark
-use 'std/time' as time
+incl 'std/time' as time
 
 start = time.clock()
 time.sleep(0.1)
-println(time.clock() - start >= 0.1)   // true
+print(time.clock() - start >= 0.1)   // true
 ```
 
 ---
 
 ## `std/random`
 
-Pseudo-random numbers (64-bit Mersenne Twister). The generator is seeded randomly at startup; call `seed(n)` for a reproducible sequence. Not suitable for cryptography. Import it with `use 'std/random' as random`.
+Pseudo-random numbers (64-bit Mersenne Twister). The generator is seeded randomly at startup; call `seed(n)` for a reproducible sequence. Not suitable for cryptography. Import it with `incl 'std/random' as random`.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
@@ -580,13 +579,13 @@ Pseudo-random numbers (64-bit Mersenne Twister). The generator is seeded randoml
 | `shuffle` | `xs: list -> list` | Shuffle in place and return the list |
 
 ```quark
-use 'std/random' as random
+incl 'std/random' as random
 
 random.seed(7)
 roll = random.randint(1, 6)
-println(roll >= 1 and roll <= 6)            // true
+print(roll >= 1 and roll <= 6)            // true
 deck = list ['a', 'b', 'c']
-println(random.shuffle(deck).sort().join(''))   // abc
+print(random.shuffle(deck).sort().join(''))   // abc
 ```
 
 ---
@@ -598,23 +597,23 @@ BLAS routines over f64 vectors, through the system OpenBLAS. The module links it
 - Debian/Ubuntu: `sudo apt install libopenblas-dev`
 - macOS: `brew install openblas`, then pass `--lib-path "$(brew --prefix openblas)/lib"` and `--include-path "$(brew --prefix openblas)/include"` (or set `QUARK_LIB_PATH` / `QUARK_INCLUDE_PATH`).
 
-Without OpenBLAS, `use 'std/blas'` fails at build time with `QK-FFI-002`.
+Without OpenBLAS, `incl 'std/blas'` fails at build time with `QK-FFI-002`.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `dot` | `x: vector, y: vector -> float` | Dot product |
-| `axpy` | `a: float, x: vector, y: vector -> vector` | `a*x + y`, as a new vector |
-| `scal` | `a: float, x: vector -> vector` | `a*x`, as a new vector |
-| `nrm2` | `x: vector -> float` | Euclidean norm |
-| `asum` | `x: vector -> float` | Sum of absolute values |
-| `gemv` | `a: vector, rows: int, cols: int, x: vector -> vector` | Matrix-vector product; `a` is `rows x cols`, row-major, flattened |
+| `dot` | `x: vec, y: vec -> float` | Dot product |
+| `axpy` | `a: float, x: vec, y: vec -> vec` | `a*x + y`, as a new vector |
+| `scal` | `a: float, x: vec -> vec` | `a*x`, as a new vector |
+| `nrm2` | `x: vec -> float` | Euclidean norm |
+| `asum` | `x: vec -> float` | Sum of absolute values |
+| `gemv` | `a: vec, rows: int, cols: int, x: vec -> vec` | Matrix-vector product; `a` is `rows x cols`, row-major, flattened |
 
 ```quark
-use 'std/blas' as blas
+incl 'std/blas' as blas
 
-x = vector [1.0, 2.0, 3.0]
-y = vector [4.0, 5.0, 6.0]
-println(blas.dot(x, y))         // 32.0
+x = vec [1.0, 2.0, 3.0]
+y = vec [4.0, 5.0, 6.0]
+print(blas.dot(x, y))         // 32.0
 z = blas.axpy(2, x, y)          // [6, 9, 12]; y is unchanged
 ```
 
@@ -630,16 +629,16 @@ All builtins work with Quark's pipe operator. The piped value becomes the first 
 
 ```quark
 // Pipe into free function
-'hello' | println()
+'hello' | print()
 
 // Pipe into method call: value | receiver.method(extra_args)
 // The piped value becomes an extra argument after the receiver.
 
-// Chain method calls then pipe to println
-'  HELLO world  '.trim().lower().replace('world', 'quark') | println()
+// Chain method calls then pipe to print
+'  HELLO world  '.trim().lower().replace('world', 'quark') | print()
 
 // Pipe into list.join
-list ['a', 'b', 'c'].join(',') | println()   // a,b,c
+list ['a', 'b', 'c'].join(',') | print()   // a,b,c
 ```
 
 ---

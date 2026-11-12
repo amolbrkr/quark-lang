@@ -113,13 +113,13 @@ inline QValue q_table_mask_filter(QValue tbl, QValue mask) {
         exit(1);
     }
     if (mask.type != QValue::VAL_VECTOR || !mask.data.vector_val) {
-        q_runtime_reportf("runtime error: q_table_mask_filter: expected bool vector as mask\n");
+        q_runtime_reportf("runtime error: q_table_mask_filter: expected bool vec as mask\n");
         exit(1);
     }
     QTable* src = tbl.data.table_val;
     QVector* mv = mask.data.vector_val;
     if (mv->type != QVector::Type::BOOL) {
-        q_runtime_reportf("runtime error: table mask index requires bool vector\n");
+        q_runtime_reportf("runtime error: table mask index requires bool vec\n");
         exit(1);
     }
     if (mv->count != static_cast<size_t>(src->nrows)) {
@@ -138,7 +138,7 @@ inline QValue q_table_mask_filter(QValue tbl, QValue mask) {
 }
 
 // q_table_index is the unified runtime indexing dispatch for tables.
-// Accepts int (row index → struct) or vector[bool] (mask → table).
+// Accepts int (row index → struct) or vec[bool] (mask → table).
 inline QValue q_table_index(QValue tbl, QValue index) {
     if (tbl.type != QValue::VAL_TABLE || !tbl.data.table_val) {
         q_runtime_reportf("runtime error: q_table_index: expected table\n");
@@ -150,7 +150,7 @@ inline QValue q_table_index(QValue tbl, QValue index) {
     if (index.type == QValue::VAL_VECTOR) {
         return q_table_mask_filter(tbl, index);
     }
-    q_runtime_reportf("runtime error: table index must be int or bool vector\n");
+    q_runtime_reportf("runtime error: table index must be int or bool vec\n");
     exit(1);
 }
 

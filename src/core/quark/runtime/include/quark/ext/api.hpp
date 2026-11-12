@@ -139,7 +139,7 @@ inline const char* as_str(QValue v) {
 
 inline QVector* as_vector(QValue v) {
     if (v.type != QValue::VAL_VECTOR || !v.data.vector_val) {
-        panic("as_vector: value is not vector");
+        panic("as_vector: value is not vec");
     }
     return v.data.vector_val;
 }
@@ -194,7 +194,7 @@ struct QSlice {
 // Read-only view over f64 values. Panics if dtype != F64.
 inline QSlice<const double> as_f64(const QVector* v) {
     if (!v || v->type != QVector::Type::F64) {
-        panic("as_f64: vector dtype is not f64");
+        panic("as_f64: vec dtype is not f64");
     }
     return QSlice<const double>{q_vec_f64_data(*v), v->count};
 }
@@ -202,7 +202,7 @@ inline QSlice<const double> as_f64(const QVector* v) {
 // Mutable view over f64 values of a vector you just created.
 inline QSlice<double> as_f64_mut(QVector* v) {
     if (!v || v->type != QVector::Type::F64) {
-        panic("as_f64_mut: vector dtype is not f64");
+        panic("as_f64_mut: vec dtype is not f64");
     }
     return QSlice<double>{q_vec_f64_data_mut(*v), v->count};
 }
@@ -210,7 +210,7 @@ inline QSlice<double> as_f64_mut(QVector* v) {
 // Read-only view over i64 values. Panics if dtype != I64.
 inline QSlice<const int64_t> as_i64(const QVector* v) {
     if (!v || v->type != QVector::Type::I64) {
-        panic("as_i64: vector dtype is not i64");
+        panic("as_i64: vec dtype is not i64");
     }
     return QSlice<const int64_t>{q_vec_i64_data(*v), v->count};
 }
@@ -218,7 +218,7 @@ inline QSlice<const int64_t> as_i64(const QVector* v) {
 // Mutable view over i64 values of a vector you just created.
 inline QSlice<int64_t> as_i64_mut(QVector* v) {
     if (!v || v->type != QVector::Type::I64) {
-        panic("as_i64_mut: vector dtype is not i64");
+        panic("as_i64_mut: vec dtype is not i64");
     }
     return QSlice<int64_t>{q_vec_i64_data_mut(*v), v->count};
 }
@@ -226,7 +226,7 @@ inline QSlice<int64_t> as_i64_mut(QVector* v) {
 // Element i of a bool vector. Panics if dtype != BOOL.
 inline bool bool_at(const QVector* v, size_t i) {
     if (!v || v->type != QVector::Type::BOOL) {
-        panic("bool_at: vector dtype is not bool");
+        panic("bool_at: vec dtype is not bool");
     }
     return q_vec_bool_at(*v, i);
 }
@@ -234,7 +234,7 @@ inline bool bool_at(const QVector* v, size_t i) {
 // Sets element i of a bool vector you just created.
 inline void set_bool(QVector* v, size_t i, bool b) {
     if (!v || v->type != QVector::Type::BOOL) {
-        panic("set_bool: vector dtype is not bool");
+        panic("set_bool: vec dtype is not bool");
     }
     q_vec_bool_put(*v, i, b);
 }
@@ -242,7 +242,7 @@ inline void set_bool(QVector* v, size_t i, bool b) {
 // Element i of a str vector as a view into the vector's bytes.
 inline std::string_view str_at(const QVector* v, size_t i) {
     if (!v || v->type != QVector::Type::STR) {
-        panic("str_at: vector dtype is not str");
+        panic("str_at: vec dtype is not str");
     }
     return q_vec_str_at(*v, i);
 }
@@ -289,12 +289,12 @@ inline size_t vec_null_count(const QVector* v) {
 }
 
 inline QVector::Type vec_dtype(const QVector* v) {
-    if (!v) panic("vec_dtype: null vector pointer");
+    if (!v) panic("vec_dtype: null vec pointer");
     return v->type;
 }
 
 inline const char* vec_dtype_name(const QVector* v) {
-    if (!v) panic("vec_dtype_name: null vector pointer");
+    if (!v) panic("vec_dtype_name: null vec pointer");
     return q_vec_dtype_name(*v);
 }
 
@@ -377,7 +377,7 @@ inline QValue call(QClosure* fn, QValue a0, QValue a1, QValue a2) {
 inline const char* q_as_type_name(QValue::ValueType t) {
     static const char* names[] = {
         "int", "float", "str", "bool", "null",
-        "list", "vector", "dict", "fn", "result", "resource"
+        "list", "vec", "dict", "fn", "result", "resource"
     };
     int idx = static_cast<int>(t);
     if (idx >= 0 && idx <= 10) return names[idx];
@@ -409,7 +409,7 @@ inline const char* q_as_str(QValue v) {
     return v.data.string_val;
 }
 inline QVector* q_as_vector(QValue v) {
-    if (v.type != QValue::VAL_VECTOR) q_as_type_panic("vector", v.type);
+    if (v.type != QValue::VAL_VECTOR) q_as_type_panic("vec", v.type);
     return v.data.vector_val;
 }
 inline QList* q_as_list(QValue v) {

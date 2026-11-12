@@ -40,7 +40,7 @@ func TestBuiltins_ArityError(t *testing.T) {
 }
 
 func TestAnyTypeAnnotations_Accepted(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("fn id(x: any) any -> x\nprintln(id(1))\nprintln(id('x'))\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("fn id(x: any) any -> x\nprint(id(1))\nprint(id('x'))\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -72,7 +72,7 @@ func TestCallPlans_DefaultsForAliasCall(t *testing.T) {
 }
 
 func TestModuleQualifiedCall_WithAlias(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("module math:\n    fn myfloor(x) -> x\nuse math as m\nprintln(m.myfloor(3))\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("module math:\n    fn myfloor(x) -> x\nincl math as m\nprint(m.myfloor(3))\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -82,7 +82,7 @@ func TestModuleQualifiedCall_WithAlias(t *testing.T) {
 }
 
 func TestModuleQualifiedCall_UnknownSymbol(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("module math:\n    fn myfloor(x) -> x\nuse math as m\nprintln(m.ceil(3))\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("module math:\n    fn myfloor(x) -> x\nincl math as m\nprint(m.ceil(3))\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -107,7 +107,7 @@ func TestDictLiteral_DuplicateKeyError(t *testing.T) {
 }
 
 func TestDictHelpers_BuiltinsRegistered(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("d = dict { a: 1 }\nprintln(d.get('a'))\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("d = dict { a: 1 }\nprint(d.get('a'))\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -142,7 +142,7 @@ func TestWarnings_DoNotFailTypeErrors(t *testing.T) {
 }
 
 func TestUnionMethodCall_RejectsAmbiguousRuntimeDispatch(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("fn pick(flag) ->\n    if flag:\n        list [1, 2]\n    else:\n        dict { a: 1 }\n\nx = pick(true)\nprintln(x.get('a'))\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("fn pick(flag) ->\n    if flag:\n        list [1, 2]\n    else:\n        dict { a: 1 }\n\nx = pick(true)\nprint(x.get('a'))\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -215,7 +215,7 @@ func TestAssignment_RejectsUnknownToConcreteType(t *testing.T) {
 }
 
 func TestSplit_BuiltinRegistered(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("println('a,b'.split(','))\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("print('a,b'.split(','))\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -225,7 +225,7 @@ func TestSplit_BuiltinRegistered(t *testing.T) {
 }
 
 func TestVectorLiteral_InfersVectorInt(t *testing.T) {
-	analyzer, node, parseErrs, typeErrs := testutil.Analyze("vector [1, 2, 3]\n")
+	analyzer, node, parseErrs, typeErrs := testutil.Analyze("vec [1, 2, 3]\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -246,7 +246,7 @@ func TestVectorLiteral_InfersVectorInt(t *testing.T) {
 }
 
 func TestVectorLiteral_InfersVectorString(t *testing.T) {
-	analyzer, node, parseErrs, typeErrs := testutil.Analyze("vector ['a', 'b', 'c']\n")
+	analyzer, node, parseErrs, typeErrs := testutil.Analyze("vec ['a', 'b', 'c']\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -267,7 +267,7 @@ func TestVectorLiteral_InfersVectorString(t *testing.T) {
 }
 
 func TestVectorLiteral_RejectsMixedTypes(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("vector [1, '2', 3]\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("vec [1, '2', 3]\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -281,7 +281,7 @@ func TestVectorLiteral_RejectsMixedTypes(t *testing.T) {
 }
 
 func TestVectorArithmetic_VectorAndScalar(t *testing.T) {
-	analyzer, node, parseErrs, typeErrs := testutil.Analyze("v = vector [1,2,3]\nv + 2\n")
+	analyzer, node, parseErrs, typeErrs := testutil.Analyze("v = vec [1,2,3]\nv + 2\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -301,7 +301,7 @@ func TestVectorArithmetic_VectorAndScalar(t *testing.T) {
 }
 
 func TestVectorReductions_Builtins(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("v = vector [1,2,3]\nprintln(sum(v))\nprintln(min(v))\nprintln(max(v))\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("v = vec [1,2,3]\nprint(sum(v))\nprint(min(v))\nprint(max(v))\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -311,7 +311,7 @@ func TestVectorReductions_Builtins(t *testing.T) {
 }
 
 func TestToVector_InfersVectorIntType(t *testing.T) {
-	analyzer, node, parseErrs, typeErrs := testutil.Analyze("xs = list [1,2,3]\nv = xs.to_vector()\nv\n")
+	analyzer, node, parseErrs, typeErrs := testutil.Analyze("xs = list [1,2,3]\nv = xs.to_vec()\nv\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -332,7 +332,7 @@ func TestToVector_InfersVectorIntType(t *testing.T) {
 }
 
 func TestToVector_InfersVectorFloatType(t *testing.T) {
-	analyzer, node, parseErrs, typeErrs := testutil.Analyze("xs = list [1.0,2.0,3.0]\nv = xs.to_vector()\nv\n")
+	analyzer, node, parseErrs, typeErrs := testutil.Analyze("xs = list [1.0,2.0,3.0]\nv = xs.to_vec()\nv\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -353,12 +353,12 @@ func TestToVector_InfersVectorFloatType(t *testing.T) {
 }
 
 func TestToVector_RejectsMixedNumericList(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("xs = list [1, 2.0, 3]\nv = xs.to_vector()\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("xs = list [1, 2.0, 3]\nv = xs.to_vec()\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
 	if len(typeErrs) == 0 {
-		t.Fatalf("expected type error for mixed int/float list in to_vector")
+		t.Fatalf("expected type error for mixed int/float list in to_vec")
 	}
 	joined := strings.Join(typeErrs, "\n")
 	if !strings.Contains(joined, "homogeneous list elements") {
@@ -367,7 +367,7 @@ func TestToVector_RejectsMixedNumericList(t *testing.T) {
 }
 
 func TestToVector_InfersVectorStringType(t *testing.T) {
-	analyzer, node, parseErrs, typeErrs := testutil.Analyze("xs = list ['a','b','c']\nv = xs.to_vector()\nv\n")
+	analyzer, node, parseErrs, typeErrs := testutil.Analyze("xs = list ['a','b','c']\nv = xs.to_vec()\nv\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -388,12 +388,12 @@ func TestToVector_InfersVectorStringType(t *testing.T) {
 }
 
 func TestToVector_RejectsMixedIntStringList(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("xs = list [1, '2', 3]\nv = xs.to_vector()\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("xs = list [1, '2', 3]\nv = xs.to_vec()\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
 	if len(typeErrs) == 0 {
-		t.Fatalf("expected type error for mixed int/str list in to_vector")
+		t.Fatalf("expected type error for mixed int/str list in to_vec")
 	}
 	joined := strings.Join(typeErrs, "\n")
 	if !strings.Contains(joined, "homogeneous list elements") {
@@ -402,7 +402,7 @@ func TestToVector_RejectsMixedIntStringList(t *testing.T) {
 }
 
 func TestVectorArithmetic_RejectsStringVectors(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("v = vector ['a', 'b']\nw = vector ['x', 'y']\nprintln(v + w)\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("v = vec ['a', 'b']\nw = vec ['x', 'y']\nprint(v + w)\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -410,13 +410,13 @@ func TestVectorArithmetic_RejectsStringVectors(t *testing.T) {
 		t.Fatalf("expected type error for string vector arithmetic")
 	}
 	joined := strings.Join(typeErrs, "\n")
-	if !strings.Contains(joined, "requires numeric vector operands") {
+	if !strings.Contains(joined, "requires numeric vec operands") {
 		t.Fatalf("expected numeric vector operand error, got: %v", typeErrs)
 	}
 }
 
 func TestArithmetic_RejectsListPlusInt(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("nums = list [1, 2, 3]\nprintln(nums + 1)\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("nums = list [1, 2, 3]\nprint(nums + 1)\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -430,7 +430,7 @@ func TestArithmetic_RejectsListPlusInt(t *testing.T) {
 }
 
 func TestForLoop_AllowsVectorIterable(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("for x in range(3).to_vector():\n    println(x)\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("for x in range(3).to_vec():\n    print(x)\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -440,7 +440,7 @@ func TestForLoop_AllowsVectorIterable(t *testing.T) {
 }
 
 func TestType_BuiltinRegistered(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("v = vector [1,2,3]\nprintln(type(v))\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("v = vec [1,2,3]\nprint(type(v))\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -450,7 +450,7 @@ func TestType_BuiltinRegistered(t *testing.T) {
 }
 
 func TestVectorFillnaAndAstype_BuiltinsRegistered(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("v = vector [1,2,3]\nprintln(v.fillna(0))\nprintln(v.astype('i64'))\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("v = vec [1,2,3]\nprint(v.fillna(0))\nprint(v.astype('i64'))\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -524,7 +524,7 @@ func TestWhenResultPattern_NonResultMatchError(t *testing.T) {
 }
 
 func TestResultHelpers_BuiltinsRegistered(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("r = ok 1\nprintln(is_ok(r))\nprintln(is_err(r))\nprintln(unwrap(r))\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("r = ok 1\nprint(is_ok(r))\nprint(is_err(r))\nprint(unwrap(r))\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -568,7 +568,7 @@ func TestFunctionParam_ResultTypeAnnotationAccepted(t *testing.T) {
 }
 
 func TestUnwrapRejectsNonResultAtAnalysisTime(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("println(unwrap(1))\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("print(unwrap(1))\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -596,7 +596,7 @@ func TestPipeMethod_ChecksArgumentTypes(t *testing.T) {
 }
 
 func TestVectorToList_ReturnsListTypeForMethodChains(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("xs = vector [1,2,3].to_list()\nprintln(xs.get(0))\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("xs = vec [1,2,3].to_list()\nprint(xs.get(0))\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -606,7 +606,7 @@ func TestVectorToList_ReturnsListTypeForMethodChains(t *testing.T) {
 }
 
 func TestForLoop_AllowsStringIterable(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("for ch in 'ab':\n    println(ch)\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("for ch in 'ab':\n    print(ch)\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -645,7 +645,7 @@ func TestCaptures_ShadowingBindingsAreLocal(t *testing.T) {
 		name string
 	}{
 		{"e = 1\nfn f(r) ->\n    when r:\n        ok v -> 'ok'\n        err e -> e\n", "e"},
-		{"i = 1\nfn f(xs) ->\n    for i in xs:\n        println(i)\n", "i"},
+		{"i = 1\nfn f(xs) ->\n    for i in xs:\n        print(i)\n", "i"},
 	}
 	for _, tc := range cases {
 		analyzer, _, parseErrs, typeErrs := testutil.Analyze(tc.src)

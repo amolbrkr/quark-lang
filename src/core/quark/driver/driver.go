@@ -102,7 +102,7 @@ func CompileSource(src, file string, upTo Stage) *Unit {
 	return u
 }
 
-// ResolveImports splices `use` imports into tree, resolves `extern` header
+// ResolveImports splices `incl` imports into tree, resolves `extern` header
 // paths, and collects the native dependencies requested by `extern link` and
 // `extern include_path`. absPath is the absolute path of the file tree came
 // from.

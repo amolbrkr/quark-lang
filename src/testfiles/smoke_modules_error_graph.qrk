@@ -1,7 +1,7 @@
 // Two modules in one file both define `foo` (lib/core.qrk: collision_a and
-// collision_b). Members are namespaced per module, so `use collision_a`
+// collision_b). Members are namespaced per module, so `incl collision_a`
 // brings in collision_a's foo, not whichever module was spliced last.
 
-use './lib/core'
-use collision_a
-foo() | println()
+incl './lib/core'
+incl collision_a
+foo() | print()

@@ -16,17 +16,17 @@ Every runtime value carries one of thirteen types:
 | `bool` | Boolean | |
 | `null` | (none) | Distinct type, not a zero-value of another type |
 | `list` | Ordered dynamic array | Heterogeneous elements |
-| `vector` | Typed columnar array | Homogeneous dtype: f64, i64, bool, or str |
+| `vec` | Typed columnar array | Homogeneous dtype: f64, i64, bool, or str |
 | `dict` | String-keyed map | Unordered |
 | `fn` | Function value | All functions are closures (even non-capturing ones) |
 | `result` | Tagged ok/err wrapper | Holds an arbitrary payload |
 | `resource` | Opaque external handle | Generational slot-based; currently used for file I/O |
 | `struct` | Fixed set of named fields | Declared with `struct`; immutable; `type()` returns the struct's name (grammar.md §9.1) |
-| `table` | Columnar table | Runtime representation only; no syntax creates one yet (`tables_v0_1_spec.md`) |
+| `tbl` | Columnar table | Runtime representation only; no syntax creates one yet (`tables_v0_1_spec.md`) |
 
 ### 1.1 Pass-by-value vs reference semantics
 
-Values are passed by copy. For scalar types (int, float, bool, null) this is a full copy. For heap types (list, dict, vector, fn, result, str, struct) the value is copied but the **underlying data is shared** — so two variables can alias the same list/dict. Mutations through one alias are visible through the other.
+Values are passed by copy. For scalar types (int, float, bool, null) this is a full copy. For heap types (list, dict, vec, fn, result, str, struct) the value is copied but the **underlying data is shared** — so two variables can alias the same list/dict. Mutations through one alias are visible through the other.
 
 ### 1.2 String ownership
 
@@ -38,7 +38,7 @@ Every string-producing operation allocates a **fresh copy**. Strings are never s
 
 ### 1.4 Resources
 
-Resources are opaque handles to external state managed outside the Quark value system. The runtime uses a generational slot-based registry: each resource handle carries a slot index, generation counter, and kind tag. Operations on a closed or stale handle produce a runtime error. Every handle has the single type `resource`: `type()` returns `"resource"`, and `to_str`/`println` show the kind, as in `<resource file>`.
+Resources are opaque handles to external state managed outside the Quark value system. The runtime uses a generational slot-based registry: each resource handle carries a slot index, generation counter, and kind tag. Operations on a closed or stale handle produce a runtime error. Every handle has the single type `resource`: `type()` returns `"resource"`, and `to_str`/`print` show the kind, as in `<resource file>`.
 
 Resources are currently used exclusively by the `std/io` stdlib module for file handles. User code cannot construct resources directly — they are created by native functions (e.g., `io.open()`) and consumed by others (e.g., `io.read()`, `io.close()`).
 
@@ -70,14 +70,14 @@ Truthiness governs all condition positions (`if`, `while`, ternary), the `and`/`
 | `str` | non-empty |
 | `null` | never |
 | `list` | non-empty |
-| `vector` | **error** — use `all(v)`, `any(v)` or `len(v) > 0` |
+| `vec` | **error** — use `all(v)`, `any(v)` or `len(v) > 0` |
 | `dict` | non-empty |
 | `fn` | always true (for valid closures) |
 | `result` | **error** — use `is_ok(r)`, `is_err(r)` or `when` |
 | `resource` | handle is alive (not closed or stale) |
 | `struct` | always true |
 
-**Results and vectors are rejected as conditions.** Treating an `err` result as false would silently discard the error. A vector comparison such as `v == w` yields a `vector[bool]`, so its emptiness says nothing about whether the elements matched. Using either in a condition, with `!`, or as an `and`/`or` operand is a compile-time error when the type is known and a runtime error otherwise.
+**Results and vectors are rejected as conditions.** Treating an `err` result as false would silently discard the error. A vector comparison such as `v == w` yields a `vec[bool]`, so its emptiness says nothing about whether the elements matched. Using either in a condition, with `!`, or as an `and`/`or` operand is a compile-time error when the type is known and a runtime error otherwise.
 
 ---
 
@@ -90,18 +90,18 @@ Truthiness governs all condition positions (`if`, `while`, ternary), the `and`/`
 | `+` | int×int | int | Overflow → fatal |
 | `+` | int×float / float×float | float | Promotion |
 | `+` | str×str | str | Concatenation |
-| `+` | vector×vector / vector×scalar | vector | Element-wise |
+| `+` | vec×vec / vec×scalar | vec | Element-wise |
 | `-` | numeric×numeric | int or float | Same promotion rules as `+`; int overflow → fatal |
 | `*` | numeric×numeric | int or float | int overflow → fatal |
 | `/` | numeric×numeric | **always float** | Division by zero → fatal |
-| `-` `*` `/` | vector×vector / vector×scalar | vector | Element-wise, like `+` |
+| `-` `*` `/` | vec×vec / vec×scalar | vec | Element-wise, like `+` |
 | `%` | **int×int only** | int | Modulo by zero → fatal |
 | `**` | numeric×numeric | int if both int; float otherwise | Exact for ints; int overflow → fatal; negative int exponent truncates (`2 ** -1` = `0`). No vector form (nor for `%`) |
 | unary `-` | numeric | same type | Negating the minimum int → fatal |
 
 Any other type combination → runtime error.
 
-**Integer overflow is always fatal.** Ints are 64-bit and never wrap silently. This holds on every execution path: boxed values, compiler-lowered native locals, and `vector[i64]` arithmetic. `LLONG_MIN % -1` is `0`.
+**Integer overflow is always fatal.** Ints are 64-bit and never wrap silently. This holds on every execution path: boxed values, compiler-lowered native locals, and `vec[i64]` arithmetic. `LLONG_MIN % -1` is `0`.
 
 ### 4.2 Comparison
 
@@ -109,8 +109,8 @@ Any other type combination → runtime error.
 |----------|---------------|--------|
 | `<` `<=` `>` `>=` | numeric×numeric | bool (with int→float promotion) |
 | `<` `<=` `>` `>=` | str×str | bool, by byte order (`'Zebra' < 'apple'`), as `list.sort()` orders strings |
-| `<` `<=` `>` `>=` | vector×vector / vector×scalar | `vector[bool]`, element-wise |
-| `==` `!=` | any×any | bool (`vector[bool]` for vectors, see below) |
+| `<` `<=` `>` `>=` | vec×vec / vec×scalar | `vec[bool]`, element-wise |
+| `==` `!=` | any×any | bool (`vec[bool]` for vectors, see below) |
 
 Any other pair, such as `'a' < 1` or `true < false`, is a runtime error ("operator '<' expects two numbers or two strings"). The checker lets mixed operands through, like other cross-type comparisons, and the runtime rejects them.
 
@@ -130,7 +130,7 @@ Type-specific equality:
 | `dict` | Structural: same key set and equal values |
 | `result` | Same tag (`ok`/`err`) and equal payloads |
 | `fn` | Identity: the same function value |
-| `vector` | Element-wise comparison producing `vector[bool]`. A vector nested inside a list, dict or result compares as a whole: same dtype, length, null positions and values |
+| `vec` | Element-wise comparison producing `vec[bool]`. A vector nested inside a list, dict or result compares as a whole: same dtype, length, null positions and values |
 | `struct` | Compile-time error; compare fields explicitly |
 
 ### 4.3 Logical operators
@@ -201,8 +201,8 @@ fn make_counter() ->
     next
 
 counter = make_counter()
-println(counter())  // 1
-println(counter())  // 2
+print(counter())  // 1
+print(counter())  // 2
 ```
 
 ### 6.3 Nested closures
@@ -248,7 +248,7 @@ fn inc(x) -> x + 1
 y = 5
 | double()
 | inc()
-println(y)  // 11
+print(y)  // 11
 ```
 
 ---
@@ -327,7 +327,7 @@ Method/index behavior:
 
 **Vectors are immutable.** Every vector operation, including `fillna` and `astype`, returns a new vector and never changes its inputs.
 
-Comparisons between `vector[i64]` and floats, or between `vector[i64]` and `vector[f64]`, promote to float. `astype('i64')` on a float that is NaN or outside the i64 range is a runtime error.
+Comparisons between `vec[i64]` and floats, or between `vec[i64]` and `vec[f64]`, promote to float. `astype('i64')` on a float that is NaN or outside the i64 range is a runtime error.
 
 Implementation details:
 
@@ -347,9 +347,9 @@ Implementation details:
 
 | Syntax | Resolution |
 |--------|------------|
-| `use './path' as alias` | Relative to current file; auto-appends `.qrk` |
-| `use 'std/module' as alias` | Stdlib path resolution (see below) |
-| `use modulename` | Same-file module reference |
+| `incl './path' as alias` | Relative to current file; auto-appends `.qrk` |
+| `incl 'std/module' as alias` | Stdlib path resolution (see below) |
+| `incl modulename` | Same-file module reference |
 
 ### 10.2 Path resolution
 
@@ -361,7 +361,7 @@ Stdlib imports (starting with `std/`) resolve by searching: `QUARK_STDLIB_ROOT` 
 
 Imported files must define at least one top-level `module` block. The loader parses the file, splices its AST into the importing file, and creates an alias binding. Module-qualified calls like `alias.function()` are resolved at analysis time and lowered to direct calls in codegen.
 
-Each module's members have their own namespace. Two modules may define the same name (`io.read` and `csv.read`), and a user definition or variable with a member's name doesn't affect the member (`open = 5` leaves `io.open` working). Internally the loader renames member `x` of module `m` to `m__x`; messages show the original name. Without an alias, `use m` makes `m`'s members usable as bare names; a bare name that two unaliased modules define, or that the program also defines at top level, is a `QK-LOAD-001` conflict.
+Each module's members have their own namespace. Two modules may define the same name (`io.read` and `csv.read`), and a user definition or variable with a member's name doesn't affect the member (`open = 5` leaves `io.open` working). Internally the loader renames member `x` of module `m` to `m__x`; messages show the original name. Without an alias, `incl m` makes `m`'s members usable as bare names; a bare name that two unaliased modules define, or that the program also defines at top level, is a `QK-LOAD-001` conflict.
 
 Module members can be called (`io.exists(p)`, `p | io.exists()`), including from inside functions, but not yet used as values (`f = io.exists` is an error).
 
@@ -392,7 +392,7 @@ extern fn list.shuffle(seed: int) list as 'q_list_shuffle'
 
 This registers a new method on the `list` type, callable via `my_list.shuffle(42)`.
 
-Parameter types map to C++ types: `int`, `float`, `bool` and `str` become `int64_t`, `double`, `bool` and `const char*`; `list`, `dict` and `vector` become `QList*`, `QDict*` and `QVector*`; `fn` becomes `QClosure*`; every other annotation (`any`, `result`, `resource`, struct names) is passed as a boxed `QValue`. An `int` argument to a `float` parameter is widened; a `float` argument to an `int` parameter is a runtime error. Return types use the same mapping; the result is automatically boxed back to `QValue`.
+Parameter types map to C++ types: `int`, `float`, `bool` and `str` become `int64_t`, `double`, `bool` and `const char*`; `list`, `dict` and `vec` become `QList*`, `QDict*` and `QVector*`; `fn` becomes `QClosure*`; every other annotation (`any`, `result`, `resource`, struct names) is passed as a boxed `QValue`. An `int` argument to a `float` parameter is widened; a `float` argument to an `int` parameter is a runtime error. Return types use the same mapping; the result is automatically boxed back to `QValue`.
 
 **Callbacks.** An `fn` parameter arrives as `QClosure*`. Native code calls it with `qext::call(f, args...)` (up to three `QValue` arguments; the result is a `QValue`) and can return it, or store it in a Quark value, with `qext::box(f)`. Any Quark function value can be passed: a lambda, a capturing closure, a named function, an `extern fn` or a module member. `qext::call` checks the argument count and fills in defaults like a call in Quark (§6.7), so a callback called with too few arguments is a runtime error, not a missing argument.
 
@@ -514,7 +514,7 @@ The analyzer prevents assigning a `result`-typed value to a variable with a non-
 
 ### 13.1 Available types
 
-Variable, parameter and struct field annotations: `int`, `float`, `str`, `bool`, `list`, `dict`, `vector`, `result`, `resource`, `fn`, `any`, and struct names. `fn` accepts any function value (named function, lambda, `extern fn`, module member). It has no signature; how the body calls the parameter is checked against the function passed instead (§6.7).
+Variable, parameter and struct field annotations: `int`, `float`, `str`, `bool`, `list`, `dict`, `vec`, `result`, `resource`, `fn`, `any`, and struct names. `fn` accepts any function value (named function, lambda, `extern fn`, module member). It has no signature; how the body calls the parameter is checked against the function passed instead (§6.7).
 
 Return type annotations accept the same list.
 
@@ -533,7 +533,7 @@ Each annotated parameter is enforced, whether or not the function's other parame
 - When the argument's type is known at compile time, it is checked then (`argument 1 of 'foo' expects int, got str`), at no runtime cost.
 - When it isn't (`any`, for example the result of `unwrap` or of an unannotated function), it is checked on entry to the function, and a mismatch is a runtime error naming the parameter: `argument 'x' of 'foo' expects int, got str`. Calls through a function value, pipes and default arguments are covered too.
 - An `int` passed to a `float` parameter is converted to `float`.
-- Reference-type annotations (`list`, `dict`, `vector`, `result`, `resource`, `fn`, struct names) also accept `null`, as at compile time.
+- Reference-type annotations (`list`, `dict`, `vec`, `result`, `resource`, `fn`, struct names) also accept `null`, as at compile time.
 
 Unannotated parameters accept any value. Inside the body, annotated `int`, `float` and `bool` parameters are native C++ values, so arithmetic on them is unboxed. Fully annotated functions are compiled to native C++ functions, and calls with arguments already known to have the right types pay no check.
 
@@ -583,7 +583,7 @@ The loop variable `item` is scoped to the loop body. Supported iterables:
 |---------------|-------------------|
 | `list` | Iterates elements in order |
 | `str` | Iterates single-character strings |
-| `vector` | Iterates scalar values (f64→float, i64→int, bool→bool, str→str) |
+| `vec` | Iterates scalar values (f64→float, i64→int, bool→bool, str→str) |
 
 `break` exits the innermost loop. `continue` skips to the next iteration. Both are compile-time errors if used outside a loop.
 

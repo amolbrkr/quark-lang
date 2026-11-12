@@ -34,7 +34,7 @@ static inline std::string q_fmt_cell(QValue v) {
                          v.data.list_val ? v.data.list_val->size() : 0);
             return buf;
         case QValue::VAL_VECTOR:
-            std::snprintf(buf, sizeof(buf), "[vector len=%d]", q_vec_size(v));
+            std::snprintf(buf, sizeof(buf), "[vec len=%d]", q_vec_size(v));
             return buf;
         case QValue::VAL_DICT:
             std::snprintf(buf, sizeof(buf), "[dict len=%zu]",
@@ -117,11 +117,11 @@ inline const char* q_fmt_list(QList* lst, int64_t max_rows, bool show_index) {
 }
 
 // ============================================================
-// q_fmt_vector(vec, n, show_index) -> str
+// q_fmt_vec(v, n, show_index) -> str
 // ============================================================
-inline const char* q_fmt_vector(QVector* vec, int64_t max_rows, bool show_index) {
+inline const char* q_fmt_vec(QVector* vec, int64_t max_rows, bool show_index) {
     if (!vec) {
-        q_runtime_reportf("runtime error: fmt.show_vec() expects vector\n");
+        q_runtime_reportf("runtime error: fmt.show_vec() expects vec\n");
         std::exit(1);
     }
 
@@ -191,7 +191,7 @@ inline const char* q_fmt_vector(QVector* vec, int64_t max_rows, bool show_index)
         for (size_t i = total - tail_n; i < total; i++) print_row(i);
     }
 
-    out += "[vector[" + std::string(dtype) + "]: " + std::to_string(total) +
+    out += "[vec[" + std::string(dtype) + "]: " + std::to_string(total) +
            " element" + (total != 1 ? "s" : "") + "]";
     return q_strdup(out.c_str());
 }
@@ -336,7 +336,7 @@ inline const char* q_fmt_table(QValue df, int64_t max_rows, bool show_index) {
             } else if (col.type == QValue::VAL_LIST && col.data.list_val) {
                 col_len = col.data.list_val->size();
             } else {
-                q_runtime_reportf("runtime error: fmt.table() column '%s' must be vector or list\n",
+                q_runtime_reportf("runtime error: fmt.table() column '%s' must be vec or list\n",
                                   cname.c_str());
                 std::exit(1);
             }
@@ -429,7 +429,7 @@ inline const char* q_fmt_table(QValue df, int64_t max_rows, bool show_index) {
     return q_strdup(out.c_str());
 }
 
-// fmt.full(x): the println rendering of x, without eliding long collections.
+// fmt.full(x): the print rendering of x, without eliding long collections.
 inline const char* q_fmt_full(QValue v) {
     return q_strdup(q_repr(v, false).c_str());
 }

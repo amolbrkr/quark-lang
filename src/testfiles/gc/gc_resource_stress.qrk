@@ -1,6 +1,6 @@
 // An open file must survive garbage collections: its payload (the fd) is
 // referenced only from the resource registry.
-use 'std/io' as io
+incl 'std/io' as io
 
 extern 'gcstats.hpp'
 extern fn gc_collect() any as 'q_test_gc_collect'

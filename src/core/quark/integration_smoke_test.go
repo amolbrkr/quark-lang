@@ -161,8 +161,8 @@ func TestSmokePrograms_Run(t *testing.T) {
 				"[3, 4, 5, 6]",
 				"[3, 8, 15, 24]",
 				"[1, 2, 3, 4]",
-				"vector[i64]",
-				"vector[i64]",
+				"vec[i64]",
+				"vec[i64]",
 				"[10, 20, 30]",
 				"60.0",
 				"[10, 20, 30]",
@@ -346,9 +346,9 @@ func TestSmokePrograms_Run(t *testing.T) {
 			file: filepath.Join(testfilesDir, "smoke_vectors.qrk"),
 			expected: join(
 				"== smoke: vectors ==",
-				"vector[i64]",
-				"vector[str]",
-				"vector[str]",
+				"vec[i64]",
+				"vec[str]",
+				"vec[str]",
 				"[false, false, true, true, true]",
 				"3.0",
 				"2.0",
@@ -373,17 +373,17 @@ func TestSmokePrograms_Run(t *testing.T) {
 			name: "vector_soundness",
 			file: filepath.Join(testfilesDir, "smoke_vector_soundness.qrk"),
 			expected: join(
-				"== smoke: vector soundness ==",
-				"vector[f64]",
+				"== smoke: vec soundness ==",
+				"vec[f64]",
 				"13.5",
-				"vector[f64]",
+				"vec[f64]",
 				"10.5",
-				"vector[f64]",
-				"vector[f64]",
+				"vec[f64]",
+				"vec[f64]",
 				"12.0",
-				"vector[bool]",
+				"vec[bool]",
 				"2.0",
-				"vector[bool]",
+				"vec[bool]",
 				"2.0",
 				"4.0",
 				"1.0",
@@ -424,7 +424,7 @@ func TestSmokePrograms_Run(t *testing.T) {
 				"0     10",
 				"1     20",
 				"2     30",
-				"[vector[i64]: 3 elements]",
+				"[vec[i64]: 3 elements]",
 				"   key   value",
 				"-------  -----",
 				"0  city  NYC  ",
@@ -477,7 +477,7 @@ func TestSmokePrograms_Run(t *testing.T) {
 			name: "vector_layout",
 			file: filepath.Join(testfilesDir, "smoke_vector_layout.qrk"),
 			expected: join(
-				"== smoke: vector layout ==",
+				"== smoke: vec layout ==",
 				"10.0", "false", "true", "true", "10", "155.0",
 				"2", "null", "null", "78.0", "null", "true",
 				"2", "40.0",
@@ -821,83 +821,83 @@ func TestSemanticsSafety_Rejected(t *testing.T) {
 		errSubstr string
 	}{
 		// Results and vectors have no truthiness.
-		{"result_if", "r = err 'x'\nif r:\n    println(1)\n", "result cannot be used as a condition"},
-		{"result_while", "r = ok 1\nwhile r:\n    println(1)\n", "result cannot be used as a condition"},
-		{"result_not", "r = ok 1\nprintln(!r)\n", "result cannot be used as a condition"},
-		{"result_and", "r = ok 1\nprintln(r and true)\n", "result cannot be used as a condition"},
-		{"vector_if", "v = vector [1, 2]\nif v == v:\n    println(1)\n", "vector cannot be used as a condition"},
-		{"vector_ternary", "v = vector [1, 2]\nprintln(1 if v else 2)\n", "vector cannot be used as a condition"},
-		{"result_if_dynamic", "fn f(x) ->\n    if x:\n        1\n    else:\n        2\nprintln(f(ok 1))\n", "result used as a condition"},
-		{"vector_if_dynamic", "fn f(x) ->\n    if x:\n        1\n    else:\n        2\nprintln(f(vector [1]))\n", "vector used as a condition"},
+		{"result_if", "r = err 'x'\nif r:\n    print(1)\n", "result cannot be used as a condition"},
+		{"result_while", "r = ok 1\nwhile r:\n    print(1)\n", "result cannot be used as a condition"},
+		{"result_not", "r = ok 1\nprint(!r)\n", "result cannot be used as a condition"},
+		{"result_and", "r = ok 1\nprint(r and true)\n", "result cannot be used as a condition"},
+		{"vector_if", "v = vec [1, 2]\nif v == v:\n    print(1)\n", "vec cannot be used as a condition"},
+		{"vector_ternary", "v = vec [1, 2]\nprint(1 if v else 2)\n", "vec cannot be used as a condition"},
+		{"result_if_dynamic", "fn f(x) ->\n    if x:\n        1\n    else:\n        2\nprint(f(ok 1))\n", "result used as a condition"},
+		{"vector_if_dynamic", "fn f(x) ->\n    if x:\n        1\n    else:\n        2\nprint(f(vec [1]))\n", "vec used as a condition"},
 		// Integer overflow is fatal on every path.
-		{"overflow_add_scalar", "x = 9223372036854775807\nprintln(x + 1)\n", "integer overflow in '+'"},
-		{"overflow_sub_scalar", "x = -9223372036854775807\nprintln(x - 2)\n", "integer overflow in '-'"},
-		{"overflow_neg_scalar", "x = -9223372036854775807 - 1\nprintln(-x)\n", "integer overflow in '-'"},
-		{"overflow_mul_boxed", "fn f(a, b) -> a * b\nprintln(f(4611686018427387904, 2))\n", "integer overflow in '*'"},
-		{"overflow_pow", "println(2 ** 63)\n", "integer overflow in '**'"},
-		{"overflow_vector", "v = vector [9223372036854775807]\nprintln(sum(v + 1))\n", "integer overflow in '+'"},
+		{"overflow_add_scalar", "x = 9223372036854775807\nprint(x + 1)\n", "integer overflow in '+'"},
+		{"overflow_sub_scalar", "x = -9223372036854775807\nprint(x - 2)\n", "integer overflow in '-'"},
+		{"overflow_neg_scalar", "x = -9223372036854775807 - 1\nprint(-x)\n", "integer overflow in '-'"},
+		{"overflow_mul_boxed", "fn f(a, b) -> a * b\nprint(f(4611686018427387904, 2))\n", "integer overflow in '*'"},
+		{"overflow_pow", "print(2 ** 63)\n", "integer overflow in '**'"},
+		{"overflow_vector", "v = vec [9223372036854775807]\nprint(sum(v + 1))\n", "integer overflow in '+'"},
 		// Scalar-lowered division and modulo match the boxed operators.
-		{"mod_zero_scalar", "x = 7\ny = 0\nprintln(x % y)\n", "modulo by zero"},
-		{"fdiv_zero_scalar", "x = 1.0\ny = 0.0\nprintln(x / y)\n", "division by zero"},
+		{"mod_zero_scalar", "x = 7\ny = 0\nprint(x % y)\n", "modulo by zero"},
+		{"fdiv_zero_scalar", "x = 1.0\ny = 0.0\nprint(x / y)\n", "division by zero"},
 		// Methods on values of unknown type: checked at compile time when no type
 		// has the method or the arity is wrong, at runtime when the value's type lacks it.
-		{"dynamic_method_wrong_type", "fn id(x) -> x\nprintln(id(5).upper())\n", "type 'int' has no method 'upper'"},
+		{"dynamic_method_wrong_type", "fn id(x) -> x\nprint(id(5).upper())\n", "type 'int' has no method 'upper'"},
 		{"dynamic_method_unknown", "fn id(x) -> x\nid(5).frobnicate()\n", "no type has a method 'frobnicate'"},
 		{"dynamic_method_arity", "fn id(x) -> x\nid('a').split()\n", "method 'split' expects 1 argument(s) but got 0"},
 		{"dynamic_method_arg_type", "fn id(x) -> x\nid('a').split(5)\n", "argument 1 of 'split' expects str, got int"},
 		// Ordering compares two numbers or two strings; mixes are runtime errors.
-		{"order_str_int", "println('a' < 1)\n", "operator '<' expects two numbers or two strings"},
-		{"csv_unterminated_quote", "use 'std/csv' as csv\nprintln(csv.parse('a,\"b\\n'))\n", "csv.parse: unterminated quoted field"},
-		{"csv_bad_separator", "use 'std/csv' as csv\nprintln(csv.parse('a', ';;'))\n", "separator must be a single character"},
+		{"order_str_int", "print('a' < 1)\n", "operator '<' expects two numbers or two strings"},
+		{"csv_unterminated_quote", "incl 'std/csv' as csv\nprint(csv.parse('a,\"b\\n'))\n", "csv.parse: unterminated quoted field"},
+		{"csv_bad_separator", "incl 'std/csv' as csv\nprint(csv.parse('a', ';;'))\n", "separator must be a single character"},
 		// A statement can't call a function defined later in the same block.
-		{"call_before_definition", "println(later(2))\nfn later(x) -> x + 1\n", "'later' is called before its definition on line 2"},
-		{"call_before_definition_in_fn", "fn outer() ->\n    r = inner()\n    fn inner() -> 1\n    r\nprintln(outer())\n", "'inner' is called before its definition on line 3"},
+		{"call_before_definition", "print(later(2))\nfn later(x) -> x + 1\n", "'later' is called before its definition on line 2"},
+		{"call_before_definition_in_fn", "fn outer() ->\n    r = inner()\n    fn inner() -> 1\n    r\nprint(outer())\n", "'inner' is called before its definition on line 3"},
 		{"chained_assignment", "a = 0\nb = 0\na = b = 1\n", "chained assignment is not supported"},
 		// sort keys must be mutually comparable.
-		{"sort_mixed_types", "println(list [1, 'a'].sort())\n", "sort() can't compare str and int"},
-		{"sort_null", "println(list [1, null].sort())\n", "sort() can't compare null and int"},
-		{"sort_by_not_fn", "println(list [1].sort_by(5))\n", "sort_by() expects a function"},
+		{"sort_mixed_types", "print(list [1, 'a'].sort())\n", "sort() can't compare str and int"},
+		{"sort_null", "print(list [1, null].sort())\n", "sort() can't compare null and int"},
+		{"sort_by_not_fn", "print(list [1].sort_by(5))\n", "sort_by() expects a function"},
 		// when patterns are literals, '_' or ok/err bindings.
-		{"when_call_pattern", "fn f(x) -> x\nn = 3\nwhen n:\n    f(3) -> println(1)\n    _ -> println(2)\n", "when patterns must be literal values"},
-		{"when_identifier_pattern", "y = 3\nn = 3\nwhen n:\n    y -> println(1)\n    _ -> println(2)\n", "when patterns must be literal values"},
-		{"when_result_or", "r = ok 1\nwhen r:\n    ok x or err x -> println(1)\n", "ok patterns cannot be combined with other patterns using 'or'"},
+		{"when_call_pattern", "fn f(x) -> x\nn = 3\nwhen n:\n    f(3) -> print(1)\n    _ -> print(2)\n", "when patterns must be literal values"},
+		{"when_identifier_pattern", "y = 3\nn = 3\nwhen n:\n    y -> print(1)\n    _ -> print(2)\n", "when patterns must be literal values"},
+		{"when_result_or", "r = ok 1\nwhen r:\n    ok x or err x -> print(1)\n", "ok patterns cannot be combined with other patterns using 'or'"},
 		// The lowered for-range loop checks its arguments like range().
-		{"range_loop_step_zero", "for i in range(0, 5, 0):\n    println(i)\n", "range() step must not be zero"},
-		{"range_loop_step_zero_dynamic", "fn id(x) -> x\nfor i in range(0, 5, id(0)):\n    println(i)\n", "range() step must not be zero"},
-		{"range_loop_non_numeric", "fn id(x) -> x\nfor i in range(id('x')):\n    println(i)\n", "range(end) expects numeric end value"},
+		{"range_loop_step_zero", "for i in range(0, 5, 0):\n    print(i)\n", "range() step must not be zero"},
+		{"range_loop_step_zero_dynamic", "fn id(x) -> x\nfor i in range(0, 5, id(0)):\n    print(i)\n", "range() step must not be zero"},
+		{"range_loop_non_numeric", "fn id(x) -> x\nfor i in range(id('x')):\n    print(i)\n", "range(end) expects numeric end value"},
 		// `fn` annotations: checked at compile time when the argument's type is
 		// known, on entry otherwise; a native function's result is checked too.
 		{"fn_param_static", "fn apply(f: fn) -> f(1)\napply(5)\n", "argument 1 of 'apply' expects fn, got int"},
 		{"fn_param_dynamic", "fn id(v) -> v\nfn apply(f: fn) -> f(1)\napply(id(5))\n", "argument 'f' of 'apply' expects fn, got int"},
-		{"fn_param_dynamic_native", "fn id(v) -> v\nfn nat(f: fn, y: int) int -> f(y)\nprintln(nat(id(5), 1))\n", "expected fn, got int"},
+		{"fn_param_dynamic_native", "fn id(v) -> v\nfn nat(f: fn, y: int) int -> f(y)\nprint(nat(id(5), 1))\n", "expected fn, got int"},
 		{"fn_var_annotation", "f: fn = 3\n", "cannot assign value of type 'int' to 'fn'"},
 		{"fn_struct_field", "struct H:\n    run: fn\nh = H { run: 1 }\n", "to field 'run' of type 'fn'"},
-		{"native_return_checked", "fn nat(f: fn) int -> f(1)\nprintln(nat(fn(a) -> 'x'))\n", "expected int, got str"},
-		{"module_member_value_unknown", "use 'std/io' as io\nf = io.nope\n", "module 'io' has no symbol 'nope'"},
+		{"native_return_checked", "fn nat(f: fn) int -> f(1)\nprint(nat(fn(a) -> 'x'))\n", "expected int, got str"},
+		{"module_member_value_unknown", "incl 'std/io' as io\nf = io.nope\n", "module 'io' has no symbol 'nope'"},
 		// Calls through function parameters are checked at compile time against
 		// the function passed: arity, argument types (including arguments the
 		// body passes on from its own parameters), across pipes, modules and
 		// functions that hand the parameter on.
-		{"callback_arity", "fn h(a, b) -> b\nfn apply(k) -> k(1)\nprintln(apply(h))\n", "argument 1 of 'apply' is called with 1 argument (line 2), but 'h' takes 2 arguments"},
-		{"callback_arity_passed_on", "fn h(a, b) -> b\nfn apply(k: fn) -> k(1)\nfn wrap(k) -> apply(k)\nprintln(wrap(h))\n", "argument 1 of 'wrap' is called with 1 argument (line 2), but 'h' takes 2 arguments"},
-		{"callback_arity_pipe", "fn h(a, b) -> b\nfn apply(k) -> 1 | k()\nprintln(apply(h))\n", "argument 1 of 'apply' is called with 1 argument (line 2), but 'h' takes 2 arguments"},
-		{"callback_arity_lambda", "fn apply(k) -> k(1)\nprintln(apply(fn(a, b) -> b))\n", "but the lambda passed takes 2 arguments"},
-		{"callback_arity_module_member", "use 'std/io' as io\nfn apply(k) -> k()\nprintln(apply(io.exists))\n", "but 'io.exists' takes 1 argument"},
-		{"callback_arity_in_closure", "fn h(a, b) -> b\nfn apply(k) ->\n    g = fn() -> k(1)\n    g()\nprintln(apply(h))\n", "is called with 1 argument (line 3), but 'h' takes 2 arguments"},
-		{"callback_arg_type", "fn inc(x: int) -> x + 1\nfn apply(k) -> k('s')\nprintln(apply(inc))\n", "argument 1 of 'apply' is called with str as argument 1 (line 2), but 'inc' expects int"},
-		{"callback_arg_type_from_param", "fn apply(k, v) -> k(v)\nprintln(apply(fn(x: int) -> x, 'str'))\n", "is called with str as argument 1 (line 1), but the lambda passed expects int"},
-		{"callback_arg_type_two_levels", "fn inc(x: int) -> x + 1\nfn apply(k, v) -> k(v)\nfn wrap(g, w) -> apply(g, w)\nprintln(wrap(inc, 'oops'))\n", "argument 1 of 'wrap' is called with str as argument 1 (line 2), but 'inc' expects int"},
-		{"callback_arg_type_default", "fn inc(x: int) -> x + 1\nfn apply(k, v = 'd') -> k(v)\nprintln(apply(inc))\n", "is called with str as argument 1 (line 2), but 'inc' expects int"},
-		{"callback_not_a_function", "fn apply(k) -> k(1)\nprintln(apply(5))\n", "argument 1 of 'apply' is called as a function (line 1), but gets int"},
-		{"callback_union_arity", "fn a1(x) -> x\nfn a2(x, y) -> y\nfs = list [a1, a2]\nprintln(fs[0](1, 2, 3))\n", "none of the functions this value can be accepts 3 arguments"},
+		{"callback_arity", "fn h(a, b) -> b\nfn apply(k) -> k(1)\nprint(apply(h))\n", "argument 1 of 'apply' is called with 1 argument (line 2), but 'h' takes 2 arguments"},
+		{"callback_arity_passed_on", "fn h(a, b) -> b\nfn apply(k: fn) -> k(1)\nfn wrap(k) -> apply(k)\nprint(wrap(h))\n", "argument 1 of 'wrap' is called with 1 argument (line 2), but 'h' takes 2 arguments"},
+		{"callback_arity_pipe", "fn h(a, b) -> b\nfn apply(k) -> 1 | k()\nprint(apply(h))\n", "argument 1 of 'apply' is called with 1 argument (line 2), but 'h' takes 2 arguments"},
+		{"callback_arity_lambda", "fn apply(k) -> k(1)\nprint(apply(fn(a, b) -> b))\n", "but the lambda passed takes 2 arguments"},
+		{"callback_arity_module_member", "incl 'std/io' as io\nfn apply(k) -> k()\nprint(apply(io.exists))\n", "but 'io.exists' takes 1 argument"},
+		{"callback_arity_in_closure", "fn h(a, b) -> b\nfn apply(k) ->\n    g = fn() -> k(1)\n    g()\nprint(apply(h))\n", "is called with 1 argument (line 3), but 'h' takes 2 arguments"},
+		{"callback_arg_type", "fn inc(x: int) -> x + 1\nfn apply(k) -> k('s')\nprint(apply(inc))\n", "argument 1 of 'apply' is called with str as argument 1 (line 2), but 'inc' expects int"},
+		{"callback_arg_type_from_param", "fn apply(k, v) -> k(v)\nprint(apply(fn(x: int) -> x, 'str'))\n", "is called with str as argument 1 (line 1), but the lambda passed expects int"},
+		{"callback_arg_type_two_levels", "fn inc(x: int) -> x + 1\nfn apply(k, v) -> k(v)\nfn wrap(g, w) -> apply(g, w)\nprint(wrap(inc, 'oops'))\n", "argument 1 of 'wrap' is called with str as argument 1 (line 2), but 'inc' expects int"},
+		{"callback_arg_type_default", "fn inc(x: int) -> x + 1\nfn apply(k, v = 'd') -> k(v)\nprint(apply(inc))\n", "is called with str as argument 1 (line 2), but 'inc' expects int"},
+		{"callback_not_a_function", "fn apply(k) -> k(1)\nprint(apply(5))\n", "argument 1 of 'apply' is called as a function (line 1), but gets int"},
+		{"callback_union_arity", "fn a1(x) -> x\nfn a2(x, y) -> y\nfs = list [a1, a2]\nprint(fs[0](1, 2, 3))\n", "none of the functions this value can be accepts 3 arguments"},
 		// Function values the compiler can't see through check the argument
 		// count when called.
-		{"dynamic_arity_too_few", "fn id(v) -> v\nfn h(a, b) -> b\nf = id(h)\nprintln(f(1))\n", "function 'h' expects 2 arguments but got 1"},
-		{"dynamic_arity_too_many", "fn id(v) -> v\nf = id(fn(a) -> a)\nprintln(f(1, 2))\n", "function expects 1 argument but got 2"},
-		{"dynamic_arity_default_range", "fn id(v) -> v\nfn g(a, b = 1) -> a\nf = id(g)\nprintln(f())\n", "function 'g' expects 1-2 arguments but got 0"},
-		{"dynamic_arity_struct_field", "struct H:\n    run: fn\nfn h(a, b) -> b\nx = H { run: h }\nr = x.run\nprintln(r(1))\n", "function 'h' expects 2 arguments but got 1"},
-		{"dynamic_arity_module_member", "use 'std/io' as io\nfn id(v) -> v\nf = id(io.exists)\nprintln(f())\n", "function 'io.exists' expects 1 argument but got 0"},
-		{"when_literal_or_result", "n = 1\nwhen n:\n    1 or ok x -> println(1)\n    _ -> println(2)\n", "ok patterns cannot be combined with other patterns using 'or'"},
+		{"dynamic_arity_too_few", "fn id(v) -> v\nfn h(a, b) -> b\nf = id(h)\nprint(f(1))\n", "function 'h' expects 2 arguments but got 1"},
+		{"dynamic_arity_too_many", "fn id(v) -> v\nf = id(fn(a) -> a)\nprint(f(1, 2))\n", "function expects 1 argument but got 2"},
+		{"dynamic_arity_default_range", "fn id(v) -> v\nfn g(a, b = 1) -> a\nf = id(g)\nprint(f())\n", "function 'g' expects 1-2 arguments but got 0"},
+		{"dynamic_arity_struct_field", "struct H:\n    run: fn\nfn h(a, b) -> b\nx = H { run: h }\nr = x.run\nprint(r(1))\n", "function 'h' expects 2 arguments but got 1"},
+		{"dynamic_arity_module_member", "incl 'std/io' as io\nfn id(v) -> v\nf = id(io.exists)\nprint(f())\n", "function 'io.exists' expects 1 argument but got 0"},
+		{"when_literal_or_result", "n = 1\nwhen n:\n    1 or ok x -> print(1)\n    _ -> print(2)\n", "ok patterns cannot be combined with other patterns using 'or'"},
 	}
 
 	tmp := t.TempDir()
@@ -927,10 +927,10 @@ func TestRuntimeContracts_FunctionTypeNameAndDoubleQuotedStrings(t *testing.T) {
 	program := filepath.Join(tmp, "runtime_contracts.qrk")
 	source := strings.Join([]string{
 		"fn add(x, y) -> x + y",
-		"println(type(add))",
-		"println(\"hello\\nworld\")",
+		"print(type(add))",
+		"print(\"hello\\nworld\")",
 		"r: result = ok 1",
-		"println(type(r))",
+		"print(type(r))",
 		"",
 	}, "\n")
 	if err := os.WriteFile(program, []byte(source), 0o644); err != nil {
@@ -951,11 +951,11 @@ func TestDefaults_DynamicCallViaAlias(t *testing.T) {
 	source := strings.Join([]string{
 		"fn add_n(x: int, n: int = 10) int -> x + n",
 		"alias = add_n",
-		"println(alias(5))",
-		"println(alias(5, 20))",
+		"print(alias(5))",
+		"print(alias(5, 20))",
 		"alias2 = alias",
-		"println(alias2(7))",
-		"5 | alias() | println()",
+		"print(alias2(7))",
+		"5 | alias() | print()",
 		"",
 	}, "\n")
 	if err := os.WriteFile(program, []byte(source), 0o644); err != nil {
@@ -977,22 +977,22 @@ func TestStdIO_FileModes(t *testing.T) {
 
 	program := filepath.Join(tmp, "std_io_modes.qrk")
 	source := strings.Join([]string{
-		"use 'std/io' as io",
+		"incl 'std/io' as io",
 		"p = '" + targetForQuark + "'",
 		"f = unwrap(io.open(p, 'w'))",
-		"println(type(f))",
-		"println(type(io.exists(p)))",
-		"io.write(f, 'hello file') | unwrap() | println()",
+		"print(type(f))",
+		"print(type(io.exists(p)))",
+		"io.write(f, 'hello file') | unwrap() | print()",
 		"io.close(f) | unwrap()",
 		"r = unwrap(io.open(p, 'r'))",
-		"println(unwrap(io.read(r, 64)))",
+		"print(unwrap(io.read(r, 64)))",
 		"io.close(r) | unwrap()",
-		"println(io.exists(p))",
+		"print(io.exists(p))",
 		"a = unwrap(io.open(p, 'a'))",
 		"io.write(a, '!') | unwrap()",
 		"io.close(a) | unwrap()",
 		"r2 = unwrap(io.open(p, 'r'))",
-		"println(unwrap(io.read(r2, 64)))",
+		"print(unwrap(io.read(r2, 64)))",
 		"io.close(r2) | unwrap()",
 		"",
 	}, "\n")
@@ -1072,7 +1072,7 @@ int main() {
 	vb = q_vec_push_bool(vb, qv_bool(true));
 	CHECK("vector_bool_values", vb.data.vector_val->values);
 
-	QValue vs = q_to_vector(qv_list_from(2, qv_string("hello"), qv_null()));
+	QValue vs = q_to_vec(qv_list_from(2, qv_string("hello"), qv_null()));
 	CHECK("vector_str_object", vs.data.vector_val);
 	CHECK("vector_str_offsets", vs.data.vector_val->offsets);
 	CHECK("vector_str_values", vs.data.vector_val->values);
@@ -1173,7 +1173,7 @@ int main() {
     q_gc_init();
 
     // Bools are bit-packed, LSB first: [T,F,T,T,F,F,F,F,T] -> 0x0D, 0x01.
-    QValue b = q_to_vector(qv_list_from(9, qv_bool(true), qv_bool(false), qv_bool(true), qv_bool(true),
+    QValue b = q_to_vec(qv_list_from(9, qv_bool(true), qv_bool(false), qv_bool(true), qv_bool(true),
         qv_bool(false), qv_bool(false), qv_bool(false), qv_bool(false), qv_bool(true)));
     const QVector& bv = *b.data.vector_val;
     EXPECT("bool byte 0", bv.values[0] == 0x0D);
@@ -1181,14 +1181,14 @@ int main() {
     EXPECT("bool no validity", bv.validity == nullptr && bv.null_count == 0);
 
     // Validity bitmap: [1, null, 3] -> bits 1,0,1 -> 0x05, null_count 1.
-    QValue i = q_to_vector(qv_list_from(3, qv_int(1), qv_null(), qv_int(3)));
+    QValue i = q_to_vec(qv_list_from(3, qv_int(1), qv_null(), qv_int(3)));
     const QVector& iv = *i.data.vector_val;
     EXPECT("i64 validity byte", iv.validity && (iv.validity[0] & 0x07) == 0x05);
     EXPECT("i64 null_count", iv.null_count == 1);
     EXPECT("i64 values", q_vec_i64_data(iv)[0] == 1 && q_vec_i64_data(iv)[2] == 3);
 
     // Strings: ['ab', null, 'cde', ''] -> offsets 0,2,2,5,5 and bytes "abcde".
-    QValue s = q_to_vector(qv_list_from(4, qv_string("ab"), qv_null(), qv_string("cde"), qv_string("")));
+    QValue s = q_to_vec(qv_list_from(4, qv_string("ab"), qv_null(), qv_string("cde"), qv_string("")));
     const QVector& sv = *s.data.vector_val;
     EXPECT("str offsets", sv.offsets[0] == 0 && sv.offsets[1] == 2 && sv.offsets[2] == 2 &&
                           sv.offsets[3] == 5 && sv.offsets[4] == 5);
@@ -1235,11 +1235,11 @@ func TestAnyTypeAnnotations_Runtime(t *testing.T) {
 	program := filepath.Join(tmp, "any_type_annotations.qrk")
 	source := strings.Join([]string{
 		"fn id(x: any) any -> x",
-		"println(id(42))",
-		"println(id('ok'))",
+		"print(id(42))",
+		"print(id('ok'))",
 		"v: any = 1",
 		"v = 'changed'",
-		"println(v)",
+		"print(v)",
 		"",
 	}, "\n")
 	if err := os.WriteFile(program, []byte(source), 0o644); err != nil {
@@ -1276,7 +1276,7 @@ func TestExternTypedArg_RuntimeTypeGuard(t *testing.T) {
 		"extern fn add1(x: int) int as 'qei_add1'",
 		"fn id(x) -> x",
 		"v = id('oops')",
-		"println(add1(v))",
+		"print(add1(v))",
 		"",
 	}, "\n")
 	if err := os.WriteFile(program, []byte(programSource), 0o644); err != nil {
@@ -1322,12 +1322,12 @@ func TestNativeCallback_Arity(t *testing.T) {
 		}
 	}
 
-	write("ok.qrk", "println(call1(fn(v, step = 2) -> v * step, 5))\n")
+	write("ok.qrk", "print(call1(fn(v, step = 2) -> v * step, 5))\n")
 	if got := strings.TrimSpace(normalizeNewlines(runQuarkIn(t, tmp, "run", "ok.qrk"))); got != "10" {
 		t.Fatalf("default filled by a native call: got %q, want 10", got)
 	}
 
-	write("bad.qrk", "println(call1(fn(a, b) -> b, 1))\n")
+	write("bad.qrk", "print(call1(fn(a, b) -> b, 1))\n")
 	cmd := exec.Command(quarkExePath, "run", "bad.qrk")
 	cmd.Dir = tmp
 	out, err := cmd.CombinedOutput()
@@ -1349,8 +1349,8 @@ func TestInput_EOFAndLongLines(t *testing.T) {
 		"    if line == null:",
 		"        break",
 		"    n = n + 1",
-		"    println(to_str(len(line)))",
-		"println('lines: ' + to_str(n))",
+		"    print(to_str(len(line)))",
+		"print('lines: ' + to_str(n))",
 		"",
 	}, "\n")
 	if err := os.WriteFile(program, []byte(source), 0o644); err != nil {
@@ -1379,14 +1379,14 @@ func TestStdSys(t *testing.T) {
 	tmp := t.TempDir()
 	program := filepath.Join(tmp, "sys_args.qrk")
 	source := strings.Join([]string{
-		"use 'std/sys' as sys",
+		"incl 'std/sys' as sys",
 		"args = sys.args()",
-		"println(to_str(len(args)) + ': ' + args.join('|'))",
-		"println(sys.env('QK_SYS_TEST'))",
-		"println(sys.env('QK_SYS_TEST_UNSET') == null)",
+		"print(to_str(len(args)) + ': ' + args.join('|'))",
+		"print(sys.env('QK_SYS_TEST'))",
+		"print(sys.env('QK_SYS_TEST_UNSET') == null)",
 		"if len(args) > 0 and args[0] == 'fail':",
 		"    sys.exit(3)",
-		"println('done')",
+		"print('done')",
 		"",
 	}, "\n")
 	if err := os.WriteFile(program, []byte(source), 0o644); err != nil {
@@ -1441,10 +1441,10 @@ func TestRuntimeErrorLocations(t *testing.T) {
 		t.Fatal(err)
 	}
 	files := map[string]string{
-		"after_call.qrk":  "fn id(x) -> x\n\n\nprintln(id(5) + 'a')\n",
+		"after_call.qrk":  "fn id(x) -> x\n\n\nprint(id(5) + 'a')\n",
 		"lib/helpers.qrk": "module helpers:\n    fn bad(x) ->\n        x + 'oops'\n",
-		"in_module.qrk":   "use './lib/helpers' as h\nprintln(h.bad(1))\n",
-		"in_stdlib.qrk":   "use 'std/random' as random\n\nprintln(random.randint(5, 1))\n",
+		"in_module.qrk":   "incl './lib/helpers' as h\nprint(h.bad(1))\n",
+		"in_stdlib.qrk":   "incl 'std/random' as random\n\nprint(random.randint(5, 1))\n",
 	}
 	for name, src := range files {
 		if err := os.WriteFile(filepath.Join(tmp, name), []byte(src), 0o644); err != nil {
@@ -1452,10 +1452,10 @@ func TestRuntimeErrorLocations(t *testing.T) {
 		}
 	}
 	cases := []struct{ file, want string }{
-		{"after_call.qrk", "after_call.qrk:4:8"},
+		{"after_call.qrk", "after_call.qrk:4:6"},
 		{"in_module.qrk", "lib/helpers.qrk:3:11"},
 		// Errors raised inside std/ modules point at the user's call.
-		{"in_stdlib.qrk", "in_stdlib.qrk:3:8"},
+		{"in_stdlib.qrk", "in_stdlib.qrk:3:6"},
 	}
 	for _, tc := range cases {
 		cmd := exec.Command(quarkExePath, "run", tc.file)
@@ -1483,26 +1483,26 @@ func TestModuleNamespacing(t *testing.T) {
 		"lib/a.qrk": "module a:\n    fn name() -> 'from a'\n    fn twice() -> name() + name()\n",
 		"lib/b.qrk": "module b:\n    fn name() -> 'from b'\n",
 		"ok.qrk": strings.Join([]string{
-			"use './lib/a' as a",
-			"use './lib/b' as b",
-			"use 'std/io' as io",
-			"use 'std/csv' as csv",
-			"use 'std/sys' as sys",
+			"incl './lib/a' as a",
+			"incl './lib/b' as b",
+			"incl 'std/io' as io",
+			"incl 'std/csv' as csv",
+			"incl 'std/sys' as sys",
 			"fn name() -> 'mine'",
 			"open = 5",
 			"args = sys.args()",
-			"println(a.name() + ' ' + b.name() + ' ' + name() + ' ' + a.twice())",
+			"print(a.name() + ' ' + b.name() + ' ' + name() + ' ' + a.twice())",
 			"f = unwrap(io.open('t.csv', 'w'))",
 			"io.write(f, 'x,y\\n')",
 			"io.close(f)",
 			"g = unwrap(io.open('t.csv'))",
-			"println(unwrap(io.read(g, 100)).trim() + ' ' + to_str(len(unwrap(csv.read('t.csv')))))",
-			"println(to_str(open) + ' ' + to_str(len(args)))",
+			"print(unwrap(io.read(g, 100)).trim() + ' ' + to_str(len(unwrap(csv.read('t.csv')))))",
+			"print(to_str(open) + ' ' + to_str(len(args)))",
 			"",
 		}, "\n"),
-		"bare_ok.qrk":       "use './lib/a'\nprintln(name())\nfn f(name) -> name\nprintln(f('param'))\n",
-		"bare_conflict.qrk": "use './lib/a'\nuse './lib/b'\nprintln(name())\n",
-		"bare_vs_def.qrk":   "use './lib/a'\nfn name() -> 1\n",
+		"bare_ok.qrk":       "incl './lib/a'\nprint(name())\nfn f(name) -> name\nprint(f('param'))\n",
+		"bare_conflict.qrk": "incl './lib/a'\nincl './lib/b'\nprint(name())\n",
+		"bare_vs_def.qrk":   "incl './lib/a'\nfn name() -> 1\n",
 	}
 	for name, src := range files {
 		if err := os.WriteFile(filepath.Join(tmp, name), []byte(src), 0o644); err != nil {
@@ -1544,12 +1544,12 @@ func TestParamAnnotationsEnforced(t *testing.T) {
 		"n = 10",
 		"fn add_n(x: int) int -> x + n",
 		"g = scale",
-		"println(scale(1, 2))",
-		"println(g(id(3), 1))",
-		"println(kinds(1, 'b'))",
-		"println(first(null))",
-		"println(add_n(1))",
-		"println(id(2) | scale(3))",
+		"print(scale(1, 2))",
+		"print(g(id(3), 1))",
+		"print(kinds(1, 'b'))",
+		"print(first(null))",
+		"print(add_n(1))",
+		"print(id(2) | scale(3))",
 		"",
 	}, "\n")
 	tmp := t.TempDir()
@@ -1562,14 +1562,14 @@ func TestParamAnnotationsEnforced(t *testing.T) {
 	}
 
 	bad := map[string]string{
-		"partial":   "fn id(v) -> v\nfn kinds(x: int, y) -> type(x)\nprintln(kinds(id('a'), 1))\n",
-		"via_value": "fn id(v) -> v\nfn f(x: float) -> x\ng = f\nprintln(g(id('s')))\n",
-		"default":   "fn id(v) -> v\nfn add(x: int, y: int = 5) -> x + y\nprintln(add(1, id(2.5)))\n",
-		"struct":    "struct P:\n    x: int\nstruct Q:\n    x: int\nfn id(v) -> v\nfn f(p: P) -> p.x\nprintln(f(id(Q { x: 2 })))\n",
-		"captured":  "fn id(v) -> v\nn = 10\nfn f(x: int) int -> x + n\nprintln(f(id('z')))\n",
+		"partial":   "fn id(v) -> v\nfn kinds(x: int, y) -> type(x)\nprint(kinds(id('a'), 1))\n",
+		"via_value": "fn id(v) -> v\nfn f(x: float) -> x\ng = f\nprint(g(id('s')))\n",
+		"default":   "fn id(v) -> v\nfn add(x: int, y: int = 5) -> x + y\nprint(add(1, id(2.5)))\n",
+		"struct":    "struct P:\n    x: int\nstruct Q:\n    x: int\nfn id(v) -> v\nfn f(p: P) -> p.x\nprint(f(id(Q { x: 2 })))\n",
+		"captured":  "fn id(v) -> v\nn = 10\nfn f(x: int) int -> x + n\nprint(f(id('z')))\n",
 	}
 	wants := map[string]string{
-		"partial":   "argument 'x' of 'kinds' expects int, got str at bad_partial.qrk:3:8",
+		"partial":   "argument 'x' of 'kinds' expects int, got str at bad_partial.qrk:3:6",
 		"via_value": "argument 'x' of 'f' expects float, got str",
 		"default":   "argument 'y' of 'add' expects int, got float",
 		"struct":    "argument 'p' of 'f' expects P, got Q",

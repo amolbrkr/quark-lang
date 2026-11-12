@@ -39,7 +39,7 @@ func (a *Analyzer) analyzeModule(node *ast.TreeNode) Type {
 
 func (a *Analyzer) analyzeUse(node *ast.TreeNode) Type {
 	if len(node.Children) < 1 {
-		a.errorAt(node, "invalid use statement")
+		a.errorAt(node, "invalid incl statement")
 		return TypeVoid
 	}
 	nameNode := node.Children[0]
@@ -213,7 +213,7 @@ func (a *Analyzer) analyzeExternFn(node *ast.TreeNode) Type {
 		MaxArgs: len(paramTypes),
 	}
 
-	receiverTypeStr := node.ExternReceiver // e.g. "list", "vector", "str", or ""
+	receiverTypeStr := node.ExternReceiver // e.g. "list", "vec", "str", or ""
 
 	if receiverTypeStr == "" {
 		// Free function
@@ -322,7 +322,7 @@ func receiverStringToTypeKey(s string) builtins.TypeKey {
 		return builtins.TypeListAny
 	case "dict":
 		return builtins.TypeDictAny
-	case "vector":
+	case "vec":
 		return builtins.TypeVectorAny
 	}
 	return ""
@@ -343,7 +343,7 @@ func receiverStringToNativeCType(s string) string {
 		return "QList*"
 	case "dict":
 		return "QDict*"
-	case "vector":
+	case "vec":
 		return "QVector*"
 	}
 	return "QValue"

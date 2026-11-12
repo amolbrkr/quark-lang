@@ -10,32 +10,32 @@ extern fn greet(name: str) str as 'qei_greet'
 extern fn apply_n(f: fn, n: int, x: any) any as 'qei_apply_n'
 extern fn same_fn(f: fn) fn as 'qei_same_fn'
 
-println('== smoke: extern fns ==')
+print('== smoke: extern fns ==')
 
 // Direct calls
-println(add1(9))            // 10
-println(halve(7.0))         // 3.5
-println(is_upper("Hello"))  // true
-println(is_upper("hello"))  // false
-println(greet("quark"))     // hello quark
+print(add1(9))            // 10
+print(halve(7.0))         // 3.5
+print(is_upper("Hello"))  // true
+print(is_upper("hello"))  // false
+print(greet("quark"))     // hello quark
 
 // Pipe
-println(4 | add1())         // 5
+print(4 | add1())         // 5
 
 // First-class use via thunk
 fn apply(f, x: int) int -> f(x)
-println(apply(add1, 20))    // 21
+print(apply(add1, 20))    // 21
 
 // int arguments widen to float parameters, for extern and Quark functions
-println(halve(7))           // 3.5
+print(halve(7))           // 3.5
 fn twice(x: float) float -> x * 2.0
-println(twice(4))           // 8
+print(twice(4))           // 8
 
 // Callbacks: native code calls Quark fn values
-println(apply_n(fn(v) -> v * 2, 3, 1))  // 8
-println(apply_n(add1, 2, 0))            // 2 (an extern fn as the callback)
+print(apply_n(fn(v) -> v * 2, 3, 1))  // 8
+print(apply_n(add1, 2, 0))            // 2 (an extern fn as the callback)
 k = 10
-println(apply_n(fn(v) -> v + k, 2, 0))  // 20 (a capturing closure)
+print(apply_n(fn(v) -> v + k, 2, 0))  // 20 (a capturing closure)
 g = same_fn(add1)
-println(g(1))                           // 2
-println(apply_n(fn(v, step = 2) -> v * step, 3, 1)) // 8 (native calls fill in defaults)
+print(g(1))                           // 2
+print(apply_n(fn(v, step = 2) -> v * step, 3, 1)) // 8 (native calls fill in defaults)

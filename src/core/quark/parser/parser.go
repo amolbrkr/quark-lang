@@ -148,8 +148,8 @@ func (p *Parser) parseStatement() *ast.TreeNode {
 	switch p.curToken.Type {
 	case token.MODULE:
 		return p.parseModule()
-	case token.USE:
-		return p.parseUse()
+	case token.INCL:
+		return p.parseIncl()
 	case token.EXTERN:
 		return p.parseExtern()
 	case token.STRUCT:
@@ -368,7 +368,7 @@ func (p *Parser) isConstantDefault(node *ast.TreeNode) bool {
 // isTypeToken checks if the current token can be a type name for annotations
 func (p *Parser) isTypeToken() bool {
 	switch p.curToken.Type {
-	case token.LIST, token.DICT, token.VECTOR, token.RESULT, token.FN:
+	case token.LIST, token.DICT, token.VEC, token.RESULT, token.FN:
 		return true
 	case token.ID:
 		switch p.curToken.Literal {
@@ -564,7 +564,7 @@ func (p *Parser) isNegatedNumericLiteral(node *ast.TreeNode) bool {
 }
 
 func (p *Parser) parseTypeExpr() *ast.TreeNode {
-	if p.curToken.Type != token.ID && p.curToken.Type != token.LIST && p.curToken.Type != token.DICT && p.curToken.Type != token.VECTOR && p.curToken.Type != token.RESULT && p.curToken.Type != token.FN {
+	if p.curToken.Type != token.ID && p.curToken.Type != token.LIST && p.curToken.Type != token.DICT && p.curToken.Type != token.VEC && p.curToken.Type != token.RESULT && p.curToken.Type != token.FN {
 		p.addError("expected type name")
 		return nil
 	}
@@ -1034,10 +1034,10 @@ func (p *Parser) parseExternFn(externTok *token.Token) *ast.TreeNode {
 }
 
 // isBuiltinTypeKeyword returns true if the current token is a type keyword that
-// can appear as the receiver prefix in an extern fn declaration (e.g. 'list', 'vector').
+// can appear as the receiver prefix in an extern fn declaration (e.g. 'list', 'vec').
 func (p *Parser) isBuiltinTypeKeyword() bool {
 	switch p.curToken.Type {
-	case token.LIST, token.DICT, token.VECTOR:
+	case token.LIST, token.DICT, token.VEC:
 		return true
 	case token.ID:
 		switch p.curToken.Literal {
@@ -1048,32 +1048,32 @@ func (p *Parser) isBuiltinTypeKeyword() bool {
 	return false
 }
 
-// parseUse parses:
+// parseIncl parses:
 //
-//	use module_name
-//	use './path/to/module'
-//	use module_name as alias
-//	use './path/to/module' as alias
-func (p *Parser) parseUse() *ast.TreeNode {
+//	incl module_name
+//	incl './path/to/module'
+//	incl module_name as alias
+//	incl './path/to/module' as alias
+func (p *Parser) parseIncl() *ast.TreeNode {
 	tok := p.curToken
-	node := ast.NewNode(ast.UseNode, &tok)
-	p.nextToken() // skip 'use'
+	node := ast.NewNode(ast.InclNode, &tok)
+	p.nextToken() // skip 'incl'
 
 	switch p.curToken.Type {
 	case token.STRING:
-		// File import: use './helpers' or use 'csv'
+		// File import: incl './helpers' or incl 'csv'
 		pathTok := p.curToken
 		pathNode := ast.NewNode(ast.LiteralNode, &pathTok)
 		node.AddChild(pathNode)
 		p.nextToken()
 	case token.ID:
-		// Same-file module reference: use math
+		// Same-file module reference: incl math
 		nameTok := p.curToken
 		nameNode := ast.NewNode(ast.IdentifierNode, &nameTok)
 		node.AddChild(nameNode)
 		p.nextToken()
 	default:
-		p.addError("expected module path string or module name after 'use'")
+		p.addError("expected module path string or module name after 'incl'")
 		return nil
 	}
 

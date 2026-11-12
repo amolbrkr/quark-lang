@@ -13,7 +13,7 @@ import (
 // --- Scope errors ---
 
 func TestNeg_UndefinedVariable(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("println(x)\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("print(x)\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -57,7 +57,7 @@ func TestNeg_ContinueOutsideLoop(t *testing.T) {
 // --- Type mismatch errors ---
 
 func TestNeg_ArithmeticOnStrings(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("println('a' - 'b')\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("print('a' - 'b')\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -71,7 +71,7 @@ func TestNeg_ArithmeticOnStrings(t *testing.T) {
 }
 
 func TestNeg_ArithmeticOnBooleans(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("println(true * false)\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("print(true * false)\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -83,7 +83,7 @@ func TestNeg_ArithmeticOnBooleans(t *testing.T) {
 func TestNeg_CompareStringToInt(t *testing.T) {
 	// Quark is dynamically typed — cross-type comparisons are allowed at compile time
 	// and checked at runtime. Verify this doesn't produce a type error.
-	_, _, parseErrs, typeErrs := testutil.Analyze("println('a' < 1)\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("print('a' < 1)\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -321,7 +321,7 @@ func TestNeg_ErrorTypeInBinaryOp(t *testing.T) {
 // --- unwrap on non-result ---
 
 func TestNeg_UnwrapNonResult(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("println(unwrap(42))\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("print(unwrap(42))\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -353,7 +353,7 @@ func TestNeg_WhenResultPatternOnNonResult(t *testing.T) {
 // --- Module errors ---
 
 func TestNeg_ModuleUnknownSymbol(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("module math:\n    fn add(x, y) -> x + y\nuse math as m\nm.nonexistent()\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("module math:\n    fn add(x, y) -> x + y\nincl math as m\nm.nonexistent()\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -382,7 +382,7 @@ func TestNeg_DictDuplicateKeys(t *testing.T) {
 // --- Vector type errors ---
 
 func TestNeg_VectorMixedTypes(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("vector [1, 'a', 3]\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("vec [1, 'a', 3]\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -396,7 +396,7 @@ func TestNeg_VectorMixedTypes(t *testing.T) {
 }
 
 func TestNeg_VectorStringArithmetic(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("v = vector ['a', 'b']\nw = vector ['c', 'd']\nprintln(v + w)\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("v = vec ['a', 'b']\nw = vec ['c', 'd']\nprint(v + w)\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -408,7 +408,7 @@ func TestNeg_VectorStringArithmetic(t *testing.T) {
 // --- For loop on non-iterable ---
 
 func TestNeg_ForLoopOnInt(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("for x in 42:\n    println(x)\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("for x in 42:\n    print(x)\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -501,7 +501,7 @@ func TestNeg_MultipleIndependentErrors(t *testing.T) {
 // --- Valid programs should NOT produce errors ---
 
 func TestValid_MethodChainOnString(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("x = 'hello'.upper().trim()\nprintln(x)\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("x = 'hello'.upper().trim()\nprint(x)\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -511,7 +511,7 @@ func TestValid_MethodChainOnString(t *testing.T) {
 }
 
 func TestValid_ListPushAndGet(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("xs = list []\nxs.push(1)\nxs.push(2)\nprintln(xs.get(0))\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("xs = list []\nxs.push(1)\nxs.push(2)\nprint(xs.get(0))\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -521,7 +521,7 @@ func TestValid_ListPushAndGet(t *testing.T) {
 }
 
 func TestValid_DictSetAndGet(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("d = dict {}\nd.set('key', 1)\nprintln(d.get('key'))\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("d = dict {}\nd.set('key', 1)\nprint(d.get('key'))\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -534,7 +534,7 @@ func TestValid_PipeIntoBuiltin(t *testing.T) {
 	// Note: ok captures the entire RHS, so "ok 1 | unwrap()" parses as ok(1 | unwrap()).
 	// Use parens to pipe a result into unwrap: (ok 1) can't be written that way either.
 	// Instead, use a variable to hold the result.
-	_, _, parseErrs, typeErrs := testutil.Analyze("r = ok 1\nx = r | unwrap()\nprintln(x)\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("r = ok 1\nx = r | unwrap()\nprint(x)\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -544,7 +544,7 @@ func TestValid_PipeIntoBuiltin(t *testing.T) {
 }
 
 func TestValid_ClosureCapture(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("x = 10\nf = fn() -> x + 1\nprintln(f())\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("x = 10\nf = fn() -> x + 1\nprint(f())\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -554,7 +554,7 @@ func TestValid_ClosureCapture(t *testing.T) {
 }
 
 func TestValid_DefaultParameters(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("fn add(x: int, y: int = 0) int -> x + y\nprintln(add(5))\nprintln(add(5, 3))\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("fn add(x: int, y: int = 0) int -> x + y\nprint(add(5))\nprint(add(5, 3))\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -584,7 +584,7 @@ func TestValid_ContinueInsideLoop(t *testing.T) {
 }
 
 func TestValid_IndexThenMethodCall(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("xs = list ['hello', 'world']\nprintln(xs[0].upper())\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("xs = list ['hello', 'world']\nprint(xs[0].upper())\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -594,7 +594,7 @@ func TestValid_IndexThenMethodCall(t *testing.T) {
 }
 
 func TestValid_SplitThenIndex(t *testing.T) {
-	_, _, parseErrs, typeErrs := testutil.Analyze("parts = 'a,b,c'.split(',')\nprintln(parts[0])\n")
+	_, _, parseErrs, typeErrs := testutil.Analyze("parts = 'a,b,c'.split(',')\nprint(parts[0])\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -610,12 +610,12 @@ func TestNeg_ResultAndVectorConditions(t *testing.T) {
 		src  string
 		want string
 	}{
-		{"r = ok 1\nif r:\n    println(1)\n", "result cannot be used as a condition"},
+		{"r = ok 1\nif r:\n    print(1)\n", "result cannot be used as a condition"},
 		{"r = ok 1\ny = 1 if r else 2\n", "result cannot be used as a condition"},
-		{"r = ok 1\nprintln(!r)\n", "result cannot be used as a condition"},
-		{"r = ok 1\nprintln(true or r)\n", "result cannot be used as a condition"},
-		{"v = vector [1]\nwhile v:\n    println(1)\n", "vector cannot be used as a condition"},
-		{"v = vector [1]\nif v > 0:\n    println(1)\n", "vector cannot be used as a condition"},
+		{"r = ok 1\nprint(!r)\n", "result cannot be used as a condition"},
+		{"r = ok 1\nprint(true or r)\n", "result cannot be used as a condition"},
+		{"v = vec [1]\nwhile v:\n    print(1)\n", "vec cannot be used as a condition"},
+		{"v = vec [1]\nif v > 0:\n    print(1)\n", "vec cannot be used as a condition"},
 	}
 	for _, tc := range cases {
 		_, _, parseErrs, typeErrs := testutil.Analyze(tc.src)
@@ -624,6 +624,29 @@ func TestNeg_ResultAndVectorConditions(t *testing.T) {
 		}
 		if !strings.Contains(strings.Join(typeErrs, "\n"), tc.want) {
 			t.Fatalf("source %q: expected %q, got: %v", tc.src, tc.want, typeErrs)
+		}
+	}
+}
+
+// The old spellings of renamed symbols (2026-11-12) must not compile:
+// println -> print, use -> incl, vector -> vec, to_vector -> to_vec.
+func TestNeg_RenamedSymbolsRejected(t *testing.T) {
+	cases := []struct {
+		src  string
+		want string // substring of a parse or type error
+	}{
+		{"println(1)\n", "undefined identifier 'println'"},
+		{"use 'std/io' as io\nprint(1)\n", "QK-PARSE-001"},
+		{"module m:\n    fn f(x) -> x\nuse m as mm\n", "QK-PARSE-001"},
+		{"v = vector [1, 2]\n", "QK-PARSE-001"},
+		{"fn f(x: vector) -> x\n", "unknown type 'vector'"},
+		{"xs = list [1, 2]\nv = xs.to_vector()\n", "has no method 'to_vector'"},
+	}
+	for _, tc := range cases {
+		_, _, parseErrs, typeErrs := testutil.Analyze(tc.src)
+		all := strings.Join(append(append([]string{}, parseErrs...), typeErrs...), "\n")
+		if !strings.Contains(all, tc.want) {
+			t.Fatalf("source %q: expected an error containing %q, got: %v", tc.src, tc.want, all)
 		}
 	}
 }

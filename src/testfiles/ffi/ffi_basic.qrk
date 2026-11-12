@@ -9,12 +9,12 @@ extern fn strlen_c(s: str) int as 'qffi_strlen'
 extern fn version() str as 'qffi_version'
 extern fn is_even(n: int) bool as 'qffi_is_even'
 
-println(add(40, 2))         // 42
-println(scale(1.5, 4.0))    // 6
-println(strlen_c('quark'))  // 5
-println(version())          // qffi 1.0
-println(is_even(10))        // true
-println(is_even(7))         // false
+print(add(40, 2))         // 42
+print(scale(1.5, 4.0))    // 6
+print(strlen_c('quark'))  // 5
+print(version())          // qffi 1.0
+print(is_even(10))        // true
+print(is_even(7))         // false
 
 // int arguments widen to float parameters (P7)
-println(scale(3, 2))        // 6
+print(scale(3, 2))        // 6

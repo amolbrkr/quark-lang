@@ -1,67 +1,67 @@
 // smoke_vectors.qrk - Vector comparison operators & boolean mask indexing
 
-println('== smoke: vectors ==')
+print('== smoke: vectors ==')
 
 // --- Vector literal dtype inference ---
-vi_lit = vector [1, 2, 3]
-vs_lit = vector ['a', 'b', 'c']
-println(type(vi_lit))
-println(type(vs_lit))
+vi_lit = vec [1, 2, 3]
+vs_lit = vec ['a', 'b', 'c']
+print(type(vi_lit))
+print(type(vs_lit))
 
-// --- to_vector homogeneous string list ---
-vs_from_list = list ['x', 'y', 'z'].to_vector()
-println(type(vs_from_list))
+// --- to_vec homogeneous string list ---
+vs_from_list = list ['x', 'y', 'z'].to_vec()
+print(type(vs_from_list))
 
 // --- Ordering comparisons (vec vs scalar) ---
-v = vector [10, 20, 30, 40, 50]
+v = vec [10, 20, 30, 40, 50]
 
 mask = v > 25
-println(mask)
-println(sum(mask))
+print(mask)
+print(sum(mask))
 
 mask2 = v < 30
-println(sum(mask2))
+print(sum(mask2))
 
 mask3 = v >= 30
-println(sum(mask3))
+print(sum(mask3))
 
 mask4 = v <= 30
-println(sum(mask4))
+print(sum(mask4))
 
 // --- Equality (vec vs scalar) ---
 eq_mask = v == 30
-println(sum(eq_mask))
+print(sum(eq_mask))
 
 neq_mask = v != 30
-println(sum(neq_mask))
+print(sum(neq_mask))
 
 // --- Vec vs vec comparison ---
-w = vector [10, 25, 30, 35, 50]
+w = vec [10, 25, 30, 35, 50]
 cmp = v > w
-println(sum(cmp))
+print(sum(cmp))
 
 // --- Boolean mask indexing ---
 big = v[v > 25]
-println(big)
-println(len(big))
+print(big)
+print(len(big))
 
 // --- Scalar indexing on vectors ---
-println(v[0])
-println(v[4])
-println(v[-1])
+print(v[0])
+print(v[4])
+print(v[-1])
 
 // --- Chained: filter then reduce ---
 total = sum(v[v > 25])
-println(total)
+print(total)
 
 // --- Empty result ---
 none = v[v > 100]
-println(len(none))
+print(len(none))
 
 // --- I64 vectors ---
-vi = vector [1, 2, 3, 4, 5]
-println(vi[vi > 3])
+vi = vec [1, 2, 3, 4, 5]
+print(vi[vi > 3])
 
 // --- Scalar comparison with I64 ---
-println(sum(vi == 3))
-println(sum(vi >= 2))
+print(sum(vi == 3))
+print(sum(vi >= 2))

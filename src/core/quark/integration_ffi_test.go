@@ -202,19 +202,19 @@ func TestFFI_Phase1(t *testing.T) {
 	}
 
 	t.Run("missing library is QK-FFI-002", func(t *testing.T) {
-		prog := writeProgram(t, "missing_lib.qrk", "println(1)\nextern link 'qffi_missing'\n")
+		prog := writeProgram(t, "missing_lib.qrk", "print(1)\nextern link 'qffi_missing'\n")
 		r := runIn(work, cleanEnv(), quarkExePath, "run", prog, "--lib-path", lib)
 		expectFailure(t, r, "QK-FFI-002", "'qffi_missing'", prog+":2", "searched: "+lib)
 	})
 
 	t.Run("missing include_path is QK-FFI-001", func(t *testing.T) {
-		prog := writeProgram(t, "missing_include.qrk", "extern include_path 'no_such_dir'\nprintln(1)\n")
+		prog := writeProgram(t, "missing_include.qrk", "extern include_path 'no_such_dir'\nprint(1)\n")
 		r := runIn(work, cleanEnv(), quarkExePath, "run", prog)
 		expectFailure(t, r, "QK-FFI-001", "no_such_dir")
 	})
 
 	t.Run("words after a directive string are reserved", func(t *testing.T) {
-		prog := writeProgram(t, "reserved_option.qrk", "extern link 'qffi_test' static\nprintln(1)\n")
+		prog := writeProgram(t, "reserved_option.qrk", "extern link 'qffi_test' static\nprint(1)\n")
 		r := runIn(work, cleanEnv(), quarkExePath, "run", prog, "--lib-path", lib)
 		expectFailure(t, r, "QK-PARSE-001", "reserved")
 	})
@@ -224,7 +224,7 @@ func TestFFI_Phase1(t *testing.T) {
 		if err := os.WriteFile(glue, []byte("#pragma once\ninline long long broken( { return 1; }\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		prog := writeProgram(t, "broken_glue.qrk", "extern 'broken_glue.hpp'\nprintln(1)\n")
+		prog := writeProgram(t, "broken_glue.qrk", "extern 'broken_glue.hpp'\nprint(1)\n")
 		r := runIn(work, cleanEnv(), quarkExePath, "run", prog)
 		expectFailure(t, r, "QK-FFI-003", glue+":2")
 	})
@@ -257,17 +257,17 @@ func TestStdBlas(t *testing.T) {
 	}
 
 	cases := []struct{ name, call, want string }{
-		{"length mismatch", "blas.dot(vector [1.0, 2.0], vector [1.0])", "blas.dot: vector size mismatch: x has 2 elements, y has 1"},
-		{"i64 input", "blas.nrm2(vector [1, 2])", "blas.nrm2: x must be an f64 vector, got i64; convert it with x.astype('f64')"},
-		{"nulls", "blas.asum(list [1.0, null].to_vector())", "blas.asum: x has 1 null values"},
-		{"gemv matrix size", "blas.gemv(vector [1.0, 2.0, 3.0], 2, 2, vector [1.0, 1.0])", "blas.gemv: a has 3 elements, but rows * cols = 2 * 2"},
-		{"gemv x length", "blas.gemv(vector [1.0, 2.0], 1, 2, vector [1.0])", "blas.gemv: x has 1 elements, but the matrix has 2 columns"},
+		{"length mismatch", "blas.dot(vec [1.0, 2.0], vec [1.0])", "blas.dot: vec size mismatch: x has 2 elements, y has 1"},
+		{"i64 input", "blas.nrm2(vec [1, 2])", "blas.nrm2: x must be an f64 vec, got i64; convert it with x.astype('f64')"},
+		{"nulls", "blas.asum(list [1.0, null].to_vec())", "blas.asum: x has 1 null values"},
+		{"gemv matrix size", "blas.gemv(vec [1.0, 2.0, 3.0], 2, 2, vec [1.0, 1.0])", "blas.gemv: a has 3 elements, but rows * cols = 2 * 2"},
+		{"gemv x length", "blas.gemv(vec [1.0, 2.0], 1, 2, vec [1.0])", "blas.gemv: x has 1 elements, but the matrix has 2 columns"},
 	}
 	tmp := t.TempDir()
 	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			prog := filepath.Join(tmp, "blas_err_"+string(rune('a'+i))+".qrk")
-			src := "use 'std/blas' as blas\nprintln(" + tc.call + ")\n"
+			src := "incl 'std/blas' as blas\nprint(" + tc.call + ")\n"
 			if err := os.WriteFile(prog, []byte(src), 0o644); err != nil {
 				t.Fatal(err)
 			}

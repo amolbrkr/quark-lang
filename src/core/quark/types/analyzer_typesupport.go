@@ -85,7 +85,7 @@ func (a *Analyzer) resolveTypeNode(node *ast.TreeNode) Type {
 		return &ListType{ElementType: TypeAny}
 	case "dict":
 		return &DictType{KeyType: TypeAny, ValueType: TypeAny}
-	case "vector":
+	case "vec":
 		return &VectorType{ElementType: TypeAny}
 	case "result":
 		return &ResultType{OkType: TypeAny, ErrType: TypeAny}

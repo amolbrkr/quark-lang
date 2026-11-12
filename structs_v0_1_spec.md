@@ -6,7 +6,7 @@ Scope: Struct-lite only (data modeling). Schema/table integration is referenced 
 
 ## 1. Purpose
 
-Define a minimal struct system for Quark that fills the fixed-shape domain-model gap between dynamic `dict` values and columnar `table` workflows.
+Define a minimal struct system for Quark that fills the fixed-shape domain-model gap between dynamic `dict` values and columnar `tbl` workflows.
 
 This spec prioritizes:
 
@@ -133,7 +133,7 @@ Implementation note:
 1. `ID { ... }` is parsed as a struct literal only when `ID` resolves to a struct type symbol.
 2. Otherwise existing expression rules apply and analyzer should emit a clear error.
 
-As implemented, the parser decides this with a per-file pre-pass that collects the struct names declared in that file. If `ID` is not a struct declared in the same file (an unknown name, or a struct imported with `use`), `ID { ... }` is a parse error (`QK-PARSE-001`, "no prefix parse function for LBRACE") rather than an analyzer error, so struct literals of imported structs are not supported yet.
+As implemented, the parser decides this with a per-file pre-pass that collects the struct names declared in that file. If `ID` is not a struct declared in the same file (an unknown name, or a struct imported with `incl`), `ID { ... }` is a parse error (`QK-PARSE-001`, "no prefix parse function for LBRACE") rather than an analyzer error, so struct literals of imported structs are not supported yet.
 
 ## 6. Static Semantics
 
@@ -144,7 +144,7 @@ As implemented, the parser decides this with a per-file pre-pass that collects t
 
 ### 6.2 Field types
 
-1. Field types may be builtins (`int`, `float`, `str`, `bool`, `list`, `dict`, `vector`, `result`, `any`) or user types.
+1. Field types may be builtins (`int`, `float`, `str`, `bool`, `list`, `dict`, `vec`, `result`, `any`) or user types.
 2. Self-referential and mutually recursive structs are deferred from v0.1.
 
 ### 6.3 Default values
@@ -250,7 +250,7 @@ fn is_adult(c: Customer) bool -> c.age >= 18
 
 1. `list` can hold struct values (boxed as `QValue`).
 2. `dict` values can be structs.
-3. `vector` does not accept struct dtype in v0.1.
+3. `vec` does not accept struct dtype in v0.1.
 
 ### 9.4 Schema integration (planned, not normative here)
 

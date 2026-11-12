@@ -1,4 +1,4 @@
-// quark/builtins/repr.hpp - text form of values for println, print and
+// quark/builtins/repr.hpp - text form of values for print and
 // to_str: scalars as themselves, containers by their contents.
 //
 //   [1, 'a', null]             list (strings inside containers are quoted)
@@ -214,7 +214,7 @@ inline void q_repr_into(std::string& out, QValue v, bool quoteStrings, QReprCtx&
     }
 }
 
-// q_repr renders a value as println shows it (top-level strings unquoted).
+// q_repr renders a value as print shows it (top-level strings unquoted).
 inline std::string q_repr(QValue v, bool truncate = true) {
     std::string out;
     QReprCtx ctx;

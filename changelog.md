@@ -18,21 +18,36 @@ These were checked against the current compiler. They are silent wrong results o
       x: float
   p = P { x: 1 }
   v = p.x
-  println(v)          // 5e-324
+  print(v)            // 5e-324
   ```
   The same happens through `s: float = r.score` (`s * 1.5` prints `1.5e-323`).
 - **An `any` value goes into a typed struct field without a check.** With `struct P: x: int` and `fn mk(a) -> P { x: a }`, `p = mk('hello')` stores a string. `p.x + 1` then prints a pointer-sized integer.
-- **A user definition that shares a name with an imported top-level name is silently ignored.** For example, `fn fmt_full(x) -> 'mine'` after `use 'std/fmt' as fmt` still calls the extern `fmt_full`. Names inside `module` blocks are safe: they are namespaced, and a clash is a `QK-LOAD-001` error.
+- **A user definition that shares a name with an imported top-level name is silently ignored.** For example, `fn fmt_full(x) -> 'mine'` after `incl 'std/fmt' as fmt` still calls the extern `fmt_full`. Names inside `module` blocks are safe: they are namespaced, and a clash is a `QK-LOAD-001` error.
 - `input()` is declared to return `str`, but it returns `null` at end of input. The mismatch fails loudly at runtime (for example `len()` or a `str` parameter check) rather than at compile time.
 - Using a field on `o: O = null` fails with `expected struct, got different type`. The program does stop, but the message doesn't mention `null`.
 
 ---
 
-## 2026-11-12: Function values, `fn` type, call-shape checking
+## 2026-11-12: Function values, `fn` type, call-shape checking, keyword renames
 
-Commits: `c0ac8cd`, `ac274c0`
+Commits: `c0ac8cd`, `ac274c0`; keyword renames not yet committed
 
 ### Breaking
+- **Renamed keywords and builtins.** The old spellings no longer compile:
+
+  | Old | New |
+  |---|---|
+  | `use 'std/io' as io`, `use mathx as m` | `incl 'std/io' as io`, `incl mathx as m` |
+  | `vector [1, 2, 3]`, `x: vector`, `fn f() vector` | `vec [1, 2, 3]`, `x: vec`, `fn f() vec` |
+  | `xs.to_vector()` | `xs.to_vec()` |
+  | `println(x)` | `print(x)` |
+  | `fmt_vector(v, n, true)` (the `std/fmt` extern binding) | `fmt_vec(v, n, true)`, or `fmt.show_vec(v)` |
+
+  `incl` was chosen because importing a file doesn't "use" everything in it.
+- `incl` and `vec` are reserved words now. A variable, parameter or function named `vec` or `incl` is a parse error. `use` and `vector` are ordinary names again.
+- **One print function.** `println` is gone. `print(x)` prints `x` followed by `end`, which defaults to `'\n'`, so each call prints its own line (this is what `print(x)` already did). Pass `end` positionally to change it: `print(x, '')` prints no newline, `print(x, ' | ')` a separator. The optional `width`, `align` and `pad` arguments are unchanged.
+- **Output says `vec`.** `type(vec [1.5])` returns `'vec[f64]'` (was `'vector[f64]'`), and code that compares `type()` strings must be updated. `fmt.show_vec` ends with `[vec[i64]: 2 elements]`. Compile-time and runtime messages name the type `vec`, for example `vec cannot be used as a condition` and `argument 'x' of 'f' expects vec, got list`.
+
 - New compile errors. Programs that pass a callback with the wrong arity or argument types, or pass a non-function where the body calls the parameter, are now rejected (see *Call shapes* below). They used to compile and then misbehave at runtime.
 - Native/extension C++ API:
   - `QClosure` has a new `const QFnInfo* info` field.
@@ -65,6 +80,9 @@ Commits: `c0ac8cd`, `ac274c0`
   - `qext::call` from native code gets the same checks.
 - A list of functions with different signatures can be indexed and called (`fs[0](9)`). This used to fail with "expression is not callable".
 
+### Changed
+- Tables spec (`tables_v0_1_spec.md`, still not implemented): the literal is `tbl { ... }` and the type annotation is `tbl` (`fn f(t: tbl)`). The runtime type name for a table is `tbl`. `fmt.table(...)` keeps its name.
+
 ### Fixed
 - A function value called with too few or too many arguments, from Quark or through `qext::call`, used to read missing arguments silently.
 - `unboxToNative` read the union fields of a native function body's result without checking the tag, which gave garbage values. The read is now checked.
@@ -72,6 +90,10 @@ Commits: `c0ac8cd`, `ac274c0`
 - `QClosure*` native arguments and returns are boxed with `qv_closure_ptr`. They used to be wrapped in a second closure.
 
 ### Internal
+- Renames: `token.USE`→`token.INCL`, `token.VECTOR`→`token.VEC`, `ast.UseNode`→`ast.InclNode` (`quark parse` prints `Incl`), `parseUse`→`parseIncl`. The catalog key `vector_any` is now `vec_any`.
+- Runtime: `q_println` removed; `q_to_vector`→`q_to_vec`, `q_fmt_vector`→`q_fmt_vec`. C++ type and tag names (`QVector`, `VAL_VECTOR`, `qv_vector*`, `qext::as_vector`) are unchanged.
+- Editor extension: `incl`/`vec` highlighting and completion, snippets `incl`, `inclf` and `vec`; `data/quark.json` regenerated.
+- `TestNeg_RenamedSymbolsRejected` checks that the old spellings are rejected.
 - `QFnInfo {name, min_arity, max_arity, default_arg}` (`types/closure.hpp`). Codegen `emitFnInfos` emits `_qfi_<name>`, and `emitDefaultArgFns` emits `quark_<name>__default_arg`.
 - `types/function.hpp` rewritten:
   - `q_call0`…`q_call12` go through `q_call_values`, which calls directly when the argument count equals the parameter count and uses `q_call_adapt` otherwise.

@@ -29,7 +29,7 @@ DuckDB is the target provider: it exercises every one of these pieces, and its c
 |---|---|---|
 | `extern 'x.hpp'` | parser → `ExternSourceNode`; loader resolves the path; codegen emits `#include` | Header only. Path resolves relative to the `.qrk` file or `std/`. |
 | `extern fn name(params) T as 'sym'` | `types/analyzer_modules.go` `analyzeExternFn` | Free functions and `type.method` methods. Registers a `CallPlan` with `DispatchExtern`. |
-| Type mapping | `quarkTypeToNativeCType` | `int`→`int64_t`, `float`→`double`, `bool`→`bool`, `str`→`const char*`, `list`/`dict`/`vector`→`QList*`/`QDict*`/`QVector*`, `fn`→`QClosure*`, anything else→`QValue`. |
+| Type mapping | `quarkTypeToNativeCType` | `int`→`int64_t`, `float`→`double`, `bool`→`bool`, `str`→`const char*`, `list`/`dict`/`vec`→`QList*`/`QDict*`/`QVector*`, `fn`→`QClosure*`, anything else→`QValue`. |
 | Marshalling | `codegen.adaptArgForExtern` / `wrapExternReturn` | Guarded unboxing (`q_as_int`, ...) at call sites; returns boxed back. Thunks make free externs first-class. |
 | Callbacks | `fn` annotation (`types.TypeFn`) | An `fn` parameter is a `QClosure*`; glue calls it with `qext::call` (argument count checked, defaults filled, via the closure's `QFnInfo`) and boxes it with `qext::box`. Tested in `smoke_extern.qrk` and `TestNativeCallback_Arity`. C function-pointer callbacks (a `void*` userdata trampoline for C APIs such as `qsort`) are not supported. |
 | Extension author API | `runtime/include/quark/ext/api.hpp` (`qext::`) | Boxing, unboxing, vector buffer views, dict helpers, `qext::call`, `qext::panic`. |
@@ -179,7 +179,7 @@ Zero-copy *import* needs vectors that can wrap foreign buffers, with an owner an
 ### P6. Tables with a runtime schema (fixes G9)
 
 - Runtime: `q_struct_def_create(name, field_names, n)` builds a GC-allocated `QStructDef` at runtime. `qext::new_table(names, columns, n)` builds a `QTable` from it.
-- Analyzer: a native function returning a table is annotated with the plain `table` type that `tables_v0_1_spec.md` §4.3 already describes for untyped tables. Column access is checked at runtime. If the plain `table` annotation is not implemented yet when this phase starts, providers return a `dict` of column name → vector in the meantime (§6.3).
+- Analyzer: a native function returning a table is annotated with the plain `tbl` type that `tables_v0_1_spec.md` §4.3 already describes for untyped tables. Column access is checked at runtime. If the plain `tbl` annotation is not implemented yet when this phase starts, providers return a `dict` of column name → vector in the meantime (§6.3).
 
 ### P7. Numeric widening at the boundary (fixes G10)
 
@@ -245,24 +245,24 @@ src/core/stdlib/blas_glue.hpp    header-only glue; includes cblas.h and quark/ex
 
 | Function | CBLAS routine | Returns |
 |---|---|---|
-| `dot(x: vector, y: vector)` | `cblas_ddot` | `float` |
-| `axpy(a: float, x: vector, y: vector)` | `cblas_daxpy` | new vector `a*x + y` |
-| `scal(a: float, x: vector)` | `cblas_dscal` | new vector `a*x` |
-| `nrm2(x: vector)` | `cblas_dnrm2` | `float` |
-| `asum(x: vector)` | `cblas_dasum` | `float` |
-| `gemv(a: vector, rows: int, cols: int, x: vector)` | `cblas_dgemv`, row-major | new vector of length `rows` |
+| `dot(x: vec, y: vec)` | `cblas_ddot` | `float` |
+| `axpy(a: float, x: vec, y: vec)` | `cblas_daxpy` | new vector `a*x + y` |
+| `scal(a: float, x: vec)` | `cblas_dscal` | new vector `a*x` |
+| `nrm2(x: vec)` | `cblas_dnrm2` | `float` |
+| `asum(x: vec)` | `cblas_dasum` | `float` |
+| `gemv(a: vec, rows: int, cols: int, x: vec)` | `cblas_dgemv`, row-major | new vector of length `rows` |
 
 `gemv` takes the matrix as a flat row-major f64 vector with explicit dimensions, because Quark has no matrix type. It may change when the planned tensor type exists.
 
 ```quark
-use 'std/blas' as blas
+incl 'std/blas' as blas
 
-x = vector [1.0, 2.0, 3.0]
-y = vector [4.0, 5.0, 6.0]
-println(blas.dot(x, y))          // 32
+x = vec [1.0, 2.0, 3.0]
+y = vec [4.0, 5.0, 6.0]
+print(blas.dot(x, y))          // 32
 z = blas.axpy(2, x, y)           // P7 lets 2 stand for 2.0
-println(z[0])                    // 6
-println(y[0])                    // 4: inputs are never modified
+print(z[0])                    // 6
+print(y[0])                    // 4: inputs are never modified
 ```
 
 **Rules.**
@@ -305,12 +305,12 @@ src/core/stdlib/duckdb_glue.cpp   implementation (P2), includes duckdb.h and qua
 - **The library is not vendored.** libduckdb is tens of megabytes. Users point Quark at an install with `--lib-path`/`--include-path` or `QUARK_LIB_PATH`/`QUARK_INCLUDE_PATH`. A `scripts/fetch_duckdb.sh` downloads a pinned release (`libduckdb-<os>-<arch>.zip`) into `deps/duckdb/`. As with the GC, the toolchain also checks `deps/duckdb/` automatically.
 - **Linking.** Shared by default, with rpath set (P1). Static linking via `libduckdb_static.a` is possible but adds about 50 MB per binary; the opt-in mechanism is an open decision (§9.2).
 - **Version.** Pin one DuckDB release (1.x) and check `duckdb_library_version()` at `open` time. Fail with a clear error on a major-version mismatch.
-- `use 'std/duckdb'` without the library installed fails with `QK-FFI-002` before linking, with a hint to run the fetch script.
+- `incl 'std/duckdb'` without the library installed fails with `QK-FFI-002` before linking, with a hint to run the fetch script.
 
 ### 6.3 Quark API (v0.1)
 
 ```quark
-use 'std/duckdb' as duck
+incl 'std/duckdb' as duck
 
 db = unwrap(duck.open(':memory:'))          // or a file path
 con = unwrap(duck.connect(db))
@@ -318,12 +318,12 @@ con = unwrap(duck.connect(db))
 unwrap(duck.exec(con, "create table t as select range as i, range * 0.5 as f from range(1000000)"))
 
 cols = unwrap(duck.query(con, "select i, f from t where i % 2 = 0"))
-println(len(cols.i))        // 500000
-println(sum(cols.f))
+print(len(cols.i))        // 500000
+print(sum(cols.f))
 
 when duck.query(con, "select * from missing"):
-    ok(c) -> println(c)
-    err(msg) -> println(msg)   // "duckdb: Catalog Error: Table with name missing does not exist!..."
+    ok(c) -> print(c)
+    err(msg) -> print(msg)   // "duckdb: Catalog Error: Table with name missing does not exist!..."
 
 duck.close(con)
 duck.close(db)
@@ -334,7 +334,7 @@ duck.close(db)
 | `open(path: str)` | `result` (database handle) | `':memory:'` for in-memory |
 | `connect(db: resource)` | `result` (connection handle) | The connection keeps the database alive (P3 parent) |
 | `exec(con: resource, sql: str)` | `result` (int rows changed) | For DDL and DML |
-| `query(con: resource, sql: str)` | `result` (dict of column name → vector) | Becomes `table` once P6 lands |
+| `query(con: resource, sql: str)` | `result` (dict of column name → vector) | Becomes `tbl` once P6 lands |
 | `close(h: resource)` | `null` | Idempotent; works on either handle kind |
 | `version()` | `str` | `duckdb_library_version()` |
 
@@ -383,7 +383,7 @@ Results and data chunks never become handles. They are converted and destroyed i
 | 1. Linking | P1, P7, P8 (build codes) | The `libqffi_test` cases pass (§5.2) and `smoke_blas.qrk` passes on Linux (§5.3). **Done 2026-11-04.** |
 | 2. Handles and results | P2, P3, P4, P8 (`QK-FFI-004`) | `std/sqlite` `open`/`exec`/`query` (dict result)/`close` pass a smoke test, including a finalizer test (§5.4) |
 | 3. DuckDB | `std/duckdb` | `open`/`connect`/`exec`/`query` (dict result)/`close` pass `smoke_duckdb.qrk` (§6.6) |
-| 4. Tables and parameters | P6, `query_params`, `insert` | `query` returns `table`; parameterized queries; bulk insert via the appender |
+| 4. Tables and parameters | P6, `query_params`, `insert` | `query` returns `tbl`; parameterized queries; bulk insert via the appender |
 | 5. Arrow | P5 | `register` queries a Quark table from DuckDB without copying; `import_vector` is used for Arrow-producing providers |
 
 Phase 1 is independent of DuckDB and useful on its own: any library with a C API becomes usable through a small glue header. P2 moved to Phase 2: no Phase 1 provider needs it, and caching glue objects correctly needs header dependency tracking (an object depends on every header its `.cpp` includes, not only its own content), which is more than Phase 1 should carry.
@@ -395,7 +395,7 @@ Phase 1 is independent of DuckDB and useful on its own: any library with a C API
 | Lexer | None (contextual words) | — |
 | Parser / AST | `ExternLinkNode`, `ExternIncludePathNode`, `ExternCppSourceNode`; existing `ExternSourceNode` renamed `ExternHeaderNode` | Additive; the rename is internal |
 | Loader | Resolve the new path directives | Additive |
-| Analyzer | None for P1/P2. P6 adds the plain `table` return annotation if it doesn't exist yet. | Additive |
+| Analyzer | None for P1/P2. P6 adds the plain `tbl` return annotation if it doesn't exist yet. | Additive |
 | IR / codegen | None | — |
 | Driver | `Unit.Native` (collected dependencies with source locations) | Additive |
 | Toolchain | Search paths, library resolution, rpath, glue object cache | Additive; programs without directives build exactly as today |
@@ -404,7 +404,7 @@ Phase 1 is independent of DuckDB and useful on its own: any library with a C API
 | Runtime: `ext/api.hpp` | Handle, result and table helpers | Additive |
 | Runtime: new `ext/arrow.hpp` | Arrow C Data Interface bridge | Additive |
 | Runtime: `q_as_float` | Accepts `int` | Relaxation only |
-| Stdlib | `std/blas` (needs OpenBLAS), then `std/sqlite` and `std/duckdb` (each needs its library) | Additive; programs that don't `use` them are unaffected |
+| Stdlib | `std/blas` (needs OpenBLAS), then `std/sqlite` and `std/duckdb` (each needs its library) | Additive; programs that don't `incl` them are unaffected |
 | Docs | `semantics.md` §10.6, `architecture.md` §7–8, `error_codes.md`, `stdlib.md`. | — |
 
 Existing extensions (`std/fmt`, `smoke_extern.qrk`) keep working unchanged.

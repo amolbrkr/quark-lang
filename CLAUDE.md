@@ -22,7 +22,7 @@ The goal is a language any developer can trust: a wrong program fails loudly and
 3. **A soundness hole on the path you're opening blocks the change.** If your feature makes an existing silent-wrong-result bug easier to hit, fix it in the same change, or stop and ask the user before continuing. Don't ship the feature with the hole only documented: "Known limitations" in the README is for deliberate gaps (missing features), not for unsoundness.
 4. **Report pre-existing soundness bugs up front**, at the top of your summary with a reproduction, not as a footnote.
 5. **Same rule everywhere.** New behavior must match the closest existing behavior (for example, if parameters widen int→float, so must struct fields and returns); if it can't, raise the inconsistency instead of adding another one.
-6. **Names never collide silently.** Every top-level symbol of a `use`d file is visible to the importer, by design (there are no access modifiers; stdlib `extern fn` bindings such as `fmt_vector` are visible too). A clash between such a name and a user definition must be a compile-time error, never one definition silently winning. Compiler-internal names (`module__member`, `q_`/`quark_` C++ symbols) must never be reachable from user code.
+6. **Names never collide silently.** Every top-level symbol of an `incl`uded file is visible to the importer, by design (there are no access modifiers; stdlib `extern fn` bindings such as `fmt_vec` are visible too). A clash between such a name and a user definition must be a compile-time error, never one definition silently winning. Compiler-internal names (`module__member`, `q_`/`quark_` C++ symbols) must never be reachable from user code.
 
 ## Changelog (update every day there are changes)
 
@@ -79,7 +79,7 @@ All stages live under `src/core/quark/`:
 |-------|---------|---------|
 | Lexer | `lexer/` | Indentation-aware tokenization (emits INDENT/DEDENT tokens) |
 | Parser | `parser/` | Recursive descent → AST (`ast/ast.go` defines `TreeNode`) |
-| Loader | `loader/` | Resolves `use` imports (relative paths and `std/` stdlib), splices ASTs, then renames module members to `module__member` (`namespace.go`) so modules and user code can't collide |
+| Loader | `loader/` | Resolves `incl` imports (relative paths and `std/` stdlib), splices ASTs, then renames module members to `module__member` (`namespace.go`) so modules and user code can't collide |
 | Analyzer | `types/` | Semantic analysis, scope/symbol tables, closure capture computation, generates `CallPlan` IR |
 | Invariants | `invariants/` | Pre-codegen validation (call plans, return types) |
 | Codegen | `codegen/` | AST → C++17 source generation |
@@ -96,7 +96,7 @@ Header-only C++17 library at `src/core/quark/runtime/include/quark/`. Key files:
 - `core/gc.hpp` — GC allocation wrappers (`q_malloc`, `q_malloc_atomic`, `q_strdup`)
 - `ops/` — Arithmetic, comparison, logical, member access operators
 - `builtins/` — prelude builtins (console I/O, string, math, list, dict, conversion); each header must be listed in `quark.hpp`
-- `builtins/repr.hpp` — how values print (`println`/`to_str`: contents, 100-item elision); `core/format.hpp` — float text (shortest round-trip)
+- `builtins/repr.hpp` — how values print (`print`/`to_str`: contents, 100-item elision); `core/format.hpp` — float text (shortest round-trip)
 - `types/resource.hpp` — generational registry for native handles; every handle has the single Quark type `resource` (the kind, e.g. `file`, is runtime-only)
 
 There are no runtime unit tests; the runtime is tested through the Go integration tests (some compile small C++ programs against the headers, e.g. `TestVectorArrowLayout`).
@@ -155,4 +155,4 @@ Smoke test programs in `src/testfiles/smoke_*.qrk`. Integration tests in `src/co
 - Type annotations: `fn add(x: int, y: int) int -> x + y`. Each annotated parameter is enforced on its own (partial annotation counts): checked at compile time when the argument type is known, on function entry otherwise (`emitParamBindings` → `q_param_*` in `builtins/params.hpp`), with int→float widening; same rules as `extern fn`. Fully annotated, non-capturing functions compile to native C++ (`DispatchNative`)
 - Default params: `fn foo(x: int, y: int = 0) -> x + y` (literals only)
 - String type is `str` (not `string`)
-- Annotation types: `int`, `float`, `str`, `bool`, `any`, `list`, `dict`, `vector`, `result`, `resource`, `fn` (`types.TypeFn`: any function value, no signature; `QClosure*` in native/extern signatures), and struct names. No generic/element types (`list[int]` doesn't parse)
+- Annotation types: `int`, `float`, `str`, `bool`, `any`, `list`, `dict`, `vec`, `result`, `resource`, `fn` (`types.TypeFn`: any function value, no signature; `QClosure*` in native/extern signatures), and struct names. No generic/element types (`list[int]` doesn't parse)

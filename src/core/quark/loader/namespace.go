@@ -29,7 +29,7 @@ func DisplayMember(module, member string) string {
 //     from inside that module, become `module__name`;
 //   - `alias.member` keeps its form, with member renamed, so the analyzer
 //     resolves it through the module's symbols;
-//   - bare names imported by `use module` (no alias) are renamed where they
+//   - bare names imported by `incl module` (no alias) are renamed where they
 //     are used.
 //
 // Parameters, loop variables and ok/err bindings shadow members as usual.
@@ -54,13 +54,13 @@ func (ml *ModuleLoader) namespaceModules(root *ast.TreeNode) {
 		return
 	}
 
-	// Aliases and bare imports come from `use` statements at the top level
+	// Aliases and bare imports come from `incl` statements at the top level
 	// (imports inside other files are spliced there too).
 	aliases := map[string]string{} // alias -> module
-	bare := map[string]string{}    // member -> module, from `use module`
-	bareUseLine := map[string]int{}
+	bare := map[string]string{}    // member -> module, from `incl module`
+	bareInclLine := map[string]int{}
 	for _, n := range root.Children {
-		if n == nil || n.NodeType != ast.UseNode || len(n.Children) == 0 {
+		if n == nil || n.NodeType != ast.InclNode || len(n.Children) == 0 {
 			continue
 		}
 		module := n.Children[0].TokenLiteral()
@@ -79,14 +79,14 @@ func (ml *ModuleLoader) namespaceModules(root *ast.TreeNode) {
 				continue
 			}
 			bare[name] = module
-			bareUseLine[name] = lineOf(n)
+			bareInclLine[name] = lineOf(n)
 		}
 	}
 	// A top-level definition with the same name as a bare import is ambiguous.
 	for _, n := range root.Children {
 		if name := definedName(n); name != "" {
 			if module, clash := bare[name]; clash {
-				ml.addErrorAt(lineOf(n), 0, "symbol '%s' from module '%s' (imported on line %d) conflicts with this definition; import the module with an alias", name, module, bareUseLine[name])
+				ml.addErrorAt(lineOf(n), 0, "symbol '%s' from module '%s' (imported on line %d) conflicts with this definition; import the module with an alias", name, module, bareInclLine[name])
 			}
 		}
 	}
@@ -191,7 +191,7 @@ func (r *memberRenamer) rewrite(n *ast.TreeNode, module string, shadow map[strin
 			r.rewrite(n.Children[1], n.Children[0].TokenLiteral(), nil)
 		}
 		return
-	case ast.UseNode, ast.StructDefNode, ast.TypeNode, ast.ExternFnNode, ast.ExternHeaderNode,
+	case ast.InclNode, ast.StructDefNode, ast.TypeNode, ast.ExternFnNode, ast.ExternHeaderNode,
 		ast.ExternLinkNode, ast.ExternIncludePathNode, ast.ParameterNode:
 		return
 	case ast.IdentifierNode:

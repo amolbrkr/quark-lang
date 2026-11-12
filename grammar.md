@@ -25,7 +25,7 @@ This document is the grammar and semantic reference for the Quark compiler in `s
 
 ### 3.1 Keywords (reserved)
 
-`use, as, module, extern, fn, struct, if, elseif, else, for, while, break, continue, when, in, and, or, true, false, null, ok, err, list, dict, vector, result`
+`incl, as, module, extern, fn, struct, if, elseif, else, for, while, break, continue, when, in, and, or, true, false, null, ok, err, list, dict, vec, result`
 
 `link` and `include_path` are contextual words after `extern`, not reserved keywords.
 
@@ -76,7 +76,7 @@ Program         ::= { Statement NEWLINE } EOF
 Statement       ::= FunctionDef
                 |   StructDef
                 |   ModuleDef
-                |   UseStatement
+                |   InclStatement
                 |   ExternStatement
                 |   IfStatement
                 |   WhenExpr
@@ -100,7 +100,7 @@ ModuleDef       ::= "module" ID ":" Block
 ### 5.2 Use forms
 
 ```ebnf
-UseStatement    ::= "use" ( ID | STRING ) [ "as" ID ]
+InclStatement    ::= "incl" ( ID | STRING ) [ "as" ID ]
 
 ExternStatement ::= ExternHeader
                 |   ExternLink
@@ -113,15 +113,15 @@ ExternIncludePath ::= "extern" "include_path" STRING
 
 ExternFnDecl    ::= "extern" "fn" ExternName Parameters [ ReturnType ] "as" STRING
 ExternName      ::= ID | BuiltinTypeName "." ID
-BuiltinTypeName ::= "int" | "float" | "str" | "bool" | "list" | "dict" | "vector"
+BuiltinTypeName ::= "int" | "float" | "str" | "bool" | "list" | "dict" | "vec"
 ```
 
 Semantics:
-- `use ID`: same-file module import
-- `use './path'` or `use '../path'`: file import resolved by loader
-- `use 'C:/path/to/file'` or `use '/path/to/file'`: absolute file import resolved by loader
-- `use 'std/name'`: stdlib import resolved from stdlib root (`QUARK_STDLIB_ROOT` or discovered `stdlib/` directory)
-- `use ... as alias`: binds `alias` as a module qualifier for `alias.symbol(...)` calls
+- `incl ID`: same-file module import
+- `incl './path'` or `incl '../path'`: file import resolved by loader
+- `incl 'C:/path/to/file'` or `incl '/path/to/file'`: absolute file import resolved by loader
+- `incl 'std/name'`: stdlib import resolved from stdlib root (`QUARK_STDLIB_ROOT` or discovered `stdlib/` directory)
+- `incl ... as alias`: binds `alias` as a module qualifier for `alias.symbol(...)` calls
 
 Extern/QEI semantics:
 - `extern 'path.hpp'` `#include`s a C++ header. The path is resolved by the loader relative to the declaring file (`std/...` paths resolve in the stdlib).
@@ -244,7 +244,7 @@ IfStatement     ::= "if" Expression ":" Block
 ForLoop         ::= "for" ID "in" Expression ":" Block
 ```
 
-Supported iterables: `list`, `vector`, `str`
+Supported iterables: `list`, `vec`, `str`
 
 ### 8.3 While loop
 
@@ -269,7 +269,7 @@ Current semantics:
 ```ebnf
 TypedDecl       ::= ID ":" Type "=" Expression
 Type            ::= "int" | "float" | "str" | "bool" | "any" | "result"
-                |   "list" | "dict" | "vector"
+                |   "list" | "dict" | "vec"
                 |   "resource"
                 |   StructName
 ReturnType      ::= Type
@@ -306,8 +306,8 @@ struct Customer:
     age: int = 0
 
 c = Customer { id: 1, name: 'Alice' }
-println(c.name)     // Alice
-println(type(c))    // Customer
+print(c.name)     // Alice
+print(type(c))    // Customer
 ```
 
 Semantics:
@@ -375,7 +375,7 @@ SQString        ::= "'" { SQChar } "'"
 DQString        ::= '"' { DQChar } '"'
 
 ListLiteral     ::= "list" "[" [ PipeExpr { "," PipeExpr } [ "," ] ] "]"
-VectorLiteral   ::= "vector" "[" [ PipeExpr { "," PipeExpr } [ "," ] ] "]"
+VectorLiteral   ::= "vec" "[" [ PipeExpr { "," PipeExpr } [ "," ] ] "]"
 DictLiteral     ::= "dict" "{" [ DictEntries ] "}"
 DictEntries     ::= DictEntry { "," DictEntry } [ "," ]
 DictEntry       ::= ID ":" PipeExpr
@@ -415,7 +415,7 @@ Dot syntax (`.`) serves five purposes:
 - `d.key = value` — dict key write
 - `s.field` — struct field read (struct fields can't be assigned; see §9.1)
 - `value.method(args)` — method dispatch (receiver type determines which method is resolved; see stdlib.md for available methods per type)
-- `alias.fn(args)` — module-qualified call after `use ... as alias`
+- `alias.fn(args)` — module-qualified call after `incl ... as alias`
 
 Dot-key access on a value that isn't a dict or struct is a compile-time error when the type is known (`dot access is only supported on dict ...`) and a runtime error otherwise. Method calls on types that don't define the method are a compile-time error.
 
@@ -423,8 +423,8 @@ Dot-key access on a value that isn't a dict or struct is a compile-time error wh
 
 - `list[idx]` supported (negative indices supported at runtime)
 - `str[idx]` supported (returns single-character string)
-- `vector[idx]` supported
-- `vector[mask]` where `mask` is bool vector supported
+- `vec[idx]` supported
+- `vec[mask]` where `mask` is bool vector supported
 - Dict bracket indexing is not supported; use dot access or `.get()` / `.set()` methods
 
 ### 11.3 Assignment targets
@@ -473,7 +473,7 @@ Result construction and use:
 
 | Category | Functions |
 |----------|-----------|
-| I/O | `print`, `println`, `input` |
+| I/O | `print`, `input` |
 | Conversion | `len`, `to_str`, `to_int`, `to_float`, `to_bool`, `type` |
 | Result | `is_ok`, `is_err`, `unwrap` |
 | Math/range | `range`, `abs`, `min`, `max`, `sum`, `sqrt`, `floor`, `ceil`, `round` |
@@ -484,29 +484,29 @@ Result construction and use:
 | Receiver | Methods |
 |----------|---------|
 | `str` | `.upper()`, `.lower()`, `.trim()`, `.contains(sub)`, `.startswith(s)`, `.endswith(s)`, `.replace(old, new)`, `.split(sep)`, `.slice(start, end)` |
-| `list` | `.push(item)`, `.pop()`, `.get(idx)`, `.set(idx, val)`, `.insert(idx, val)`, `.remove(idx)`, `.slice(start, end)`, `.reverse()`, `.sort()`, `.sort_by(key)`, `.concat(other)`, `.join(sep)`, `.enumerate()`, `.to_vector()` |
+| `list` | `.push(item)`, `.pop()`, `.get(idx)`, `.set(idx, val)`, `.insert(idx, val)`, `.remove(idx)`, `.slice(start, end)`, `.reverse()`, `.sort()`, `.sort_by(key)`, `.concat(other)`, `.join(sep)`, `.enumerate()`, `.to_vec()` |
 | `dict` | `.get(key)`, `.set(key, val)`, `.keys()`, `.values()`, `.items()` |
-| `vector` | `.get(idx)`, `.fillna(val)`, `.astype(dtype)`, `.to_list()`, `.enumerate()` |
+| `vec` | `.get(idx)`, `.fillna(val)`, `.astype(dtype)`, `.to_list()`, `.enumerate()` |
 
 ## 13) Feature Status Matrix
 
 | Feature | Status | Notes |
 |---|---|---|
 | Indentation blocks | Implemented | Triggered after `:` and `->` |
-| `module` / `use` same-file | Implemented | `use ID` |
-| `use STRING` file imports | Implemented | Relative and absolute file paths |
-| Stdlib string imports (`use 'std/name'`) | Implemented | Resolved via stdlib root |
+| `module` / `incl` same-file | Implemented | `incl ID` |
+| `incl STRING` file imports | Implemented | Relative and absolute file paths |
+| Stdlib string imports (`incl 'std/name'`) | Implemented | Resolved via stdlib root |
 | Named functions and lambdas | Implemented | Parenthesized params required |
 | Return type annotations | Implemented | `fn f(x) int -> x + 1`; checked at compile time, and at runtime in fully annotated (native) functions |
 | Default parameters | Implemented | `fn f(x, y = 0) -> x + y`; literals only, required-before-defaults |
-| Typed params / typed var declarations | Implemented | `int`, `float`, `str`, `bool`, `any`, `list`, `dict`, `vector`, `result`, `resource`, `fn`, struct names (see §9) |
+| Typed params / typed var declarations | Implemented | `int`, `float`, `str`, `bool`, `any`, `list`, `dict`, `vec`, `result`, `resource`, `fn`, struct names (see §9) |
 | Generic type expressions | Not implemented | e.g. `list[int]` unsupported |
 | List literals (`list [...]`) | Implemented | Keyword required |
-| Vector literals (`vector [...]`) | Implemented | 1D only |
+| Vector literals (`vec [...]`) | Implemented | 1D only |
 | Dict literals (`dict {k: v}`) | Implemented | Keys are identifiers in source |
 | Loop control (`break`, `continue`) | Implemented | Exits/skips nearest enclosing loop; compile error outside loops |
-| Method dispatch (`value.method()`) | Implemented | String, list, dict, vector methods |
-| Module-qualified call syntax (`alias.fn(...)`) | Implemented | Requires `use ... as alias` |
+| Method dispatch (`value.method()`) | Implemented | String, list, dict, vec methods |
+| Module-qualified call syntax (`alias.fn(...)`) | Implemented | Requires `incl ... as alias` |
 | Dot data access on dict | Implemented | read/write |
 | Result values `ok` / `err` | Implemented | Analyzer has `ResultType` |
 | `when` result patterns | Implemented | `ok x`, `err e` |
@@ -520,7 +520,7 @@ Result construction and use:
 | String interpolation (`!{expr}`) | Not implemented | Deferred from v0.1 |
 | `unwrap_or`, `map_ok`, etc. | Future | Not implemented yet |
 | Struct methods / impl blocks | Future | Not implemented |
-| `table` type | Not implemented | Runtime representation only; see `tables_v0_1_spec.md` |
+| `tbl` type | Not implemented | Runtime representation only; see `tables_v0_1_spec.md` |
 | Tensor type | Future | Not implemented |
 
 ## 14) Known Limits / Current Diagnostics

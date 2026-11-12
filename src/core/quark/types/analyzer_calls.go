@@ -122,7 +122,7 @@ func (a *Analyzer) resolveMethodCall(
 				a.callPlans[planNode].ArgTypesChecked = true
 				// Flow typing: widen element type on mutation methods
 				a.widenReceiverOnMutation(receiverNode, receiverType, methodName, argTypes)
-				if methodName == "to_vector" {
+				if methodName == "to_vec" {
 					return methodCallResult{returnType: a.inferToVectorType(receiverType, errorNode), resolved: true}
 				}
 				if methodName == "astype" {
@@ -850,7 +850,7 @@ func typeKeyToReceiverString(key builtins.TypeKey) string {
 	case builtins.TypeDictAny:
 		return "dict"
 	case builtins.TypeVectorAny:
-		return "vector"
+		return "vec"
 	}
 	return string(key)
 }

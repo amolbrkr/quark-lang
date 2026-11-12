@@ -1,7 +1,7 @@
 // smoke_types.qrk
 // Covers: core value types + typed declarations + dict static/dynamic keys.
 
-println('== smoke: types ==')
+print('== smoke: types ==')
 
 // Basic literals
 i = 42
@@ -10,11 +10,11 @@ s = 'hello'
 b = true
 n = null
 
-println(i)
-println(f)
-println(s)
-println(b)
-println(n)
+print(i)
+print(f)
+print(s)
+print(b)
+print(n)
 
 // Typed declarations (parser/analyzer coverage)
 count: int = 3
@@ -22,64 +22,64 @@ name: str = 'quark'
 xs: list = list [1, 2, 3]
 d: dict = dict { a: 1, b: 2 }
 
-println(count)
-println(name)
-println(len(xs))
-println(d.a)
+print(count)
+print(name)
+print(len(xs))
+print(d.a)
 
 // Dict static key access
 d.c = 99
-println(d.c)
+print(d.c)
 
 // Dict dynamic key access via methods
 keys = list ['a', 'b', 'c', 'missing']
 for k in keys:
-    println(d.get(k))
+    print(d.get(k))
 
 // Set dynamic key
 d = d.set('z', 123)
-println(d.z)
+print(d.z)
 
 // Vector MVP (1D only)
-v = vector [1, 2, 3, 4]
-println(v)
-println(len(v))
+v = vec [1, 2, 3, 4]
+print(v)
+print(len(v))
 
 w = v + 1
-println(w)
+print(w)
 
 u = v * w
-println(u)
+print(u)
 
-println(sum(v))
-println(min(v))
-println(max(v))
+print(sum(v))
+print(min(v))
+print(max(v))
 
 // Vector phase-2 helpers
 vi = v.astype('i64')
-println(vi)
-println(sum(vi))
-println(min(vi))
-println(max(vi))
+print(vi)
+print(sum(vi))
+print(min(vi))
+print(max(vi))
 
 vplus = vi + 2
-println(vplus)
+print(vplus)
 
 vmul = vi * vplus
-println(vmul)
+print(vmul)
 
 vfilled = vi.fillna(0)
-println(vfilled)
+print(vfilled)
 
-println(type(v))
-println(type(vi))
+print(type(v))
+print(type(vi))
 
-v_from_list = list [10, 20, 30].to_vector()
-println(v_from_list)
-println(sum(v_from_list))
+v_from_list = list [10, 20, 30].to_vec()
+print(v_from_list)
+print(sum(v_from_list))
 
-// to_list conversion (vector -> list)
+// to_list conversion (vec -> list)
 back_to_list = v_from_list.to_list()
-println(back_to_list)
-println(type(back_to_list))
-println(back_to_list.get(0))
+print(back_to_list)
+print(type(back_to_list))
+print(back_to_list.get(0))

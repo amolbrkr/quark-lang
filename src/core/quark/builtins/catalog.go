@@ -15,7 +15,7 @@ const (
 	TypeListInt    TypeKey = "list_int"
 	TypeListString TypeKey = "list_str"
 	TypeDictAny    TypeKey = "dict_any"
-	TypeVectorAny  TypeKey = "vector_any"
+	TypeVectorAny  TypeKey = "vec_any"
 	TypeResultAny  TypeKey = "result_any"
 )
 
@@ -36,7 +36,6 @@ type Spec struct {
 var catalog = []Spec{
 	// I/O (free functions)
 	{Name: "print", Runtime: "q_print", MinArgs: 1, MaxArgs: 5, ParamTypes: []TypeKey{TypeAny, TypeString, TypeInt, TypeString, TypeString}, ReturnType: TypeVoid},
-	{Name: "println", Runtime: "q_println", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeVoid},
 	{Name: "input", Runtime: "q_input", MinArgs: 0, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeString},
 
 	// Conversions (free functions)
@@ -91,7 +90,7 @@ var catalog = []Spec{
 	{Name: "sort_by", Runtime: "q_sort_by", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeListAny, ReceiverType: TypeListAny},
 	{Name: "enumerate", Runtime: "q_enumerate", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeListAny},
 	{Name: "join", Runtime: "q_str_join", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeString, ReceiverType: TypeListAny},
-	{Name: "to_vector", Runtime: "q_to_vector", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeAny, ReceiverType: TypeListAny},
+	{Name: "to_vec", Runtime: "q_to_vec", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeAny, ReceiverType: TypeListAny},
 
 	// Dict methods (receiver = dict)
 	{Name: "get", Runtime: "q_dget", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeAny, ReceiverType: TypeDictAny},

@@ -48,11 +48,11 @@ func extensionDir(t *testing.T) string {
 // Function is a callable shown in completion.
 type Function struct {
 	Name      string `json:"name"`
-	Signature string `json:"signature"`     // e.g. "len(any) int" or "dot(x: vector, y: vector) float"
+	Signature string `json:"signature"`     // e.g. "len(any) int" or "dot(x: vec, y: vec) float"
 	Doc       string `json:"doc,omitempty"` // first comment line above a stdlib function
 }
 
-// Module is a stdlib module importable as `use 'std/<name>'`.
+// Module is a stdlib module importable as `incl 'std/<name>'`.
 type Module struct {
 	Name      string     `json:"name"`
 	Functions []Function `json:"functions"`
@@ -77,8 +77,8 @@ func displayType(k builtins.TypeKey) string {
 		return "list"
 	case strings.HasPrefix(s, "dict"):
 		return "dict"
-	case strings.HasPrefix(s, "vector"):
-		return "vector"
+	case strings.HasPrefix(s, "vec"):
+		return "vec"
 	case strings.HasPrefix(s, "result"):
 		return "result"
 	}
@@ -89,7 +89,7 @@ var receiverNames = map[builtins.TypeKey]string{
 	builtins.TypeString:    "str",
 	builtins.TypeListAny:   "list",
 	builtins.TypeDictAny:   "dict",
-	builtins.TypeVectorAny: "vector",
+	builtins.TypeVectorAny: "vec",
 }
 
 // catalogSignature renders a builtin as name(a: T, ...) R. The catalog has

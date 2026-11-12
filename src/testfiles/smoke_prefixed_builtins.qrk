@@ -1,24 +1,24 @@
-println('== smoke: prefixed builtins ==')
+print('== smoke: prefixed builtins ==')
 
 xs = list [10, 20]
 xs = xs.push(30)
-println(len(xs))
-println(xs.get(1))
+print(len(xs))
+print(xs.get(1))
 
 text = '  hello  '
-println(text.trim())
-println('abcdef'.contains('cde'))
+print(text.trim())
+print('abcdef'.contains('cde'))
 
 m = dict { a: 1, b: 2 }
-println(len(m.keys()))
-println(len(m.values()))
+print(len(m.keys()))
+print(len(m.values()))
 
 items = m.items()
-println(type(items))
+print(type(items))
 
 pairs = list ['x', 'y'].enumerate()
-println(type(pairs))
-println(len(pairs))
+print(type(pairs))
+print(len(pairs))
 
 print('row', '|', 8, 'left', '.')
 print('42', '\n', 8, 'right', '0')

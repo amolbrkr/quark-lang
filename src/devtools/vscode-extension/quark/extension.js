@@ -194,7 +194,7 @@ function structFields(text) {
 }
 
 // importedModules maps each name usable before a dot to the module behind
-// it: `use 'std/io' as io`, `use './other' as o`, `use name` (same file).
+// it: `incl 'std/io' as io`, `incl './other' as o`, `incl name` (same file).
 function importedModules(document) {
 	const text = document.getText();
 	const result = new Map();
@@ -202,7 +202,7 @@ function importedModules(document) {
 	for (const [name, mod] of local) {
 		result.set(name, { name, functions: mod.functions });
 	}
-	const re = new RegExp(`^\\s*use\\s+(?:['"]([^'"]+)['"]|(${IDENT}))(?:\\s+as\\s+(${IDENT}))?`, 'gm');
+	const re = new RegExp(`^\\s*incl\\s+(?:['"]([^'"]+)['"]|(${IDENT}))(?:\\s+as\\s+(${IDENT}))?`, 'gm');
 	let m;
 	while ((m = re.exec(text)) !== null) {
 		const [, importPath, sameFile, alias] = m;
@@ -257,9 +257,9 @@ function typeOfExpression(expr, known, structs) {
 	if (/^['"]/.test(text) || /^(to_str|input)\s*\(/.test(text)) return 'str';
 	if (/^list\s*\[/.test(text) || /^(range|enumerate)\s*\(/.test(text)) return 'list';
 	if (/^dict\s*\{/.test(text)) return 'dict';
-	if (/^vector\s*\[/.test(text)) return 'vector';
+	if (/^vec\s*\[/.test(text)) return 'vec';
 	if (/\.(split|to_list|keys|values|items)\s*\([^()]*\)\s*$/.test(text)) return 'list';
-	if (/\.(to_vector|astype|fillna)\s*\([^()]*\)\s*$/.test(text)) return 'vector';
+	if (/\.(to_vec|astype|fillna)\s*\([^()]*\)\s*$/.test(text)) return 'vec';
 	if (/\.(upper|lower|trim|replace|concat)\s*\([^()]*\)\s*$/.test(text)) return known[text.split('.')[0]] === 'list' ? 'list' : 'str';
 	const ident = text.match(new RegExp(`^(${IDENT})$`));
 	if (ident) return known[ident[1]];
@@ -268,7 +268,7 @@ function typeOfExpression(expr, known, structs) {
 
 function annotationType(annotation, structs) {
 	const t = annotation.trim();
-	if (['str', 'list', 'dict', 'vector'].includes(t)) return t;
+	if (['str', 'list', 'dict', 'vec'].includes(t)) return t;
 	if (structs.has(t)) return `struct:${t}`;
 	return undefined;
 }
@@ -302,7 +302,7 @@ function receiverType(linePrefix, known, structs) {
 	const before = linePrefix.replace(/\.\s*[A-Za-z0-9_]*$/, '');
 	if (/(['"])(?:\\.|(?!\1).)*\1\s*$/.test(before)) return 'str';
 	if (/\blist\s*\[[^\]]*\]\s*$/.test(before)) return 'list';
-	if (/\bvector\s*\[[^\]]*\]\s*$/.test(before)) return 'vector';
+	if (/\bvec\s*\[[^\]]*\]\s*$/.test(before)) return 'vec';
 	if (/\bdict\s*\{[^}]*\}\s*$/.test(before)) return 'dict';
 	const call = before.match(/\.([A-Za-z_][A-Za-z0-9_]*)\s*\([^()]*\)\s*$/);
 	if (call) return typeOfExpression(before.trim(), known, structs);
@@ -415,7 +415,7 @@ async function importCompletions(document) {
 const completionProvider = {
 	provideCompletionItems(document, position, token, context) {
 		const linePrefix = document.lineAt(position.line).text.slice(0, position.character);
-		if (/^\s*use\s+['"][^'"]*$/.test(linePrefix)) {
+		if (/^\s*incl\s+['"][^'"]*$/.test(linePrefix)) {
 			return importCompletions(document);
 		}
 		// Quotes and / only trigger completion for import paths.

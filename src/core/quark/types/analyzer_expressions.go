@@ -250,11 +250,11 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 	if op == token.PLUS || op == token.MINUS || op == token.MULTIPLY || op == token.DIVIDE {
 		if leftIsVec && rightIsVec {
 			if !IsNumeric(leftVec.ElementType) && !isUnknownType(leftVec.ElementType) {
-				a.errorAt(node, "operator '%s' requires numeric vector operands, got %s", node.Token.Type.String(), leftType.String())
+				a.errorAt(node, "operator '%s' requires numeric vec operands, got %s", node.Token.Type.String(), leftType.String())
 				return TypeError
 			}
 			if !IsNumeric(rightVec.ElementType) && !isUnknownType(rightVec.ElementType) {
-				a.errorAt(node, "operator '%s' requires numeric vector operands, got %s", node.Token.Type.String(), rightType.String())
+				a.errorAt(node, "operator '%s' requires numeric vec operands, got %s", node.Token.Type.String(), rightType.String())
 				return TypeError
 			}
 			if leftVec.ElementType.Equals(TypeFloat) || rightVec.ElementType.Equals(TypeFloat) {
@@ -270,7 +270,7 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 		}
 		if leftIsVec && (isNumericScalar(rightType) || isUnknownType(rightType)) {
 			if !IsNumeric(leftVec.ElementType) && !isUnknownType(leftVec.ElementType) {
-				a.errorAt(node, "operator '%s' requires numeric vector operands, got %s", node.Token.Type.String(), leftType.String())
+				a.errorAt(node, "operator '%s' requires numeric vec operands, got %s", node.Token.Type.String(), leftType.String())
 				return TypeError
 			}
 			if op == token.DIVIDE && leftVec.ElementType.Equals(TypeInt) && rightType.Equals(TypeInt) {
@@ -280,7 +280,7 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 		}
 		if rightIsVec && (isNumericScalar(leftType) || isUnknownType(leftType)) {
 			if !IsNumeric(rightVec.ElementType) && !isUnknownType(rightVec.ElementType) {
-				a.errorAt(node, "operator '%s' requires numeric vector operands, got %s", node.Token.Type.String(), rightType.String())
+				a.errorAt(node, "operator '%s' requires numeric vec operands, got %s", node.Token.Type.String(), rightType.String())
 				return TypeError
 			}
 			if op == token.DIVIDE && rightVec.ElementType.Equals(TypeInt) && leftType.Equals(TypeInt) {
@@ -325,16 +325,16 @@ func (a *Analyzer) analyzeOperator(node *ast.TreeNode) Type {
 	case token.LT, token.LTE, token.GT, token.GTE:
 		if leftIsVec || rightIsVec {
 			if leftIsVec && !IsNumeric(leftVec.ElementType) && !isUnknownType(leftVec.ElementType) {
-				a.errorAt(node, "ordering comparison requires numeric vector, got %s", leftType.String())
+				a.errorAt(node, "ordering comparison requires numeric vec, got %s", leftType.String())
 			}
 			if rightIsVec && !IsNumeric(rightVec.ElementType) && !isUnknownType(rightVec.ElementType) {
-				a.errorAt(node, "ordering comparison requires numeric vector, got %s", rightType.String())
+				a.errorAt(node, "ordering comparison requires numeric vec, got %s", rightType.String())
 			}
 			if leftIsVec && !rightIsVec && !isNumericScalar(rightType) && !isUnknownType(rightType) {
-				a.errorAt(node, "cannot compare vector with %s", rightType.String())
+				a.errorAt(node, "cannot compare vec with %s", rightType.String())
 			}
 			if rightIsVec && !leftIsVec && !isNumericScalar(leftType) && !isUnknownType(leftType) {
-				a.errorAt(node, "cannot compare vector with %s", leftType.String())
+				a.errorAt(node, "cannot compare vec with %s", leftType.String())
 			}
 			return &VectorType{ElementType: TypeBool}
 		}
@@ -393,7 +393,7 @@ func (a *Analyzer) analyzeVector(node *ast.TreeNode) Type {
 			continue
 		}
 		if !childType.Equals(TypeInt) && !childType.Equals(TypeFloat) && !childType.Equals(TypeBool) && !childType.Equals(TypeString) {
-			a.errorAt(child, "vector elements must be homogeneous int, float, bool, or str, got %s", childType.String())
+			a.errorAt(child, "vec elements must be homogeneous int, float, bool, or str, got %s", childType.String())
 			elemType = MergeTypes(elemType, TypeAny)
 			continue
 		}
@@ -402,7 +402,7 @@ func (a *Analyzer) analyzeVector(node *ast.TreeNode) Type {
 			continue
 		}
 		if !elemType.Equals(childType) {
-			a.errorAt(child, "vector literal requires homogeneous element types; found %s and %s", elemType.String(), childType.String())
+			a.errorAt(child, "vec literal requires homogeneous element types; found %s and %s", elemType.String(), childType.String())
 			elemType = TypeAny
 		}
 	}
@@ -464,10 +464,10 @@ func (a *Analyzer) analyzeIndex(node *ast.TreeNode) Type {
 			if idxVec.ElementType.Equals(TypeBool) || isUnknownType(idxVec.ElementType) {
 				return vecType
 			}
-			a.errorAt(node.Children[1], "vector mask index requires bool vector, got %s", indexType.String())
+			a.errorAt(node.Children[1], "vec mask index requires bool vec, got %s", indexType.String())
 			return vecType
 		}
-		a.errorAt(node.Children[1], "vector index must be int or bool vector, got %s", indexType.String())
+		a.errorAt(node.Children[1], "vec index must be int or bool vec, got %s", indexType.String())
 		return TypeError
 	}
 	if listType, ok := targetType.(*ListType); ok {

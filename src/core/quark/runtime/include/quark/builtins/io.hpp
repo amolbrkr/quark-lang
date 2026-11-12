@@ -40,7 +40,7 @@ inline void print_qvalue(QValue v) {
     }
 }
 
-// Print without newline
+// print(v): end defaults to '\n', so each call prints its own line.
 inline QValue q_print(QValue v) {
     print_qvalue(v);
     printf("\n");
@@ -112,11 +112,6 @@ inline QValue q_print(QValue v, QValue end, QValue width, QValue align) {
 
 inline QValue q_print(QValue v, QValue end, QValue width, QValue align, QValue pad) {
     return q_print_impl(v, end, width, align, pad);
-}
-
-// Print with newline
-inline QValue q_println(QValue v) {
-    return q_print(v, qv_string("\n"));
 }
 
 // Read a line from stdin (with optional prompt). Returns the line without its

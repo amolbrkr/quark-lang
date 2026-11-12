@@ -25,7 +25,7 @@ inline QValue q_len(QValue v) {
         case QValue::VAL_DICT:
             return qv_int(v.data.dict_val ? static_cast<long long>(v.data.dict_val->entries.size()) : 0);
         default:
-            q_runtime_reportf("runtime error: len() expects str, list, dict, or vector\n");
+            q_runtime_reportf("runtime error: len() expects str, list, dict, or vec\n");
             std::exit(1);
     }
 }
@@ -36,11 +36,11 @@ inline QValue q_iter_get(QValue iterable, QValue index) {
         return q_get(iterable, index);
     }
     if (iterable.type != QValue::VAL_VECTOR) {
-        q_runtime_reportf("runtime error: for-loop iterable must be list, string, or vector\n");
+        q_runtime_reportf("runtime error: for-loop iterable must be list, string, or vec\n");
         std::exit(1);
     }
     if (!q_vec_has_valid_handle(iterable) || !q_vec_validate(*iterable.data.vector_val)) {
-        q_runtime_reportf("runtime error: for-loop iterable vector is invalid\n");
+        q_runtime_reportf("runtime error: for-loop iterable vec is invalid\n");
         std::exit(1);
     }
     if (index.type != QValue::VAL_INT) {
@@ -103,7 +103,7 @@ inline QValue q_int(QValue v) {
             return qv_int(result);
         }
         default: {
-            static const char* names[] = {"int","float","str","bool","null","list","vector","dict","fn","result","resource","struct","table"};
+            static const char* names[] = {"int","float","str","bool","null","list","vec","dict","fn","result","resource","struct","tbl"};
             const char* tname = (v.type >= 0 && v.type <= 12) ? names[v.type] : "unknown";
             q_runtime_reportf("runtime error: to_int() cannot convert %s to int\n", tname);
             std::exit(1);
@@ -134,7 +134,7 @@ inline QValue q_float(QValue v) {
             return qv_float(result);
         }
         default: {
-            static const char* names[] = {"int","float","str","bool","null","list","vector","dict","fn","result","resource","struct","table"};
+            static const char* names[] = {"int","float","str","bool","null","list","vec","dict","fn","result","resource","struct","tbl"};
             const char* tname = (v.type >= 0 && v.type <= 12) ? names[v.type] : "unknown";
             q_runtime_reportf("runtime error: to_float() cannot convert %s to float\n", tname);
             std::exit(1);
@@ -179,13 +179,13 @@ inline QValue q_type(QValue v) {
             if (v.data.table_val && v.data.table_val->def) {
                 return qv_string(v.data.table_val->def->name);
             }
-            return qv_string("table");
+            return qv_string("tbl");
         case QValue::VAL_VECTOR: {
             if (!q_vec_has_valid_handle(v) || !q_vec_validate(*v.data.vector_val)) {
-                return qv_string("vector[invalid]");
+                return qv_string("vec[invalid]");
             }
             char buffer[64];
-            std::snprintf(buffer, sizeof(buffer), "vector[%s]", q_vec_dtype_name(*v.data.vector_val));
+            std::snprintf(buffer, sizeof(buffer), "vec[%s]", q_vec_dtype_name(*v.data.vector_val));
             return qv_string(buffer);
         }
         default:

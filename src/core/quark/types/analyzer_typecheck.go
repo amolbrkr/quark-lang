@@ -29,7 +29,7 @@ func (a *Analyzer) inferBuiltinReturnType(name string, argTypes []Type, callNode
 			_, isVec := t.(*VectorType)
 			isStr := t.Equals(TypeString)
 			if !isList && !isDict && !isVec && !isStr {
-				a.errorAt(callNode, "argument 1 of 'len' expects str, list, dict, or vector, got %s", t.String())
+				a.errorAt(callNode, "argument 1 of 'len' expects str, list, dict, or vec, got %s", t.String())
 			}
 		}
 		return TypeInt
@@ -49,10 +49,10 @@ func (a *Analyzer) inferBuiltinReturnType(name string, argTypes []Type, callNode
 			switch st := t.(type) {
 			case *VectorType:
 				if !IsNumeric(st.ElementType) && st.ElementType != TypeBool && !isUnknownType(st.ElementType) {
-					a.errorAt(callNode, "argument 1 of 'sum' expects numeric or bool vector, got %s", t.String())
+					a.errorAt(callNode, "argument 1 of 'sum' expects numeric or bool vec, got %s", t.String())
 				}
 			default:
-				a.errorAt(callNode, "argument 1 of 'sum' expects numeric or bool vector, got %s", t.String())
+				a.errorAt(callNode, "argument 1 of 'sum' expects numeric or bool vec, got %s", t.String())
 			}
 		}
 		return TypeAny
@@ -61,11 +61,11 @@ func (a *Analyzer) inferBuiltinReturnType(name string, argTypes []Type, callNode
 			t := argTypes[0]
 			if vec, isVec := t.(*VectorType); isVec {
 				if !IsNumeric(vec.ElementType) && !isUnknownType(vec.ElementType) {
-					a.errorAt(callNode, "argument 1 of '%s' with single argument expects numeric vector, got %s", name, t.String())
+					a.errorAt(callNode, "argument 1 of '%s' with single argument expects numeric vec, got %s", name, t.String())
 				}
 				return TypeFloat
 			}
-			a.errorAt(callNode, "argument 1 of '%s' with single argument expects numeric vector, got %s", name, t.String())
+			a.errorAt(callNode, "argument 1 of '%s' with single argument expects numeric vec, got %s", name, t.String())
 			return TypeAny
 		}
 		if len(argTypes) == 2 {
@@ -87,7 +87,7 @@ func (a *Analyzer) inferBuiltinReturnType(name string, argTypes []Type, callNode
 	return TypeAny
 }
 
-// inferToVectorType is the result type of xs.to_vector(): a typed vector when
+// inferToVectorType is the result type of xs.to_vec(): a typed vector when
 // the list's elements are all int, all float, all bool or all str (nulls allowed).
 func (a *Analyzer) inferToVectorType(srcType Type, callNode *ast.TreeNode) Type {
 	if vec, ok := srcType.(*VectorType); ok {
@@ -97,7 +97,7 @@ func (a *Analyzer) inferToVectorType(srcType Type, callNode *ast.TreeNode) Type 
 	listType, ok := srcType.(*ListType)
 	if !ok {
 		if !isUnknownType(srcType) {
-			a.errorAt(callNode, "to_vector expects list or vector input, got %s", srcType.String())
+			a.errorAt(callNode, "to_vec expects list or vec input, got %s", srcType.String())
 		}
 		return TypeAny
 	}
@@ -159,7 +159,7 @@ func (a *Analyzer) inferToVectorType(srcType Type, callNode *ast.TreeNode) Type 
 				kinds++
 			}
 			if kinds > 1 {
-				a.errorAt(callNode, "to_vector requires homogeneous list elements (all int, all float, all bool, or all str)")
+				a.errorAt(callNode, "to_vec requires homogeneous list elements (all int, all float, all bool, or all str)")
 				return TypeAny
 			}
 			if hasInt && !hasFloat {
@@ -182,7 +182,7 @@ func (a *Analyzer) inferToVectorType(srcType Type, callNode *ast.TreeNode) Type 
 		return TypeAny
 	}
 
-	a.errorAt(callNode, "to_vector requires list elements of type int, float, bool, or str, got %s", elem.String())
+	a.errorAt(callNode, "to_vec requires list elements of type int, float, bool, or str, got %s", elem.String())
 	return TypeAny
 }
 

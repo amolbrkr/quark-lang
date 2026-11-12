@@ -45,11 +45,11 @@ inline QValue q_get(QValue list, QValue index) {
         if (index.type == QValue::VAL_VECTOR) {
             return q_vec_mask_filter(list, index);
         }
-        q_runtime_reportf("runtime error: vector index must be int or bool vector\n");
+        q_runtime_reportf("runtime error: vec index must be int or bool vec\n");
         std::exit(1);
     }
     if (list.type != QValue::VAL_LIST || !list.data.list_val) {
-        q_runtime_reportf("runtime error: get() expects list/string/vector as first argument\n");
+        q_runtime_reportf("runtime error: get() expects list/string/vec as first argument\n");
         std::exit(1);
     }
     if (index.type != QValue::VAL_INT) {
@@ -224,7 +224,7 @@ inline QValue q_enumerate(QValue seq) {
     } else if (seq.type == QValue::VAL_VECTOR) {
         len = q_vec_size(seq);
     } else {
-        q_runtime_reportf("runtime error: enumerate() expects list, string, or vector\n");
+        q_runtime_reportf("runtime error: enumerate() expects list, string, or vec\n");
         std::exit(1);
     }
 

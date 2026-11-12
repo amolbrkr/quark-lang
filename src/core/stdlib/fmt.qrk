@@ -1,7 +1,7 @@
 extern 'fmt.hpp'
 
 extern fn fmt_list(lst: list, n: int, show_index: bool) str as 'q_fmt_list'
-extern fn fmt_vector(vec: vector, n: int, show_index: bool) str as 'q_fmt_vector'
+extern fn fmt_vec(v: vec, n: int, show_index: bool) str as 'q_fmt_vec'
 extern fn fmt_dict(dct: dict, n: int, show_index: bool) str as 'q_fmt_dict'
 extern fn fmt_table(df: any, n: int, show_index: bool) str as 'q_fmt_table'
 extern fn fmt_full(x: any) str as 'q_fmt_full'
@@ -10,8 +10,8 @@ module fmt:
     fn show_list(lst: list, n: int = 10, show_index: bool = true) str ->
         fmt_list(lst, n, show_index)
 
-    fn show_vec(vec: vector, n: int = 10, show_index: bool = true) str ->
-        fmt_vector(vec, n, show_index)
+    fn show_vec(v: vec, n: int = 10, show_index: bool = true) str ->
+        fmt_vec(v, n, show_index)
 
     fn show_dict(dct: dict, n: int = 10, show_index: bool = true) str ->
         fmt_dict(dct, n, show_index)
@@ -19,7 +19,7 @@ module fmt:
     fn table(df: any, n: int = 20, show_index: bool = true) str ->
         fmt_table(df, n, show_index)
 
-    // x as println shows it, but with every item of long collections.
+    // x as print shows it, but with every item of long collections.
     fn full(x: any) str ->
         fmt_full(x)
 

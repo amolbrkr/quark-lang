@@ -15,6 +15,7 @@
     "for",
     "if",
     "in",
+    "incl",
     "list",
     "module",
     "null",
@@ -23,8 +24,7 @@
     "result",
     "struct",
     "true",
-    "use",
-    "vector",
+    "vec",
     "when",
     "while"
   ],
@@ -32,10 +32,6 @@
     {
       "name": "print",
       "signature": "print(any, str?, int?, str?, str?)"
-    },
-    {
-      "name": "println",
-      "signature": "println(any)"
     },
     {
       "name": "input",
@@ -199,8 +195,8 @@
         "signature": "join() str"
       },
       {
-        "name": "to_vector",
-        "signature": "to_vector() any"
+        "name": "to_vec",
+        "signature": "to_vec() any"
       }
     ],
     "str": [
@@ -241,18 +237,18 @@
         "signature": "slice(int) str"
       }
     ],
-    "vector": [
+    "vec": [
       {
         "name": "get",
         "signature": "get() any"
       },
       {
         "name": "fillna",
-        "signature": "fillna() vector"
+        "signature": "fillna() vec"
       },
       {
         "name": "astype",
-        "signature": "astype() vector"
+        "signature": "astype() vec"
       },
       {
         "name": "to_list",
@@ -270,33 +266,33 @@
       "functions": [
         {
           "name": "dot",
-          "signature": "dot(x: vector, y: vector) float",
+          "signature": "dot(x: vec, y: vec) float",
           "doc": "Dot product of x and y."
         },
         {
           "name": "axpy",
-          "signature": "axpy(a: float, x: vector, y: vector) vector",
+          "signature": "axpy(a: float, x: vec, y: vec) vec",
           "doc": "a*x + y."
         },
         {
           "name": "scal",
-          "signature": "scal(a: float, x: vector) vector",
+          "signature": "scal(a: float, x: vec) vec",
           "doc": "a*x."
         },
         {
           "name": "nrm2",
-          "signature": "nrm2(x: vector) float",
+          "signature": "nrm2(x: vec) float",
           "doc": "Euclidean norm of x."
         },
         {
           "name": "asum",
-          "signature": "asum(x: vector) float",
+          "signature": "asum(x: vec) float",
           "doc": "Sum of absolute values of x."
         },
         {
           "name": "gemv",
-          "signature": "gemv(a: vector, rows: int, cols: int, x: vector) vector",
-          "doc": "flat vector of length rows * cols; x has length cols."
+          "signature": "gemv(a: vec, rows: int, cols: int, x: vec) vec",
+          "doc": "flat vec of length rows * cols; x has length cols."
         }
       ]
     },
@@ -324,7 +320,7 @@
         },
         {
           "name": "show_vec",
-          "signature": "show_vec(vec: vector, n: int = 10, show_index: bool = true) str"
+          "signature": "show_vec(v: vec, n: int = 10, show_index: bool = true) str"
         },
         {
           "name": "show_dict",
@@ -337,7 +333,7 @@
         {
           "name": "full",
           "signature": "full(x: any) str",
-          "doc": "x as println shows it, but with every item of long collections."
+          "doc": "x as print shows it, but with every item of long collections."
         },
         {
           "name": "head",

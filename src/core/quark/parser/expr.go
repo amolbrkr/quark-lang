@@ -143,7 +143,7 @@ func (p *Parser) prefixParseFn(t token.TokenType) func() *ast.TreeNode {
 		return p.parseResultLiteral
 	case token.LIST:
 		return p.parseListLiteral
-	case token.VECTOR:
+	case token.VEC:
 		return p.parseVectorLiteral
 	case token.DICT:
 		return p.parseDictLiteral
@@ -420,7 +420,7 @@ func (p *Parser) parseDictLiteral() *ast.TreeNode {
 func (p *Parser) parseVectorLiteral() *ast.TreeNode {
 	tok := p.curToken
 	node := ast.NewNode(ast.VectorNode, &tok)
-	p.nextToken() // skip 'vector'
+	p.nextToken() // skip 'vec'
 
 	if !p.expect(token.LBRACKET) {
 		return nil
@@ -435,7 +435,7 @@ func (p *Parser) parseVectorLiteral() *ast.TreeNode {
 			}
 			// 1D vectors only in MVP: reject ';' row separators for now.
 			if p.curToken.Type == token.ILLEGAL && p.curToken.Literal == ";" {
-				p.addError("vector literal currently supports 1D only; ';' rows are not supported yet")
+				p.addError("vec literal currently supports 1D only; ';' rows are not supported yet")
 				return nil
 			}
 

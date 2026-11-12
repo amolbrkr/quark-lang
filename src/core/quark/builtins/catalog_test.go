@@ -116,7 +116,7 @@ func TestCatalog_NoDuplicateMethodsPerReceiver(t *testing.T) {
 // --- Lookup functions ---
 
 func TestLookup_FindsFreeFunctions(t *testing.T) {
-	freeFuncs := []string{"print", "println", "input", "len", "to_str", "to_int",
+	freeFuncs := []string{"print", "input", "len", "to_str", "to_int",
 		"to_float", "to_bool", "type", "range", "abs", "sqrt", "unwrap"}
 	for _, name := range freeFuncs {
 		spec, ok := Lookup(name)
@@ -162,7 +162,7 @@ func TestLookupMethod_FindsStringMethods(t *testing.T) {
 
 func TestLookupMethod_FindsListMethods(t *testing.T) {
 	methods := []string{"push", "pop", "get", "set", "insert", "remove",
-		"slice", "reverse", "enumerate", "join", "to_vector", "concat"}
+		"slice", "reverse", "enumerate", "join", "to_vec", "concat"}
 	for _, name := range methods {
 		spec, ok := LookupMethod(TypeListAny, name)
 		if !ok {

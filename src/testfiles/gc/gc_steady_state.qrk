@@ -1,7 +1,7 @@
 // Runs the same allocation-heavy round repeatedly. Everything a round allocates
 // is garbage once it ends, so after a warm-up round neither the GC heap nor
 // peak RSS should grow. integration_gc_test.go compares the two reports.
-use 'std/io' as io
+incl 'std/io' as io
 
 extern 'gcstats.hpp'
 extern fn gc_live() int as 'q_test_gc_live'
@@ -32,10 +32,10 @@ fn churn(path) ->
         d.set('another_long_dictionary_key_name', xs)
         d.set('a_third_long_key_for_the_leak_check', s)
         d.set('a_fourth_long_key_for_the_leak_check', i)
-        // vectors, including a string vector with nulls
-        v = range(64).to_vector().astype('f64') * 2.0
+        // vectors, including a string vec with nulls
+        v = range(64).to_vec().astype('f64') * 2.0
         m = v[v > 10.0]
-        sv = list ['a', null, 'a string longer than sixteen bytes'].to_vector()
+        sv = list ['a', null, 'a string longer than sixteen bytes'].to_vec()
         // closures, structs, results
         f = make_counter(i)
         f()
@@ -51,7 +51,7 @@ fn churn(path) ->
 
 fn report(label) ->
     gc_collect()
-    println(label + ' ' + to_str(gc_live()) + ' ' + to_str(peak_rss()))
+    print(label + ' ' + to_str(gc_live()) + ' ' + to_str(peak_rss()))
 
 path = './gc_steady_state.tmp'
 churn(path)

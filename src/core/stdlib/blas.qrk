@@ -12,29 +12,29 @@
 extern link 'openblas'
 extern 'blas_glue.hpp'
 
-extern fn blas_dot(x: vector, y: vector) float as 'qblas_dot'
-extern fn blas_axpy(a: float, x: vector, y: vector) vector as 'qblas_axpy'
-extern fn blas_scal(a: float, x: vector) vector as 'qblas_scal'
-extern fn blas_nrm2(x: vector) float as 'qblas_nrm2'
-extern fn blas_asum(x: vector) float as 'qblas_asum'
-extern fn blas_gemv(a: vector, rows: int, cols: int, x: vector) vector as 'qblas_gemv'
+extern fn blas_dot(x: vec, y: vec) float as 'qblas_dot'
+extern fn blas_axpy(a: float, x: vec, y: vec) vec as 'qblas_axpy'
+extern fn blas_scal(a: float, x: vec) vec as 'qblas_scal'
+extern fn blas_nrm2(x: vec) float as 'qblas_nrm2'
+extern fn blas_asum(x: vec) float as 'qblas_asum'
+extern fn blas_gemv(a: vec, rows: int, cols: int, x: vec) vec as 'qblas_gemv'
 
 module blas:
     // Dot product of x and y.
-    fn dot(x: vector, y: vector) float -> blas_dot(x, y)
+    fn dot(x: vec, y: vec) float -> blas_dot(x, y)
 
     // a*x + y.
-    fn axpy(a: float, x: vector, y: vector) vector -> blas_axpy(a, x, y)
+    fn axpy(a: float, x: vec, y: vec) vec -> blas_axpy(a, x, y)
 
     // a*x.
-    fn scal(a: float, x: vector) vector -> blas_scal(a, x)
+    fn scal(a: float, x: vec) vec -> blas_scal(a, x)
 
     // Euclidean norm of x.
-    fn nrm2(x: vector) float -> blas_nrm2(x)
+    fn nrm2(x: vec) float -> blas_nrm2(x)
 
     // Sum of absolute values of x.
-    fn asum(x: vector) float -> blas_asum(x)
+    fn asum(x: vec) float -> blas_asum(x)
 
-    // Matrix-vector product. a is a rows x cols matrix stored row-major as a
-    // flat vector of length rows * cols; x has length cols.
-    fn gemv(a: vector, rows: int, cols: int, x: vector) vector -> blas_gemv(a, rows, cols, x)
+    // Matrix-vec product. a is a rows x cols matrix stored row-major as a
+    // flat vec of length rows * cols; x has length cols.
+    fn gemv(a: vec, rows: int, cols: int, x: vec) vec -> blas_gemv(a, rows, cols, x)

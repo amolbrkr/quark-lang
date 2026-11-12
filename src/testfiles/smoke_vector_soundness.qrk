@@ -1,32 +1,32 @@
-println('== smoke: vector soundness ==')
+print('== smoke: vec soundness ==')
 
-a = vector [1, 2, 3]
-b = vector [1.5, 2.5, 3.5]
-println(type(a + b))
-println(sum(a + b))
-println(type(a + 1.5))
-println(sum(a + 1.5))
+a = vec [1, 2, 3]
+b = vec [1.5, 2.5, 3.5]
+print(type(a + b))
+print(sum(a + b))
+print(type(a + 1.5))
+print(sum(a + 1.5))
 
-vi = vector [1, 2, 3]
+vi = vec [1, 2, 3]
 vf = vi.astype('f64')
-println(type(vf))
-println(type(vf + vi))
-println(sum(vf + vi))
+print(type(vf))
+print(type(vf + vi))
+print(sum(vf + vi))
 
-vb = vector [true, false, true]
-println(type(vb))
-println(sum(vb))
+vb = vec [true, false, true]
+print(type(vb))
+print(sum(vb))
 
-vb2 = list [true, false, null, true].to_vector()
-println(type(vb2))
-println(sum(vb2))
+vb2 = list [true, false, null, true].to_vec()
+print(type(vb2))
+print(sum(vb2))
 
-vn = list [1, null, 3].to_vector()
-println(sum(vn))
-println(min(vn))
-println(max(vn))
+vn = list [1, null, 3].to_vec()
+print(sum(vn))
+print(min(vn))
+print(max(vn))
 
 acc = 0
-for x in vector [1, 2, 3, 4, 5]:
+for x in vec [1, 2, 3, 4, 5]:
     acc = acc + x
-println(acc)
+print(acc)

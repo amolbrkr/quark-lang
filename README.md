@@ -33,14 +33,14 @@ native code.
 // A list holds anything: here, one CSV row
 row = list ['Pune', 31.5, true]
 row.push(list [1, 2])            // lists nest and grow in place
-println(len(row))                // 4
+print(len(row))                // 4
 
 // A vector is one typed column
-temps = vector [31.5, 29.0, 33.1, 38.2]
-println(type(temps))             // vector[f64]
+temps = vec [31.5, 29.0, 33.1, 38.2]
+print(type(temps))             // vec[f64]
 fahrenheit = temps * 1.8 + 32.0  // element-wise, no loop
 hot = temps[temps > 30.0]        // filter with a boolean mask
-println(max(hot))                // 38.2
+print(max(hot))                // 38.2
 ```
 
 Keeping the two apart lets each one be good at its job. A list doesn't have to
@@ -167,7 +167,7 @@ You now have a `quark` executable in `src/core/quark`.
 Create a file `hello.qrk`:
 
 ```quark
-println('Hello, Quark!')
+print('Hello, Quark!')
 ```
 
 Compile and run it:
@@ -267,7 +267,7 @@ label: str = 'hello'
 
 If the right-hand side does not match the annotation, you get a compile-time
 error. The available annotation names are `int`, `float`, `str`, `bool`, `any`,
-`result`, `list`, `dict`, `vector`, `resource` (a native handle, such as an
+`result`, `list`, `dict`, `vec`, `resource` (a native handle, such as an
 open file from `std/io`), `fn` (a function value of any signature), and any
 `struct` type you define. Generic forms like `list[int]` are
 **not** supported.
@@ -284,12 +284,12 @@ the same rules.
 ### Printing and input
 
 ```quark
-println('hello')              // value followed by a newline
+print('hello')              // value followed by a newline
 print('no newline by default?') // print also writes a trailing newline by default
 name = input('Your name: ')   // read a line from stdin (prompt is optional)
 ```
 
-- `println(value)` writes `value` followed by a newline.
+- `print(value)` writes `value` followed by a newline.
 - `print(value, end, width, align, pad)` writes `value` with up to four optional
   formatting arguments (custom line terminator, minimum field width, alignment,
   and pad character).
@@ -298,15 +298,15 @@ name = input('Your name: ')   // read a line from stdin (prompt is optional)
   gives `''`), so `while true: line = input(); if line == null: break` reads
   stdin to the end.
 
-`println` and `to_str` show a collection's contents. Strings inside it are quoted
+`print` and `to_str` show a collection's contents. Strings inside it are quoted
 and dict keys are sorted. A collection with more than 100 items shows its first
 and last 5 and a count; `fmt.full(x)` from `std/fmt` gives every item:
 
 ```quark
-println(list [1, 'a', null])              // [1, 'a', null]
-println(dict {name: 'Ada', age: 36})      // {age: 36, name: 'Ada'}
-println(range(1000))                      // [0, 1, 2, 3, 4, ..., 995, 996, 997, 998, 999] (1000 items)
-println(ok 5)                             // ok 5
+print(list [1, 'a', null])              // [1, 'a', null]
+print(dict {name: 'Ada', age: 36})      // {age: 36, name: 'Ada'}
+print(range(1000))                      // [0, 1, 2, 3, 4, ..., 995, 996, 997, 998, 999] (1000 items)
+print(ok 5)                             // ok 5
 ```
 
 ### Operators and precedence
@@ -332,12 +332,12 @@ From lowest to highest binding:
 | 12 (highest) | postfix `.` `[]` `()` |
 
 ```quark
-println(1 + 2 * 3)      // 7
-println(2 ** 3 ** 2)    // 512  (right-associative: 2 ** (3 ** 2))
-println(-5)             // -5
-println(-2 ** 2)        // -4   (** binds tighter, as in math: -(2 ** 2))
-println((-2) ** 2)      // 4
-println(!false)         // true
+print(1 + 2 * 3)      // 7
+print(2 ** 3 ** 2)    // 512  (right-associative: 2 ** (3 ** 2))
+print(-5)             // -5
+print(-2 ** 2)        // -4   (** binds tighter, as in math: -(2 ** 2))
+print((-2) ** 2)      // 4
+print(!false)         // true
 ```
 
 Assignment is a statement, not a chainable expression: `a = b = 1` is a
@@ -345,7 +345,7 @@ compile-time error.
 
 Ints are 64-bit, and overflow is a runtime error rather than a silent wrap.
 `==` compares lists, dicts and results by value, so `list [1, 2] == list [1, 2]`
-is `true`. Vectors compare element-wise and produce a `vector[bool]`.
+is `true`. Vectors compare element-wise and produce a `vec[bool]`.
 
 ### Strings
 
@@ -356,12 +356,12 @@ compile error. (String interpolation is planned but not yet available.)
 Strings carry methods, called with dot syntax, and they chain:
 
 ```quark
-println('  Quark  '.trim().upper())   // QUARK
-println('hello world'.split(' ').join('-'))  // hello-world
-println('abcdef'.slice(1, 4))         // bcd
-println('hello'.contains('ell'))      // true
-println('Hello, ' + 'Quark')          // Hello, Quark
-println('n = ' + to_str(3))           // n = 3: + joins strings only
+print('  Quark  '.trim().upper())   // QUARK
+print('hello world'.split(' ').join('-'))  // hello-world
+print('abcdef'.slice(1, 4))         // bcd
+print('hello'.contains('ell'))      // true
+print('Hello, ' + 'Quark')          // Hello, Quark
+print('n = ' + to_str(3))           // n = 3: + joins strings only
 ```
 
 See the [string methods table](#string-methods-str) for the full set.
@@ -373,10 +373,10 @@ convert to `bool` explicitly:
 
 ```quark
 if 'non-empty':       // truthy
-    println('yes')
+    print('yes')
 
 if 0:                 // falsy
-    println('never')
+    print('never')
 ```
 
 `and` / `or` short-circuit and return one of their operands (Python-style), while
@@ -387,12 +387,12 @@ Check results with `is_ok(r)`, `is_err(r)` or `when`. Reduce a vector comparison
 with `all(mask)` or `any(mask)`:
 
 ```quark
-a = vector [1, 2, 3]
-b = vector [1, 0, 3]
+a = vec [1, 2, 3]
+b = vec [1, 0, 3]
 if all(a == b):
-    println('same')
+    print('same')
 else:
-    println('different')   // different
+    print('different')   // different
 ```
 
 ### Conditionals and the ternary
@@ -408,7 +408,7 @@ fn classify(n) ->
     else:
         'positive'
 
-println(classify(10))   // positive
+print(classify(10))   // positive
 ```
 
 The ternary is an expression:
@@ -416,7 +416,7 @@ The ternary is an expression:
 ```quark
 x = 7
 label = 'big' if x > 5 else 'small'
-println(label)          // big
+print(label)          // big
 ```
 
 ### Pattern matching with `when`
@@ -431,7 +431,7 @@ fn describe(n) ->
         1 or 2 or 3 -> 'small'
         _ -> 'many'
 
-println(describe(2))    // small
+print(describe(2))    // small
 ```
 
 `when` is an expression, so its value can be assigned directly:
@@ -442,19 +442,19 @@ size = when n:
     0 -> 'none'
     1 or 2 -> 'few'
     _ -> 'many'
-println(size)           // few
+print(size)           // few
 ```
 
 ### Loops
 
-`for` iterates over a `list`, `vector`, or `str`. `range` produces a list of
+`for` iterates over a `list`, `vec`, or `str`. `range` produces a list of
 integers — `range(end)`, `range(start, end)`, or `range(start, end, step)`:
 
 ```quark
 total = 0
 for i in range(1, 6):   // 1, 2, 3, 4, 5
     total = total + i
-println(total)          // 15
+print(total)          // 15
 ```
 
 `while` repeats while its condition is truthy. `break` and `continue` work inside
@@ -463,7 +463,7 @@ either loop (using them outside a loop is a compile-time error):
 ```quark
 count = 3
 while count > 0:
-    println(count)
+    print(count)
     count = count - 1
 ```
 
@@ -474,7 +474,7 @@ required. The body may be a single expression after `->`:
 
 ```quark
 fn add(x, y) -> x + y
-println(add(2, 3))      // 5
+print(add(2, 3))      // 5
 ```
 
 …or an indented block (the last expression is the result):
@@ -486,7 +486,7 @@ fn abs_diff(a, b) ->
     else:
         b - a
 
-println(abs_diff(3, 8)) // 5
+print(abs_diff(3, 8)) // 5
 ```
 
 **Return type annotations** go between the `)` and the `->`. They are checked at
@@ -502,8 +502,8 @@ list), and required parameters must come before defaulted ones:
 
 ```quark
 fn add_n(x, n = 1) -> x + n
-println(add_n(5))       // 6
-println(add_n(5, 10))   // 15
+print(add_n(5))       // 6
+print(add_n(5, 10))   // 15
 ```
 
 ### Lambdas and closures
@@ -512,7 +512,7 @@ A lambda is `fn(params) -> expression`. Assign it to a variable to name it:
 
 ```quark
 inc = fn(x) -> x + 1
-println(inc(41))        // 42
+print(inc(41))        // 42
 ```
 
 Lambdas capture variables from the enclosing scope (this is what makes them
@@ -521,7 +521,7 @@ closures):
 ```quark
 base = 100
 bump = fn(x) -> x + base   // captures `base`
-println(bump(5))           // 105
+print(bump(5))           // 105
 ```
 
 You can build higher-order functions, but note a current parser limitation: you
@@ -534,7 +534,7 @@ fn make_adder(n) ->
     f                       // return the closure
 
 add5 = make_adder(5)
-println(add5(10))          // 15
+print(add5(10))          // 15
 
 // fn make_adder(n) -> fn(x) -> x + n   // does NOT parse yet
 ```
@@ -546,12 +546,12 @@ require a function value:
 
 ```quark
 fn apply(f: fn, x: int) -> f(x)
-println(apply(inc, 1))           // 2
-println(apply(fn(v) -> v * 2, 4)) // 8
+print(apply(inc, 1))           // 2
+print(apply(fn(v) -> v * 2, 4)) // 8
 
 fn pick(up: bool) fn -> inc if up else fn(v) -> v - 1
 down = pick(false)
-println(down(10))                // 9
+print(down(10))                // 9
 ```
 
 `fn` says nothing about the signature (`fn(int) int` isn't a type), but the
@@ -582,10 +582,10 @@ The pipe operator `|` feeds the left value in as the first argument of the call 
 the right. It makes left-to-right data transformations read naturally:
 
 ```quark
-'hello'.upper() | println()        // HELLO
+'hello'.upper() | print()        // HELLO
 
 inc = fn(x) -> x + 1
-5 | inc() | println()              // 6
+5 | inc() | print()              // 6
 ```
 
 Pipes cooperate with default parameters — `5 | add_n()` fills `n` with its
@@ -605,12 +605,12 @@ fn safe_div(a, b) ->
         ok (a / b)
 
 when safe_div(10, 2):
-    ok value -> println(value)     // 5.0
-    err msg  -> println(msg)
+    ok value -> print(value)     // 5.0
+    err msg  -> print(msg)
 
 when safe_div(10, 0):
-    ok value -> println(value)
-    err msg  -> println(msg)       // division by zero
+    ok value -> print(value)
+    err msg  -> print(msg)       // division by zero
 ```
 
 Helper builtins: `is_ok(r)`, `is_err(r)`, and `unwrap(r)` (which aborts loudly if
@@ -625,9 +625,9 @@ required in the literal:
 ```quark
 nums = list [3, 1, 2]
 nums.push(4)                 // append (mutates in place)
-println(len(nums))           // 4
-println(nums.get(0))         // 3
-println(nums.reverse().join('-'))  // 4-2-1-3
+print(len(nums))           // 4
+print(nums.get(0))         // 3
+print(nums.reverse().join('-'))  // 4-2-1-3
 ```
 
 Index with `[]` (negative indices count from the end); assign to an index to
@@ -635,9 +635,9 @@ replace an element:
 
 ```quark
 xs = list [10, 20, 30]
-println(xs[-1])              // 30
+print(xs[-1])              // 30
 xs[0] = 99
-println(xs[0])               // 99
+print(xs[0])               // 99
 ```
 
 See the [list methods table](#list-methods-list) for the full set.
@@ -650,13 +650,13 @@ literal are written as bare identifiers:
 ```quark
 user = dict { name: 'ada', city: 'paris' }
 
-println(user.name)           // ada — dot read
+print(user.name)           // ada — dot read
 user.city = 'london'         // dot write
-println(user.city)           // london
+print(user.city)           // london
 
 user = user.set('lang', 'en')   // .set returns the updated dict
-println(user.lang)           // en
-println(user.get('missing')) // null — missing keys read as null
+print(user.lang)           // en
+print(user.get('missing')) // null — missing keys read as null
 ```
 
 The analyzer infers a value type from the literal. Storing a value of a
@@ -673,18 +673,18 @@ comparisons apply element-wise across the whole vector, which is convenient for
 numeric work:
 
 ```quark
-v = vector [1, 2, 3, 4]
-println(type(v))             // vector[i64]
+v = vec [1, 2, 3, 4]
+print(type(v))             // vec[i64]
 
-w = v + 10                   // element-wise add -> vector [11, 12, 13, 14]
-println(sum(w))              // 50.0  (vector reductions return a float)
+w = v + 10                   // element-wise add -> vec [11, 12, 13, 14]
+print(sum(w))              // 50.0  (vector reductions return a float)
 
 mask = v > 2                 // element-wise compare -> bool vector
-println(sum(mask))           // 2.0 (true counts as 1)
+print(sum(mask))           // 2.0 (true counts as 1)
 ```
 
 Vectors support `.get`, `.fillna` (replace nulls), `.astype` (cast dtype),
-`.to_list` and `.enumerate`. Convert a list with `.to_vector()`. You can also index a vector with a
+`.to_list` and `.enumerate`. Convert a list with `.to_vec()`. You can also index a vector with a
 boolean mask vector to filter it: `v[v > 2]`.
 
 ### Structs
@@ -706,8 +706,8 @@ multi-line literals are allowed:
 
 ```quark
 c = Customer { id: 1, name: 'Alice', city: 'NYC' }
-println(c.age)        // 0   (used the default)
-println(type(c))      // Customer
+print(c.age)        // 0   (used the default)
+print(type(c))      // Customer
 
 c3 = Customer {
     id: 3
@@ -730,7 +730,7 @@ Struct values are **immutable**: there is no `c.field = ...` assignment. To
 
 ```quark
 older = Customer { id: c.id, name: c.name, age: c.age + 1, city: c.city }
-println(older.age)    // 1
+print(older.age)    // 1
 ```
 
 Structs may be passed to and returned from functions and stored in lists. In v0.1
@@ -739,7 +739,7 @@ fields explicitly).
 
 ### Modules and imports
 
-A module groups functions under a name. Import it with `use`, and the recommended
+A module groups functions under a name. Import it with `incl`, and the recommended
 form binds an alias you then qualify calls with.
 
 **Same-file module:**
@@ -749,9 +749,9 @@ module mathx:
     fn square(x) -> x * x
     fn cube(x) -> x * x * x
 
-use mathx as m
-println(m.square(9))   // 81
-println(m.cube(3))     // 27
+incl mathx as m
+print(m.square(9))   // 81
+print(m.cube(3))     // 27
 ```
 
 **File import** (relative or absolute path, no extension). The imported file
@@ -765,19 +765,19 @@ module helpers:
 ```
 
 ```quark
-use './lib/helpers' as h
-println(h.format_name('Ada'))   // Name: Ada
+incl './lib/helpers' as h
+print(h.format_name('Ada'))   // Name: Ada
 ```
 
 **Standard library import** (the `std/` prefix; see
 [stdlib modules](#standard-library-modules)):
 
 ```quark
-use 'std/io' as io
-use 'std/fmt' as fmt
+incl 'std/io' as io
+incl 'std/fmt' as fmt
 
-println(io.exists('hello.qrk'))         // true / false
-println(fmt.show_list(list [3, 1, 2]))  // formatted, readable list
+print(io.exists('hello.qrk'))         // true / false
+print(fmt.show_list(list [3, 1, 2]))  // formatted, readable list
 
 exists = io.exists                      // a module member as a value
 ```
@@ -793,8 +793,8 @@ exists = io.exists                      // a module member as a value
 qualifies the `module` block's members. Functions, variables, `struct`s and
 `extern fn`s defined outside the `module` block (in your own libraries and in
 the stdlib) become global names in the importing program, alias or not. The
-stdlib's native bindings are an example: after `use 'std/fmt' as fmt`,
-`fmt_vector(v, 10, true)` is callable, although the intended API is
+stdlib's native bindings are an example: after `incl 'std/fmt' as fmt`,
+`fmt_vec(v, 10, true)` is callable, although the intended API is
 `fmt.show_vec(v)`. Quark has no access modifiers; put a library's public API in
 its `module` block and treat its other top-level names as internal.
 
@@ -808,15 +808,14 @@ required** for them. (The `std/io` and `std/fmt` modules are separate; see
 
 | Function | Arity | Returns | Notes |
 |---|---:|---|---|
-| `print` | 1–5 | — | value plus optional end, width, align, pad |
-| `println` | 1 | — | value followed by a newline |
+| `print` | 1–5 | — | value, then `end` (default `'\n'`); optional width, align, pad |
 | `input` | 0–1 | str | optional string prompt |
-| `len` | 1 | int | length of str / list / dict / vector |
+| `len` | 1 | int | length of str / list / dict / vec |
 | `to_str` | 1 | str | convert to string |
 | `to_int` | 1 | int | parse/convert; runtime error if invalid |
 | `to_float` | 1 | float | parse/convert; runtime error if invalid |
 | `to_bool` | 1 | bool | truthiness conversion |
-| `type` | 1 | str | runtime type name (e.g. `vector[i64]`, `Customer`) |
+| `type` | 1 | str | runtime type name (e.g. `vec[i64]`, `Customer`) |
 | `is_ok` | 1 | bool | true if a result is `ok` |
 | `is_err` | 1 | bool | true if a result is `err` |
 | `unwrap` | 1 | any | value of an `ok`; aborts on `err` |
@@ -829,8 +828,8 @@ required** for them. (The `std/io` and `std/fmt` modules are separate; see
 | `floor` | 1 | int | round toward −∞ |
 | `ceil` | 1 | int | round toward +∞ |
 | `round` | 1 | int | round to nearest int |
-| `all` | 1 | bool | true if every non-null element of a `vector[bool]` is true |
-| `any` | 1 | bool | true if any non-null element of a `vector[bool]` is true |
+| `all` | 1 | bool | true if every non-null element of a `vec[bool]` is true |
+| `any` | 1 | bool | true if any non-null element of a `vec[bool]` is true |
 
 ### Methods by receiver type
 
@@ -865,7 +864,7 @@ required** for them. (The `std/io` and `std/fmt` modules are separate; see
 | `.concat(other)` | concatenate two lists |
 | `.join(sep)` | join into a string |
 | `.enumerate()` | list of `{ index, value }` records |
-| `.to_vector()` | convert to a typed vector |
+| `.to_vec()` | convert to a typed vector |
 
 #### Dict methods (`dict`)
 
@@ -877,7 +876,7 @@ required** for them. (The `std/io` and `std/fmt` modules are separate; see
 | `.values()` | list of values |
 | `.items()` | list of `{ key, value }` records |
 
-#### Vector methods (`vector`)
+#### Vector methods (`vec`)
 
 | Method | Description |
 |---|---|
@@ -893,13 +892,13 @@ These ship under `src/core/stdlib` and are imported with the `std/` prefix:
 
 | Module | Import | Highlights |
 |---|---|---|
-| `io` | `use 'std/io' as io` | `io.open`, `io.read`, `io.write`, `io.close`, `io.seek`, `io.exists`, and `io.seek_set` / `io.seek_cur` / `io.seek_end` |
-| `fmt` | `use 'std/fmt' as fmt` | `fmt.show_list`, `fmt.show_vec`, `fmt.show_dict`, `fmt.table`, `fmt.head`, `fmt.tail` for readable rendering |
-| `sys` | `use 'std/sys' as sys` | `sys.args()` (command-line arguments), `sys.env(name)` (environment variable or `null`), `sys.exit(code)` |
-| `csv` | `use 'std/csv' as csv` | `csv.parse(text, sep)` and `csv.read(path, sep)` (RFC 4180 quoting; rows of `str` fields) |
-| `time` | `use 'std/time' as time` | `time.now()` (epoch seconds), `time.clock()` (monotonic seconds, for timing), `time.sleep(seconds)` |
-| `random` | `use 'std/random' as random` | `random.seed(n)`, `random.uniform()`, `random.randint(lo, hi)`, `random.choice(xs)`, `random.shuffle(xs)` |
-| `blas` | `use 'std/blas' as blas` | `blas.dot`, `blas.axpy`, `blas.scal`, `blas.nrm2`, `blas.asum`, `blas.gemv` over f64 vectors via OpenBLAS (needs `libopenblas-dev` or `brew install openblas`) |
+| `io` | `incl 'std/io' as io` | `io.open`, `io.read`, `io.write`, `io.close`, `io.seek`, `io.exists`, and `io.seek_set` / `io.seek_cur` / `io.seek_end` |
+| `fmt` | `incl 'std/fmt' as fmt` | `fmt.show_list`, `fmt.show_vec`, `fmt.show_dict`, `fmt.table`, `fmt.head`, `fmt.tail` for readable rendering |
+| `sys` | `incl 'std/sys' as sys` | `sys.args()` (command-line arguments), `sys.env(name)` (environment variable or `null`), `sys.exit(code)` |
+| `csv` | `incl 'std/csv' as csv` | `csv.parse(text, sep)` and `csv.read(path, sep)` (RFC 4180 quoting; rows of `str` fields) |
+| `time` | `incl 'std/time' as time` | `time.now()` (epoch seconds), `time.clock()` (monotonic seconds, for timing), `time.sleep(seconds)` |
+| `random` | `incl 'std/random' as random` | `random.seed(n)`, `random.uniform()`, `random.randint(lo, hi)`, `random.choice(xs)`, `random.shuffle(xs)` |
+| `blas` | `incl 'std/blas' as blas` | `blas.dot`, `blas.axpy`, `blas.scal`, `blas.nrm2`, `blas.asum`, `blas.gemv` over f64 vectors via OpenBLAS (needs `libopenblas-dev` or `brew install openblas`) |
 
 For deeper behavior notes, see [stdlib.md](stdlib.md). The code-level source of
 truth for builtin names and arities is
@@ -1020,10 +1019,10 @@ verified by compiling and running the bundled examples.
 
 **In progress / not yet usable**
 
-- **`table` literals.** A columnar `table` type is specified in
+- **`tbl` literals.** A columnar `tbl` type is specified in
   [tables_v0_1_spec.md](tables_v0_1_spec.md) and partially scaffolded (the
   runtime has a table type, and `fmt.table` already renders tables and
-  dict-of-columns values), but `table { ... }` **does not parse in the current
+  dict-of-columns values), but `tbl { ... }` **does not parse in the current
   build** — it reports `QK-PARSE-001`. Treat tables as not yet available.
 - **Un-aliased imports.** Importing modules without `as` reports a conflict when
   two of them, or one of them and your code, define the same name; use aliases.
@@ -1032,7 +1031,7 @@ verified by compiling and running the bundled examples.
 
 - **Library gaps:** no regex, JSON, HTTP, subprocesses or dates. Vectors have no
   sort (`v.to_list().sort()` works). `std/csv` returns every field as a string;
-  typed columns wait on the `table` type.
+  typed columns wait on the `tbl` type.
 - **Builtin names can't be variable names.** `sum = 0`, `len = 3` or `max = 10`
   is a compile-time error, even inside a function. Parameters may reuse them
   (`fn f(sum) -> sum`).
@@ -1084,7 +1083,7 @@ verified by compiling and running the bundled examples.
   while list `.get` returns `null`; `min`/`max` of an empty vector are errors,
   while `sum` returns `0.0`.
 - **Vector reductions** (`sum`, `min`, `max`) return a float, also for int
-  vectors: `min(vector [1, 2])` is `1.0`.
+  vectors: `min(vec [1, 2])` is `1.0`.
 
 **Planned**
 
@@ -1121,7 +1120,7 @@ executables do not depend on `libgc` at runtime.
 **Imports, runtime headers or the GC not found** — keep the binary in
 `src/core/quark`. If you run it from elsewhere, this is where it looks:
 
-- **Standard library** (`use 'std/...'`): `QUARK_STDLIB_ROOT` if set; then a
+- **Standard library** (`incl 'std/...'`): `QUARK_STDLIB_ROOT` if set; then a
   `stdlib/` directory in the source file's directory or any parent; then
   `stdlib/`, `../stdlib` or `../../stdlib` next to the binary. To set it
   explicitly:
@@ -1146,7 +1145,7 @@ directory the linker searches. Install it, or pass its directory with
 the problem. A `'foo.h' file not found` error usually means the library's
 headers are installed somewhere else; pass `--include-path <dir>`.
 
-**A `table { ... }` literal fails with `QK-PARSE-001`** — tables are not yet
+**A `tbl { ... }` literal fails with `QK-PARSE-001`** — tables are not yet
 implemented; see [Current status and roadmap](#current-status-and-roadmap).
 
 ## Further reading

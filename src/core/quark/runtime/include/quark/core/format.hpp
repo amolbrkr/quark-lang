@@ -1,5 +1,5 @@
 // quark/core/format.hpp - text form of floats, shared by every place that
-// prints one (println, to_str, std/fmt, error messages).
+// prints one (print, to_str, std/fmt, error messages).
 #ifndef QUARK_CORE_FORMAT_HPP
 #define QUARK_CORE_FORMAT_HPP
 

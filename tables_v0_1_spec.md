@@ -2,13 +2,13 @@
 
 Status: Draft. Work is paused (2026-11-04) while FFI comes first (`ffi_v0_1_spec.md`).
 
-Implementation state: only the runtime representation exists: `QTable` in `runtime/include/quark/types/table.hpp` and the `VAL_TABLE` value tag, which `fmt.table` can render. The lexer, parser, analyzer and codegen have no table support: `table` is not a keyword, a `table { ... }` literal is a parse error (`QK-PARSE-001`), and `table` is not accepted as a type annotation.
+Implementation state: only the runtime representation exists: `QTable` in `runtime/include/quark/types/table.hpp` and the `VAL_TABLE` value tag, which `fmt.table` can render. The lexer, parser, analyzer and codegen have no table support: `tbl` is not a keyword, a `tbl { ... }` literal is a parse error (`QK-PARSE-001`), and `tbl` is not accepted as a type annotation.
 Last Updated: 2026-04-02
 Scope: Core table type, typed table literals, and in-memory vector-backed backend. This spec also defines a backend abstraction for future lazy and database-backed execution.
 
 ## 1. Purpose
 
-Define a first-class `table` type that is:
+Define a first-class `tbl` type that is:
 
 1. Columnar and vector-backed for performance.
 2. Strongly typed for compile-time guarantees.
@@ -34,7 +34,7 @@ Tables must:
 
 ### 3.1 Goals
 
-1. Introduce `table` as a first-class type.
+1. Introduce `tbl` as a first-class type.
 2. Support typed table construction with deterministic column order.
 3. Enforce column shape and type constraints at compile time whenever possible.
 4. Provide baseline table access operations (column, row, slice, mask).
@@ -52,12 +52,12 @@ Tables must:
 
 ### 4.1 Table type form
 
-`table` is a single first-class type at the source level.
+`tbl` is a single first-class type at the source level.
 
 Primary declaration form uses a struct annotation on the variable to supply row shape:
 
 ```quark
-orders: Order = table {
+orders: Order = tbl {
     1, 'c1', 10.0, 2
     2, 'c2',  5.5, 4
 }
@@ -67,9 +67,9 @@ Where `Order` is a struct type.
 
 Semantics:
 
-1. When a variable is annotated with a struct type `R` and the right-hand side is a `table { ... }` literal, the value is typed as `table` with attached row-shape metadata `R` in analysis/runtime metadata.
+1. When a variable is annotated with a struct type `R` and the right-hand side is a `tbl { ... }` literal, the value is typed as `tbl` with attached row-shape metadata `R` in analysis/runtime metadata.
 2. This keeps source syntax minimal while preserving compile-time guarantees.
-3. Function signatures and variable annotations do not use `table R` syntax.
+3. Function signatures and variable annotations do not use `tbl R` syntax.
 
 Example:
 
@@ -80,7 +80,7 @@ struct Order:
     price: float
     qty: int
 
-orders: Order = table {
+orders: Order = tbl {
     1, 'c1', 10.0, 2
     2, 'c2',  5.5, 4
 }
@@ -102,14 +102,14 @@ Inference sources:
 2. Homogeneous vector/list column sources.
 3. Homogeneous row literals.
 
-Recommendation for production code: prefer struct-typed table declarations (`x: R = table { ... }`) and plain `table` in function signatures.
+Recommendation for production code: prefer struct-typed table declarations (`x: R = tbl { ... }`) and plain `tbl` in function signatures.
 
 ## 5. Syntax
 
 ### 5.1 Struct-typed table literal (primary form)
 
 ```quark
-orders: Order = table {
+orders: Order = tbl {
     1, 'c1', 10.0, 2
     2, 'c2',  5.5, 4
 }
@@ -128,7 +128,7 @@ Rules:
 Optional header form for inferred tables:
 
 ```quark
-orders = table {
+orders = tbl {
     id:int, customer:str, price:float, qty:int
     1, 'c1', 10.0, 2
     2, 'c2',  5.5, 4
@@ -138,12 +138,12 @@ orders = table {
 ### 5.3 Table literal from column sources
 
 ```quark
-ids = vector [1, 2, 3]
+ids = vec [1, 2, 3]
 customers = list ['c1', 'c2', 'c3']
-prices = vector [10.0, 5.5, 8.0]
-qtys = vector [2, 4, 1]
+prices = vec [10.0, 5.5, 8.0]
+qtys = vec [2, 4, 1]
 
-orders = table {
+orders = tbl {
     id:int, customer:str, price:float, qty:int
     ids, customers, prices, qtys
 }
@@ -162,7 +162,7 @@ v0.1 column names are identifiers. Quoted identifiers for spaces/punctuation are
 ### 5.5 Access and selection
 
 ```quark
-orders.customer         // column access -> vector[str]
+orders.customer         // column access -> vec[str]
 orders[0]              // row access -> Order
 orders[0:10]           // row slice -> table
 orders[orders.qty > 1] // mask filter -> table
@@ -191,13 +191,13 @@ Notes:
 Type              ::= ...
                   |   TableType
 
-TableType         ::= "table"
+TableType         ::= "tbl"
 
 Expression        ::= ...
                   |   TableLiteral
                   |   TableIndexExpr
 
-TableLiteral      ::= "table" "{" NEWLINE INDENT
+TableLiteral      ::= "tbl" "{" NEWLINE INDENT
                       TableBody
                       DEDENT "}"
 
@@ -221,7 +221,7 @@ TableIndexExpr    ::= Expression "[" Expression "]"
 
 Parser note:
 
-1. `table { ... }` is a dedicated literal form.
+1. `tbl { ... }` is a dedicated literal form.
 2. Body mode is context-sensitive:
     - When a struct-typed declaration context exists, `RowsOnly` is valid and mapped positionally to struct fields.
     - Otherwise a header-based form is required for reliable schema inference.
@@ -230,7 +230,7 @@ Parser note:
 
 Guarantees depend on how much type information is available.
 
-### 7.1 Struct-typed table (`x: R = table { ... }`) guarantees
+### 7.1 Struct-typed table (`x: R = tbl { ... }`) guarantees
 
 1. `R` must resolve to a struct type.
 2. Each row must have exactly one value per struct field.
@@ -240,7 +240,7 @@ Guarantees depend on how much type information is available.
 
 Additional note:
 
-1. These guarantees are attached to the resulting `table` value as row-shape metadata, not as a user-visible `table R` type annotation.
+1. These guarantees are attached to the resulting `tbl` value as row-shape metadata, not as a user-visible `tbl R` type annotation.
 
 ### 7.2 Header-typed inferred table guarantees
 
@@ -258,7 +258,7 @@ Additional note:
 
 ### 8.1 Storage model (v0.1)
 
-`table` runtime values are columnar and vector-backed:
+`tbl` runtime values are columnar and vector-backed:
 
 1. Each column is a typed vector storage object.
 2. Table stores column metadata (name, logical type, ordinal).
@@ -315,7 +315,7 @@ v0.1 table operations are value-oriented:
 
 `tbl[mask]`:
 
-1. `mask` must be `vector[bool]`.
+1. `mask` must be `vec[bool]`.
 2. Mask length must equal table row count.
 3. Null mask entries count as not selected.
 4. Result preserves column order and row-shape metadata.
@@ -367,12 +367,12 @@ Recommended message shapes:
 
 1. Structs define row shape.
 2. Tables carry row collections for that shape.
-3. Schemas (future spec) bind constraints over either row-level (`R`) or table-level (`table`) checks.
+3. Schemas (future spec) bind constraints over either row-level (`R`) or table-level (`tbl`) checks.
 
 Example:
 
 ```quark
-fn id_unique(t: table) result ->
+fn id_unique(t: tbl) result ->
     if unique_count(t.id) == len(t.id):
         ok null
     else:
@@ -383,11 +383,11 @@ In practice, analyzer uses call-site row-shape metadata to statically validate `
 
 ## 13. Compiler Work Plan (Implementation-Oriented)
 
-1. Lexer: add `table` keyword token.
+1. Lexer: add `tbl` keyword token.
 2. AST: add table literal node, table type node, table index/slice nodes.
 3. Parser: parse header + body forms and distinguish row vs column-source mode.
 4. Analyzer:
-    - resolve row type binding from struct-typed declarations (`x: R = table { ... }`)
+    - resolve row type binding from struct-typed declarations (`x: R = tbl { ... }`)
     - infer table schema when omitted
     - validate widths, types, and column names
     - propagate row-shape metadata through table operations
@@ -418,5 +418,5 @@ In practice, analyzer uses call-site row-shape metadata to statically validate `
 1. For untyped table inference, should int+float mixed columns promote to float, or fail unless explicit type is given?
 2. Should `tbl[i]` out-of-bounds be fatal (current spec) or return `null` like list `.get()`?
 3. Should quoted column names (for example `Customer Name`) be in v0.1, or deferred with identifier-only names?
-4. Should `x: R = table { ... }` require `R` to be a struct only, or allow future schema-bound aliases directly?
-5. For `fn f(t: table)`, how strict should analyzer be when row-shape metadata is unknown at call sites: fail compile or defer to runtime checks?
+4. Should `x: R = tbl { ... }` require `R` to be a struct only, or allow future schema-bound aliases directly?
+5. For `fn f(t: tbl)`, how strict should analyzer be when row-shape metadata is unknown at call sites: fail compile or defer to runtime checks?

@@ -125,7 +125,7 @@
           }
         },
         {
-          "comment": "use '...' as alias",
+          "comment": "incl '...' as alias",
           "match": "\\b(as)\\s+([A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
             "1": { "name": "keyword.control.import.quark" },
@@ -138,7 +138,7 @@
       "patterns": [
         {
           "comment": "Annotation after a colon: x: int, field: str. Not when the word starts a literal (list [...], dict {...}).",
-          "match": "(:)\\s*(int|float|str|bool|any|fn|list|dict|vector|result|resource)\\b(?!\\s*[\\[{])",
+          "match": "(:)\\s*(int|float|str|bool|any|fn|list|dict|vec|result|resource)\\b(?!\\s*[\\[{])",
           "captures": {
             "1": { "name": "punctuation.separator.annotation.quark" },
             "2": { "name": "support.type.quark" }
@@ -154,7 +154,7 @@
         },
         {
           "comment": "Return type after the parameter list: fn f(x) int ->, extern fn f(x) str as",
-          "match": "(\\))\\s*(int|float|str|bool|any|fn|list|dict|vector|result|resource|[A-Z][A-Za-z0-9_]*)\\b(?=\\s*(?:->|as\\b|$))",
+          "match": "(\\))\\s*(int|float|str|bool|any|fn|list|dict|vec|result|resource|[A-Z][A-Za-z0-9_]*)\\b(?=\\s*(?:->|as\\b|$))",
           "captures": {
             "1": { "name": "punctuation.section.parens.end.quark" },
             "2": { "name": "support.type.quark" }
@@ -175,7 +175,7 @@
         },
         {
           "name": "keyword.control.import.quark",
-          "match": "\\b(use|as|module|extern)\\b"
+          "match": "\\b(incl|as|module|extern)\\b"
         },
         {
           "name": "storage.type.quark",
@@ -186,9 +186,9 @@
           "match": "\\b(and|or)\\b"
         },
         {
-          "comment": "Literal constructors: list [...], dict {...}, vector [...]; result in annotations",
+          "comment": "Literal constructors: list [...], dict {...}, vec [...]; result in annotations",
           "name": "storage.type.collection.quark",
-          "match": "\\b(list|dict|vector|result)\\b"
+          "match": "\\b(list|dict|vec|result)\\b"
         },
         {
           "name": "support.function.result.quark",
@@ -214,12 +214,12 @@
         {
           "comment": "Free builtins",
           "name": "support.function.builtin.quark",
-          "match": "\\b(print|println|input|len|to_str|to_int|to_float|to_bool|type|is_ok|is_err|unwrap|range|abs|min|max|sum|all|any|sqrt|floor|ceil|round)\\b(?=\\s*\\()"
+          "match": "\\b(print|input|len|to_str|to_int|to_float|to_bool|type|is_ok|is_err|unwrap|range|abs|min|max|sum|all|any|sqrt|floor|ceil|round)\\b(?=\\s*\\()"
         },
         {
-          "comment": "Builtin methods (str, list, dict, vector), after a dot",
+          "comment": "Builtin methods (str, list, dict, vec), after a dot",
           "name": "support.function.method.quark",
-          "match": "(?<=\\.)(upper|lower|trim|contains|startswith|endswith|replace|concat|split|slice|push|pop|get|set|insert|remove|reverse|sort_by|sort|enumerate|join|to_vector|keys|values|items|fillna|astype|to_list)\\b(?=\\s*\\()"
+          "match": "(?<=\\.)(upper|lower|trim|contains|startswith|endswith|replace|concat|split|slice|push|pop|get|set|insert|remove|reverse|sort_by|sort|enumerate|join|to_vec|keys|values|items|fillna|astype|to_list)\\b(?=\\s*\\()"
         }
       ]
     },

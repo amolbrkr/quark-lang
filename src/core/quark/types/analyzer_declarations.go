@@ -72,7 +72,7 @@ func functionTypeFromLambdaNodeWithStructs(lambdaNode *ast.TreeNode, structTypes
 				paramTypes[i] = &ListType{ElementType: TypeAny}
 			case "dict":
 				paramTypes[i] = &DictType{KeyType: TypeAny, ValueType: TypeAny}
-			case "vector":
+			case "vec":
 				paramTypes[i] = &VectorType{ElementType: TypeAny}
 			case "resource":
 				paramTypes[i] = TypeResource
@@ -139,7 +139,7 @@ func resolveTypeNodeStaticWithStructs(node *ast.TreeNode, structTypes map[string
 		return &ListType{ElementType: TypeAny}
 	case "dict":
 		return &DictType{KeyType: TypeAny, ValueType: TypeAny}
-	case "vector":
+	case "vec":
 		return &VectorType{ElementType: TypeAny}
 	case "result":
 		return &ResultType{OkType: TypeAny, ErrType: TypeAny}

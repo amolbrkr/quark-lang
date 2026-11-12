@@ -46,9 +46,9 @@ func TestResolveImports_DetectsCircularImport(t *testing.T) {
 	a := filepath.Join(tmp, "a.qrk")
 	b := filepath.Join(tmp, "b.qrk")
 
-	writeFile(t, entry, "use './a'\n")
-	writeFile(t, a, "use './b'\nmodule a:\n    fn fa() -> 1\n")
-	writeFile(t, b, "use './a'\nmodule b:\n    fn fb() -> 2\n")
+	writeFile(t, entry, "incl './a'\n")
+	writeFile(t, a, "incl './b'\nmodule a:\n    fn fa() -> 1\n")
+	writeFile(t, b, "incl './a'\nmodule b:\n    fn fb() -> 2\n")
 
 	root := parseRoot(t, entry)
 	ml := NewModuleLoader()
@@ -68,7 +68,7 @@ func TestResolveImports_DedupsAlreadyLoadedModule(t *testing.T) {
 	entry := filepath.Join(tmp, "main.qrk")
 	a := filepath.Join(tmp, "a.qrk")
 
-	writeFile(t, entry, "use './a'\nuse './a'\n")
+	writeFile(t, entry, "incl './a'\nincl './a'\n")
 	writeFile(t, a, "module a:\n    fn foo() -> 1\n")
 
 	root := parseRoot(t, entry)
@@ -85,7 +85,7 @@ func TestResolveImports_SupportsStdlibImport(t *testing.T) {
 	entry := filepath.Join(tmp, "main.qrk")
 	stdlibRoot := filepath.Join(tmp, "stdlib")
 	writeFile(t, filepath.Join(stdlibRoot, "math.qrk"), "module math:\n    fn floor(x) -> x\n")
-	writeFile(t, entry, "use 'std/math'\n")
+	writeFile(t, entry, "incl 'std/math'\n")
 
 	if err := os.Setenv("QUARK_STDLIB_ROOT", stdlibRoot); err != nil {
 		t.Fatalf("set env: %v", err)
@@ -103,7 +103,7 @@ func TestResolveImports_SupportsStdlibImport(t *testing.T) {
 		t.Fatalf("unexpected loader errors: %v", ml.Errors())
 	}
 	if len(root.Children) != 2 {
-		t.Fatalf("expected imported module and synthetic use node, got %d children", len(root.Children))
+		t.Fatalf("expected imported module and synthetic incl node, got %d children", len(root.Children))
 	}
 }
 
@@ -112,7 +112,7 @@ func TestResolveImports_AllowsAbsoluteImportPath(t *testing.T) {
 	entry := filepath.Join(tmp, "main.qrk")
 	lib := filepath.Join(tmp, "lib", "math.qrk")
 	writeFile(t, lib, "module math:\n    fn square(n) -> n * n\n")
-	writeFile(t, entry, "use '"+filepath.ToSlash(strings.TrimSuffix(lib, ".qrk"))+"'\n")
+	writeFile(t, entry, "incl '"+filepath.ToSlash(strings.TrimSuffix(lib, ".qrk"))+"'\n")
 
 	root := parseRoot(t, entry)
 	if len(root.Children) != 1 {
@@ -125,16 +125,16 @@ func TestResolveImports_AllowsAbsoluteImportPath(t *testing.T) {
 		t.Fatalf("unexpected loader errors: %v", ml.Errors())
 	}
 	if len(root.Children) != 2 {
-		t.Fatalf("expected imported module and synthetic use node, got %d children", len(root.Children))
+		t.Fatalf("expected imported module and synthetic incl node, got %d children", len(root.Children))
 	}
 }
 
-func TestResolveImports_PreservesUseAliasInSyntheticUse(t *testing.T) {
+func TestResolveImports_PreservesInclAliasInSyntheticIncl(t *testing.T) {
 	tmp := t.TempDir()
 	entry := filepath.Join(tmp, "main.qrk")
 	lib := filepath.Join(tmp, "lib", "math.qrk")
 	writeFile(t, lib, "module math:\n    fn square(n) -> n * n\n")
-	writeFile(t, entry, "use './lib/math' as m\n")
+	writeFile(t, entry, "incl './lib/math' as m\n")
 
 	root := parseRoot(t, entry)
 	ml := NewModuleLoader()
@@ -143,14 +143,14 @@ func TestResolveImports_PreservesUseAliasInSyntheticUse(t *testing.T) {
 		t.Fatalf("unexpected loader errors: %v", ml.Errors())
 	}
 	if len(root.Children) != 2 {
-		t.Fatalf("expected imported module and synthetic use node, got %d children", len(root.Children))
+		t.Fatalf("expected imported module and synthetic incl node, got %d children", len(root.Children))
 	}
-	useNode := root.Children[1]
-	if useNode.NodeType != ast.UseNode {
-		t.Fatalf("expected synthetic UseNode, got %v", useNode)
+	inclNode := root.Children[1]
+	if inclNode.NodeType != ast.InclNode {
+		t.Fatalf("expected synthetic InclNode, got %v", inclNode)
 	}
-	if len(useNode.Children) < 2 || useNode.Children[1].TokenLiteral() != "m" {
-		t.Fatalf("expected synthetic alias 'm', got %#v", useNode.Children)
+	if len(inclNode.Children) < 2 || inclNode.Children[1].TokenLiteral() != "m" {
+		t.Fatalf("expected synthetic alias 'm', got %#v", inclNode.Children)
 	}
 }
 
@@ -159,7 +159,7 @@ func TestResolveImports_PreservesUseAliasInSyntheticUse(t *testing.T) {
 func TestResolveImports_MissingFileError(t *testing.T) {
 	tmp := t.TempDir()
 	entry := filepath.Join(tmp, "main.qrk")
-	writeFile(t, entry, "use './nonexistent'\n")
+	writeFile(t, entry, "incl './nonexistent'\n")
 
 	root := parseRoot(t, entry)
 	ml := NewModuleLoader()
@@ -177,7 +177,7 @@ func TestResolveImports_ImportedFileWithNoModule(t *testing.T) {
 	lib := filepath.Join(tmp, "lib.qrk")
 	// lib.qrk has no module declaration — just bare code
 	writeFile(t, lib, "x = 1\n")
-	writeFile(t, entry, "use './lib'\n")
+	writeFile(t, entry, "incl './lib'\n")
 
 	root := parseRoot(t, entry)
 	ml := NewModuleLoader()
@@ -196,10 +196,10 @@ func TestResolveImports_CircularImport3Modules(t *testing.T) {
 	b := filepath.Join(tmp, "b.qrk")
 	c := filepath.Join(tmp, "c.qrk")
 
-	writeFile(t, entry, "use './a'\n")
-	writeFile(t, a, "use './b'\nmodule a:\n    fn fa() -> 1\n")
-	writeFile(t, b, "use './c'\nmodule b:\n    fn fb() -> 2\n")
-	writeFile(t, c, "use './a'\nmodule c:\n    fn fc() -> 3\n")
+	writeFile(t, entry, "incl './a'\n")
+	writeFile(t, a, "incl './b'\nmodule a:\n    fn fa() -> 1\n")
+	writeFile(t, b, "incl './c'\nmodule b:\n    fn fb() -> 2\n")
+	writeFile(t, c, "incl './a'\nmodule c:\n    fn fc() -> 3\n")
 
 	root := parseRoot(t, entry)
 	ml := NewModuleLoader()
@@ -223,8 +223,8 @@ func TestResolveImports_TransitiveImports(t *testing.T) {
 	b := filepath.Join(tmp, "b.qrk")
 
 	writeFile(t, b, "module b:\n    fn fb() -> 2\n")
-	writeFile(t, a, "use './b'\nmodule a:\n    fn fa() -> 1\n")
-	writeFile(t, entry, "use './a'\n")
+	writeFile(t, a, "incl './b'\nmodule a:\n    fn fa() -> 1\n")
+	writeFile(t, entry, "incl './a'\n")
 
 	root := parseRoot(t, entry)
 	ml := NewModuleLoader()
@@ -233,7 +233,7 @@ func TestResolveImports_TransitiveImports(t *testing.T) {
 	if len(ml.Errors()) > 0 {
 		t.Fatalf("unexpected errors for transitive imports: %v", ml.Errors())
 	}
-	// Should have: module b, module a, synthetic use for a
+	// Should have: module b, module a, synthetic incl for a
 	if len(root.Children) < 3 {
 		t.Fatalf("expected at least 3 children (modules + synthetic use), got %d", len(root.Children))
 	}
@@ -249,9 +249,9 @@ func TestResolveImports_DiamondImportDeduplication(t *testing.T) {
 	c := filepath.Join(tmp, "c.qrk")
 
 	writeFile(t, c, "module c:\n    fn fc() -> 3\n")
-	writeFile(t, a, "use './c'\nmodule a:\n    fn fa() -> 1\n")
-	writeFile(t, b, "use './c'\nmodule b:\n    fn fb() -> 2\n")
-	writeFile(t, entry, "use './a'\nuse './b'\n")
+	writeFile(t, a, "incl './c'\nmodule a:\n    fn fa() -> 1\n")
+	writeFile(t, b, "incl './c'\nmodule b:\n    fn fb() -> 2\n")
+	writeFile(t, entry, "incl './a'\nincl './b'\n")
 
 	root := parseRoot(t, entry)
 	ml := NewModuleLoader()
@@ -277,7 +277,7 @@ func TestResolveImports_UnsupportedImportPath(t *testing.T) {
 	tmp := t.TempDir()
 	entry := filepath.Join(tmp, "main.qrk")
 	// A bare name (not relative, not absolute, not std/) should error
-	writeFile(t, entry, "use 'justname'\n")
+	writeFile(t, entry, "incl 'justname'\n")
 
 	root := parseRoot(t, entry)
 	ml := NewModuleLoader()
@@ -292,7 +292,7 @@ func TestResolveImports_UnsupportedImportPath(t *testing.T) {
 func TestResolveImports_StdlibNotFoundError(t *testing.T) {
 	tmp := t.TempDir()
 	entry := filepath.Join(tmp, "main.qrk")
-	writeFile(t, entry, "use 'std/nonexistent'\n")
+	writeFile(t, entry, "incl 'std/nonexistent'\n")
 
 	// Unset QUARK_STDLIB_ROOT to force filesystem search (which should fail in tmpdir)
 	old := os.Getenv("QUARK_STDLIB_ROOT")
@@ -320,7 +320,7 @@ func TestResolveImports_ParseErrorInImportedFile(t *testing.T) {
 	bad := filepath.Join(tmp, "bad.qrk")
 	// Invalid syntax: unclosed paren
 	writeFile(t, bad, "module bad:\n    fn f( -> 1\n")
-	writeFile(t, entry, "use './bad'\n")
+	writeFile(t, entry, "incl './bad'\n")
 
 	root := parseRoot(t, entry)
 	ml := NewModuleLoader()
@@ -335,11 +335,11 @@ func TestResolveImports_ParseErrorInImportedFile(t *testing.T) {
 	}
 }
 
-func TestResolveImports_IdentifierUsePassesThrough(t *testing.T) {
-	// `use moduleName` (identifier, not string literal) should not be processed as file import
+func TestResolveImports_IdentifierInclPassesThrough(t *testing.T) {
+	// `incl moduleName` (identifier, not string literal) should not be processed as file import
 	tmp := t.TempDir()
 	entry := filepath.Join(tmp, "main.qrk")
-	writeFile(t, entry, "module math:\n    fn add(x, y) -> x + y\nuse math\n")
+	writeFile(t, entry, "module math:\n    fn add(x, y) -> x + y\nincl math\n")
 
 	root := parseRoot(t, entry)
 	ml := NewModuleLoader()
@@ -353,7 +353,7 @@ func TestResolveImports_IdentifierUsePassesThrough(t *testing.T) {
 func TestDiagnostics_ReturnsStructuredErrors(t *testing.T) {
 	tmp := t.TempDir()
 	entry := filepath.Join(tmp, "main.qrk")
-	writeFile(t, entry, "use './missing'\n")
+	writeFile(t, entry, "incl './missing'\n")
 
 	root := parseRoot(t, entry)
 	ml := NewModuleLoader()

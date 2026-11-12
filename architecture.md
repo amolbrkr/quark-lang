@@ -35,9 +35,9 @@ Key parser decisions:
 
 ### 1.3 Loader → Merged AST
 
-Resolves all `use` statements by loading, parsing, and splicing external files into the main AST. See semantics.md §10 for resolution rules.
+Resolves all `incl` statements by loading, parsing, and splicing external files into the main AST. See semantics.md §10 for resolution rules.
 
-After splicing, `namespaceModules` (`loader/namespace.go`) gives module members unique names, since all files share one scope: each definition at the top level of module `m` and every reference to it becomes `m__name` (`loader.MemberName`). That covers sibling references inside the module, the member side of `alias.member` (kept as a dot so the analyzer resolves it through the module's symbols), and bare names imported by an unaliased `use`. Parameters, loop variables and ok/err bindings shadow as usual. The analyzer shows the original name in messages (`displayMember`). The loader also tags nodes from imported files with `SourceFile`, which codegen's `q_set_source_loc` calls use so runtime errors name the module's file (code from `std/` sets no location, so its errors point at the user's call). Every generated function starts with a `QSourceLocGuard` that restores the caller's location when it returns.
+After splicing, `namespaceModules` (`loader/namespace.go`) gives module members unique names, since all files share one scope: each definition at the top level of module `m` and every reference to it becomes `m__name` (`loader.MemberName`). That covers sibling references inside the module, the member side of `alias.member` (kept as a dot so the analyzer resolves it through the module's symbols), and bare names imported by an unaliased `incl`. Parameters, loop variables and ok/err bindings shadow as usual. The analyzer shows the original name in messages (`displayMember`). The loader also tags nodes from imported files with `SourceFile`, which codegen's `q_set_source_loc` calls use so runtime errors name the module's file (code from `std/` sets no location, so its errors point at the user's call). Every generated function starts with a `QSourceLocGuard` that restores the caller's location when it returns.
 
 ### 1.4 Analyzer → Annotated AST + Metadata
 
@@ -125,7 +125,7 @@ If codegen encounters an unexpected dispatch/runtime-symbol invariant break, it 
 - **Default injection**: Missing trailing args filled from DefaultNodes in the CallPlan
 - **Lambdas**: Emitted as top-level C++ functions with closure allocation at the capture site
 - **for loops**: Lowered to index-based iteration (`q_iter_get` with incrementing counter); loop variable uses scalar tier when the iterable's element type is statically known. `range()` calls are lowered to raw C++ loops unless the loop variable is captured. Vector iteration has a fast path (see §9).
-- **if/while**: Conditions are wrapped in `q_truthy()` (truthiness rules; `result` and `vector` conditions are rejected), or emitted as a raw C++ `bool` when `scalarExpr` lowers the condition
+- **if/while**: Conditions are wrapped in `q_truthy()` (truthiness rules; `result` and `vec` conditions are rejected), or emitted as a raw C++ `bool` when `scalarExpr` lowers the condition
 - **when**: Lowered to a chain of if/else with result payload extraction; pattern bindings use `isCaptured` to choose `QCell*` vs `QValue`
 
 **Scope management**:
@@ -189,7 +189,7 @@ struct QValue {
         QResult* result_val;   // {bool is_ok, QValue payload}
         QResourceHandle* resource_val;
         QStruct* struct_val;
-        QTable* table_val;     // runtime only; `table` syntax is not implemented yet
+        QTable* table_val;     // runtime only; `tbl` syntax is not implemented yet
     } data;
 };
 ```
@@ -313,7 +313,7 @@ type CallPlan struct {
 - `DispatchClosure` — Dynamic call through `q_call*` (dereferences QClosure)
 - `DispatchExtern` — Call to a native C++ function declared via `extern fn`. Args are unboxed from `QValue` to native C++ types (`int64_t`, `double`, `bool`, `const char*`, `QList*`, `QDict*`, `QVector*`, `QClosure*`) at the call site; the return value is boxed back. A QValue-convention thunk is also generated so extern functions can be stored as first-class values.
 - `DispatchNative` — Fully-typed user function (all params + return annotated with scalar types). Codegen emits both a native C++ signature (taking `int64_t`/`double`/`bool`/`const char*`) and a QValue-convention thunk for first-class use.
-- `DispatchDynamicMethod` — Builtin method call on a receiver of unknown type (`any`). The analyzer (`resolveDynamicMethodCall`) collects every builtin receiver type (str, list, dict, vector) that has the method and accepts the argument count; codegen switches on the receiver's type tag, and any other type is a runtime error (`q_no_method`). Argument types are checked at compile time only when a single receiver type matches. If no type has the method, or none accepts the argument count, it is a compile-time error. The `INV-DYNAMIC-METHOD` invariant checks each candidate against the catalog.
+- `DispatchDynamicMethod` — Builtin method call on a receiver of unknown type (`any`). The analyzer (`resolveDynamicMethodCall`) collects every builtin receiver type (str, list, dict, vec) that has the method and accepts the argument count; codegen switches on the receiver's type tag, and any other type is a runtime error (`q_no_method`). Argument types are checked at compile time only when a single receiver type matches. If no type has the method, or none accepts the argument count, it is a compile-time error. The `INV-DYNAMIC-METHOD` invariant checks each candidate against the catalog.
 
 ---
 
@@ -418,7 +418,7 @@ Arguments follow the same rules as the `range()` builtin: scalar ints are used d
 
 ### Vector loop fast path
 
-When iterating a vector (`for x in vec`), codegen emits a runtime type check. If the vector's dtype matches the loop variable's scalar tier and it has no nulls, iteration goes directly over the typed backing buffer:
+When iterating a vector (`for x in v`), codegen emits a runtime type check. If the vector's dtype matches the loop variable's scalar tier and it has no nulls, iteration goes directly over the typed backing buffer:
 
 ```cpp
 if (q_vec_is_dense_of(_t8, QVector::Type::I64)) {
@@ -436,7 +436,7 @@ Both branches are emitted; only one executes at runtime. Falls back to the gener
 
 ### Vector literal lowering
 
-When the analyzer knows the precise element type of a vector literal, codegen emits typed constructors directly (e.g., `qv_vector_i64` + `q_vec_push_i64`). Otherwise, it falls back to building a list then calling `q_to_vector` at runtime.
+When the analyzer knows the precise element type of a vector literal, codegen emits typed constructors directly (e.g., `qv_vector_i64` + `q_vec_push_i64`). Otherwise, it falls back to building a list then calling `q_to_vec` at runtime.
 
 ### Scalar lowering
 

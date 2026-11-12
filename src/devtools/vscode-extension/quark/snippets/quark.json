@@ -12,7 +12,7 @@
   "Function (typed)": {
     "prefix": "fnt",
     "body": ["fn ${1:name}(${2:x}: ${3:int}) ${4:int} ->", "\t${0:x}"],
-    "description": "Function with parameter and return type annotations (int, float, str, bool, list, dict, vector, result, any)"
+    "description": "Function with parameter and return type annotations (int, float, str, bool, list, dict, vec, result, any)"
   },
   "Function (default parameter)": {
     "prefix": "fnd",
@@ -31,12 +31,12 @@
   },
   "If / else": {
     "prefix": "ife",
-    "body": ["if ${1:condition}:", "\t${2:println('yes')}", "else:", "\t$0"],
+    "body": ["if ${1:condition}:", "\t${2:print('yes')}", "else:", "\t$0"],
     "description": "If / else"
   },
   "If / elseif / else": {
     "prefix": "ifel",
-    "body": ["if ${1:condition}:", "\t${2:println('a')}", "elseif ${3:other}:", "\t${4:println('b')}", "else:", "\t$0"],
+    "body": ["if ${1:condition}:", "\t${2:print('a')}", "elseif ${3:other}:", "\t${4:print('b')}", "else:", "\t$0"],
     "description": "If / elseif / else (elseif, not elif or else if)"
   },
   "Ternary": {
@@ -51,13 +51,13 @@
   },
   "When (result)": {
     "prefix": "whenr",
-    "body": ["when ${1:result_value}:", "\tok ${2:value} -> ${3:println(value)}", "\terr ${4:msg} -> ${0:println(msg)}"],
+    "body": ["when ${1:result_value}:", "\tok ${2:value} -> ${3:print(value)}", "\terr ${4:msg} -> ${0:print(msg)}"],
     "description": "Match an ok/err result: ok value -> ..., err msg -> ..."
   },
   "For": {
     "prefix": "for",
     "body": ["for ${1:item} in ${2:items}:", "\t$0"],
-    "description": "Loop over a list, vector or str"
+    "description": "Loop over a list, vec or str"
   },
   "For range": {
     "prefix": "forr",
@@ -66,7 +66,7 @@
   },
   "For enumerate": {
     "prefix": "fore",
-    "body": ["for ${1:entry} in ${2:items}.enumerate():", "\tprintln(to_str(${1:entry}.index) + ': ' + to_str(${1:entry}.value))$0"],
+    "body": ["for ${1:entry} in ${2:items}.enumerate():", "\tprint(to_str(${1:entry}.index) + ': ' + to_str(${1:entry}.value))$0"],
     "description": "Loop with index: each entry has .index and .value"
   },
   "While": {
@@ -85,8 +85,8 @@
     "description": "Dict literal. The dict keyword is required; keys are identifiers: dict { name: 'quark' }"
   },
   "Vector": {
-    "prefix": "vector",
-    "body": ["vector [${0:1.0, 2.0, 3.0}]"],
+    "prefix": "vec",
+    "body": ["vec [${0:1.0, 2.0, 3.0}]"],
     "description": "Typed vector (all int, all float, all bool or all str); element-wise math"
   },
   "Struct": {
@@ -102,16 +102,16 @@
   "Module": {
     "prefix": "module",
     "body": ["module ${1:name}:", "\tfn ${2:f}(${3:x}) ->", "\t\t${0:x}"],
-    "description": "Module block; other files import it with use './file' as alias"
+    "description": "Module block; other files import it with incl './file' as alias"
   },
-  "Use (stdlib)": {
-    "prefix": "use",
-    "body": ["use '${1|std/io,std/fmt,std/blas|}' as ${0:io}"],
+  "Incl (stdlib)": {
+    "prefix": "incl",
+    "body": ["incl '${1|std/io,std/fmt,std/blas|}' as ${0:io}"],
     "description": "Import a stdlib module under an alias, then call alias.fn(...)"
   },
-  "Use (file)": {
-    "prefix": "usef",
-    "body": ["use './${1:other}' as ${0:other}"],
+  "Incl (file)": {
+    "prefix": "inclf",
+    "body": ["incl './${1:other}' as ${0:other}"],
     "description": "Import a module from another file (path relative to this file, starting with ./ or ../)"
   },
   "Result": {
@@ -121,7 +121,7 @@
   },
   "Pipe": {
     "prefix": "pipe",
-    "body": ["${1:value} | ${2:to_str}() | ${0:println}()"],
+    "body": ["${1:value} | ${2:to_str}() | ${0:print}()"],
     "description": "Pipe: the left value becomes the first argument of the call on the right"
   },
   "Extern": {

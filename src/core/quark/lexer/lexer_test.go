@@ -11,7 +11,7 @@ import (
 // --- Indentation ---
 
 func TestIndentation_ProperIndentEmitsIndentDedent(t *testing.T) {
-	src := "if true:\n    println(1)\nprintln(2)\n"
+	src := "if true:\n    print(1)\nprint(2)\n"
 	toks := testutil.Lex(src)
 
 	var hasIndent, hasDedent bool
@@ -29,7 +29,7 @@ func TestIndentation_ProperIndentEmitsIndentDedent(t *testing.T) {
 }
 
 func TestIndentation_MissingIndentAfterColonYieldsIllegal(t *testing.T) {
-	src := "if true:\nprintln(1)\n"
+	src := "if true:\nprint(1)\n"
 	toks := testutil.Lex(src)
 
 	for _, tok := range toks {
@@ -123,11 +123,11 @@ func TestIndentation_BlankLinesIgnored(t *testing.T) {
 // --- Keywords ---
 
 func TestVectorKeyword_TokenizedAsKeyword(t *testing.T) {
-	src := "x = vector [1, 2, 3]\n"
+	src := "x = vec [1, 2, 3]\n"
 	toks := testutil.Lex(src)
 
 	for _, tok := range toks {
-		if tok.Type == token.VECTOR {
+		if tok.Type == token.VEC {
 			return
 		}
 	}
@@ -148,13 +148,13 @@ func TestResultKeyword_TokenizedAsKeyword(t *testing.T) {
 
 func TestKeywords_AllRecognized(t *testing.T) {
 	keywords := map[string]token.TokenType{
-		"use": token.USE, "as": token.AS, "module": token.MODULE,
+		"incl": token.INCL, "as": token.AS, "module": token.MODULE,
 		"in": token.IN, "and": token.AND, "or": token.OR,
 		"if": token.IF, "elseif": token.ELSEIF, "else": token.ELSE,
 		"for": token.FOR, "while": token.WHILE, "when": token.WHEN,
 		"fn": token.FN, "true": token.TRUE, "false": token.FALSE,
 		"null": token.NULL, "ok": token.OK, "err": token.ERR,
-		"list": token.LIST, "dict": token.DICT, "vector": token.VECTOR,
+		"list": token.LIST, "dict": token.DICT, "vec": token.VEC,
 		"result": token.RESULT, "break": token.BREAK, "continue": token.CONTINUE,
 	}
 	for kw, expected := range keywords {

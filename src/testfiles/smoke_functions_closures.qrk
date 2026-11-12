@@ -4,7 +4,7 @@
 // - mutable captured state is shared across closure calls
 
 fib = fn(n) -> n if n <= 1 else fib(n - 1) + fib(n - 2)
-println(fib(10)) // 55
+print(fib(10)) // 55
 
 fn make_counter() ->
     count = 0
@@ -14,5 +14,5 @@ fn make_counter() ->
     next
 
 next_id = make_counter()
-println(next_id()) // 1
-println(next_id()) // 2
+print(next_id()) // 1
+print(next_id()) // 2

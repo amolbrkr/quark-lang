@@ -6,11 +6,11 @@ Scope: import unit, name scoping and qualification (`::`), function declarations
 
 ## 1. Summary
 
-A **file** is the import unit and the scope boundary. Every top-level name in an imported file is reachable from the importer, always qualified with `::`: `fmt::show_vec`, `fmt::fmt_vector`, `geo::Point`. `module X:` blocks stay as named namespaces inside a file (`formats::csv::read`, `formats::json::parse`). Names are resolved per file, so two files can define the same name without affecting each other, and a library's internal calls can't be redirected by the code that imports it.
+A **file** is the import unit and the scope boundary. Every top-level name in an imported file is reachable from the importer, always qualified with `::`: `fmt::show_vec`, `fmt::fmt_vec`, `geo::Point`. `module X:` blocks stay as named namespaces inside a file (`formats::csv::read`, `formats::json::parse`). Names are resolved per file, so two files can define the same name without affecting each other, and a library's internal calls can't be redirected by the code that imports it.
 
 `fn` declarations become fixed, hoisted definitions: a name can be declared once per scope and never reassigned. Variables holding functions (`g = fn(x) -> ...`) stay reassignable.
 
-Everything is public. There are no access modifiers. Discouraging direct use of internal names such as `fmt::fmt_vector` is left to a future documentation feature (§9).
+Everything is public. There are no access modifiers. Discouraging direct use of internal names such as `fmt::fmt_vec` is left to a future documentation feature (§9).
 
 ## 2. Problems This Fixes
 
@@ -24,8 +24,8 @@ Today an import splices the imported file's top-level statements into the import
 | Two libraries each contain `module utils` | `module 'utils' already defined`, even with different aliases |
 | Two files define `struct Point` | `struct 'Point' already defined`; struct names are global |
 | A struct is used from another file | No qualified type syntax (`q: geo.Point` is a parse error); a struct literal can only be written in the defining file |
-| `use 'std/fmt' as fmt` | `fmt_vector`, `blas_dot` etc. are callable unqualified, colliding with user names |
-| An imported file has top-level statements (`println(...)`) | They run inside the importer's program, at the `use` |
+| `incl 'std/fmt' as fmt` | `fmt_vec`, `blas_dot` etc. are callable unqualified, colliding with user names |
+| An imported file has top-level statements (`print(...)`) | They run inside the importer's program, at the `incl` |
 | `fn f` declared twice | The second silently wins |
 | `fn f`, then `f = fn(x) -> 0` | Silently replaced; for a fully annotated `f`, the program fails to compile with a C++ error (`redefinition of 'quark_f'`) |
 | `fn a() -> b()`, `a()`, then `fn b` | Runtime failure: `b` is bound only when its line runs |
@@ -35,27 +35,27 @@ Today an import splices the imported file's top-level statements into the import
 
 ### 3.1 Files and import paths
 
-1. A `.qrk` file name, and every directory name in an import path, must match `[a-z][a-z0-9_]*`: lowercase letters, digits and underscores, starting with a letter. `use './lib/geo_utils'` is valid; `use './My Lib/geo-utils'` is a load error. The rule applies to files that are imported; the main script passed to `quark run` is exempt.
+1. A `.qrk` file name, and every directory name in an import path, must match `[a-z][a-z0-9_]*`: lowercase letters, digits and underscores, starting with a letter. `incl './lib/geo_utils'` is valid; `incl './My Lib/geo-utils'` is a load error. The rule applies to files that are imported; the main script passed to `quark run` is exempt.
 2. Import path forms are unchanged: `./` and `../` relative paths, absolute paths, and `std/` for the stdlib. The `.qrk` extension is omitted.
-3. `use 'path'` binds the file under its **stem** (last path segment): `use 'std/fmt'` binds `fmt`, `use './lib/geo_utils'` binds `geo_utils`.
-4. `use 'path' as name` binds it under `name` instead.
+3. `incl 'path'` binds the file under its **stem** (last path segment): `incl 'std/fmt'` binds `fmt`, `incl './lib/geo_utils'` binds `geo_utils`.
+4. `incl 'path' as name` binds it under `name` instead.
 5. An imported file no longer has to contain a `module` block. A file of top-level definitions is a valid library.
 6. A file imported along several paths (directly and transitively) is loaded once and has one identity, keyed by its absolute path.
 
 ### 3.2 Qualified names
 
 7. `::` separates the parts of a qualified name. The forms are:
-   - `file::name`: a top-level name of an imported file (`fmt::fmt_vector`, `geo::Point`).
+   - `file::name`: a top-level name of an imported file (`fmt::fmt_vec`, `geo::Point`).
    - `file::module::name`: a member of a `module` block in an imported file (`formats::csv::read`).
    - `module::name`: inside the file that defines the module (`csv::read`), including same-file modules in a main script (`mathx::square`).
-8. **Primary module.** A module whose name equals its file's stem is the file's primary module. Its members can also be written `file::name`: in `std/fmt.qrk`, `fmt::show_vec` means `fmt::fmt::show_vec`. Every stdlib file is a single primary module, so stdlib calls stay two-part (`io::open`, `fmt::show_vec`, `blas::dot`). The primary module is reached through the file's binding, so `use 'std/fmt' as f` gives `f::show_vec`.
+8. **Primary module.** A module whose name equals its file's stem is the file's primary module. Its members can also be written `file::name`: in `std/fmt.qrk`, `fmt::show_vec` means `fmt::fmt::show_vec`. Every stdlib file is a single primary module, so stdlib calls stay two-part (`io::open`, `fmt::show_vec`, `blas::dot`). The primary module is reached through the file's binding, so `incl 'std/fmt' as f` gives `f::show_vec`.
 9. A qualified name is valid wherever a name is:
    - a value: `f = io::exists`;
    - a call: `io::exists(p)`;
    - a pipe target: `p | io::exists()`;
    - a type annotation: `p: geo::Point`;
    - a struct literal: `geo::Point { x: 1, y: 2 }`.
-10. `.` is only for fields and methods of values. `io.exists` where `io` is an import binding is a compile error with the hint `use io::exists`.
+10. `.` is only for fields and methods of values. `io.exists` where `io` is an import binding is a compile error with the hint `incl io::exists`.
 11. Imports are not re-exported. If `geo.qrk` imports `std/io`, an importer of `geo` can't write `geo::io::open`.
 
 ### 3.3 Scopes
@@ -79,11 +79,11 @@ Today an import splices the imported file's top-level statements into the import
     - `fn` declarations;
     - `struct` definitions;
     - `module` blocks;
-    - `use` (top level only);
+    - `incl` (top level only);
     - `extern`, `extern fn`, `extern link` and `extern include_path` (with their existing placement rules);
     - `name = <constant expression>`, using the same constant expressions as struct field defaults.
 
-    Any other statement, such as a call or `println`, is a load error naming the statement. Importing a file therefore never runs code, and there is no initialization order to define.
+    Any other statement, such as a call or `print`, is a load error naming the statement. Importing a file therefore never runs code, and there is no initialization order to define.
 16. The main script (the file passed to `quark run` or `quark build`) has no such restriction.
 
 ### 3.5 Definitions are fixed
@@ -105,12 +105,12 @@ Today an import splices the imported file's top-level statements into the import
 25. A `struct` can be defined at a file's top level or inside a `module` block. A struct in an imported file is named `file::Point` or `file::module::Point`.
 26. Struct identity is the definition, not the name: `a::Point` and `b::Point` are different types at compile time and at runtime (§5.3).
 27. Inside its defining file, a struct is written bare (`Point { ... }`), or `module::Point` from outside its module.
-28. Diagnostics, `type()` and `println` show an imported struct's name qualified by its defining file's stem (`geo::Point`) and a main-script struct bare (`Point`). The runtime uses the stem, not the importer's alias, because one struct may be imported under different aliases.
+28. Diagnostics, `type()` and `print` show an imported struct's name qualified by its defining file's stem (`geo::Point`) and a main-script struct bare (`Point`). The runtime uses the stem, not the importer's alias, because one struct may be imported under different aliases.
 
 ### 3.8 Removed
 
-- **Flat imports.** `use 'std/fmt'` no longer puts `show_vec` (or anything else) into the importer's scope; it binds `fmt`. Selective imports may come later (§9).
-- **`use` of a same-file module** (`use mathx as m`). Same-file modules are written `mathx::name` directly.
+- **Flat imports.** `incl 'std/fmt'` no longer puts `show_vec` (or anything else) into the importer's scope; it binds `fmt`. Selective imports may come later (§9).
+- **`incl` of a same-file module** (`incl mathx as m`). Same-file modules are written `mathx::name` directly.
 - **Global module names.** Module identity is (file, module name).
 - **`.` for module access** (rule 10).
 - **The requirement that an imported file define a module** (rule 5).
@@ -120,8 +120,8 @@ Today an import splices the imported file's top-level statements into the import
 | Error | Stage / code | Message (shape) |
 |---|---|---|
 | Bad file or directory name | load, `QK-LOAD-001` | `module file name 'My Lib' must be lowercase letters, digits and underscores (e.g. my_lib)` |
-| Statement in an imported file | load, `QK-LOAD-001` | `'lib.qrk' is imported, so it can only contain definitions; line 3 is a statement (println(...))` |
-| Import binding clashes | check, `QK-CHECK-001` | `import 'geo' (line 2) conflicts with the function 'geo' defined on line 5; use 'path' as other_name` |
+| Statement in an imported file | load, `QK-LOAD-001` | `'lib.qrk' is imported, so it can only contain definitions; line 3 is a statement (print(...))` |
+| Import binding clashes | check, `QK-CHECK-001` | `import 'geo' (line 2) conflicts with the function 'geo' defined on line 5; incl 'path' as other_name` |
 | Unknown qualified name | check, `QK-CHECK-001` | `'fmt' (std/fmt) has no 'show_vector'`, with a closest-match hint when one exists |
 | `.` on an import binding | check, `QK-CHECK-001` | `'io' is an imported file; use io::exists` |
 | Assignment to imported name | check, `QK-CHECK-001` | `'fmt::x' belongs to std/fmt and can't be assigned here` |
@@ -202,7 +202,7 @@ That is why per-module renaming had to happen before analysis, and why the runti
   3. resolves bare references by rule 12, using parameters and locals as shadows, as today;
   4. resolves `binding::name` and `binding::module::name` against the imported file, with the primary-module rule;
   5. reports the clash rules (rule 14) and unknown qualified names.
-- Remove: flat-import handling (`bare` map), the same-file `use module` form, the global-module-name check, and the "does not define a module" error.
+- Remove: flat-import handling (`bare` map), the same-file `incl module` form, the global-module-name check, and the "does not define a module" error.
 - Emit the `NameTable`.
 
 ### 5.6 Analyzer
@@ -234,8 +234,8 @@ That is why per-module renaming had to happen before analysis, and why the runti
 |---|---|
 | Stdlib (`src/core/stdlib/*.qrk`) | None expected (each file is one primary module, with definitions only). Verify none reassigns a declared function |
 | Programs using stdlib modules | `io.exists(p)` becomes `io::exists(p)`; `p \| io.exists()` becomes `p \| io::exists()` |
-| Flat imports | `use 'std/fmt'` + `show_vec(x)` becomes `fmt::show_vec(x)`. `src/testfiles/test.qrk`: `fmt_vector(x, len(x), true)` becomes `fmt::show_vec(x)`, `blas_dot(...)` becomes `blas::dot(...)` |
-| Same-file modules | `use mathx as m` + `m.square(9)` becomes `mathx::square(9)` (README "Same-file module" example, smoke tests) |
+| Flat imports | `incl 'std/fmt'` + `show_vec(x)` becomes `fmt::show_vec(x)`. `src/testfiles/test.qrk`: `fmt_vec(x, len(x), true)` becomes `fmt::show_vec(x)`, `blas_dot(...)` becomes `blas::dot(...)` |
+| Same-file modules | `incl mathx as m` + `m.square(9)` becomes `mathx::square(9)` (README "Same-file module" example, smoke tests) |
 | `src/testfiles/lib/core.qrk` (three modules) | Stays; importers write `core::helpers::double`. `smoke_modules_error_graph.qrk` (unaliased collision of `collision_a`/`collision_b`) is rewritten: that collision can no longer happen, so the test checks the new clash rules instead |
 | `smoke_modules_success.qrk` and other module smoke tests | Rewritten for `::`, file bindings and no flat imports |
 | Code that reassigns a declared function or declares one twice | Becomes a compile error; use a variable |
@@ -271,8 +271,8 @@ Steps 1–4 land together for module syntax: there is no useful intermediate sta
 
 ## 9. Deferred
 
-- **Selective imports:** `use 'std/fmt' (show_vec, table)`.
-- **Discouraging internal names:** documentation comments that mark a name as internal, shown by the editor and possibly warned about at use (`fmt::fmt_vector`).
+- **Selective imports:** `incl 'std/fmt' (show_vec, table)`.
+- **Discouraging internal names:** documentation comments that mark a name as internal, shown by the editor and possibly warned about at use (`fmt::fmt_vec`).
 - **Renaming one module of a multi-module file on import.**
 - **Re-exports and facade modules.**
 - **Mutable module-level state.**

@@ -26,7 +26,7 @@ func findFirstCall(node *ast.TreeNode) *ast.TreeNode {
 }
 
 func TestValidateCallPlans_MissingPlan(t *testing.T) {
-	_, tree, parseErrs, typeErrs := testutil.Analyze("println(len('x'))\n")
+	_, tree, parseErrs, typeErrs := testutil.Analyze("print(len('x'))\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -73,7 +73,7 @@ func TestValidateCallPlans_DefaultOverflow(t *testing.T) {
 }
 
 func TestValidateCallPlans_DispatchUnknown(t *testing.T) {
-	analyzer, tree, parseErrs, typeErrs := testutil.Analyze("println('hello')\n")
+	analyzer, tree, parseErrs, typeErrs := testutil.Analyze("print('hello')\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}
@@ -138,7 +138,7 @@ func TestValidateCallPlans_RuntimeSymbolMissing(t *testing.T) {
 
 func TestValidateCallPlans_ValidPlansPass(t *testing.T) {
 	// Valid program with all 3 dispatch modes should pass invariants
-	analyzer, tree, parseErrs, typeErrs := testutil.Analyze("fn double(x) -> x * 2\ndouble(5)\nprintln(10)\nf = fn(x) -> x\nf(1)\n")
+	analyzer, tree, parseErrs, typeErrs := testutil.Analyze("fn double(x) -> x * 2\ndouble(5)\nprint(10)\nf = fn(x) -> x\nf(1)\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}

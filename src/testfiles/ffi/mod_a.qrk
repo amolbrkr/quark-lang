@@ -1,7 +1,7 @@
 // mod_a imports mod_b *before* declaring its own library. The link line
 // must still be -lqffi_a -lqffi_b: a module's libraries come before the
 // libraries of the modules it imports.
-use './mod_b'
+incl './mod_b'
 
 extern link 'qffi_a'
 extern 'qffi_a_glue.hpp'

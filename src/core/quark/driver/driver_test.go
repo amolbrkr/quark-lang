@@ -8,7 +8,7 @@ import (
 )
 
 func TestCompileSource_StopsAtRequestedStage(t *testing.T) {
-	src := "println(1 + 2)\n"
+	src := "print(1 + 2)\n"
 
 	parsed := driver.CompileSource(src, "t.qrk", driver.StageParse)
 	if parsed.Failed() || parsed.AST == nil || parsed.Analysis != nil || parsed.CPP != "" {
@@ -31,8 +31,8 @@ func TestCompileSource_ReportsErrorsPerStage(t *testing.T) {
 		name, src, want string
 	}{
 		{"parse", "x = (1 +\n", "(parse)"},
-		{"load", "use './does_not_exist'\n", "does_not_exist"},
-		{"check", "println(undefined_name)\n", "undefined identifier"},
+		{"load", "incl './does_not_exist'\n", "does_not_exist"},
+		{"check", "print(undefined_name)\n", "undefined identifier"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

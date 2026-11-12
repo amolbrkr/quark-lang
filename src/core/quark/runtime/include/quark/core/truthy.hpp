@@ -13,7 +13,7 @@
 //
 // Results and vectors have no truthiness. Treating an err result as false
 // silently discards the error, and a vector comparison such as `v == w`
-// yields a vector[bool] whose emptiness says nothing about its elements.
+// yields a vec[bool] whose emptiness says nothing about its elements.
 // Both are fatal here; the analyzer rejects them at compile time when the
 // type is known.
 inline bool q_truthy(QValue v) {
@@ -31,7 +31,7 @@ inline bool q_truthy(QValue v) {
         case QValue::VAL_LIST:
             return v.data.list_val && !v.data.list_val->empty();
         case QValue::VAL_VECTOR:
-            q_runtime_reportf("runtime error: vector used as a condition; "
+            q_runtime_reportf("runtime error: vec used as a condition; "
                               "use all(v), any(v) or len(v) > 0\n");
             std::exit(1);
         case QValue::VAL_DICT:

@@ -53,7 +53,7 @@ const (
 
 	// Keywords
 	keyword_beg
-	USE
+	INCL
 	AS
 	MODULE
 	IN
@@ -73,7 +73,7 @@ const (
 	ERR
 	LIST
 	DICT
-	VECTOR
+	VEC
 	RESULT
 	BREAK
 	CONTINUE
@@ -125,7 +125,7 @@ var tokenNames = map[TokenType]string{
 	COLON:      "COLON",
 	UNDERSCORE: "UNDERSCORE",
 
-	USE:      "USE",
+	INCL:     "INCL",
 	AS:       "AS",
 	MODULE:   "MODULE",
 	IN:       "IN",
@@ -145,7 +145,7 @@ var tokenNames = map[TokenType]string{
 	ERR:      "ERR",
 	LIST:     "LIST",
 	DICT:     "DICT",
-	VECTOR:   "VECTOR",
+	VEC:      "VEC",
 	RESULT:   "RESULT",
 	BREAK:    "BREAK",
 	CONTINUE: "CONTINUE",
@@ -161,7 +161,7 @@ func (t TokenType) String() string {
 }
 
 var keywords = map[string]TokenType{
-	"use":      USE,
+	"incl":     INCL,
 	"as":       AS,
 	"module":   MODULE,
 	"in":       IN,
@@ -181,7 +181,7 @@ var keywords = map[string]TokenType{
 	"err":      ERR,
 	"list":     LIST,
 	"dict":     DICT,
-	"vector":   VECTOR,
+	"vec":      VEC,
 	"result":   RESULT,
 	"break":    BREAK,
 	"continue": CONTINUE,

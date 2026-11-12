@@ -281,7 +281,7 @@ func TestListLiteral_TrailingComma(t *testing.T) {
 }
 
 func TestVectorLiteral_ParseNode(t *testing.T) {
-	node, errs := testutil.Parse("v = vector [1, 2, 3]\n")
+	node, errs := testutil.Parse("v = vec [1, 2, 3]\n")
 	if len(errs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", errs)
 	}
@@ -305,7 +305,7 @@ func TestVectorLiteral_ParseNode(t *testing.T) {
 }
 
 func TestVectorLiteral_RejectsSemicolonRows(t *testing.T) {
-	_, errs := testutil.Parse("vector [1, 2; 3, 4]\n")
+	_, errs := testutil.Parse("vec [1, 2; 3, 4]\n")
 	if len(errs) == 0 {
 		t.Fatalf("expected parse error for semicolon row separators in vector literal")
 	}
@@ -371,9 +371,9 @@ func TestFunction_WithReturnTypeAnnotation(t *testing.T) {
 }
 
 func TestFunction_WithBlockBody(t *testing.T) {
-	// Block bodies use -> not : — fn greet(name) -> println(name) is single-expr
-	// Multi-statement block: fn greet(name) ->\n    println(name)\n
-	node, errs := testutil.Parse("fn greet(name) ->\n    println(name)\n")
+	// Block bodies use -> not : — fn greet(name) -> print(name) is single-expr
+	// Multi-statement block: fn greet(name) ->\n    print(name)\n
+	node, errs := testutil.Parse("fn greet(name) ->\n    print(name)\n")
 	if len(errs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", errs)
 	}
@@ -429,7 +429,7 @@ func TestLambda_NoParams(t *testing.T) {
 // --- Control flow ---
 
 func TestIf_BasicParse(t *testing.T) {
-	node, errs := testutil.Parse("if x > 0:\n    println(x)\n")
+	node, errs := testutil.Parse("if x > 0:\n    print(x)\n")
 	if len(errs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", errs)
 	}
@@ -440,7 +440,7 @@ func TestIf_BasicParse(t *testing.T) {
 }
 
 func TestIfElse_Parse(t *testing.T) {
-	node, errs := testutil.Parse("if x > 0:\n    println(x)\nelse:\n    println(0)\n")
+	node, errs := testutil.Parse("if x > 0:\n    print(x)\nelse:\n    print(0)\n")
 	if len(errs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", errs)
 	}
@@ -451,7 +451,7 @@ func TestIfElse_Parse(t *testing.T) {
 }
 
 func TestForLoop_Parse(t *testing.T) {
-	node, errs := testutil.Parse("for x in range(10):\n    println(x)\n")
+	node, errs := testutil.Parse("for x in range(10):\n    print(x)\n")
 	if len(errs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", errs)
 	}
@@ -462,7 +462,7 @@ func TestForLoop_Parse(t *testing.T) {
 }
 
 func TestWhileLoop_Parse(t *testing.T) {
-	node, errs := testutil.Parse("while true:\n    println(1)\n")
+	node, errs := testutil.Parse("while true:\n    print(1)\n")
 	if len(errs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", errs)
 	}
@@ -499,7 +499,7 @@ func TestContinue_Parse(t *testing.T) {
 // --- Pipe ---
 
 func TestPipe_BasicParse(t *testing.T) {
-	node, errs := testutil.Parse("1 | println()\n")
+	node, errs := testutil.Parse("1 | print()\n")
 	if len(errs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", errs)
 	}
@@ -529,7 +529,7 @@ func TestPipe_ChainedParse(t *testing.T) {
 }
 
 func TestPipe_InsideFunctionArg(t *testing.T) {
-	node, errs := testutil.Parse("println(x | f())\n")
+	node, errs := testutil.Parse("print(x | f())\n")
 	if len(errs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", errs)
 	}
@@ -561,7 +561,7 @@ func TestAssignment_Simple(t *testing.T) {
 }
 
 func TestTypedVarDecl_Parse(t *testing.T) {
-	node, errs := testutil.Parse("v: vector = vector [1, 2]\n")
+	node, errs := testutil.Parse("v: vec = vec [1, 2]\n")
 	if len(errs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", errs)
 	}
@@ -668,7 +668,7 @@ func TestResult_ErrParse(t *testing.T) {
 // --- When ---
 
 func TestWhen_BasicParse(t *testing.T) {
-	node, errs := testutil.Parse("when x:\n    1 -> println('one')\n    _ -> println('other')\n")
+	node, errs := testutil.Parse("when x:\n    1 -> print('one')\n    _ -> print('other')\n")
 	if len(errs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", errs)
 	}
@@ -680,26 +680,26 @@ func TestWhen_BasicParse(t *testing.T) {
 
 // --- Use/Module ---
 
-func TestUseAlias_Parse(t *testing.T) {
-	node, errs := testutil.Parse("use './lib/math' as math\n")
+func TestInclAlias_Parse(t *testing.T) {
+	node, errs := testutil.Parse("incl './lib/math' as math\n")
 	if len(errs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", errs)
 	}
 	if len(node.Children) != 1 {
 		t.Fatalf("expected one top-level node, got %d", len(node.Children))
 	}
-	useNode := node.Children[0]
-	if useNode.NodeType != ast.UseNode {
-		t.Fatalf("expected UseNode, got %v", useNode)
+	inclNode := node.Children[0]
+	if inclNode.NodeType != ast.InclNode {
+		t.Fatalf("expected InclNode, got %v", inclNode)
 	}
-	if len(useNode.Children) != 2 {
-		t.Fatalf("expected use node with import target and alias, got %d children", len(useNode.Children))
+	if len(inclNode.Children) != 2 {
+		t.Fatalf("expected incl node with import target and alias, got %d children", len(inclNode.Children))
 	}
-	if useNode.Children[0].NodeType != ast.LiteralNode || useNode.Children[0].Token == nil || useNode.Children[0].Token.Type != token.STRING {
-		t.Fatalf("expected string import path, got %v", useNode.Children[0])
+	if inclNode.Children[0].NodeType != ast.LiteralNode || inclNode.Children[0].Token == nil || inclNode.Children[0].Token.Type != token.STRING {
+		t.Fatalf("expected string import path, got %v", inclNode.Children[0])
 	}
-	if useNode.Children[1].NodeType != ast.IdentifierNode || useNode.Children[1].TokenLiteral() != "math" {
-		t.Fatalf("expected alias 'math', got %v", useNode.Children[1])
+	if inclNode.Children[1].NodeType != ast.IdentifierNode || inclNode.Children[1].TokenLiteral() != "math" {
+		t.Fatalf("expected alias 'math', got %v", inclNode.Children[1])
 	}
 }
 
@@ -904,7 +904,7 @@ func findNodeType(node *ast.TreeNode, nt ast.NodeType) *ast.TreeNode {
 }
 
 func TestParser_WhenAsExpression(t *testing.T) {
-	src := "x = 3\ny = when x:\n    3 -> 'a'\n    _ -> 'b'\n-y\nprintln(y)\n"
+	src := "x = 3\ny = when x:\n    3 -> 'a'\n    _ -> 'b'\n-y\nprint(y)\n"
 	node, errs := testutil.Parse(src)
 	if len(errs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", errs)

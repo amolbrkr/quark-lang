@@ -38,7 +38,7 @@ const (
 	TypeNode
 	VarDeclNode
 	ModuleNode
-	UseNode
+	InclNode
 	BreakNode
 	ContinueNode
 	ExternHeaderNode      // extern 'path/to/glue.hpp'
@@ -80,7 +80,7 @@ var nodeTypeNames = map[NodeType]string{
 	TypeNode:              "Type",
 	VarDeclNode:           "VarDecl",
 	ModuleNode:            "Module",
-	UseNode:               "Use",
+	InclNode:              "Incl",
 	BreakNode:             "Break",
 	ContinueNode:          "Continue",
 	ExternHeaderNode:      "ExternHeader",
@@ -119,7 +119,7 @@ type TreeNode struct {
 	// Children = ParameterNodes (same as function params)
 	// ReturnType = TypeNode for the return type (reusing existing field)
 	ExternSymbol   string // The 'as' symbol (C++ function name)
-	ExternReceiver string // The receiver type prefix (e.g. "list", "vector", "str") — empty for free functions
+	ExternReceiver string // The receiver type prefix (e.g. "list", "vec", "str") — empty for free functions
 
 	// SourceFile is the display name of the file the node was parsed from, set
 	// by the loader for nodes spliced in from imported modules (empty for the

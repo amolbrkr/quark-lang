@@ -153,17 +153,17 @@ test('method insert text places the cursor inside the parentheses', async () => 
 });
 
 test('stdlib module members after an alias', async () => {
-	const items = await complete("use 'std/blas' as blas\nblas.|", '.');
+	const items = await complete("incl 'std/blas' as blas\nblas.|", '.');
 	const dot = items.find((i) => i.label === 'dot');
 	assert(dot, labels(items).join(','));
-	assert(dot.detail.includes('dot(x: vector, y: vector) float'), dot.detail);
+	assert(dot.detail.includes('dot(x: vec, y: vec) float'), dot.detail);
 	assert(dot.documentation.value.includes('Dot product'));
 });
 
 test('module members from another file', async () => {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'quark-ext-'));
 	fs.writeFileSync(path.join(dir, 'shapes.qrk'), 'module shapes:\n    // Area of a circle.\n    fn area(r: float) float ->\n        3.14 * r * r\n');
-	const items = await complete("use './shapes' as s\ns.|", '.', path.join(dir, 'main.qrk'));
+	const items = await complete("incl './shapes' as s\ns.|", '.', path.join(dir, 'main.qrk'));
 	const area = items.find((i) => i.label === 'area');
 	assert(area && area.detail.includes('area(r: float) float'), labels(items).join(','));
 });
@@ -175,8 +175,8 @@ test('struct fields', async () => {
 
 test('general completion has keywords and builtins with snippet insert text', async () => {
 	const items = await complete('pri|');
-	const println = items.find((i) => i.label === 'println');
-	assert(println && println.insertText.value === 'println($0)');
+	const print = items.find((i) => i.label === 'print');
+	assert(print && print.insertText.value === 'print($0)');
 	assert(items.some((i) => i.label === 'elseif' && i.kind === 'keyword'));
 });
 
@@ -190,7 +190,7 @@ test('division slash does not trigger completion', async () => {
 });
 
 test('import paths list stdlib modules', async () => {
-	const l = labels(await complete("use '|", "'"));
+	const l = labels(await complete("incl '|", "'"));
 	assert(l.includes('std/io') && l.includes('std/blas'), l.join(','));
 });
 
@@ -206,7 +206,7 @@ test('hover explains Python and R habits', () => {
 
 test('hover shows builtin and module signatures', () => {
 	assert(/len\(any\) int/.test(hover('n = le|n(x)')));
-	assert(/Dot product/.test(hover("use 'std/blas' as blas\nblas.d|ot(x, y)")));
+	assert(/Dot product/.test(hover("incl 'std/blas' as blas\nblas.d|ot(x, y)")));
 });
 
 (async () => {

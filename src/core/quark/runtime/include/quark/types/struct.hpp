@@ -38,6 +38,10 @@ inline QStruct* q_struct_create(const QStructDef* def) {
 // q_struct_get_field returns the field value at the given index.
 // Index must be valid (enforced at compile time by the analyzer).
 inline QValue q_struct_get_field(QValue val, int index) {
+    if (val.type == QValue::VAL_NULL) {
+        q_runtime_reportf("runtime error: cannot read a field of null (expected a struct value)\n");
+        exit(1);
+    }
     if (val.type != QValue::VAL_STRUCT || !val.data.struct_val) {
         q_runtime_reportf("runtime error: expected struct, got different type\n");
         exit(1);

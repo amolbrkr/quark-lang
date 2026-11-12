@@ -656,8 +656,13 @@ print(user.city)           // london
 
 user = user.set('lang', 'en')   // .set returns the updated dict
 print(user.lang)           // en
-print(user.get('missing')) // null — missing keys read as null
+print(user.get('missing')) // null — .get returns null for a missing key
+print(user.missing)        // runtime error: dict has no key 'missing'
 ```
+
+`d.key` is for keys you know are there, so a missing key (usually a typo) stops
+the program with an error instead of reading as `null`. Use `.get(key)` when a
+key may be absent.
 
 The analyzer infers a value type from the literal. Storing a value of a
 different type (say an int in the dict above) still works, but prints a
@@ -701,8 +706,11 @@ struct Customer:
 ```
 
 Construct with named fields. Missing required fields, unknown fields, duplicate
-fields, and type mismatches are all compile-time errors. Both inline and
-multi-line literals are allowed:
+fields, and type mismatches are all compile-time errors. A value whose type
+isn't known at compile time (from `any` or an unannotated parameter) is checked
+when the struct is built (`field 'id' of Customer expects int, got str`), and
+an `int` going into a `float` field is converted, as for parameters. Both inline
+and multi-line literals are allowed:
 
 ```quark
 c = Customer { id: 1, name: 'Alice', city: 'NYC' }
@@ -1035,13 +1043,6 @@ verified by compiling and running the bundled examples.
 - **Builtin names can't be variable names.** `sum = 0`, `len = 3` or `max = 10`
   is a compile-time error, even inside a function. Parameters may reuse them
   (`fn f(sum) -> sum`).
-- **Struct field types aren't enforced at runtime, and ints aren't widened to
-  floats.** A field is only checked when the value's type is known at compile
-  time, so `fn mk(x) -> Row { id: x, score: 1.0 }` accepts `mk('abc')`. With
-  `score: float`, `Row { id: 1, score: 2 }` stores an int (parameters widen,
-  fields don't). Because the compiler trusts the declared field type, reading
-  such a field into a typed variable gives a wrong value:
-  `s: float = r.score` then `s * 1.5` prints `1.5e-323`.
 - **A clash with an imported file's top-level name isn't reported**, and how it
   resolves depends on the kind of name. Redefining an imported top-level
   function replaces it for the library too (with `fn helper` in the library and
@@ -1052,11 +1053,9 @@ verified by compiling and running the bundled examples.
 - **Structs aren't namespaced.** They must be defined at a file's top level,
   not inside a `module` block (there, `Point { ... }` reports
   `unknown struct type 'Point'`). Struct names are global, so two imported
-  files that each define `Point` report `struct 'Point' already defined`. A
-  struct literal can only be written in the file that defines the struct; in
-  an importing file it is a parse error, so construct values through a
-  function of the defining module. Annotations use the bare name
-  (`q: Point`); `q: geo.Point` is a parse error.
+  files that each define `Point` report `struct 'Point' already defined`. An
+  importing file uses the bare name for literals and annotations
+  (`Point { x: 1 }`, `q: Point`); `q: geo.Point` is a parse error.
 - **No "any struct" annotation:** `fn f(x: struct)` is a parse error; use `any`.
 - **Struct fields can't be nullable**, since `null` can't be written as an
   annotation.

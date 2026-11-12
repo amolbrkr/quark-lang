@@ -4,6 +4,7 @@
 
 #include "../core/value.hpp"
 #include "../core/constructors.hpp"
+#include "../types/dict.hpp"
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
@@ -16,7 +17,17 @@ inline QValue q_member_get(QValue obj, const char* member) {
     }
 
     if (obj.type == QValue::VAL_DICT) {
-        return q_dict_get(obj, qv_string(member));
+        // d.key names a key in the source, so a missing key is a mistake
+        // (usually a typo), not a lookup that may fail: report it instead of
+        // returning null. d.get(key) is the form for keys that may be absent.
+        if (obj.data.dict_val) {
+            auto it = obj.data.dict_val->entries.find(QDictKey(member));
+            if (it != obj.data.dict_val->entries.end()) {
+                return it->second;
+            }
+        }
+        q_runtime_reportf("runtime error: dict has no key '%s'; use .get('%s') if the key may be missing\n", member, member);
+        std::exit(1);
     }
 
     const char* type_names[] = {"int", "float", "string", "bool", "null", "list", "vec", "dict", "fn", "result", "resource", "struct", "tbl"};

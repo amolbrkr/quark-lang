@@ -8,29 +8,19 @@ Sections follow [Keep a Changelog](https://keepachangelog.com/): **Breaking**, *
 
 ---
 
-## Known issues (as of `ac274c0`)
+## Known issues (as of `6dc11a0` plus uncommitted struct/dict fixes)
 
-These were checked against the current compiler. They are silent wrong results or silent name resolution, so they break the robustness rules in `CLAUDE.md`.
+These were checked against the current compiler. The first is silent name resolution, which breaks the robustness rules in `CLAUDE.md`; the others fail loudly but report the wrong type or location.
 
-- **An int stored in a `float` struct field reads back as a garbage float.** The analyzer accepts int→float in a struct literal, but codegen stores the int unconverted, and the field read uses `.data.float_val`.
-  ```
-  struct P:
-      x: float
-  p = P { x: 1 }
-  v = p.x
-  print(v)            // 5e-324
-  ```
-  The same happens through `s: float = r.score` (`s * 1.5` prints `1.5e-323`).
-- **An `any` value goes into a typed struct field without a check.** With `struct P: x: int` and `fn mk(a) -> P { x: a }`, `p = mk('hello')` stores a string. `p.x + 1` then prints a pointer-sized integer.
 - **A user definition that shares a name with an imported top-level name is silently ignored.** For example, `fn fmt_full(x) -> 'mine'` after `incl 'std/fmt' as fmt` still calls the extern `fmt_full`. Names inside `module` blocks are safe: they are namespaced, and a clash is a `QK-LOAD-001` error.
 - `input()` is declared to return `str`, but it returns `null` at end of input. The mismatch fails loudly at runtime (for example `len()` or a `str` parameter check) rather than at compile time.
-- Using a field on `o: O = null` fails with `expected struct, got different type`. The program does stop, but the message doesn't mention `null`.
+- A runtime error inside a `for` loop body is reported at the `for` line, not at the statement that failed. For example, `print(r % 0)` on line 4 of a loop starting on line 2 reports `modulo by zero at file.qrk:2:1`.
 
 ---
 
-## 2026-11-12: Function values, `fn` type, call-shape checking, keyword renames
+## 2026-11-12: Function values, `fn` type, call-shape checking, keyword renames, struct field checks
 
-Commits: `c0ac8cd`, `ac274c0`; keyword renames not yet committed
+Commits: `c0ac8cd`, `ac274c0`, `6dc11a0` (keyword renames); struct field and dict key changes not yet committed
 
 ### Breaking
 - **Renamed keywords and builtins.** The old spellings no longer compile:
@@ -54,6 +44,13 @@ Commits: `c0ac8cd`, `ac274c0`; keyword renames not yet committed
   - `q_alloc_closure(fn, info, n)` and `qv_func(fn, info)` take a new `QFnInfo*` argument.
   - `q_require_callable` was replaced by `q_require_closure`.
   - Hand-written glue that builds closures must be updated.
+- **`d.key` on a missing dict key is a runtime error** instead of returning `null`: `dict has no key 'nmae'; use .get('nmae') if the key may be missing`. Code that relied on `d.key` reading `null` must use `d.get('key')`.
+  ```
+  rows = list [dict {name: 'b', amount: 2}]
+  for r in rows:
+      print(r.amonut)      // used to print null; now stops with an error
+  ```
+- **Struct field values of unknown type are checked when the literal is built.** `fn mk(a) -> P { x: a }` with `x: int` used to accept `mk('hello')`; it now stops with `field 'x' of P expects int, got str`.
 - A fully annotated (native) function now checks its result at runtime. For example, `fn nat(f: fn) int -> f(1)` fails with `expected int, got str` when the callback returns a string; it used to read garbage.
 
 ### Added
@@ -79,11 +76,15 @@ Commits: `c0ac8cd`, `ac274c0`; keyword renames not yet committed
   - Omitted default arguments are built fresh on every call.
   - `qext::call` from native code gets the same checks.
 - A list of functions with different signatures can be indexed and called (`fs[0](9)`). This used to fail with "expression is not callable".
+- **Struct literals and struct return types work in an importing file.** With `struct Point` defined at the top level of `lib/geo.qrk`, the importer can write `Point { x: 1 }` and `fn mk(a: int) Point -> ...`. Both used to be parse errors (`no prefix parse function for LBRACE`). A misspelled struct name is now a check error: `unknown struct type 'Pnt'` or `unknown type 'Pnt'`.
 
 ### Changed
 - Tables spec (`tables_v0_1_spec.md`, still not implemented): the literal is `tbl { ... }` and the type annotation is `tbl` (`fn f(t: tbl)`). The runtime type name for a table is `tbl`. `fmt.table(...)` keeps its name.
 
 ### Fixed
+- **An int stored in a `float` struct field read back as a garbage float.** `P { x: 1 }` with `x: float` stored the int unconverted, and the field read took the float bits: `print(p.x)` printed `5e-324`. Ints are now widened to float in struct literals and in field defaults (`weight: float = 2`), as for parameters.
+- **A value of unknown type stored in a typed struct field wasn't checked**, so reading it reinterpreted the wrong type (`p.x + 1` on a string printed a large integer). It is now checked when the struct is built (see Breaking).
+- Reading a field of a `null` struct value says so: `cannot read a field of null (expected a struct value)` (was `expected struct, got different type`).
 - A function value called with too few or too many arguments, from Quark or through `qext::call`, used to read missing arguments silently.
 - `unboxToNative` read the union fields of a native function body's result without checking the tag, which gave garbage values. The read is now checked.
 - Fully annotated (native) functions can be called from closures and nested functions.
@@ -94,6 +95,10 @@ Commits: `c0ac8cd`, `ac274c0`; keyword renames not yet committed
 - Runtime: `q_println` removed; `q_to_vector`→`q_to_vec`, `q_fmt_vector`→`q_fmt_vec`. C++ type and tag names (`QVector`, `VAL_VECTOR`, `qv_vector*`, `qext::as_vector`) are unchanged.
 - Editor extension: `incl`/`vec` highlighting and completion, snippets `incl`, `inclf` and `vec`; `data/quark.json` regenerated.
 - `TestNeg_RenamedSymbolsRejected` checks that the old spellings are rejected.
+- Struct field checks: codegen `checkedFieldValue` wraps each field value whose type isn't proven in a new `q_field_int/float/bool/check/struct` helper (`builtins/params.hpp`); proven values are stored unchanged.
+- Parser: the struct-name pre-pass (`collectStructNames`, `Parser.structNames`) is removed. `Name {` always parses as a struct literal and any name before `->` as a return type; the analyzer checks the name.
+- `q_member_get` (`ops/member.hpp`) reports a missing dict key instead of returning `null`.
+- New `smoke_struct_fields.qrk`, `TestStructsAcrossFiles`, and 12 `TestSemanticsSafety_Rejected` cases for struct fields and dict keys.
 - `QFnInfo {name, min_arity, max_arity, default_arg}` (`types/closure.hpp`). Codegen `emitFnInfos` emits `_qfi_<name>`, and `emitDefaultArgFns` emits `quark_<name>__default_arg`.
 - `types/function.hpp` rewritten:
   - `q_call0`…`q_call12` go through `q_call_values`, which calls directly when the argument count equals the parameter count and uses `q_call_adapt` otherwise.

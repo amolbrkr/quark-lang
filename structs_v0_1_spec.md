@@ -130,10 +130,8 @@ StructFieldInitLine ::= ID ":" Expression
 
 Implementation note:
 
-1. `ID { ... }` is parsed as a struct literal only when `ID` resolves to a struct type symbol.
-2. Otherwise existing expression rules apply and analyzer should emit a clear error.
-
-As implemented, the parser decides this with a per-file pre-pass that collects the struct names declared in that file. If `ID` is not a struct declared in the same file (an unknown name, or a struct imported with `incl`), `ID { ... }` is a parse error (`QK-PARSE-001`, "no prefix parse function for LBRACE") rather than an analyzer error, so struct literals of imported structs are not supported yet.
+1. `ID { ... }` is always parsed as a struct literal: `{` after a name has no other meaning, so the parser doesn't need to know which structs exist.
+2. The analyzer resolves `ID`. A name that isn't a known struct is a check error (`unknown struct type 'Pnt'`). Struct names are global, so a struct defined at the top level of an imported file can be built with its bare name in the importer.
 
 ## 6. Static Semantics
 

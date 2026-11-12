@@ -53,4 +53,44 @@ inline QValue q_param_struct(QValue v, const char* structName, const char* fn, c
     q_param_type_error(v, structName, fn, param);
 }
 
+// Struct field values. A struct literal checks each field value whose type the
+// compiler couldn't prove, with the same rules as parameters (float widens an
+// int, reference types accept null), so a field read can trust the stored tag.
+[[noreturn]] inline void q_field_type_error(QValue v, const char* expected, const char* structName, const char* field) {
+    QValue got = q_type(v);
+    q_runtime_reportf("runtime error: field '%s' of %s expects %s, got %s\n",
+                      field, structName, expected, got.data.string_val ? got.data.string_val : "unknown");
+    std::exit(1);
+}
+
+inline QValue q_field_int(QValue v, const char* structName, const char* field) {
+    if (v.type != QValue::VAL_INT) q_field_type_error(v, "int", structName, field);
+    return v;
+}
+
+inline QValue q_field_float(QValue v, const char* structName, const char* field) {
+    if (v.type == QValue::VAL_FLOAT) return v;
+    if (v.type == QValue::VAL_INT) return qv_float(static_cast<double>(v.data.int_val));
+    q_field_type_error(v, "float", structName, field);
+}
+
+inline QValue q_field_bool(QValue v, const char* structName, const char* field) {
+    if (v.type != QValue::VAL_BOOL) q_field_type_error(v, "bool", structName, field);
+    return v;
+}
+
+inline QValue q_field_check(QValue v, QValue::ValueType tag, bool allowNull, const char* expected, const char* structName, const char* field) {
+    if (v.type == tag || (allowNull && v.type == QValue::VAL_NULL)) return v;
+    q_field_type_error(v, expected, structName, field);
+}
+
+inline QValue q_field_struct(QValue v, const char* expectedStruct, const char* structName, const char* field) {
+    if (v.type == QValue::VAL_NULL) return v;
+    if (v.type == QValue::VAL_STRUCT && v.data.struct_val && v.data.struct_val->def &&
+        std::strcmp(v.data.struct_val->def->name, expectedStruct) == 0) {
+        return v;
+    }
+    q_field_type_error(v, expectedStruct, structName, field);
+}
+
 #endif // QUARK_BUILTINS_PARAMS_HPP

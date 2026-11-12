@@ -34,7 +34,7 @@ Every string-producing operation allocates a **fresh copy**. Strings are never s
 
 ### 1.3 Null
 
-`null` is a distinct type, not a zero-value of another type. It is used as the return value for missing keys, out-of-bounds reads, and void-returning builtins.
+`null` is a distinct type, not a zero-value of another type. It is used as the return value for missing keys read with `.get`, out-of-bounds reads, and void-returning builtins.
 
 ### 1.4 Resources
 
@@ -52,7 +52,7 @@ Quark has **no implicit coercion** except in three narrow cases:
 
 2. **int → float promotion in mixed comparison**: `<`, `<=`, `>`, `>=`, `==`, `!=` promote the int operand when comparing int to float.
 
-3. **int → float widening at `float` parameters**: an `int` argument passed to a parameter annotated `float`, of a Quark function or an `extern fn`, is converted to `float`. The reverse is not done: a `float` passed to an `int` parameter is an error (§13.2).
+3. **int → float widening at `float` parameters and struct fields**: an `int` argument passed to a parameter annotated `float`, of a Quark function or an `extern fn`, is converted to `float`, and so is an `int` stored in a `float` struct field (literal value or default). The reverse is not done: a `float` passed to an `int` parameter or field is an error (§13.2).
 
 All other type mismatches are errors (compile-time when type info is available, runtime otherwise).
 
@@ -313,7 +313,7 @@ Method/index behavior:
 
 - Created with `dict { key: value }`; keys in a literal are identifiers.
 - Keys are strings. `.get` and `.set` convert a non-string key to its string form, so `d.set(1, 2)` stores the key `'1'` and `d.get(1)` reads it back.
-- `d.key` and `d.get(key)` return `null` for a missing key.
+- `d.key` names a key in the source, so reading a missing key with it is a runtime error: `dict has no key 'nmae'; use .get('nmae') if the key may be missing`. `d.get(key)` returns `null` for a missing key; use it when a key may be absent.
 
 ### 9.3 Ranges
 
@@ -538,6 +538,8 @@ Each annotated parameter is enforced, whether or not the function's other parame
 Unannotated parameters accept any value. Inside the body, annotated `int`, `float` and `bool` parameters are native C++ values, so arithmetic on them is unboxed. Fully annotated functions are compiled to native C++ functions, and calls with arguments already known to have the right types pay no check.
 
 If a parameter has both a type annotation and a default value, the default's type must be assignable to the annotated type.
+
+Struct fields follow the same rules. A field value whose type is known at compile time is checked then (`cannot assign value of type 'str' to field 'x' of type 'int'`). Otherwise it is checked when the struct literal is built, so a field never holds a value of the wrong type: `field 'x' of P expects int, got str`. An `int` going into a `float` field, including a default, is converted to `float`, and reference-typed fields accept `null`.
 
 ### 13.3 Return type annotations
 

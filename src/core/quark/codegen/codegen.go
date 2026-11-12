@@ -2823,6 +2823,82 @@ func (g *Generator) emitStructDefs() {
 	g.emit("\n")
 }
 
+// checkedFieldValue makes a struct field value match the field's declared
+// type before it is stored. Field reads trust the stored tag (a float field is
+// read as .data.float_val), so a value is stored unchecked only when the
+// analyzer proved its type. An int going into a float field is widened, as for
+// parameters; any other unproven value goes through a q_field_* check, so a
+// mismatch is a runtime error instead of a garbage read.
+func (g *Generator) checkedFieldValue(st *types.StructType, field types.StructField, valueNode *ast.TreeNode, value string) string {
+	ft := field.Type
+	if ft == nil || ft.Equals(types.TypeAny) {
+		return value
+	}
+	vt := g.nodeType(valueNode)
+	proven := vt != nil && !types.IsErrorType(vt) && !vt.Equals(types.TypeAny)
+	if _, isUnion := vt.(*types.UnionType); isUnion {
+		proven = false
+	}
+	sname := escapeCppString(st.Name)
+	fname := escapeCppString(field.Name)
+	switch {
+	case ft.Equals(types.TypeInt):
+		if proven && vt.Equals(types.TypeInt) {
+			return value
+		}
+		return fmt.Sprintf("q_field_int(%s, \"%s\", \"%s\")", value, sname, fname)
+	case ft.Equals(types.TypeFloat):
+		if proven && vt.Equals(types.TypeFloat) {
+			return value
+		}
+		return fmt.Sprintf("q_field_float(%s, \"%s\", \"%s\")", value, sname, fname)
+	case ft.Equals(types.TypeBool):
+		if proven && vt.Equals(types.TypeBool) {
+			return value
+		}
+		return fmt.Sprintf("q_field_bool(%s, \"%s\", \"%s\")", value, sname, fname)
+	}
+	if fst, ok := ft.(*types.StructType); ok {
+		if vst, ok := vt.(*types.StructType); proven && ok && vst.Name == fst.Name {
+			return value
+		}
+		if proven && vt.Equals(types.TypeNull) {
+			return value
+		}
+		return fmt.Sprintf("q_field_struct(%s, \"%s\", \"%s\", \"%s\")", value, escapeCppString(fst.Name), sname, fname)
+	}
+	var key string
+	switch t := ft.(type) {
+	case *types.ListType:
+		key = "list"
+	case *types.DictType:
+		key = "dict"
+	case *types.VectorType:
+		key = "vec"
+	case *types.ResultType:
+		key = "result"
+	case *types.FunctionType:
+		key = "fn"
+	default:
+		switch {
+		case t.Equals(types.TypeString):
+			key = "str"
+		case t.Equals(types.TypeResource):
+			key = "resource"
+		case t.Equals(types.TypeFn):
+			key = "fn"
+		}
+	}
+	check, ok := paramTagChecks[key]
+	if !ok {
+		return value
+	}
+	if proven && types.CanAssign(ft, vt) {
+		return value
+	}
+	return fmt.Sprintf("q_field_check(%s, QValue::%s, %t, \"%s\", \"%s\", \"%s\")", value, check.tag, check.allowNull, key, sname, fname)
+}
+
 // generateStructLiteral emits code to construct a struct value.
 func (g *Generator) generateStructLiteral(node *ast.TreeNode) string {
 	structName := node.TokenLiteral()
@@ -2850,12 +2926,12 @@ func (g *Generator) generateStructLiteral(node *ast.TreeNode) string {
 	// Emit field assignments in declaration order
 	for i, field := range st.Fields {
 		if valueNode, ok := provided[field.Name]; ok {
-			value := g.generateExpr(valueNode)
+			value := g.checkedFieldValue(st, field, valueNode, g.generateExpr(valueNode))
 			g.emitLine("%s_raw->fields[%d] = %s;", temp, i, value)
 		} else if field.HasDefault {
 			// Emit default value expression
 			if defaultNode, ok := field.DefaultNode.(*ast.TreeNode); ok {
-				value := g.generateExpr(defaultNode)
+				value := g.checkedFieldValue(st, field, defaultNode, g.generateExpr(defaultNode))
 				g.emitLine("%s_raw->fields[%d] = %s;", temp, i, value)
 			} else {
 				panicICEf("INV-STRUCT-DEFAULT", nil, "struct '%s' field '%s' has non-nil HasDefault but DefaultNode is not *ast.TreeNode", structName, field.Name)

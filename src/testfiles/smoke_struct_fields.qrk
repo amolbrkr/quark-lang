@@ -1,0 +1,48 @@
+// smoke_struct_fields.qrk - struct field values match their declared types.
+// An int going into a float field (literal, default or a value of unknown
+// type) is widened, as for parameters; reference fields accept null.
+
+struct Row:
+    id: int
+    score: float
+    weight: float = 2
+
+struct Inner:
+    n: int
+
+struct Outer:
+    inner: Inner
+    tags: list
+    run: fn
+    name: str
+
+fn id(v) -> v
+
+// int literal and int default widen to float
+r = Row { id: 1, score: 2 }
+s: float = r.score
+print(s * 1.5)
+print(r.weight * 1.5)
+print(r)
+
+// a value of unknown type is checked and widened when it is stored
+r2 = Row { id: id(7), score: id(3) }
+print(r2.score / 2)
+print(r2.id + 1)
+
+// reference fields accept their type or null, also from untyped paths
+o = Outer { inner: id(Inner { n: 4 }), tags: id(list [1, 2]), run: id(fn(x) -> x * 2), name: id('ok') }
+print(o.inner.n)
+print(len(o.tags))
+f = o.run
+print(f(5))
+o2 = Outer { inner: id(null), tags: null, run: null, name: 'empty' }
+print(o2.name)
+print(o2.tags)
+
+// d.key reads an existing key; d.get covers keys that may be missing
+d = dict {name: 'Ada', lang: 'en'}
+print(d.name)
+print(d.get('city'))
+d.city = 'London'
+print(d.city)

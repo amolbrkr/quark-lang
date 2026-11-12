@@ -188,8 +188,10 @@ func (p *Parser) infixParseFn(t token.TokenType) func(*ast.TreeNode) *ast.TreeNo
 func (p *Parser) parseIdentifier() *ast.TreeNode {
 	tok := p.curToken
 
-	// Check for struct literal: StructName { field: value, ... }
-	if p.structNames[tok.Literal] && p.peek(1).Type == token.LBRACE {
+	// Struct literal: StructName { field: value, ... }. '{' after a name has no
+	// other meaning, so this doesn't depend on where the struct is defined; the
+	// checker reports a name that isn't a known struct.
+	if p.peek(1).Type == token.LBRACE {
 		return p.parseStructLiteral()
 	}
 

@@ -23,7 +23,7 @@ Today an import splices the imported file's top-level statements into the import
 | Importer defines `fn io_open` while `std/io` declares `extern fn io_open` | The importer's function is ignored; calls go to the extern (externs live in the builtins table, which the analyzer checks first) |
 | Two libraries each contain `module utils` | `module 'utils' already defined`, even with different aliases |
 | Two files define `struct Point` | `struct 'Point' already defined`; struct names are global |
-| A struct is used from another file | No qualified type syntax (`q: geo.Point` is a parse error); a struct literal can only be written in the defining file |
+| A struct is used from another file | No qualified type syntax (`q: geo.Point` is a parse error); literals and annotations use the bare global name (`Point { ... }`) |
 | `incl 'std/fmt' as fmt` | `fmt_vec`, `blas_dot` etc. are callable unqualified, colliding with user names |
 | An imported file has top-level statements (`print(...)`) | They run inside the importer's program, at the `incl` |
 | `fn f` declared twice | The second silently wins |
@@ -187,7 +187,7 @@ That is why per-module renaming had to happen before analysis, and why the runti
 ### 5.4 Lexer and parser
 
 - **Lexer:** a `COLONCOLON` token for `::`. Check that `:` keeps working in annotations, dict literals and blocks; `x: int` and `dict { a: b }` must not lex as `::`.
-- **Parser:** a `QualifiedNameNode` (`ID ('::' ID)+`) in expression position, in `parseTypeExpr` (and `isTypeToken`) for annotations, and before `{` as a struct literal. `Q::...::Name {` is always a struct literal, so the `structNames` pre-pass is only needed for bare same-file names.
+- **Parser:** a `QualifiedNameNode` (`ID ('::' ID)+`) in expression position, in `parseTypeExpr` (and `isTypeToken`) for annotations, and before `{` as a struct literal. `Q::...::Name {` is always a struct literal, as `Name {` already is (the parser has no struct-name pre-pass).
 - **Parser:** `struct` definitions inside `module` bodies.
 - **Parser:** `fn f` stops desugaring to `f = fn(...)`. It produces a declaration node (`FunctionNode` already exists, and codegen and the analyzer handle it) that the analyzer treats as fixed. Anonymous lambdas are unchanged.
 

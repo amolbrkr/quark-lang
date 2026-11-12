@@ -11,11 +11,10 @@ import (
 const maxParserErrors = 10
 
 type Parser struct {
-	tokens      []token.Token
-	pos         int
-	curToken    token.Token
-	errors      []diagnostics.Diagnostic
-	structNames map[string]bool // struct names collected in pre-pass for literal parsing
+	tokens   []token.Token
+	pos      int
+	curToken token.Token
+	errors   []diagnostics.Diagnostic
 	// blockExprEnded is set when an expression ended with an indented block
 	// (a `when` used as an expression). The block's DEDENT has already been
 	// consumed, so the current token starts the next statement and must not
@@ -25,27 +24,13 @@ type Parser struct {
 
 func New(tokens []token.Token) *Parser {
 	p := &Parser{
-		tokens:      tokens,
-		errors:      make([]diagnostics.Diagnostic, 0),
-		structNames: make(map[string]bool),
+		tokens: tokens,
+		errors: make([]diagnostics.Diagnostic, 0),
 	}
 	if len(tokens) > 0 {
 		p.curToken = tokens[0]
 	}
-	p.collectStructNames()
 	return p
-}
-
-// collectStructNames does a quick scan of the token stream to find all
-// `struct <ID> :` patterns so the expression parser can recognize struct literals.
-func (p *Parser) collectStructNames() {
-	for i := 0; i+2 < len(p.tokens); i++ {
-		if p.tokens[i].Type == token.STRUCT &&
-			p.tokens[i+1].Type == token.ID &&
-			p.tokens[i+2].Type == token.COLON {
-			p.structNames[p.tokens[i+1].Literal] = true
-		}
-	}
 }
 
 func (p *Parser) Errors() []string {
@@ -371,14 +356,10 @@ func (p *Parser) isTypeToken() bool {
 	case token.LIST, token.DICT, token.VEC, token.RESULT, token.FN:
 		return true
 	case token.ID:
-		switch p.curToken.Literal {
-		case "int", "float", "str", "bool", "any", "resource":
-			return true
-		}
-		// User-defined struct names are valid types
-		if p.structNames[p.curToken.Literal] {
-			return true
-		}
+		// A builtin type name (int, str, ...) or a struct name, which may be
+		// defined in another file. The position (after a parameter list) makes
+		// it a type; the checker rejects names that aren't a known type.
+		return true
 	}
 	return false
 }

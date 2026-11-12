@@ -591,6 +591,25 @@ func TestSmokePrograms_Run(t *testing.T) {
 			),
 		},
 		{
+			name: "struct_fields",
+			file: filepath.Join(testfilesDir, "smoke_struct_fields.qrk"),
+			expected: join(
+				"3.0",
+				"3.0",
+				"Row {id: 1, score: 2.0, weight: 2.0}",
+				"1.5",
+				"8",
+				"4",
+				"2",
+				"10",
+				"empty",
+				"null",
+				"Ada",
+				"null",
+				"London",
+			),
+		},
+		{
 			name: "structs",
 			file: filepath.Join(testfilesDir, "smoke_structs.qrk"),
 			expected: join(
@@ -898,6 +917,21 @@ func TestSemanticsSafety_Rejected(t *testing.T) {
 		{"dynamic_arity_struct_field", "struct H:\n    run: fn\nfn h(a, b) -> b\nx = H { run: h }\nr = x.run\nprint(r(1))\n", "function 'h' expects 2 arguments but got 1"},
 		{"dynamic_arity_module_member", "incl 'std/io' as io\nfn id(v) -> v\nf = id(io.exists)\nprint(f())\n", "function 'io.exists' expects 1 argument but got 0"},
 		{"when_literal_or_result", "n = 1\nwhen n:\n    1 or ok x -> print(1)\n    _ -> print(2)\n", "ok patterns cannot be combined with other patterns using 'or'"},
+		// Struct field values of unknown type are checked when the literal is
+		// built, so a field read never reinterprets a value of the wrong type.
+		{"struct_field_any_int", "struct P:\n    x: int\nfn mk(a) -> P { x: a }\np = mk('hello')\nprint(p.x + 1)\n", "field 'x' of P expects int, got str"},
+		{"struct_field_any_float", "struct P:\n    x: float\nfn mk(a) -> P { x: a }\np = mk('hello')\nprint(p.x * 2.0)\n", "field 'x' of P expects float, got str"},
+		{"struct_field_any_bool", "struct P:\n    flag: bool\nfn mk(a) -> P { flag: a }\np = mk(1)\nprint(p.flag)\n", "field 'flag' of P expects bool, got int"},
+		{"struct_field_any_str", "struct P:\n    name: str\nfn mk(a) -> P { name: a }\nprint(mk(null).name)\n", "field 'name' of P expects str, got null"},
+		{"struct_field_any_list", "struct P:\n    xs: list\nfn mk(a) -> P { xs: a }\nprint(mk(3).xs)\n", "field 'xs' of P expects list, got int"},
+		{"struct_field_any_fn", "struct H:\n    run: fn\nfn mk(a) -> H { run: a }\nprint(mk(3).run)\n", "field 'run' of H expects fn, got int"},
+		{"struct_field_wrong_struct", "struct A:\n    x: int\nstruct B:\n    a: A\nfn mk(v) -> B { a: v }\nq: any = B { a: A { x: 1 } }\nprint(mk(q))\n", "field 'a' of B expects A, got B"},
+		{"struct_field_null_read", "struct O:\n    id: int\no: O = null\nprint(o.id + 1)\n", "cannot read a field of null"},
+		{"struct_literal_unknown_name", "q = Pnt { x: 1 }\n", "unknown struct type 'Pnt'"},
+		{"struct_return_type_unknown_name", "fn f() Pnt -> 1\nprint(f())\n", "unknown type 'Pnt'"},
+		// d.key names a key in the source: a missing key is an error, not null.
+		{"dict_dot_missing_key", "rows = list [dict {name: 'b', amount: 2}]\nfor r in rows:\n    print(r.amonut)\n", "dict has no key 'amonut'"},
+		{"dict_dot_missing_key_untyped", "fn id(v) -> v\nd = id(dict {a: 1})\nprint(d.b)\n", "dict has no key 'b'"},
 	}
 
 	tmp := t.TempDir()
@@ -1528,6 +1562,37 @@ func TestModuleNamespacing(t *testing.T) {
 		if err == nil || !strings.Contains(string(out), wantErr) {
 			t.Fatalf("%s: expected error %q, got (err=%v):\n%s", file, wantErr, err, out)
 		}
+	}
+}
+
+// TestStructsAcrossFiles: a struct defined in an imported file can be built
+// with a literal and used as a return type in the importer (the parser no
+// longer needs to have seen the struct's definition), and its field values are
+// checked like those of a local struct.
+func TestStructsAcrossFiles(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmp, "lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"lib/geo.qrk": "struct Point:\n    x: int\n    y: float = 0\n\nmodule geo:\n    fn sum(p: Point) float -> p.x + p.y\n",
+		"ok.qrk":      "incl './lib/geo.qrk'\np = Point { x: 3, y: 4 }\nprint(geo.sum(p))\nfn mk(a: int) Point -> Point { x: a }\nprint(mk(2))\n",
+		"bad.qrk":     "incl './lib/geo.qrk'\nfn mk(a) -> Point { x: a }\nprint(mk('s'))\n",
+	}
+	for name, src := range files {
+		if err := os.WriteFile(filepath.Join(tmp, name), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := strings.TrimSpace(normalizeNewlines(runQuarkIn(t, tmp, "run", "ok.qrk")))
+	if want := "7.0\nPoint {x: 2, y: 0.0}"; got != want {
+		t.Fatalf("ok.qrk output:\n%s\nwant:\n%s", got, want)
+	}
+	cmd := exec.Command(quarkExePath, "run", "bad.qrk")
+	cmd.Dir = tmp
+	out, err := cmd.CombinedOutput()
+	if wantErr := "field 'x' of Point expects int, got str"; err == nil || !strings.Contains(string(out), wantErr) {
+		t.Fatalf("bad.qrk: expected error %q, got (err=%v):\n%s", wantErr, err, out)
 	}
 }
 

@@ -25,4 +25,16 @@ inline const char* qei_greet(const char* name) {
     return q_strdup(buf);
 }
 
+// Callbacks: `fn` parameters arrive as QClosure*, called with qext::call.
+// Applies f to x n times: f(f(...f(x))).
+inline QValue qei_apply_n(QClosure* f, int64_t n, QValue x) {
+    for (int64_t i = 0; i < n; i++) x = qext::call(f, x);
+    return x;
+}
+
+// Returns the fn value it was given (QClosure* in, QClosure* out).
+inline QClosure* qei_same_fn(QClosure* f) {
+    return f;
+}
+
 #endif // EXT_SMOKE_HPP

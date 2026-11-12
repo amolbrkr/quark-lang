@@ -275,7 +275,19 @@ The most common format after CSV. Candidates: [nlohmann/json](https://github.com
 
 `std::regex` is slow and adds noticeable compile time; RE2 (BSD) or PCRE2 (BSD) are fast but are libraries to link. Defer until a concrete need appears; the string methods (`split`, `replace`, `contains`, `startswith`) cover simple cases.
 
-## 10. Rollout
+## 10. Dependencies on FFI Phase 2
+
+Measured 2026-11-11 (`quark build`, PCH warm, Linux x86_64): a one-line program builds in 1.1s; the same program importing all six current stdlib modules builds in 3.6s, even if it calls none of them. Nearly all of that is `std/fmt`: its 437-line glue header costs 1.9s, because every import recompiles the glue at `-O3` inside the program's translation unit. This proposal makes the glue much larger (format mini-language, buffered I/O, CSV columns and writer), and some of it needs heavy standard headers on their own: `<filesystem>` adds 0.7s, `<regex>` 0.7s, `<iomanip>` 0.4s; nlohmann/json (48,158 lines) 5.1s.
+
+- **P2 (separately compiled glue sources)** should come first. With stdlib glue compiled once and cached (`extern source`), an import costs only its declarations and a link, so build time stays near 1.1s however much the stdlib grows. Stdlib glue includes only runtime headers, which are already part of the PCH cache key, so the stdlib is the simple first case for P2's dependency tracking. P2 also makes the libraries ruled out in §8.2 and §9.2 for compile cost (csv-parser, nlohmann/json) viable again.
+- **P3 (extension handles), at least its finalizers**, should come before the `std/io` rework (§6.2). Closing forgotten files is P3 item 3; doing it for files alone first means writing it twice. P3's dynamic kinds also give `stdin()`/`stdout()`/`stderr()` and later SQLite and DuckDB handles one mechanism. Parent references aren't needed by the stdlib.
+- **P4 (result helpers) and `QK-FFI-004`** are small and help every new function that returns a result or checks a handle; do them alongside.
+
+Not dependent on Phase 2: multi-argument `println` (prelude), `std/sys` and `std/time` additions (small headers), `std/random`, and the in-house CSV logic. These can proceed first or in parallel.
+
+FFI Phase 2 as specified ends with `std/sqlite`; the stdlib needs only P2, P3 and P4 from it, so the order can be P2, P3, P4, then stdlib phase 1, then SQLite.
+
+## 11. Rollout
 
 | Phase | Contents | Done when |
 |---|---|---|
@@ -286,9 +298,9 @@ The most common format after CSV. Candidates: [nlohmann/json](https://github.com
 
 Every function gets a smoke test, an entry in `stdlib.md`, and editor data (`go test ./internal/editordata -update`).
 
-## 11. Decisions
+## 12. Decisions
 
-### 11.1 Open
+### 12.1 Open
 
 1. **Multi-argument `println`.** Accept the prelude change (§3.2a), or keep `println` single-argument and rely on `fmt.format`? Recommended: accept. It's the change that removes the most `to_str` calls, and it adds no new name.
 2. **`fmt.format` arguments.** A list (`fmt.format(t, list [a, b])`, proposed), or a prelude builtin `format(t, a, b, ...)` that can be variadic like `println`? The builtin reads better but takes the name `format` from users.

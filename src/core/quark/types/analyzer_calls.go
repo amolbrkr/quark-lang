@@ -369,10 +369,15 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 			a.callPlans[node] = &ir.CallPlan{Kind: ir.CallFunctionValue, CalleeName: calleeNameFromNode(funcNode), MinArity: argCount, MaxArity: argCount, Dispatch: ir.DispatchClosure, ArgTypesChecked: true}
 			return TypeError
 		}
+		a.callPlans[node] = &ir.CallPlan{Kind: ir.CallFunctionValue, CalleeName: calleeNameFromNode(funcNode), MinArity: argCount, MaxArity: argCount, Dispatch: ir.DispatchClosure, ArgTypesChecked: true}
+		// A value typed `fn` (or a mix of signatures) is called as a
+		// closure; its arity and argument types are checked at runtime.
+		if IsCallableType(funcExprType) {
+			return TypeAny
+		}
 		if !isUnknownType(funcExprType) {
 			a.errorAt(funcNode, "expression is not callable")
 		}
-		a.callPlans[node] = &ir.CallPlan{Kind: ir.CallFunctionValue, CalleeName: calleeNameFromNode(funcNode), MinArity: argCount, MaxArity: argCount, Dispatch: ir.DispatchClosure, ArgTypesChecked: true}
 		return TypeError
 	}
 

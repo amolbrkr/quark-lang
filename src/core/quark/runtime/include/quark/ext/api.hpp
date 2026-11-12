@@ -93,6 +93,13 @@ inline QValue box(QDict* v) {
     q.data.dict_val = v;
     return q;
 }
+// A fn value received as QClosure* (an `fn` parameter), boxed back unchanged.
+inline QValue box(QClosure* v) {
+    QValue q;
+    q.type = QValue::VAL_FUNC;
+    q.data.func_val = static_cast<void*>(v);
+    return q;
+}
 inline QValue null_val() { return qv_null(); }
 
 // ------------------------------------------------------------

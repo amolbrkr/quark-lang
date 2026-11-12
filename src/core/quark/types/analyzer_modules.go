@@ -112,6 +112,10 @@ type Analysis struct {
 	NativeFns          map[string]*ir.CallPlan
 	ExternFns          map[string]*ir.CallPlan
 	StructTypes        map[string]*StructType
+	// ModuleMemberRefs marks `alias.member` nodes used as values; codegen
+	// emits the member (its right child, already renamed `module__member`)
+	// like an identifier.
+	ModuleMemberRefs map[*ast.TreeNode]bool
 }
 
 // Analysis returns the analyzer outputs for root, which must be the tree
@@ -126,6 +130,7 @@ func (a *Analyzer) Analysis(root *ast.TreeNode) *Analysis {
 		NativeFns:          a.nativeFns,
 		ExternFns:          a.externFns,
 		StructTypes:        a.structTypes,
+		ModuleMemberRefs:   a.moduleMemberRefs,
 	}
 }
 
@@ -283,6 +288,8 @@ func quarkTypeToNativeCType(t Type) string {
 			return "bool"
 		case "str":
 			return "const char*"
+		case "fn":
+			return "QClosure*"
 		}
 	case *ListType:
 		return "QList*"

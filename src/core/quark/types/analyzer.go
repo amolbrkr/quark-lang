@@ -41,8 +41,10 @@ type Analyzer struct {
 	callPlans       map[*ast.TreeNode]*ir.CallPlan
 	returnValidated map[*ast.TreeNode]bool
 	nodeTypes       map[*ast.TreeNode]Type // Inferred type of every expression node
-	loopDepth       int
-	pendingFuncName string
+	// moduleMemberRefs holds `alias.member` nodes used as values (not called).
+	moduleMemberRefs map[*ast.TreeNode]bool
+	loopDepth        int
+	pendingFuncName  string
 	// externFns maps extern fn registrations: free function name or "type.method" key
 	// → prototype CallPlan used to build per-call-site plans with DispatchExtern.
 	externFns map[string]*ir.CallPlan
@@ -86,22 +88,23 @@ func NewAnalyzer() *Analyzer {
 	}
 
 	return &Analyzer{
-		currentScope:    globalScope,
-		errors:          make([]diagnostics.Diagnostic, 0),
-		functions:       funcs,
-		modules:         make(map[string]*Module),
-		moduleAliases:   make(map[string]string),
-		currentModule:   "",
-		builtins:        builtinSigs,
-		methods:         methodSigs,
-		captures:        make(map[*ast.TreeNode][]string),
-		callPlans:       make(map[*ast.TreeNode]*ir.CallPlan),
-		returnValidated: make(map[*ast.TreeNode]bool),
-		nodeTypes:       make(map[*ast.TreeNode]Type),
-		externFns:       make(map[string]*ir.CallPlan),
-		externSources:   make([]string, 0),
-		nativeFns:       make(map[string]*ir.CallPlan),
-		structTypes:     make(map[string]*StructType),
+		currentScope:     globalScope,
+		errors:           make([]diagnostics.Diagnostic, 0),
+		functions:        funcs,
+		modules:          make(map[string]*Module),
+		moduleAliases:    make(map[string]string),
+		currentModule:    "",
+		builtins:         builtinSigs,
+		methods:          methodSigs,
+		captures:         make(map[*ast.TreeNode][]string),
+		callPlans:        make(map[*ast.TreeNode]*ir.CallPlan),
+		returnValidated:  make(map[*ast.TreeNode]bool),
+		nodeTypes:        make(map[*ast.TreeNode]Type),
+		moduleMemberRefs: make(map[*ast.TreeNode]bool),
+		externFns:        make(map[string]*ir.CallPlan),
+		externSources:    make([]string, 0),
+		nativeFns:        make(map[string]*ir.CallPlan),
+		structTypes:      make(map[string]*StructType),
 	}
 }
 

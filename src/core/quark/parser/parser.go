@@ -368,7 +368,7 @@ func (p *Parser) isConstantDefault(node *ast.TreeNode) bool {
 // isTypeToken checks if the current token can be a type name for annotations
 func (p *Parser) isTypeToken() bool {
 	switch p.curToken.Type {
-	case token.LIST, token.DICT, token.VECTOR, token.RESULT:
+	case token.LIST, token.DICT, token.VECTOR, token.RESULT, token.FN:
 		return true
 	case token.ID:
 		switch p.curToken.Literal {
@@ -564,7 +564,7 @@ func (p *Parser) isNegatedNumericLiteral(node *ast.TreeNode) bool {
 }
 
 func (p *Parser) parseTypeExpr() *ast.TreeNode {
-	if p.curToken.Type != token.ID && p.curToken.Type != token.LIST && p.curToken.Type != token.DICT && p.curToken.Type != token.VECTOR && p.curToken.Type != token.RESULT {
+	if p.curToken.Type != token.ID && p.curToken.Type != token.LIST && p.curToken.Type != token.DICT && p.curToken.Type != token.VECTOR && p.curToken.Type != token.RESULT && p.curToken.Type != token.FN {
 		p.addError("expected type name")
 		return nil
 	}

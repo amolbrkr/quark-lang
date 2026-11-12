@@ -276,11 +276,11 @@ ReturnType      ::= Type
 ```
 
 Notes:
-- `Type` is accepted in variable, parameter, struct field and return type annotations (`resource` included). `resource` is any native handle, such as an open file from `std/io`
+- `Type` is accepted in variable, parameter, struct field and return type annotations (`resource` and `fn` included). `resource` is any native handle, such as an open file from `std/io`; `fn` is any function value (there is no signature syntax such as `fn(int) int`)
 - Other names are a compile-time error (`unknown type 'void'`)
 - Generic type syntax like `list[int]` is not implemented
 - `any` is the current top-level escape-hatch annotation for gradual typing
-- `null` is a runtime literal/value and is not accepted as an annotation; `void` appears only in inferred types (for example a non-exhaustive `when`), and `fn` is not an annotation
+- `null` is a runtime literal/value and is not accepted as an annotation; `void` appears only in inferred types (for example a non-exhaustive `when`)
 - `result` is a first-class Quark type annotation keyword
 - `result` annotations are non-generic in v0.1 and represent a general result value
 
@@ -497,9 +497,9 @@ Result construction and use:
 | `use STRING` file imports | Implemented | Relative and absolute file paths |
 | Stdlib string imports (`use 'std/name'`) | Implemented | Resolved via stdlib root |
 | Named functions and lambdas | Implemented | Parenthesized params required |
-| Return type annotations | Implemented | `fn f(x) int -> x + 1`; compile-time check only |
+| Return type annotations | Implemented | `fn f(x) int -> x + 1`; checked at compile time, and at runtime in fully annotated (native) functions |
 | Default parameters | Implemented | `fn f(x, y = 0) -> x + y`; literals only, required-before-defaults |
-| Typed params / typed var declarations | Implemented | `int`, `float`, `str`, `bool`, `any`, `list`, `dict`, `vector`, `result`, `resource`, struct names (see §9) |
+| Typed params / typed var declarations | Implemented | `int`, `float`, `str`, `bool`, `any`, `list`, `dict`, `vector`, `result`, `resource`, `fn`, struct names (see §9) |
 | Generic type expressions | Not implemented | e.g. `list[int]` unsupported |
 | List literals (`list [...]`) | Implemented | Keyword required |
 | Vector literals (`vector [...]`) | Implemented | 1D only |

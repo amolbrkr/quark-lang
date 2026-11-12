@@ -49,7 +49,8 @@ var (
 	TypeAny      = &BasicType{Name: "any"}  // For unresolved types
 	TypeVoid     = &BasicType{Name: "void"} // For statements with no value
 	TypeResource = &BasicType{Name: "resource"}
-	TypeError    = &errorType{} // Poison type — error already reported upstream
+	TypeFn       = &BasicType{Name: "fn"} // The `fn` annotation: a function value of any signature
+	TypeError    = &errorType{}           // Poison type — error already reported upstream
 )
 
 // IsErrorType returns true if the type is the poison error type.
@@ -351,7 +352,15 @@ func CanAssign(dstType, srcType Type) bool {
 		_, isStruct := dstType.(*StructType)
 		_, isVec := dstType.(*VectorType)
 		isResource := dstType.Equals(TypeResource)
-		return isList || isDict || isFunc || isResult || isStruct || isVec || isResource
+		return isList || isDict || isFunc || isResult || isStruct || isVec || isResource || dstType.Equals(TypeFn)
+	}
+	// `fn` accepts every function value; a function value typed only as `fn`
+	// can go where a specific signature is expected (checked when called).
+	if dstType.Equals(TypeFn) {
+		return IsCallableType(srcType)
+	}
+	if _, ok := dstType.(*FunctionType); ok && srcType.Equals(TypeFn) {
+		return true
 	}
 	// Int can be promoted to float
 	if dstType.Equals(TypeFloat) && srcType.Equals(TypeInt) {
@@ -396,6 +405,27 @@ func CanAssign(dstType, srcType Type) bool {
 		return dstType.Equals(srcType)
 	}
 	return dstType.Equals(srcType)
+}
+
+// IsCallableType reports whether t is a function value type: a signature, the
+// `fn` annotation, or a union of those (the element type of a list of
+// functions with different signatures).
+func IsCallableType(t Type) bool {
+	switch v := t.(type) {
+	case *FunctionType:
+		return true
+	case *UnionType:
+		if len(v.Options) == 0 {
+			return false
+		}
+		for _, opt := range v.Options {
+			if !IsCallableType(opt) {
+				return false
+			}
+		}
+		return true
+	}
+	return t != nil && t.Equals(TypeFn)
 }
 
 // MergeTypes combines multiple type possibilities into the most precise representation.

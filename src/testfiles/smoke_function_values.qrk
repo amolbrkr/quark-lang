@@ -1,0 +1,71 @@
+// smoke_function_values.qrk
+// Function values: aliased module members as values, the `fn` annotation,
+// and native (fully annotated) functions called from closures.
+
+use 'std/io' as io
+
+module mathx:
+    fn inc(x) -> x + 1
+    fn add(x: int, y: int) int -> x + y
+    fn twice(f: fn, x) -> f(f(x))
+    base = 100
+
+use mathx as mx
+
+println('== smoke: function values ==')
+
+// Aliased module members used as values
+f = mx.inc
+println(f(1))                       // 2
+add = mx.add
+println(add(2, 3))                  // 5 (a native function, through its thunk)
+println(mx.twice(mx.inc, 5))        // 7
+println(mx.base)                    // 100
+exists = io.exists
+println(exists('no_such_file.txt')) // false
+fs = list [mx.inc, io.exists]       // functions with different signatures
+println(fs[0](9))                   // 10
+println(type(f))                    // fn
+
+// ...inside lambdas and named functions
+plus = fn(v) -> mx.add(v, 1)
+println(plus(1))                    // 2
+fn via_module(v) -> mx.twice(mx.inc, v)
+println(via_module(0))              // 2
+
+// `fn` parameters, return types, variables and struct fields
+fn apply(g: fn, x: int) -> g(x)
+println(apply(fn(v) -> v * 10, 2))  // 20
+println(apply(mx.inc, 2))           // 3
+cb: fn = mx.inc
+println(cb | apply(3))              // 4
+fn pick(up: bool) fn -> mx.inc if up else fn(v) -> v - 1
+down = pick(false)
+println(down(10))                   // 9
+
+struct Handler:
+    name: str
+    run: fn
+h = Handler { name: 'inc', run: mx.inc }
+run = h.run
+println(run(4))                     // 5
+
+// A fully annotated function taking `fn` compiles to native C++
+fn apply_native(g: fn, x: int) int -> g(x)
+println(apply_native(mx.inc, 1))    // 2
+k = 5
+println(apply_native(fn(v) -> v + k, 1)) // 6 (a capturing closure)
+
+// Native functions called from closures and nested functions
+fn sum2(x: int, y: int) int -> x + y
+w = fn(v) -> sum2(v, 2)
+println(w(1))                       // 3
+fn outer() ->
+    get = fn() -> sum2
+    s = get()
+    s(3, 4)
+println(outer())                    // 7
+
+// A native function's result is checked; an int result widens to float
+fn as_float(g: fn) float -> g(1)
+println(as_float(fn(v) -> v))       // 1.0

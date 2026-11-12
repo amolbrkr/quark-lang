@@ -43,26 +43,26 @@ type funcDecl struct {
 
 // Generator generates C code from an AST
 type Generator struct {
-	output        strings.Builder
-	indentLevel   int
-	sourceName    string
-	funcDecls     []funcDecl               // Function declarations with param counts
-	lambdas       []*ast.TreeNode          // Lambda expressions to generate
-	lambdaNames   map[*ast.TreeNode]string // Maps lambda nodes to their generated names
+	output      strings.Builder
+	indentLevel int
+	sourceName  string
+	funcDecls   []funcDecl               // Function declarations with param counts
+	lambdas     []*ast.TreeNode          // Lambda expressions to generate
+	lambdaNames map[*ast.TreeNode]string // Maps lambda nodes to their generated names
 	// lambdaUserNames maps lambdas bound by `name = fn(...)` (how named functions
 	// are written) to that name, for runtime messages.
 	lambdaUserNames map[*ast.TreeNode]string
-	tempCounter   int
-	lambdaCounter int
-	inFunction    bool
-	currentFunc   string
-	declaredVars  map[string]bool            // Tracks declared variables to avoid redeclaration
-	cellVars      map[string]bool            // Subset of declaredVars that are QCell* (vs QValue)
-	scopeStack    []map[string]bool          // Stack of variable scopes for nested blocks
-	cellStack     []map[string]bool          // Mirrors scopeStack for cellVars
-	captures      map[*ast.TreeNode][]string // Lambda node → captured variable names (from analyzer)
-	funcNames     map[string]bool            // Set of declared function names (for first-class funcs)
-	callPlans     map[*ast.TreeNode]*ir.CallPlan
+	tempCounter     int
+	lambdaCounter   int
+	inFunction      bool
+	currentFunc     string
+	declaredVars    map[string]bool            // Tracks declared variables to avoid redeclaration
+	cellVars        map[string]bool            // Subset of declaredVars that are QCell* (vs QValue)
+	scopeStack      []map[string]bool          // Stack of variable scopes for nested blocks
+	cellStack       []map[string]bool          // Mirrors scopeStack for cellVars
+	captures        map[*ast.TreeNode][]string // Lambda node → captured variable names (from analyzer)
+	funcNames       map[string]bool            // Set of declared function names (for first-class funcs)
+	callPlans       map[*ast.TreeNode]*ir.CallPlan
 	// capturedByFunction maps each function/lambda node to the set of variable
 	// names that any directly-nested lambda captures from it. A variable NOT in
 	// this set for the current function can be emitted as a stack QValue instead
@@ -88,6 +88,8 @@ type Generator struct {
 	externFns map[string]*ir.CallPlan
 	// structTypes maps struct name → StructType from the analyzer.
 	structTypes map[string]*types.StructType
+	// moduleMemberRefs marks `alias.member` nodes used as values.
+	moduleMemberRefs map[*ast.TreeNode]bool
 }
 
 func New() *Generator {
@@ -142,6 +144,7 @@ func (g *Generator) SetAnalysis(an *types.Analysis) {
 	if an.StructTypes != nil {
 		g.structTypes = an.StructTypes
 	}
+	g.moduleMemberRefs = an.ModuleMemberRefs
 }
 
 // nodeType returns the analyzer-inferred type for a given AST node, or nil if unknown.
@@ -213,7 +216,7 @@ func nativeArgToQValue(expr string, nativeType string) string {
 	case "QVector*":
 		return fmt.Sprintf("qv_vector_ptr(%s)", expr)
 	case "QClosure*":
-		return fmt.Sprintf("qv_func((void*)%s)", expr)
+		return fmt.Sprintf("qv_closure_ptr(%s)", expr)
 	}
 	return expr // already QValue
 }
@@ -232,31 +235,13 @@ func nativeCppTypeToTier(cppType string) string {
 	return ""
 }
 
-// unboxToNative ensures a generateExpr result (always QValue) is unboxed to the
-// given C++ native return type. If retType is QValue or empty, returns expr unchanged.
+// unboxToNative converts a native function's QValue result to its C++
+// return type with the checked q_as_* helpers. The body's value may have a
+// type the compiler doesn't know (a callback's result, a dict field), so a
+// mismatch is a runtime error rather than a raw read of the wrong union field;
+// an int result widens to a float return type.
 func unboxToNative(expr string, retType string) string {
-	// Scalar tiers
-	tier := nativeCppTypeToTier(retType)
-	if tier != "" {
-		field := unboxFieldAccessor(tier)
-		if field != "" {
-			return fmt.Sprintf("(%s).data.%s", expr, field)
-		}
-	}
-	// Non-scalar native types
-	switch retType {
-	case "const char*":
-		return fmt.Sprintf("(%s).data.string_val", expr)
-	case "QList*":
-		return fmt.Sprintf("(%s).data.list_val", expr)
-	case "QDict*":
-		return fmt.Sprintf("(%s).data.dict_val", expr)
-	case "QVector*":
-		return fmt.Sprintf("(%s).data.vector_val", expr)
-	case "QClosure*":
-		return fmt.Sprintf("(QClosure*)(%s).data.func_val", expr)
-	}
-	return expr
+	return adaptArgForExtern(expr, retType)
 }
 
 // unboxForTier extracts the raw scalar value from a QValue expression.
@@ -524,6 +509,8 @@ func wrapExternReturn(callExpr string, nativeReturn string) string {
 		return fmt.Sprintf("qv_list_ptr(%s)", callExpr)
 	case "QDict*":
 		return fmt.Sprintf("qv_dict_ptr(%s)", callExpr)
+	case "QClosure*":
+		return fmt.Sprintf("qv_closure_ptr(%s)", callExpr)
 	case "QValue", "":
 		return callExpr
 	default:
@@ -858,6 +845,7 @@ var paramTagChecks = map[string]struct {
 	"vector":   {"VAL_VECTOR", true},
 	"result":   {"VAL_RESULT", true},
 	"resource": {"VAL_RESOURCE", true},
+	"fn":       {"VAL_FUNC", true},
 }
 
 // emitParamBindings binds a QValue-convention function's parameters. Every
@@ -1554,6 +1542,10 @@ func (g *Generator) generateOperator(node *ast.TreeNode) string {
 
 	// Member access: struct field or dict key
 	if op == token.DOT && len(node.Children) >= 2 {
+		// alias.member used as a value: the member is a binding of its own.
+		if g.moduleMemberRefs[node] {
+			return g.generateIdentifier(node.Children[1])
+		}
 		obj := g.generateExpr(node.Children[0])
 		memberName := node.Children[1].TokenLiteral()
 

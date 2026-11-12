@@ -125,4 +125,4 @@ Smoke test programs in `src/testfiles/smoke_*.qrk`. Integration tests in `src/co
 - Type annotations: `fn add(x: int, y: int) int -> x + y`. Each annotated parameter is enforced on its own (partial annotation counts): checked at compile time when the argument type is known, on function entry otherwise (`emitParamBindings` → `q_param_*` in `builtins/params.hpp`), with int→float widening; same rules as `extern fn`. Fully annotated, non-capturing functions compile to native C++ (`DispatchNative`)
 - Default params: `fn foo(x: int, y: int = 0) -> x + y` (literals only)
 - String type is `str` (not `string`)
-- Annotation types: `int`, `float`, `str`, `bool`, `any`, `list`, `dict`, `vector`, `result`, `resource`, and struct names. No generic/element types (`list[int]` doesn't parse)
+- Annotation types: `int`, `float`, `str`, `bool`, `any`, `list`, `dict`, `vector`, `result`, `resource`, `fn` (`types.TypeFn`: any function value, no signature; `QClosure*` in native/extern signatures), and struct names. No generic/element types (`list[int]` doesn't parse)

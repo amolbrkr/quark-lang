@@ -583,6 +583,10 @@ func TestSmokePrograms_Run(t *testing.T) {
 				"21",
 				"3.5",
 				"8.0",
+				"8",
+				"2",
+				"20",
+				"2",
 			),
 		},
 		{
@@ -606,6 +610,19 @@ func TestSmokePrograms_Run(t *testing.T) {
 				"3",
 				"3600",
 				"3",
+			),
+		},
+		{
+			name: "function_values",
+			file: filepath.Join(testfilesDir, "smoke_function_values.qrk"),
+			expected: join(
+				"== smoke: function values ==",
+				"2", "5", "7", "100", "false", "10", "fn",
+				"2", "2",
+				"20", "3", "4", "9", "5",
+				"2", "6",
+				"3", "7",
+				"1.0",
 			),
 		},
 		{
@@ -846,6 +863,15 @@ func TestSemanticsSafety_Rejected(t *testing.T) {
 		{"range_loop_step_zero", "for i in range(0, 5, 0):\n    println(i)\n", "range() step must not be zero"},
 		{"range_loop_step_zero_dynamic", "fn id(x) -> x\nfor i in range(0, 5, id(0)):\n    println(i)\n", "range() step must not be zero"},
 		{"range_loop_non_numeric", "fn id(x) -> x\nfor i in range(id('x')):\n    println(i)\n", "range(end) expects numeric end value"},
+		// `fn` annotations: checked at compile time when the argument's type is
+		// known, on entry otherwise; a native function's result is checked too.
+		{"fn_param_static", "fn apply(f: fn) -> f(1)\napply(5)\n", "argument 1 of 'apply' expects fn, got int"},
+		{"fn_param_dynamic", "fn id(v) -> v\nfn apply(f: fn) -> f(1)\napply(id(5))\n", "argument 'f' of 'apply' expects fn, got int"},
+		{"fn_param_dynamic_native", "fn id(v) -> v\nfn nat(f: fn, y: int) int -> f(y)\nprintln(nat(id(5), 1))\n", "expected fn, got int"},
+		{"fn_var_annotation", "f: fn = 3\n", "cannot assign value of type 'int' to 'fn'"},
+		{"fn_struct_field", "struct H:\n    run: fn\nh = H { run: 1 }\n", "to field 'run' of type 'fn'"},
+		{"native_return_checked", "fn nat(f: fn) int -> f(1)\nprintln(nat(fn(a) -> 'x'))\n", "expected int, got str"},
+		{"module_member_value_unknown", "use 'std/io' as io\nf = io.nope\n", "module 'io' has no symbol 'nope'"},
 		{"when_literal_or_result", "n = 1\nwhen n:\n    1 or ok x -> println(1)\n    _ -> println(2)\n", "ok patterns cannot be combined with other patterns using 'or'"},
 	}
 

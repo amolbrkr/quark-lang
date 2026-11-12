@@ -76,6 +76,8 @@ func functionTypeFromLambdaNodeWithStructs(lambdaNode *ast.TreeNode, structTypes
 				paramTypes[i] = &VectorType{ElementType: TypeAny}
 			case "resource":
 				paramTypes[i] = TypeResource
+			case "fn":
+				paramTypes[i] = TypeFn
 			default:
 				if structTypes != nil {
 					if st, ok := structTypes[typeName]; ok {
@@ -143,6 +145,8 @@ func resolveTypeNodeStaticWithStructs(node *ast.TreeNode, structTypes map[string
 		return &ResultType{OkType: TypeAny, ErrType: TypeAny}
 	case "resource":
 		return TypeResource
+	case "fn":
+		return TypeFn
 	default:
 		if structTypes != nil {
 			if st, ok := structTypes[name]; ok {

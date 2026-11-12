@@ -268,7 +268,8 @@ label: str = 'hello'
 If the right-hand side does not match the annotation, you get a compile-time
 error. The available annotation names are `int`, `float`, `str`, `bool`, `any`,
 `result`, `list`, `dict`, `vector`, `resource` (a native handle, such as an
-open file from `std/io`), and any `struct` type you define. Generic forms like `list[int]` are
+open file from `std/io`), `fn` (a function value of any signature), and any
+`struct` type you define. Generic forms like `list[int]` are
 **not** supported.
 
 A parameter annotation always holds, whether or not the rest of the function is
@@ -538,6 +539,25 @@ println(add5(10))          // 15
 // fn make_adder(n) -> fn(x) -> x + n   // does NOT parse yet
 ```
 
+Functions are values: named functions, lambdas, `extern fn`s and module
+members (`io.exists`, without calling it) can be stored, passed and returned.
+Annotate a parameter, return type, variable or struct field with `fn` to
+require a function value:
+
+```quark
+fn apply(f: fn, x: int) -> f(x)
+println(apply(inc, 1))           // 2
+println(apply(fn(v) -> v * 2, 4)) // 8
+
+fn pick(up: bool) fn -> inc if up else fn(v) -> v - 1
+down = pick(false)
+println(down(10))                // 9
+```
+
+`fn` says nothing about the signature (`fn(int) int` isn't a type): passing a
+non-function is an error, but the number and types of arguments are only
+checked when the function runs.
+
 ### Pipes
 
 The pipe operator `|` feeds the left value in as the first argument of the call on
@@ -740,6 +760,8 @@ use 'std/fmt' as fmt
 
 println(io.exists('hello.qrk'))         // true / false
 println(fmt.show_list(list [3, 1, 2]))  // formatted, readable list
+
+exists = io.exists                      // a module member as a value
 ```
 
 > **Prefer the `as alias` form.** Importing without an alias makes the module's
@@ -987,22 +1009,45 @@ verified by compiling and running the bundled examples.
 - **Builtin names can't be variable names.** `sum = 0`, `len = 3` or `max = 10`
   is a compile-time error, even inside a function. Parameters may reuse them
   (`fn f(sum) -> sum`).
-- **Module members can only be called**, not used as values: `io.exists(p)` and
-  `p | io.exists()` work, `f = io.exists` doesn't.
-- **Structs** must be defined at a file's top level, not inside a `module` block
-  (there, `Point { ... }` reports `unknown struct type 'Point'`). A struct
-  literal can only be written in the file that defines the struct; in an
-  importing file it is a parse error, so construct values through a function
-  of the defining module.
-- **`null` and `fn` can't be written as annotations**, so an `extern fn` can't
-  take a callback parameter.
+- **Struct field types aren't enforced at runtime, and ints aren't widened to
+  floats.** A field is only checked when the value's type is known at compile
+  time, so `fn mk(x) -> Row { id: x, score: 1.0 }` accepts `mk('abc')`. With
+  `score: float`, `Row { id: 1, score: 2 }` stores an int (parameters widen,
+  fields don't). Because the compiler trusts the declared field type, reading
+  such a field into a typed variable gives a wrong value:
+  `s: float = r.score` then `s * 1.5` prints `1.5e-323`.
+- **Structs aren't namespaced.** They must be defined at a file's top level,
+  not inside a `module` block (there, `Point { ... }` reports
+  `unknown struct type 'Point'`). Struct names are global, so two imported
+  files that each define `Point` report `struct 'Point' already defined`. A
+  struct literal can only be written in the file that defines the struct; in
+  an importing file it is a parse error, so construct values through a
+  function of the defining module. Annotations use the bare name
+  (`q: Point`); `q: geo.Point` is a parse error.
+- **No "any struct" annotation:** `fn f(x: struct)` is a parse error; use `any`.
+- **Struct fields can't be nullable**, since `null` can't be written as an
+  annotation.
+- **Field access on a struct of unknown type** reports a misleading error for a
+  missing field: `dot access is only supported on dict; got type 'struct'`.
+- **`null` can't be written as an annotation.**
+- **Calling a function value with the wrong number of arguments isn't
+  detected.** A value typed `fn` (or unannotated) carries no arity at runtime,
+  so `fn apply(f: fn) -> f(1)` with `apply(fn(a, b) -> b)` reads a missing
+  argument instead of failing; the same holds for native code calling a
+  callback through `qext::call`.
+- **A struct field holding a function can't be called directly:** with
+  `run: fn`, `h.run(4)` is a compile-time error (`dot-call syntax is not
+  supported`); bind it first (`r = h.run`, then `r(4)`).
 - **A pipe continuation line** (`| f()` on the next line) must have the same
   indentation as the line before it.
 - **Calling a function before its definition** is a compile-time error when the
   call is direct; through another function (`fn a() -> b()`, `a()`, then
   `fn b`), it fails at runtime.
-- **Return annotations** are checked at compile time only; a body that returns
-  a value of unknown type isn't checked at runtime.
+- **Return annotations** are checked at compile time. At runtime only fully
+  annotated functions (compiled to native C++) check their result: there,
+  `fn f(g: fn) int -> g(1)` reports `expected int, got str` when `g` returns a
+  string. In other functions, a body that returns a value of unknown type isn't
+  checked.
 - **Error wording:** a wrong argument type passed to a fully annotated function
   or an `extern fn` reports `expected int, got str`, without the parameter name.
 - **Inconsistent failure modes:** `io.close` on a closed file returns `err`, while
@@ -1017,6 +1062,8 @@ verified by compiling and running the bundled examples.
 - String interpolation (`!{ expr }` inside string literals).
 - Generic type expressions (e.g. `list[int]`).
 - Struct methods / `impl` blocks, and whole-struct equality.
+- `::` for module paths (`io::exists`, `geo::Point { ... }`, `q: geo::Point`),
+  as part of a struct rework that namespaces structs and allows them in modules.
 - Schemas over structs and tables.
 - A tensor type and additional optimizer passes.
 - Result combinators such as `unwrap_or` and `map_ok`.

@@ -91,6 +91,8 @@ func (a *Analyzer) resolveTypeNode(node *ast.TreeNode) Type {
 		return &ResultType{OkType: TypeAny, ErrType: TypeAny}
 	case "resource":
 		return TypeResource
+	case "fn":
+		return TypeFn
 	default:
 		// Check user-defined struct types
 		if st, ok := a.structTypes[name]; ok {

@@ -112,6 +112,11 @@ func (a *Analyzer) collectFreeVars(node *ast.TreeNode, lambdaScope *Scope, param
 		if lambdaScope.LookupLocal(name) != nil {
 			return
 		}
+		// Native functions are C++ functions, called (and used as values,
+		// through their thunk) by name, so there is no binding to capture.
+		if _, isNative := a.nativeFns[name]; isNative {
+			return
+		}
 		if lambdaScope.Parent != nil && lambdaScope.Parent.Lookup(name) != nil {
 			seen[name] = true
 			*result = append(*result, name)

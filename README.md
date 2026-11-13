@@ -167,15 +167,18 @@ flowchart LR
     C --> D["Loader<br/>imports, names"]
     D --> E["Analyzer<br/>types, scopes"]
     E --> F[Invariants]
-    F --> G[Codegen]
-    G --> H["C++17 source"]
+    F --> G["Lower<br/>typed IR, verify"]
+    G --> G2[Emit]
+    G2 --> H["C++17 source"]
     H --> I["clang++ -O3"]
     I --> J["native binary"]
 ```
 
 The loader reads every included file and resolves every name, the analyzer
 infers and checks types, the invariants stage checks the analyzer's output
-for compiler bugs, and codegen writes one C++ translation unit. Errors from
+for compiler bugs, lowering turns the program into a typed IR that is
+verified on every compile, and the emitter prints it as one C++ translation
+unit. Errors from
 any stage carry a stable code (`QK-PARSE-001`, `QK-LOAD-001`, `QK-CHECK-001`,
 `QK-RUNTIME-001`, ...; see [error_codes.md](error_codes.md)). Each stage can be
 inspected with `quark lex`, `parse`, `check` and `emit`.
@@ -539,6 +542,7 @@ nums.push(4)
 print(len(nums))                  // 4
 print(nums[-1])                   // 4
 print(nums.get(10))               // null: .get returns null out of range
+// nums[10] is a runtime error: list index 10 out of range (list length 4)
 nums[0] = 9
 print(nums.sort())                // [1, 2, 4, 9]
 ```
@@ -606,18 +610,19 @@ f = temps * 1.8 + 32.0            // element-wise, no loop
 hot = temps[temps > 30.0]         // filter with a mask
 print(hot)                        // [31.5, 33.1, 38.2]
 print(max(hot))                   // 38.2
-print(sum(vec [1, 2, 3]))         // 6.0
+print(sum(vec [1, 2, 3]))         // 6
 ```
 
 A vector may have missing values. A `vec` literal can't contain `null`, so
 build one from a list: `list [1, null, 3].to_vec()`. Arithmetic skips missing
-slots, `fillna(v)` replaces them, and reductions skip them. Reading a missing
-element as a scalar (`for x in v`) is not checked yet (see Known issues).
+slots, `fillna(v)` replaces them, `drop_na()` removes them, and reductions skip
+them. Taking a missing element out as one value (`v[i]`, `for x in v`) is a
+runtime error that names `fillna` and `drop_na`.
 
-`sum`, `min` and `max` of a vector currently return a float, also for an int
-vector; `sum` of an empty vector is `0.0` and `min`/`max` of one are errors.
-This will change to match the table aggregates: int sums stay int, and
-`min`/`max`/`mean` of no values are `null`.
+`sum`, `min` and `max` of a vector follow the table aggregates: an int vector
+sums exactly to an int, `min`/`max` keep the element type, and missing entries
+and NaN are skipped. `min`/`max` of a vector with no present values is an
+error. The mean is `stats::mean` from `std/stats`.
 
 The buffers use the Apache Arrow columnar layout: contiguous `int64`/`double`
 values, bit-packed bools, `int32` offsets plus UTF-8 bytes for strings, a
@@ -751,17 +756,17 @@ names, arities and types is `src/core/quark/builtins/catalog.go`.
 | | `.slice(start, end)` | substring `[start, end)` |
 | `list` | `.push(x)` | appends in place, returns the list |
 | | `.pop()`, `.remove(i)` | removes and returns the last item / item `i` |
-| | `.get(i)` | item `i`, or `null` out of range |
+| | `.get(i)` | item `i`, or `null` out of range (type `any`; `xs[i]` errors out of range) |
 | | `.set(i, x)`, `.insert(i, x)` | in place |
 | | `.slice(start, end)`, `.concat(other)` | new list |
 | | `.reverse()`, `.sort()`, `.sort_by(key)` | in place, returns the list; sorts are stable and ascending, keys all numbers, all strings or all bools (`rows.sort_by(fn(r) -> r.amount)`) |
 | | `.join(sep)` | one string |
 | | `.enumerate()` | list of `{index, value}` dicts |
 | | `.to_vec()` | typed vector (elements must be one scalar type, or `null`) |
-| `dict` | `.get(key)` | value, or `null` if missing |
+| `dict` | `.get(key)` | value, or `null` if missing (type `any`; `d.key` errors if missing) |
 | | `.set(key, x)` | sets in place, returns the dict |
 | | `.keys()`, `.values()`, `.items()` | lists (`items` gives `{key, value}` dicts) |
-| `vec` | `.get(i)` | element `i`; runtime error out of range |
+| `vec` | `.get(i)` | element `i`, or `null` for a missing entry (type `any`); runtime error out of range |
 | | `.fillna(x)` | new vector with missing values replaced |
 | | `.astype(dtype)` | new vector of dtype `'i64'`, `'f64'` or `'bool'` |
 | | `.to_list()`, `.enumerate()` | lists |
@@ -857,7 +862,7 @@ and don't. An `INV-*` diagnostic is a compiler bug.
 | Path | Contents |
 |---|---|
 | `src/core/quark` | the Go compiler (`main.go` is the CLI) |
-| `.../lexer`, `parser`, `loader`, `types`, `invariants`, `codegen` | the compiler stages (`types` is the analyzer) |
+| `.../lexer`, `parser`, `loader`, `types`, `invariants`, `lower`, `emit` | the compiler stages (`types` is the analyzer, `lower` builds and verifies the IR, `emit` prints C++) |
 | `.../driver`, `toolchain` | run the stages in order; find clang++, the runtime and the GC, compile and link |
 | `.../ast`, `token`, `names`, `ir`, `builtins`, `diagnostics` | shared data: AST, tokens, the name table, call-plan and storage IR, the builtin catalog, diagnostics |
 | `.../runtime/include/quark` | the header-only C++17 runtime, including the table engine and CSV reader (`table/`) |

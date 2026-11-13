@@ -9,7 +9,8 @@ The registry of every error code the compiler and runtime emit. `QK-*` codes are
 - [Runtime errors](#runtime-errors)
 - [Internal invariant codes (INV-*)](#internal-invariant-codes-inv-)
   - [Invariant validation](#invariant-validation)
-  - [Codegen](#codegen)
+  - [Lowering](#lowering)
+  - [IR verification](#ir-verification)
 - [Planned codes](#planned-codes)
 - [Rules for new codes](#rules-for-new-codes)
 
@@ -63,7 +64,7 @@ These mean the compiler violated one of its own invariants. They are compiler bu
 
 ### Invariant validation
 
-Run between the analyzer and codegen (`src/core/quark/invariants/callplan.go`). Printed as `error[INV-...] (invariants): message at line N, col M`.
+Run between the analyzer and lowering (`src/core/quark/invariants/callplan.go`). Printed as `error[INV-...] (invariants): message at line N, col M`.
 
 | Code | Checks |
 | --- | --- |
@@ -81,24 +82,39 @@ Run between the analyzer and codegen (`src/core/quark/invariants/callplan.go`). 
 | `INV-RETURN-MAP` | The analyzer produced a return-validation map |
 | `INV-RETURN-VALIDATE` | Every annotated return type was validated |
 
-### Codegen
+### Lowering
 
-Raised while generating C++. Printed as `internal compiler error [INV-...]: message at line N`; the compiler exits with status 2.
+Raised while lowering the analyzed tree to the IR (`src/core/quark/lower/`). Printed as `internal compiler error [INV-...]: message at line N`; no C++ is emitted.
 
-| Code | Raised when | Emitted from |
-| --- | --- | --- |
-| `INV-NODE-TYPE` | An AST node type has no codegen case | `codegen/codegen.go` |
-| `INV-OPERATOR` | A binary operator has no codegen case | `codegen/codegen.go` |
-| `INV-ASSIGN-TARGET` | An assignment target kind has no codegen case | `codegen/codegen.go` |
-| `INV-FIXED-FN` | A `fn` declaration was not analyzed | `codegen/codegen.go` |
-| `INV-CALLPLAN-MISSING` | A call has no call plan | `codegen/codegen.go` |
-| `INV-CALLPLAN-RUNTIME` | A builtin, direct, native or extern call plan has no runtime symbol | `codegen/codegen.go` |
-| `INV-CALLPLAN-DISPATCH` | A call plan's dispatch kind is unknown | `codegen/codegen.go` |
-| `INV-DOT-CALL` | A dot-call node reached codegen | `codegen/codegen.go` |
-| `INV-STRUCT-LITERAL` | A struct literal names an unknown struct | `codegen/codegen.go` |
-| `INV-STRUCT-DEFAULT` | A struct field default is malformed | `codegen/codegen.go` |
-| `INV-SYMBOL` | An identifier has no analyzer symbol | `codegen/storage.go` |
-| `INV-STORAGE` | A scalar conversion was requested for non-scalar storage | `codegen/storage.go` |
+| Code | Invariant | Raised in |
+|---|---|---|
+| `INV-NODE-TYPE` | An AST node type has a lowering | `lower/expr.go` |
+| `INV-OPERATOR` | A binary operator has a lowering | `lower/expr.go` |
+| `INV-ASSIGN-TARGET` | An assignment target kind has a lowering | `lower/expr.go` |
+| `INV-FIXED-FN` | A `fn` declaration was analyzed | `lower/expr.go` |
+| `INV-LAMBDA` | Every lambda was collected as a function | `lower/expr.go` |
+| `INV-CALLPLAN-MISSING` | A call has a call plan | `lower/calls.go` |
+| `INV-CALLPLAN-RUNTIME` | A builtin, direct, native or extern call plan has a runtime symbol, and a dynamic method call a receiver | `lower/calls.go` |
+| `INV-CALLPLAN-DISPATCH` | A call plan's dispatch kind is known | `lower/calls.go` |
+| `INV-DOT-CALL` | No dot-call node reaches lowering as a function value call | `lower/calls.go` |
+| `INV-STRUCT-LITERAL` | A struct literal names a known struct | `lower/expr.go` |
+| `INV-STRUCT-DEFAULT` | A struct field default is well formed | `lower/expr.go` |
+| `INV-SYMBOL` | An identifier has an analyzer symbol | `lower/expr.go` |
+| `INV-STORAGE` | A scalar conversion is only requested for scalar storage | `lower/store.go` |
+
+### IR verification
+
+Run on every compile after lowering (`src/core/quark/lower/verify.go`, `architecture.md` §1.6). Printed as `internal compiler error [INV-IR-...]: in <function>: message`; no C++ is emitted.
+
+| Code | Invariant |
+|---|---|
+| `INV-IR-SCOPE` | Every variable, temporary and parameter is used inside the scope that declares it, after its declaration, and declared once per scope; a closure captures cells in scope |
+| `INV-IR-REP` | Every value has the representation its use needs: a raw bool for a condition, a `QValue` for `q_truthy`, `Unbox`, `Adapt` and `Check`, the storage's type for a variable, the function's return type for `return`, a list or `QValue` for the list a loop checks; captured variables are cells |
+| `INV-IR-UNBOX` | Every `Unbox` (a raw read of a `QValue`'s union field) says why the tag is known, and the reason fits: an analyzer type that is exactly the scalar read, or a loop's element read (`architecture.md` §12) |
+| `INV-IR-LOOP` | `break` and `continue` are inside a loop; a loop's length, range bounds and the list whose length it checks are temporaries or constants, since they are re-evaluated each iteration |
+| `INV-IR-RETURN` | `return` is inside a function |
+| `INV-IR-CALL` | A call of a generated function passes one argument per parameter, of the parameter's type; `q_callN` gets N arguments; a function value names a generated function |
+| `INV-IR-NODE` | Every node is known; a closure is bound by a `Let`; a tag test reads a stable value; a source location is an entry of the location table |
 
 ## Planned codes
 

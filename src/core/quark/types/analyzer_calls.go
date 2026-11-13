@@ -238,7 +238,7 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 		argTypes = append(argTypes, a.Analyze(arg))
 	}
 	// A call that fails to resolve still gets a plan, so the invariant checks
-	// see every call; codegen never runs after an error.
+	// see every call; lowering never runs after an error.
 	unresolved := func() Type {
 		a.callPlans[node] = &ir.CallPlan{CalleeName: calleeNameFromNode(funcNode), MinArity: argCount, MaxArity: argCount, Dispatch: ir.DispatchClosure}
 		return TypeError
@@ -439,8 +439,12 @@ func (a *Analyzer) settleArgs(params []Type, argTypes []Type, argNodes []*ast.Tr
 func refineMethodReturnType(catalogReturn Type, receiverType Type, methodName string) Type {
 	if listType, ok := receiverType.(*ListType); ok {
 		switch methodName {
-		case "get", "pop", "remove":
-			// These return element type
+		case "get":
+			// null past the end, so not the element type; xs[i] is the
+			// typed read, and errors out of range.
+			return TypeAny
+		case "pop", "remove":
+			// Errors on an empty list or out of range, so always an element.
 			return listType.ElementType
 		case "concat", "push", "insert", "slice", "reverse", "sort", "sort_by", "enumerate":
 			// These return a list (preserve element type for concat/push/slice/reverse)
@@ -453,8 +457,10 @@ func refineMethodReturnType(catalogReturn Type, receiverType Type, methodName st
 	if vecType, ok := receiverType.(*VectorType); ok {
 		switch methodName {
 		case "get":
-			return vecType.ElementType
-		case "fillna":
+			// null for a missing entry, so not the element type (D12);
+			// v[i] is the checked, typed read.
+			return TypeAny
+		case "fillna", "drop_na":
 			return receiverType
 		case "astype":
 			return &VectorType{ElementType: TypeAny}
@@ -465,7 +471,9 @@ func refineMethodReturnType(catalogReturn Type, receiverType Type, methodName st
 	if _, ok := receiverType.(*DictType); ok {
 		switch methodName {
 		case "get":
-			return receiverType.(*DictType).ValueType
+			// null for a missing key, so not the value type; d.key is the
+			// typed read, and errors on a missing key.
+			return TypeAny
 		case "set":
 			return receiverType
 		case "keys":

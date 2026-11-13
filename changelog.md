@@ -9,6 +9,9 @@ Sections follow [Keep a Changelog](https://keepachangelog.com/): **Breaking**, *
 ## Contents
 
 - [Known issues (as of `fd6822c`)](#known-issues-as-of-fd6822c)
+- [2026-11-13: Vec reductions follow the table aggregates; `std/stats` (tables D13)](#2026-11-13-vec-reductions-follow-the-table-aggregates-stdstats-tables-d13)
+- [2026-11-13: A missing vec entry taken out as one value is an error (tables D12)](#2026-11-13-a-missing-vec-entry-taken-out-as-one-value-is-an-error-tables-d12)
+- [2026-11-13: New back end: lowering pass, typed IR and verifier (architecture §13)](#2026-11-13-new-back-end-lowering-pass-typed-ir-and-verifier-architecture-13)
 - [2026-11-13: Docs overhaul](#2026-11-13-docs-overhaul)
 - [2026-11-13: Element types are fixed, variables don't narrow, return annotations are checked (architecture §12)](#2026-11-13-element-types-are-fixed-variables-dont-narrow-return-annotations-are-checked-architecture-12)
 - [2026-11-13: Table engine and CSV reader (runtime only)](#2026-11-13-table-engine-and-csv-reader-runtime-only)
@@ -34,14 +37,10 @@ Checked against the compiler on 2026-11-12 and 2026-11-13. The structural causes
 
 ### Wrong results with no error
 
-**A `null` is read as an element type.** Element types are fixed and every write is checked since the §12.9 work (2026-11-13), but a few reads still return `null` where the compiler assumed an element:
-- A list read past its end, stored in a variable: `w = list [1, 2][5]`, `print(w)` prints `0` (`null` is documented). The same for `xs.get(i)` and `d.get(k)` on a missing key, and for a list changed during a `for` loop over it (`for y in xs: xs.pop()`).
-- A `null` inside a vector read by a loop: `for x in list [1, null, 3].to_vec(): print(x)` prints `1`, `0`, `3` (`0.0` for floats, `false` for bools). `to_list()` of such a vec gives a `list[int]` with a `null` in it.
-- `when` on a vec compares elementwise and reads the first result: `fn g(a) -> when a:` / `1 -> 'one'` / `_ -> 'other'` returns `'other'` for `g(vec [1, 1])` with no error. `if a == 1` correctly fails with "vec used as a condition".
-
 **The parser accepts two expressions with no separator.**
 - Several statements on one line run as separate statements: `price = 4`, `qty = 3`, then `total = price qty` / `print(total)` prints `4` with no error (`total = price`, then `qty` as a statement). `y = 'a' 'b'` gives `'a'`. `fn f(x) -> x + 1 print(9)` gives `f` a two-statement body, so `f(1)` prints `9` and returns `null`.
 - An unclosed string ends at the end of the line with no error: `msg = "hello` then `print(msg)` prints `hello`.
+- A `fn` declaration whose body is an inline `when` swallows the next top-level statement: after `fn pick(x) -> when x:` / `    1 -> 'one'` / `    _ -> 'other'`, a following `print(pick(1))` becomes part of `pick`'s body, so the program prints nothing. Only the first statement after the arms is affected (`x = 5` / `print(x)` after it run); a lambda (`g = fn(x) -> when x: ...`) and the block form (`fn pick(x) ->` / `    when x: ...`) are fine.
 
 **Structs and extern methods.**
 - `==` on structs reached through an untyped path is always `false`, with no error: `struct P:` / `x: int`, `fn id(v) -> v`, `a = P { x: 1 }`, then `print(id(a) == id(a))` and `print(list [a] == list [a])` both print `false`. A direct `a == a` is a compile error (structs have no `==`).
@@ -51,13 +50,8 @@ Checked against the compiler on 2026-11-12 and 2026-11-13. The structural causes
 - Any directory named `stdlib` in the script's directory or a parent is used as the standard library, before the real one and with no warning (`findStdlibRoot`, `loader/loader.go`). With `/tmp/x/stdlib/io.qrk` present, `incl 'std/io'` in `/tmp/x/a/main.qrk` silently loads that file; without one it fails with `cannot find module 'std/io': file '/tmp/x/stdlib/io.qrk' does not exist`.
 - A misspelled `print` alignment is ignored: `print('x', '|\n', 5, 'rigth', '.')` prints `x....|` (left-aligned) with no error.
 
-**Part of an expression runs at the wrong time.** A method call's receiver is computed before the whole statement, not where the expression needs it.
-- `and`, `or` and `x if c else y` run both sides: `false and noisy().upper()` and `'x' if true else noisy().upper()` both call `noisy()`.
-- A `while` condition containing a method call is computed once: `while x.contains('a'):` / `x = x.replace('a', 'b')` never ends.
-- `f().contains(g().upper())` calls `g` before `f`.
-
 **Runtime numbers and edge cases.**
-- List and string indexes are cut to 32 bits: `list [10, 20, 30].get(4294967296)` returns `10`, `xs.set(4294967297, 99)` writes element 1, `'abc'[4294967297]` is `'b'`.
+- List indexes in methods are cut to 32 bits: `list [10, 20, 30].get(4294967296)` returns `10`, and `xs.set(4294967297, 99)` writes element 1 (the same for `insert` and `remove`). `xs[i]` and `s[i]` take the whole index.
 - `abs(-9223372036854775807 - 1)` returns `0`.
 - `to_int('99999999999999999999')` returns `9223372036854775807`. `to_int(1e19)`, `floor(1e30)`, `round(-1e300)` and `fillna(1e30)` on an int vec give arbitrary values; `fillna(2.7)` on an int vec stores `2`.
 - `range(0.5, 3.0)` is `[0, 1, 2]`. `range(9223372036854775800, 9223372036854775807, 5)` never ends, and a lowered `for` loop over it wraps to negative numbers.
@@ -65,20 +59,18 @@ Checked against the compiler on 2026-11-12 and 2026-11-13. The structural causes
 - `sys::exit(256)` exits with status 0.
 - `io::read` stops at a NUL byte: on a file containing `ab\0cd`, the first read returns `ab` and the next returns `''`.
 - `csv::parse('a,"b"x,c')` returns `[['a', 'bx', 'c']]` instead of an error.
-- `'abc'[i]` with a non-int `i` of unknown type returns `null` (`fn id(v) -> v`, `'abc'[id(1.5)]`); a known non-int is a compile error, and the list version is a runtime error.
-- `sum(vec [9007199254740993, 1])` is `9007199254740992.0`: int vecs are summed in floating point.
-- `min(n, 1.0)` with `n = to_float('nan')` is `1.0`, but `min(1.0, n)` is `nan`. Sorting a list that contains NaN is undefined behavior in the C++ sort.
+- Two-argument `min`/`max` with NaN depend on the order: `min(n, 1.0)` with `n = to_float('nan')` is `1.0`, but `min(1.0, n)` is `nan` (vec reductions skip NaN). Sorting a list that contains NaN is undefined behavior in the C++ sort.
+
+**Unbounded recursion crashes with no message.** `print('before')`, `fn f(n) -> f(n + 1)`, `f(0)` overflows the C++ stack: the binary dies with a segmentation fault (status 139), `quark run` exits with 255 and prints nothing, not even `before`, since buffered output is lost. It should be a runtime error with a location, and output printed before it should appear.
 
 ### Fails loudly, but with a C++ error, a wrong location or a misleading message
 
-- An `elseif` whose condition calls a method fails in clang: `elseif name().upper() == 'B':` gives `expected expression`.
 - A prelude builtin used as a value passes the checker and fails in clang: `f = len`, then `print(f('ab'))`, or `print(len)`, gives `use of undeclared identifier 'quark_len'`. Extern fns used as values work (they have thunks).
 - `struct S` inside a `fn` body fails with `internal: struct 'S' not pre-declared`.
 - A call written above a `fn` declaration is checked less than one below it. `print(apply(fn(a, b) -> a + b))` above `fn apply(k) -> k(1)` is a runtime error, below it a compile error.
 - Calling a function value with more than 12 arguments compiles and always fails at runtime (`function call supports up to 12 arguments, got 13`); it could be a compile error.
 - A struct field named with `__` (`a__b: int`) is accepted in the `struct` and rejected only where a literal uses it.
 - A syntax error in an imported file is reported inside a load error located at the importer's `incl` line. Load errors in the main file show its absolute path, while check errors show the path as written. Several messages name token kinds instead of source text (`operator 'PLUS'`, `expected identifier after OK`, `no prefix parse function for NEWLINE`), and a multi-line `g = fn(x) ->` body gives about ten cascading `DEDENT` errors.
-- **Loop bodies are about 9% slower since `0cf468d`** (step 2). Every statement in a `for` or `while` body now sets its source location, so a runtime error there reports the right line; the three stores per statement measured +9% on a loop that only reads list elements. Storing one integer that indexes a static table of locations measured no slower than no location (`architecture.md` §12.9).
 - Native code that appends to a list with `push_back`, or writes `d->entries` directly, skips the element-type check; `qext::list_push` and `qext::dict_set` check it.
 - Tooling: the integration tests share one binary, `src/core/quark/quark_test`, which `TestMain` deletes at the start and end of every run. A second `go test` in the same checkout (another session, an editor) deletes it mid-run, and every integration test then fails with `fork/exec .../quark_test: no such file or directory`. Each run should build into its own temporary directory.
 - A field read on a struct of unknown type that lacks the field says `dot access is only supported on dict; got type 'struct'` (`fn id(v) -> v`, `p = id(P { x: 1 })`, `p.y`).
@@ -87,6 +79,119 @@ Checked against the compiler on 2026-11-12 and 2026-11-13. The structural causes
 - `qext::box(int)` in native code doesn't compile (ambiguous between the `int64_t`, `double` and `bool` overloads); pass an `int64_t`.
 
 ---
+
+## 2026-11-13: Vec reductions follow the table aggregates; `std/stats` (tables D13)
+
+Commits: not yet committed
+
+Implements `tables_v0_1_spec.md` D13: `sum`, `min` and `max` of a vector follow the table aggregate rules, so `sum(t.x)` and `summarize(s = sum(e.x))` will agree. Two decisions were taken while implementing it: `min`/`max`/mean of a vector with no present values are a runtime error (D13 had said `null`), and the mean is `stats::mean` in a new `std/stats` module rather than a prelude builtin.
+
+### Breaking
+- **`sum` of an int or bool vector is an `int`, and exact**; it was a float summed in floating point. `sum(vec [1, 2, 3, 4])` prints `10` (it printed `10.0`), `sum(vec [true, false, true])` is `2`, and `sum(vec [9007199254740993, 1])` is `9007199254740994` (it was `9007199254740992.0`). An overflowing int sum is a runtime error (`integer overflow in 'sum'`). A float vector still sums to a float.
+- **`min` and `max` of a vector keep its element type**: `min(vec [1, 2])` is `1` (it was `1.0`), so `max(v) - min(v)` is int arithmetic. They also accept `vec[str]` (byte order: `max(vec ['pear', 'apple'])` is `pear`) and `vec[bool]`.
+- **NaN is skipped** by `sum`, `min` and `max`, like a missing entry: `sum(vec [1.5, to_float('nan')])` is `1.5` (it was `nan`).
+- **A float sum is pairwise** (NumPy's method) instead of one value at a time, so long sums can differ in the last digits: a million `0.1`s sum to within `1e-8` of `100000` (it was off by about `1e-6`). The result is the same on every platform. The `reduce` benchmark runs in 18 ms (25.5 ms before).
+- **No present values:** `sum` is `0` (`0.0` for floats); it was `null` for a vector whose entries were all missing. `min` and `max` are a runtime error, `min() of a vec with no present values`, for an empty vector (as before) and now also for one whose entries are all missing or all NaN.
+
+### Added
+- **`std/stats`** with `stats::mean(v)`: the mean of the present values of a numeric or bool vector, as a float (a bool vector gives the share of `true` values); missing entries and NaN are skipped; no present values, or a `vec[str]`, are runtime errors. `mean` is not a prelude name, so programs can keep using it as a variable.
+  ```
+  incl 'std/stats'
+  print(stats::mean(list [1, null, 4].to_vec()))   // 2.5
+  ```
+
+### Fixed
+- `min(v)` and `max(v)` of a vector whose entries were all missing gave `null` while typed `float`, so `m = min(v)` stored `0.0`: `v = list [1, null].to_vec()[vec [false, true]]`, `m = min(v)`, `print(m + 1.0)` printed `1.0`. It is now the runtime error above.
+
+### Internal
+- `q_vec_sum` and `q_vec_extremum` (`types/vector.hpp`) use the engine's rules: `q_vec_skips` (missing, or NaN in a float vector), `__builtin_add_overflow` for int sums, `q_vec_compare` for each element type, with fast paths for vectors with no missing entries. Float sums go through `q_pairwise_sum` (new `core/sum.hpp`): `q_vec_f64_present_sum` sums a dense vector in place and gathers the present values of any other first; the engine's `agg_sum` and `agg_mean` gather each group's values the same way (`gather_f64`, a counting sort), so a group sums exactly as `sum()` sums a vec of its values. Int means sum exactly in 128 bits (`q_vec_mean_present`, shared by `stats::mean` and `agg_mean`). Nothing uses `long double`, whose width differs by platform. `q_vec_numeric_as_f64` is removed. The analyzer types `sum` as `int` or `float` and `min`/`max` as the element type (they were `any` and `float`).
+- `src/core/stdlib/stats.qrk` and `stats.hpp` (`q_stats_mean`, with `agg_mean`'s rules).
+- Tests: `src/testfiles/table/reduce_test.cpp` (run by `TestTableEngine`) checks that `sum`, `min`, `max` and `stats::mean` give what the engine's `agg_sum`, `agg_min`, `agg_max` and `agg_mean` give over a whole table, for int, float (with NaN), bool and str vectors with and without missing entries, plus: missing entries and NaN between the same values don't change a float sum's bits, each group of a grouped `agg_sum`/`agg_mean` equals `sum`/`stats::mean` of a vec of its values, and the pairwise error bound; 10 `TestSemanticsSafety_Rejected` cases cover no present values, all-NaN, untyped vectors, overflow, `vec[str]` sums, a typed result, and `stats::mean` misuse. The smoke expectations of `smoke_types`, `smoke_vectors`, `smoke_vector_soundness` and `smoke_vector_layout` change from floats to ints where an int or bool vector is reduced (22 values). The editor data lists `std/stats`.
+
+## 2026-11-13: A missing vec entry taken out as one value is an error (tables D12)
+
+Commits: not yet committed
+
+Implements `tables_v0_1_spec.md` D12, the first prerequisite of the table compiler work: vectors keep their missing entries, and a missing entry can't leave a vector as a single value. Before, it was read as `0` (`0.0`, `false`) into a typed variable.
+
+### Breaking
+- **`for x in v`, `v[i]`, `v.to_list()` and `v.enumerate()` on a vector with a missing entry are runtime errors**: `vec element 1 is missing; use fillna or drop_na first`, and `to_list() of a vec with 2 missing entries; use fillna or drop_na first`. This holds for every element type and also when the vector reaches the code through `any`. They printed or stored `0`, `0.0`, `false` or `null`:
+  ```
+  v = list [1, null, 3].to_vec()
+  for x in v:            // printed 1, 0, 3; now 1, then the error
+      print(x)
+  n = v[1]
+  print(n * 2)           // printed 0; now the error at `n = v[1]`
+  ```
+  Use `v.fillna(0)` or `v.drop_na()` first. Operations on the whole vector are unchanged: `v + 1` is `[2, null, 4]` and `sum(v)` skips the missing entry.
+- **`v.get(i)` has type `any`.** It returns `null` for a missing entry (as documented), but was typed as the element type, so `n = v.get(1)` stored `0` in an int variable. Now `n` holds `null`; `n: int = v.get(1)` is `variable 'n' is declared int but got null`, and `v[i]` is the typed read.
+
+### Added
+- `v.drop_na()`: the present entries of a vector, in order, with the same element type (`list [1, null, 3].to_vec().drop_na()` is `[1, 3]`).
+
+### Internal
+- The check is in the runtime, where every single-element read goes: `q_vec_get_scalar` (`v[i]`, table rows) and `q_iter_get` (loops) report a missing entry (`q_vec_missing`); `q_vec_get` is the `.get` that returns `null`; `q_to_list` refuses a vector with missing entries. A `for` loop over a value the analyzer typed `vec` records its own location before each element read, so the error points at the loop. Loops over vectors without missing entries still read the buffer directly, with no check.
+- `q_vec_keep` gathers the elements a predicate keeps; the mask filter (`v[mask]`) and `q_drop_na` share it.
+- Tests: 14 `TestSemanticsSafety_Rejected` cases (loops over int, float, bool and str vectors, captured and untyped loop variables, a `vec` parameter, `v[i]` with positive and negative indexes and through `any`, `to_list`, `enumerate`, typed and untyped `.get`); `smoke_vector_soundness.qrk` covers `drop_na`, `fillna`, `.get` and `v[i]` on present entries. The editor data and grammar list `drop_na`.
+
+## 2026-11-13: New back end: lowering pass, typed IR and verifier (architecture §13)
+
+Commits: not yet committed
+
+The C++ back end is rewritten (`architecture.md` §1.6). The new one lowers the analyzed program to a small typed IR in which every temporary, conversion, runtime check and evaluation step is explicit, verifies the IR, and prints it. This fixes the "part of an expression runs at the wrong time" group of known issues as a whole, and it is the back end the table compiler work will target. It replaces `codegen/`, which is removed. The whole test suite passes on it, and loops run as fast as before.
+
+### Breaking
+- **Every part of an expression runs once, when it is needed, left to right as written** (`semantics.md` §4.5). Programs whose output depended on the old order print something different:
+  - `false and f().upper()`, `true or f().upper()` and `'x' if true else f().upper()` no longer call `f` (the receiver of a method call ran before the whole statement, so the skipped side ran anyway).
+  - `f().contains(g().upper())` calls `f` before `g`; it called `g` first.
+  - A struct literal evaluates its field values in the order written. It evaluated them in the struct's declaration order: with `struct P:` / `a: int` / `b: int`, `P { b: f(), a: g() }` called `g` first.
+- **An assignment can't be part of an expression.** `if a and (n = f()) > 0:`, `b = a or (z = 3) > 1`, `w = (q = 4) if c else 0`, `y = x + (x = 5)` and `elseif x = f():` are parse errors (`an assignment can't be part of an expression; assign it on its own line first`). Under the new evaluation order such an assignment could be skipped, leaving the variable unassigned; the old back end ran it eagerly, even when `a` was false (and an `elseif` assignment failed in clang). An assignment as the whole condition of an `if` or `while` still works.
+- **`x and y` / `x or y` with an operand of unknown type returns that operand**, not a bool: `fn id(x) -> x`, `s = id(0) or id(5)`, `print(s)` prints `5`; it printed `true`, because the result was typed `bool` and read as one. `id(2) and id(0)` is `0` (it was `false`).
+- **A bool never equals a number**, as documented: `b = true`, `print(b == 1)` prints `false` (it compared the raw C++ values and printed `true`); `b != 1` is `true`.
+- **`xs[i]` and `s[i]` with an index out of range are runtime errors**, as `v[i]` already was: `list [1, 2][5]` is `list index 5 out of range (list length 2); use .get(i) when the index may be past the end`, and `'abc'[3]` is `str index 3 out of range (str length 3)`. They returned `null`, so `w = list [1, 2][5]`, `print(w)` printed `0`. Use `xs.get(i)` to probe.
+- **`xs.get(i)` and `d.get(k)` have type `any`**, since they return `null` for a missing item, like `v.get(i)`. They had the element type, so a `null` from them could be read as a number. Code that used the result as a typed value needs a typed declaration, checked once:
+  ```
+  t = 0
+  t = t + xs.get(0)      // now a compile error: cannot assign value of unknown type to 'int'
+  n: int = xs.get(0)     // checked: a runtime error if xs is empty
+  t = t + n
+  ```
+- **A `when` value pattern on a vec is an error**: a compile-time error when the vec is known (`when can't match a vec (== on a vec compares elementwise); test all(v == x) or any(v == x) with if instead`), a runtime error otherwise. It compared elementwise and read the first result as a bool, so `g(vec [1, 1])` with `when a:` / `1 -> 'one'` / `_ -> 'other'` returned `'other'`. A `_` arm alone still matches a vec.
+- **A `for` loop whose body changes the length of the list it iterates stops with a runtime error** at the `for` (`semantics.md` §14). The length was counted once at the start, so items pushed during the loop were skipped silently and a list that shrank was read past its end:
+  ```
+  xs = list [1, 2, 3]
+  for y in xs:
+      xs.push(y)    // was: ran 3 times; now: list changed size during the for loop over it (length 3 at the start, 4 now)
+  ```
+  Writes that keep the length (`xs[i] = v`) and a change followed by `break` are still allowed. A list that grows while you work through it needs an index loop: `while i < len(xs):`.
+
+### Fixed
+- A `while` condition containing a method call is evaluated before every iteration: `while x.contains('a'):` / `x = x.replace('a', 'b')` ends. The condition was computed once, so the loop never ended.
+- An `elseif` condition with a method call compiles: `elseif name().upper() == 'B':` failed in clang (`expected expression`). Such a condition also runs only when the conditions before it were false.
+- A member or index assignment that is the last statement of a function computes its value once: `fn setit(d) ->` / `    d.x = bump()` called `bump()` twice, once to store and once for the function's result.
+- A variable assigned by a `while` condition can be read after the loop: `while s = xs.get(i):` / `...`, then `print(s)`.
+- `and` and `or` of two bools are plain C++ `&&` and `||`; a loop testing `n % 3 == 0 and n % 5 != 0 or n % 7 == 0` runs about 45% faster.
+- `'abc'[i]` with an `i` of unknown type that isn't an int is a runtime error (`str index must be int, got float`); it returned `null`. `xs[4294967296]` and `'abc'[4294967297]` are out of range; the index was cut to 32 bits (`'abc'[4294967297]` was `'b'`).
+- A `for` loop over a value of unknown type that isn't a list, string or vec fails before the first iteration, also when it is empty: `for k in id(dict {}):` ran zero times with no error (a non-empty dict failed). The message names the type (`for-loop iterable must be list, string, or vec, got null`; a `null` said `len() expects str, list, dict, or vec`).
+- Indexing a value of unknown type that isn't a list, string or vec says so: `cannot index a dict; only list, str and vec can be indexed` (was `get() expects list/string/vec as first argument`).
+- A list that shrinks during a `for` loop over it is no longer read past its end: `for y in xs: xs.pop()` read `null`, or `0` for a list of ints (now the runtime error above).
+- `for` loops over a list read its elements directly: a program that builds a 5M-element list and sums it 20 times runs 2.5x faster (1.18s to 0.48s).
+- Loop bodies no longer pay for source locations: a loop that only adds up list elements runs 12% faster, back to its speed before `0cf468d`. Runtime errors report the same locations as before.
+
+### Removed
+- The old back end, `codegen/` (`codegen.go`, `storage.go`, `elemtype.go`). Nothing selects it any more: the driver has one back end, and there is no `QUARK_BACKEND` setting.
+
+### Internal
+- New packages: `lower/` (`ir.go` the IR, `lower.go`/`expr.go`/`calls.go`/`store.go` the lowering, `verify.go` the verifier) and `emit/` (prints the IR). The driver always runs lower → verify → emit (`driver.Generate`); `architecture.md` §13 lists the remaining back-end steps.
+- The verifier runs on every compile and checks scopes, value representations, loop control, closure binding and call arity (`INV-IR-*`, `error_codes.md`). Lowering's internal errors are returned to the driver (`lower.ICE`) instead of exiting the process.
+- Measured on the same programs with both back ends (best of 5, `-O3`): a 100M-iteration `range` loop, 10 passes over a 5M-element list, 10M closure calls and 30M native function calls are within 2%.
+- A native pointer result passed straight to another native function is boxed and converted again, so a null `str`/`list`/`dict`/`vec`/`fn` from the first is reported (`a native function declared to return str returned a null pointer`) instead of reaching the second; bool/number comparisons and `and`/`or` of unknown types go through the boxed operators.
+- Tests: `TestEvaluationOrder` (integration), `lower/lower_test.go` (every smoke program lowers and verifies; 15 kinds of malformed IR are rejected), `emit/emit_test.go` (the C++ shape of each lowering) and `emit/program_test.go` (codegen's C++ text tests, moved: the three that checked the old `and`/`or`, `!` and ternary forms are replaced by `emit_test.go` cases; the missing-call-plan test checks `lower.Lower`'s error; the closure-call helper test became a test of `q_call0`..`q_calln` by arity).
+- The unused `diagnostics.StageCodegen` is removed.
+- Every `Unbox` (a raw read of a `QValue`'s union field) carries the reason its tag is known (`lower.Proof`: `ProofType`, an exact analyzer type, or `ProofElement`, a loop's element read), and the verifier rejects one without a fitting reason (`INV-IR-UNBOX`, `architecture.md` §12). A runtime call's result is never unboxed; adding the reasons found the `when` hole above, where `q_eq`'s result was unboxed as a bool although it is a vec for a vec operand. `when` value patterns call the new `q_match_eq` (a C++ `bool`), and loops over an iterable of unknown type take their length from the new `q_for_len` (a `long long`, checked) instead of unboxing `q_len`. `xs[i]` lowers to the new `q_index`; `xs.get(i)` stays `q_get`.
+- `for` over a value typed as a list: `q_for_list` (the `QList*`, checked once), `q_list_len`, `q_list_at`, and the loop test `q_for_list_more`, which calls `q_list_resized` when the length changed; a loop over an iterable of unknown type uses `q_for_more` with `q_iter_get` (`architecture.md` §9). `lower.ForIndex` has `Sized` and `Loc` for the test, `lower.LocRef` passes a location table entry to the runtime, and the verifier checks both (`INV-IR-REP`, `INV-IR-LOOP`, `INV-IR-NODE`). Tests: `TestForLoop_ListResized`, `TestForLoop_ListAllowed`.
+- Source locations are a static table in the generated C++ (`static const QSourceLoc _qloc[]`, `lower.Program.Locs`); `SetLoc` is an index into it and prints as `q_set_source_loc(&_qloc[N])`, one pointer store where there were three. `q_runtime_loc` is a `const QSourceLoc*` and `QSourceLocGuard` saves one pointer. The verifier rejects an index outside the table (`INV-IR-NODE`).
+- Known issues gains three bugs found while testing: a `v[i]` read of a missing vector entry into a variable is `0`, a `fn` declaration with an inline `when` body swallows the next top-level statement, and unbounded recursion crashes with no message and loses earlier output.
 
 ## 2026-11-13: Docs overhaul
 

@@ -82,7 +82,7 @@ inline QValue q_call_values(QValue f, Args... args) {
     return q_call_adapt(cl, n, argv);
 }
 
-// q_call0 .. q_call12: the entry points codegen emits for calls through a
+// q_call0 .. q_call12: the entry points the compiler emits for calls through a
 // function value (q_callN takes N arguments).
 inline QValue q_call0(QValue f) { return q_call_values(f); }
 inline QValue q_call1(QValue f, QValue a) { return q_call_values(f, a); }

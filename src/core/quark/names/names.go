@@ -3,7 +3,7 @@
 //
 // The loader renames every definition of an imported file, and every module
 // member, to a unique internal name (q2_fmt__show_vec, mathx__square), so the
-// analyzer and codegen work on unique strings. Everything user-facing
+// analyzer and the back end work on unique strings. Everything user-facing
 // (diagnostics, QFnInfo names, struct display names) goes through Display.
 package names
 

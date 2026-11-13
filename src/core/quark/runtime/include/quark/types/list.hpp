@@ -68,6 +68,40 @@ inline QValue q_get(QValue list, QValue index) {
     return (*list.data.list_val)[idx];
 }
 
+// q_index is `target[index]`, the typed read (semantics.md §9): an index out
+// of range is a runtime error for lists and strings, as for vecs, and so is a
+// non-int index. `xs.get(i)` (q_get) is the probing read that returns null.
+inline QValue q_index(QValue target, QValue index) {
+    if (target.type == QValue::VAL_VECTOR) {
+        return q_get(target, index);  // an int index or a bool mask; checked there
+    }
+    const bool is_list = target.type == QValue::VAL_LIST && target.data.list_val != nullptr;
+    const bool is_str = target.type == QValue::VAL_STRING && target.data.string_val != nullptr;
+    if (!is_list && !is_str) {
+        q_runtime_reportf("runtime error: cannot index a %s; only list, str and vec can be indexed\n", q_type_name(target.type));
+        std::exit(1);
+    }
+    const char* kind = is_list ? "list" : "str";
+    if (index.type != QValue::VAL_INT) {
+        q_runtime_reportf("runtime error: %s index must be int, got %s\n", kind, q_type_name(index.type));
+        std::exit(1);
+    }
+    const long long len = is_list ? static_cast<long long>(target.data.list_val->size())
+                                  : static_cast<long long>(strlen(target.data.string_val));
+    const long long given = index.data.int_val;
+    const long long idx = given < 0 ? len + given : given;
+    if (idx < 0 || idx >= len) {
+        q_runtime_reportf("runtime error: %s index %lld out of range (%s length %lld)%s\n", kind, given, kind, len,
+                          is_list ? "; use .get(i) when the index may be past the end" : "");
+        std::exit(1);
+    }
+    if (is_list) {
+        return (*target.data.list_val)[static_cast<size_t>(idx)];
+    }
+    char buf[2] = {target.data.string_val[idx], '\0'};
+    return qv_string(buf);
+}
+
 // Set item at index (supports negative indexing)
 inline QValue q_set(QValue list, QValue index, QValue value) {
     if (list.type != QValue::VAL_LIST || !list.data.list_val) {

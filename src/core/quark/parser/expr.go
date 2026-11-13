@@ -336,10 +336,17 @@ func (p *Parser) parseWildcard() *ast.TreeNode {
 }
 
 func (p *Parser) parseGroupedExpression() *ast.TreeNode {
+	open := p.curToken
 	p.nextToken() // skip '('
 	expr := p.parseExpression(ast.PrecLowest)
 	if !p.expect(token.RPAR) {
 		return nil
+	}
+	// An assignment is a statement (grammar.md §10.1). Inside parentheses it
+	// would be part of a larger expression, which may run it conditionally
+	// (`a and (n = f())`) and leave the variable unassigned.
+	if expr != nil && expr.NodeType == ast.AssignNode {
+		p.addErrorAt(&open, "an assignment can't be part of an expression; assign it on its own line first")
 	}
 	return expr
 }

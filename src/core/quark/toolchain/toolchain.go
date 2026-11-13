@@ -78,7 +78,7 @@ func ExeName(path string) string {
 // CompileFlags returns the clang++ flags for compiling generated C++.
 //
 // Optimization policy:
-// - Always use -O3 for release-like codegen performance.
+// - Always use -O3 for release-like performance of the generated code.
 // - Keep x86-64-v3 tuning on amd64 as currently intended by the project.
 //
 // Diagnostics policy:

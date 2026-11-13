@@ -10,7 +10,6 @@ const (
 	StageLoad      Stage = "load"
 	StageCheck     Stage = "check"
 	StageInvariant Stage = "invariant"
-	StageCodegen   Stage = "codegen"
 	StageBuild     Stage = "build" // native compile and link (clang++)
 	StageRuntime   Stage = "runtime"
 )

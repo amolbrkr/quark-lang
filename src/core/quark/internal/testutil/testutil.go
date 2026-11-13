@@ -33,7 +33,7 @@ type Result struct {
 	CPP          string
 }
 
-// PipelineResult is the name the codegen tests use for Result.
+// PipelineResult is the name the emit tests use for Result.
 type PipelineResult = Result
 
 func Lex(source string) []token.Token {
@@ -79,7 +79,7 @@ func Analyze(source string) (*Result, *ast.TreeNode, []string, []string) {
 }
 
 // GenerateCPP runs the driver through C++ generation, with the same invariant
-// checks and codegen setup as the compiler.
+// checks and back end as the compiler.
 func GenerateCPP(source string) Result {
 	return *Compile(source, driver.StageEmit)
 }

@@ -22,7 +22,7 @@ const (
 // Spec is the single source of truth for builtin definitions.
 // ReceiverType is empty for free functions.
 // When non-empty, the builtin is a method: x.Method(args) where x has type ReceiverType.
-// The receiver is injected as the first argument at codegen time.
+// The receiver is passed as the first argument (lowering, lower/calls.go).
 type Spec struct {
 	Name         string
 	Runtime      string
@@ -100,8 +100,9 @@ var catalog = []Spec{
 	{Name: "items", Runtime: "q_ditems", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeDictAny},
 
 	// Vector methods (receiver = vector)
-	{Name: "get", Runtime: "q_get", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeInt}, ReturnType: TypeAny, ReceiverType: TypeVectorAny},
+	{Name: "get", Runtime: "q_vec_get", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeInt}, ReturnType: TypeAny, ReceiverType: TypeVectorAny},
 	{Name: "fillna", Runtime: "q_fillna", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeVectorAny, ReceiverType: TypeVectorAny},
+	{Name: "drop_na", Runtime: "q_drop_na", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeVectorAny, ReceiverType: TypeVectorAny},
 	{Name: "astype", Runtime: "q_astype", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeVectorAny, ReceiverType: TypeVectorAny},
 	{Name: "to_list", Runtime: "q_to_list", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeVectorAny},
 	{Name: "enumerate", Runtime: "q_enumerate", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeVectorAny},

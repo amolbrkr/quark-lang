@@ -616,7 +616,13 @@ func (p *Parser) parseIfStatement() *ast.TreeNode {
 	// Parse elseif/else
 	for p.curToken.Type == token.ELSEIF {
 		p.nextToken() // skip 'elseif'
+		condTok := p.curToken
 		elseifCondition := p.parseExpression(ast.PrecLowest)
+		if elseifCondition != nil && elseifCondition.NodeType == ast.AssignNode {
+			// It would run only when the conditions before it are false, so
+			// the variable could be unassigned after the if.
+			p.addErrorAt(&condTok, "an assignment can't be an elseif condition; assign it before the if")
+		}
 		if elseifCondition == nil {
 			p.addError("expected condition after 'elseif'")
 			return nil

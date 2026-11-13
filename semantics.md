@@ -56,11 +56,11 @@ A string is a sequence of bytes. String operations return new strings; nothing c
 
 `null` is the value of:
 
-- `xs.get(i)` and `xs[i]` past the end of a list, `s[i]` past the end of a string, and `d.get(k)` for a missing key;
+- `xs.get(i)` past the end of a list, `d.get(k)` for a missing key and `v.get(i)` for a missing vector entry, so all three have type `any`;
 - an `if` without `else`, or a `when` with no matching arm, used as a value (its inferred type includes `void`);
 - builtins that return nothing, such as `print`.
 
-Only `any`, struct and `resource` annotations accept `null` (§13.2). Reading a `null` returned by `.get` or an out-of-range index from a typed list is a known issue (changelog.md).
+Only `any`, struct and `resource` annotations accept `null` (§13.2), so the result of a `.get` stored into a typed slot is checked: `n: int = xs.get(9)` is a runtime error (`variable 'n' is declared int but got null`) when `xs` has no item 9. The typed reads `xs[i]`, `s[i]`, `v[i]` and `d.key` never give `null` for something missing; they are runtime errors (§9).
 
 ### 1.4 Resources
 
@@ -160,12 +160,12 @@ Comparing a `result` with `null` is a compile-time error, since a result is neve
 
 `and`, `or` and `!` accept any type except results and vectors, and use truthiness (§3).
 
-`and` and `or` short-circuit and return one of their operands:
+`and` and `or` short-circuit and return one of their operands, so the result is a `bool` only when both operands are (`id(0) or id(5)` is `5`):
 - `x and y` evaluates `x`; if it is falsy, the result is `x` and `y` is not evaluated. Otherwise the result is `y`.
 - `x or y` evaluates `x`; if it is truthy, the result is `x` and `y` is not evaluated. Otherwise the result is `y`.
 - `!x` is `true` if `x` is falsy and `false` otherwise; it always returns a `bool`.
 
-So `if n != 0 and total / n > 2:` never divides by zero. A method call in the operand that should be skipped still runs; this is a known issue (changelog.md), and it affects the ternary too.
+So `if n != 0 and total / n > 2:` never divides by zero, and `false and f().upper()` never calls `f`. The ternary is the same: `x if c else y` evaluates only the branch it takes.
 
 ### 4.4 Conditions
 
@@ -176,6 +176,18 @@ if my_list:          // non-empty
 if count:            // nonzero
 if name:             // non-empty string
 ```
+
+### 4.5 Evaluation order
+
+Every part of an expression runs once, when the expression needs it, left to right as written:
+
+- A call evaluates the function value (for a call through a variable), then a method's receiver, then the arguments in order: `f().contains(g())` calls `f` before `g`, and `t('a') + t('b')` calls `t('a')` first.
+- An assignment evaluates the target's object and index before the value: `obj().k = v()` and `xs[i()] = v()` call `obj` and `i` before `v`. The value is computed once, also when the assignment is a function's last statement.
+- A struct literal evaluates its field values in the order written, whatever the declaration order.
+- `and`, `or` and the ternary evaluate their right side or untaken branch only when needed (§4.3).
+- `elseif` conditions are tested in order, each only when the ones before it were false; a `while` condition is evaluated again before every iteration, method calls included.
+- A `when` evaluates its value once, then tests the arms in order.
+- An assignment is a statement, so it can't run in the middle of another expression (grammar.md §10.1). A variable assigned by a `while` condition is visible after the loop, holding the value of the last test.
 
 ---
 
@@ -295,6 +307,8 @@ when expr:
 - **Value patterns**: literals (numbers, including negative ones, strings, booleans and `null`) separated by `or`; the arm matches if the scrutinee equals one of them. Variables, calls and other expressions can't be patterns (compile-time error); compare with `if` instead.
 - **Wildcard**: `_` matches anything.
 
+A value pattern compares with `==`, and `==` on a vec compares elementwise, so a value pattern on a vec is a compile-time error, or a runtime error when the compiler couldn't know the value is a vec (`when can't match a vec`); test `all(v == x)` or `any(v == x)` with `if` instead.
+
 Each arm's body is a single expression, and the `when` evaluates to the matched arm's value, so it can end a line, as in an assignment:
 
 ```
@@ -318,7 +332,8 @@ A `when` is **exhaustive** when it has a `_` arm, or both an `ok` and an `err` a
 - Code whose types the compiler can't see (an untyped function's parameter, a value from `any`, native code) is checked when it writes: `push() can't add a str to a list of int`. Lists made by builtins have element types too: `range` gives a `list[int]`, `split` and `keys` a `list[str]`, `values` the dict's value type, `slice` and `concat` the receiver's. `concat` checks the other list's elements against the receiver's element type.
 - Containers nested in a list are checked by their own element type: a `list[list[int]]` takes a `list[int]` but not a `list[str]`, a `list[float]` or a list annotated as holding anything. A function stored in a list keeps its parameters but not its return type (a call through it returns an untyped value).
 - Indexes may be negative where an index is accepted (`-1` is the last item).
-- Reads are safe and writes are strict: `xs[i]` and `xs.get(i)` past the end return `null`; `xs.set(i, v)`, `xs[i] = v`, `xs.remove(i)` out of range and `xs.pop()` on an empty list are runtime errors. `insert` clamps its index to `[0, len]`, and `slice` clamps its bounds.
+- `xs[i]` is the typed read: an index out of range is a runtime error (`list index 5 out of range (list length 2)`), so `xs[i]` on a `list[int]` is always an `int`. `xs.get(i)` is the probing read: `null` past the end, so its type is `any`; convert a result you know is there with a typed declaration (`n: int = xs.get(i)`, checked once). `xs.set(i, v)`, `xs[i] = v` and `xs.remove(i)` out of range and `xs.pop()` on an empty list are runtime errors. `insert` clamps its index to `[0, len]`, and `slice` clamps its bounds.
+- A list keeps its length during a `for` loop over it (§14).
 - `sort`, `sort_by` and `reverse` change the list in place and return it. Sorting is stable and ascending; the keys must be all numbers, all strings or all bools.
 
 The methods are listed in stdlib.md.
@@ -328,7 +343,7 @@ The methods are listed in stdlib.md.
 - Created with `dict { key: value }`; keys in a literal are identifiers.
 - A dict's **value type is fixed when it is created**, like a list's element type: `d = dict { a: 1 }`, then `d.b = 'x'` or `d.set('b', 'x')` is a compile-time error, and a write from untyped code is a runtime error (`can't store a str under key 'k' of a dict of int`). `d: dict = dict { a: 1 }` holds values of any type; an empty `dict {}` takes the type of its first value.
 - Keys are strings. `.get` and `.set` convert a non-string key to its string form, so `d.set(1, 2)` stores the key `'1'` and `d.get(1)` reads it back.
-- `d.key` names a key in the source, so reading a missing key with it is a runtime error: `dict has no key 'nmae'; use .get('nmae') if the key may be missing`. `d.get(key)` returns `null` for a missing key.
+- `d.key` names a key in the source, so reading a missing key with it is a runtime error: `dict has no key 'nmae'; use .get('nmae') if the key may be missing`. `d.get(key)` returns `null` for a missing key, so its type is `any`, whatever the dict's value type.
 - `d['key']` is a compile-time error (use `d.key` or `d.get('key')`). A dict isn't iterable; loop over `d.keys()`, `d.values()` or `d.items()`.
 
 ### 9.3 Ranges
@@ -341,7 +356,7 @@ The methods are listed in stdlib.md.
 - **Vectors are immutable.** Every vector operation, including `fillna` and `astype`, returns a new vector.
 - `v[i]` and `v.get(i)` out of range are runtime errors. `v[mask]`, with a `vec[bool]` mask of the same length, selects elements.
 - Comparisons between `vec[i64]` and floats, or `vec[i64]` and `vec[f64]`, promote to float. `astype('i64')` of a NaN or out-of-range float is a runtime error.
-- A vector can hold nulls (for example from `to_vec()` of a list with `null` in it); `fillna` replaces them. Reading such a null as a scalar is a known issue (changelog.md).
+- A vector can hold missing entries (for example from `to_vec()` of a list with `null` in it). Operations on the whole vector keep them (arithmetic, comparisons) or skip them (reductions); `fillna` replaces them and `drop_na` removes them. Taking one out as a single value (`v[i]`, `for x in v`, `to_list()`, `enumerate()`) is a runtime error naming `fillna` and `drop_na`, so a missing entry never reads as a number. `v.get(i)` returns `null` for one and has type `any`.
 - Storage follows the Apache Arrow columnar layout, so buffers can be shared with Arrow-compatible libraries without copying (architecture.md, `QVector`).
 
 ---
@@ -396,7 +411,7 @@ An import cycle is a load error that shows the full chain. Each file is loaded o
 
 ### 10.7 Internal names
 
-The loader gives every definition a unique internal name (`q2_fmt__fmt_vec` for `fmt_vec` of the second imported file, `mathx__square` for a main-script module member) and rewrites every reference to it, so the analyzer and codegen see one flat namespace. Diagnostics and runtime messages always show the name as written (`fmt::fmt_vec`). User code can't reach an internal name, since user names can't contain `__` (§5).
+The loader gives every definition a unique internal name (`q2_fmt__fmt_vec` for `fmt_vec` of the second imported file, `mathx__square` for a main-script module member) and rewrites every reference to it, so the analyzer and the back end see one flat namespace. Diagnostics and runtime messages always show the name as written (`fmt::fmt_vec`). User code can't reach an internal name, since user names can't contain `__` (§5).
 
 ### 10.8 Extern functions (native C++ interop)
 
@@ -478,13 +493,15 @@ A runtime error prints its message and source location to stderr and exits with 
 | `d.key` on a missing key | `dict has no key 'b'; use .get('b') if the key may be missing` |
 | Dot access on a value that isn't a dict or struct, or on `null` | `cannot access member 'name' on null` |
 | A method the value's type doesn't have (dynamic dispatch, §15) | `type 'int' has no method 'upper'` |
-| `.set`/`.remove` out of range, `.pop()` on an empty list, vector index out of range | `pop() on empty list` |
+| An index out of range: `xs[i]`, `s[i]`, `v[i]`, `.set`, `.remove`; `.pop()` on an empty list | `list index 5 out of range (list length 2); use .get(i) when the index may be past the end` |
+| A value pattern of `when` on a vec the compiler couldn't see (§8) | `when can't match a vec (== on a vec compares elementwise); ...` |
 | `unwrap` of an `err`, or of a value that isn't a result | `unwrap on err: boom` |
 | A result or vector used as a condition | |
 | Calling a non-function, wrong argument count through a function value, more than 12 arguments | `function 'h' expects 2 arguments but got 1` |
 | `range` with `step = 0`, `sqrt` of a negative number, `min`/`max` of an empty vector, vectors of different lengths in arithmetic | `sqrt() domain error: argument is negative (-1.0)` |
 | A closed or stale resource, or a resource of the wrong kind | `io.read() expects an open file (resource is closed)` |
 | `for` over a value that isn't a list, string or vector | |
+| A loop body changing the length of the list the `for` iterates (§14) | `list changed size during the for loop over it (length 3 at the start, 2 now)` |
 | `==` nested deeper than 512 levels | |
 
 ---
@@ -579,6 +596,16 @@ for item in iterable:
 
 Anything else is a compile-time error when the type is known (`for loop expects list, vec, or str iterable, got dict[str, int]`) and a runtime error otherwise. The loop variable belongs to the loop body (§5). `break` exits the innermost loop and `continue` skips to its next iteration; both are compile-time errors outside a loop.
 
+**A list keeps its length during a `for` loop over it.** If the body pushes, pops, inserts or removes, the loop stops with a runtime error at the `for` before its next step, also when that happens in the last iteration:
+
+```
+xs = list [1, 2, 3]
+for y in xs:
+    xs.pop()      // runtime error: list changed size during the for loop over it (length 3 at the start, 2 now)
+```
+
+Writes that keep the length (`xs[i] = v`) are allowed. Each element is read when its iteration starts, so the loop sees a write to an element it hasn't reached yet. A change followed by `break` is allowed too, since the loop takes no further step. To process a list that grows while you work through it (a worklist), loop over an index: `while i < len(xs):`. Strings and vectors can't change length.
+
 ---
 
 ## 15) Dot Syntax
@@ -612,7 +639,7 @@ When the receiver's type isn't known at compile time (the result of `unwrap`, or
 | A list's or dict's element type is fixed when it is created | Same reason; writes the compiler can't see are checked at runtime, which costs about 1.5% in a loop that only pushes |
 | `list`, `dict`, `vec`, `fn` and `result` annotations reject `null` | `xs: list` means a list; use `any` or an empty default for optional values |
 | `fn` declarations are fixed and hoisted | Calls work in any order and mutual recursion needs no forward declaration; a non-capturing declaration compiles to a direct call |
-| Out-of-range list reads and `.get` return `null`; writes out of range are errors | Probing is convenient; a bad write is always a bug |
+| `xs[i]` and `s[i]` out of range are errors; `xs.get(i)` and `d.get(k)` return `null` and have type `any` | A typed read is never a hidden `null`; probing stays available, and its result is checked where it meets a type |
 | `d.key` on a missing key is an error | `d.key` names a key in the source, so a missing one is usually a typo; `.get` is for keys that may be absent |
 | Dict keys are strings | Simple hashing and printing; `.get`/`.set` convert other keys to strings |
 | Element types are inferred, not written | Keeps annotations short; `list[T]` is planned (`tables_v0_1_spec.md` D16) |

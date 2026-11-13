@@ -123,6 +123,9 @@ func isUnknownType(t Type) bool {
 	return false
 }
 
+// isBoolLike reports whether every value of type t is a bool. A value of
+// unknown type is not: `id(0) or id(5)` is 5, so an `and`/`or` of it isn't
+// typed bool.
 func isBoolLike(t Type) bool {
 	if t == nil {
 		return false
@@ -141,7 +144,7 @@ func isBoolLike(t Type) bool {
 		}
 		return true
 	}
-	return isUnknownType(t)
+	return false
 }
 
 func isStringLike(t Type) bool {
@@ -162,7 +165,7 @@ func isStringLike(t Type) bool {
 		}
 		return true
 	}
-	return isUnknownType(t)
+	return false
 }
 
 func isIntLike(t Type) bool {
@@ -183,5 +186,5 @@ func isIntLike(t Type) bool {
 		}
 		return true
 	}
-	return isUnknownType(t)
+	return false
 }

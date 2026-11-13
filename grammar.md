@@ -333,7 +333,7 @@ Primary         ::= ID
                 |   "(" Expression ")"
 ```
 
-Call arguments, collection elements and field values are `PipeExpr`s, so an assignment can't appear there. Assignment isn't chainable: `a = b = 1` is a compile-time error. Other assignment targets are compile-time errors too: a struct field (structs are immutable), a string index (strings are immutable), an imported name. `x: T = ...` (§9) is a separate statement form, recognized when a line starts with `ID ":"`.
+Call arguments, collection elements and field values are `PipeExpr`s, so an assignment can't appear there. An assignment is a statement: inside parentheses (`a and (n = f())`, `x + (x = 5)`) or as an `elseif` condition it is a parse error (`an assignment can't be part of an expression; assign it on its own line first`), since it could run conditionally and leave the variable unassigned. It may be the condition of an `if` or a `while` (`while line = next():`), which always runs. Assignment isn't chainable: `a = b = 1` is a compile-time error. Other assignment targets are compile-time errors too: a struct field (structs are immutable), a string index (strings are immutable), an imported name. `x: T = ...` (§9) is a separate statement form, recognized when a line starts with `ID ":"`.
 
 `d['key']` parses but is a compile-time error: dict keys are read with `d.key` or `d.get(k)` (semantics.md §9.2).
 
@@ -414,7 +414,7 @@ These are not part of Quark, by decision or because they are planned in a spec:
 - `grammar.md` (this file): syntax, tokens and precedence.
 - `semantics.md`: runtime behaviour, types, scoping, the error model and design decisions.
 - `stdlib.md`: builtin functions, methods and stdlib modules. The code-level source of truth for builtin names, arity and types is `src/core/quark/builtins/catalog.go`.
-- `architecture.md`: compiler pipeline, runtime structures and codegen.
+- `architecture.md`: compiler pipeline, runtime structures and the back end.
 - `modules_v0_2_spec.md`, `structs_v0_1_spec.md`, `ffi_v0_1_spec.md`, `tables_v0_1_spec.md`: the full rules of each area.
 
 A change to the language updates these docs in the same change. A conflict between a doc and the implementation is a bug to fix before adding features.

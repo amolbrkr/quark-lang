@@ -25,6 +25,7 @@ The prelude builtins (available everywhere without an import) and the stdlib mod
 - [`std/fmt`](#stdfmt)
 - [`std/sys`](#stdsys)
 - [`std/csv`](#stdcsv)
+- [`std/stats`](#stdstats)
 - [`std/time`](#stdtime)
 - [`std/random`](#stdrandom)
 - [`std/blas` (OpenBLAS)](#stdblas-openblas)
@@ -198,7 +199,7 @@ A float argument is truncated instead of rejected (`range(0.5, 3.0)` is `[0, 1, 
 |---|---|---|
 | `abs` | `int\|float -> int\|float` | Absolute value, same type as the argument |
 | `min`, `max` | `number, number -> number` | The smaller/larger of two numbers: an `int` when both are ints, otherwise a `float` (`min(1, 2.5)` is `1.0`). With one argument they reduce a vector ([Reductions](#reductions)) |
-| `sum`, `all`, `any` | `vec -> ...` | Vector reductions ([Reductions](#reductions)) |
+| `sum`, `all`, `any` | `vec -> ...` | Vector reductions ([Reductions](#reductions)); the mean is `stats::mean` (`std/stats`) |
 | `sqrt` | `float -> float` | Square root; an int argument is widened. A negative argument is a runtime error |
 | `floor`, `ceil` | `float -> int` | Round down / up |
 | `round` | `float -> int` | Round to nearest, halves away from zero (`round(2.5)` is `3`, `round(-2.5)` is `-3`) |
@@ -213,7 +214,7 @@ sqrt(16) | print()         // 4.0
 floor(3.7) | print()       // 3
 ```
 
-`abs` of the smallest int64, `floor`/`ceil`/`round` of floats outside the int64 range, and `min`/`max` with NaN give wrong values; see changelog.md Known issues.
+`abs` of the smallest int64, `floor`/`ceil`/`round` of floats outside the int64 range, and two-argument `min`/`max` with NaN give wrong values; see changelog.md Known issues.
 
 ---
 
@@ -260,7 +261,7 @@ A list keeps its element type ([Element types](#element-types-of-returned-lists)
 |---|---|---|
 | `.push(item)` | `any -> list` | Append, in place; returns the same list |
 | `.pop()` | `-> any` | Remove and return the last item. An empty list is a runtime error |
-| `.get(idx)` | `int -> any` | Item at `idx` (negative counts from the end); `null` when out of range |
+| `.get(idx)` | `int -> any` | Item at `idx` (negative counts from the end); `null` when out of range, so the result has type `any` (`xs[idx]` is the typed read, and errors out of range) |
 | `.set(idx, val)` | `int, any -> any` | Replace the item at `idx`; returns `val`. Out of range is a runtime error |
 | `.insert(idx, val)` | `int, any -> list` | Insert before `idx`, in place; returns the same list. A negative index counts from the end; an index past either end is clamped (`list [1, 2, 3].insert(99, 7)` gives `[1, 2, 3, 7]`) |
 | `.remove(idx)` | `int -> any` | Remove and return the item at `idx` (negative counts from the end). Out of range is a runtime error |
@@ -294,7 +295,7 @@ list [1, 2, 3].join('+') | print()            // 1+2+3
 print(type(list [1, 2, 3].to_vec()))          // vec[i64]
 ```
 
-Known issues (changelog.md): a `null` from `.get` out of range, stored in a variable, can read as `0`; indexes above 32 bits wrap; sorting a list that contains NaN is undefined.
+Known issues (changelog.md): indexes above 32 bits wrap in `.get`, `.set`, `.insert` and `.remove` (`xs[i]` takes the whole 64-bit index); sorting a list that contains NaN is undefined.
 
 ---
 
@@ -313,7 +314,7 @@ Use the methods when the key is computed:
 
 | Method | Signature | Description |
 |---|---|---|
-| `.get(key)` | `any -> any` | Value for `key`, or `null` when it's missing |
+| `.get(key)` | `any -> any` | Value for `key`, or `null` when it's missing, so the result has type `any` (`d.key` is the typed read, and errors on a missing key) |
 | `.set(key, val)` | `any, any -> dict` | Set `key`, in place; returns the same dict |
 | `.keys()` | `-> list[str]` | The keys |
 | `.values()` | `-> list` | The values, typed like the dict's values |
@@ -331,7 +332,7 @@ for item in mydict.items():
     print(item.key)
 ```
 
-Known issues (changelog.md): a `null` from `.get` on a missing key, stored in a variable, can read as `0`; `d.set(1, ...)` and `d.set('1', ...)` write the same key.
+Known issues (changelog.md): `d.set(1, ...)` and `d.set('1', ...)` write the same key.
 
 ---
 
@@ -349,47 +350,60 @@ v2 = list [10, null, 30].to_vec()   // vec[i64] with a missing entry
 - A literal must be homogeneous and can't contain `null`; missing entries come from `list [...].to_vec()`. `vec [1, null, 3]` is planned (`tables_v0_1_spec.md` D12).
 - Vectors can't be assigned into (`v[0] = 5` is a compile-time error).
 - Arithmetic `+ - * /` works elementwise on numeric vectors of equal length, or a vector and a number; `/` gives `vec[f64]`. Comparisons (`<`, `==`, ...) give `vec[bool]`. Missing entries stay missing. A length mismatch is a runtime error.
-- `v[i]` reads one element (as `.get(i)`), and `v[mask]` with a `vec[bool]` of the same length keeps the selected elements: `v[v > 2]` (a mask of another length is a runtime error).
+- `v[i]` reads one element (negative counts from the end; out of range is a runtime error), and `v[mask]` with a `vec[bool]` of the same length keeps the selected elements: `v[v > 2]` (a mask of another length is a runtime error).
+- **A missing entry taken out as one value is a runtime error** (`tables_v0_1_spec.md` D12): `v[i]`, `for x in v`, `.to_list()` and `.enumerate()` stop with `vec element 1 is missing; use fillna or drop_na first`, whatever the element type and whether or not the compiler knows the value is a vec. Operations on the whole vector (arithmetic, comparisons, masks, reductions, `fillna`, `drop_na`) keep or skip missing entries instead. `.get(i)` returns `null` for one, so its result has type `any`.
+
+```quark
+v = list [1, null, 3].to_vec()
+print(v + 1)                 // [2, null, 4]
+for x in v.drop_na():        // 1, 3
+    print(x)
+for x in v.fillna(0):        // 1, 0, 3
+    print(x)
+print(v.get(1))              // null
+for x in v:                  // runtime error: vec element 1 is missing; use fillna or drop_na first
+    print(x)
+```
 - A vector can't be used as a condition: `if v == 1:` is an error that suggests `all(v)`, `any(v)` or `len(v) > 0`.
 
 ### Vector methods
 
 | Method | Signature | Description |
 |---|---|---|
-| `.get(idx)` | `int -> any` | Element at `idx` (negative counts from the end); `null` for a missing entry. Out of range is a runtime error (unlike list `.get`) |
+| `.get(idx)` | `int -> any` | Element at `idx` (negative counts from the end); `null` for a missing entry, so the result has type `any` (`v[idx]` is the typed read, and errors on a missing entry). Out of range is a runtime error (unlike list `.get`) |
 | `.fillna(val)` | `any -> vec` | Missing entries replaced by `val`, which must fit the dtype (a number for numeric vectors, a bool or int for `vec[bool]`, a string for `vec[str]`) |
+| `.drop_na()` | `-> vec` | The present entries, in order, with the same element type (the vector itself when nothing is missing) |
 | `.astype(dtype)` | `str -> vec` | Cast between `'f64'`, `'i64'` and `'bool'`. f64 → i64 truncates; a value outside the int64 range is a runtime error. `vec[str]` can't be cast |
-| `.to_list()` | `-> list` | List of the elements, typed by the dtype |
-| `.enumerate()` | `-> list` | List of `{index, value}` dicts, as for lists |
+| `.to_list()` | `-> list` | List of the elements, typed by the dtype. A vector with missing entries is a runtime error (`to_list() of a vec with 2 missing entries; use fillna or drop_na first`) |
+| `.enumerate()` | `-> list` | List of `{index, value}` dicts, as for lists; a missing entry is a runtime error |
 
-`drop_na` is planned next to `fillna` (`tables_v0_1_spec.md` D12).
-
-Known issues (changelog.md): a missing entry read by `for x in v` reads as `0` (`0.0`, `false`); `.to_list()` of such a vector puts a `null` into a typed list; `fillna(2.7)` on an int vector stores `2`.
+Known issues (changelog.md): `fillna(2.7)` on an int vector stores `2`.
 
 ### Reductions
 
+Reductions follow the table aggregates (`tables_v0_1_spec.md` D6, D13), so `sum(t.x)` and `summarize(s = sum(e.x))` agree.
+
 | Function | Signature | Description |
 |---|---|---|
-| `sum` | `vec -> float` | Sum of a numeric or bool vector (`true` counts 1) |
-| `min`, `max` | `vec -> float` | Smallest / largest element of a numeric vector |
+| `sum` | `vec[int] -> int`, `vec[bool] -> int`, `vec[float] -> float` | Sum of the present values: exact for ints (overflow is a runtime error), `true` counts 1. Floats are summed pairwise in `double` (NumPy's method): the rounding error grows with the log of the length, and the result is the same on every platform. No values sum to `0` (`0.0` for floats) |
+| `min`, `max` | `vec[T] -> T` | Smallest / largest present value, with the vector's element type: numbers by value, `false` before `true`, strings in byte order. A vector with no present values is a runtime error |
 | `all` | `vec[bool] -> bool` | Every present element is `true` (`true` for an empty vector) |
 | `any` | `vec[bool] -> bool` | Some present element is `true` (`false` for an empty vector) |
 
-Current rules:
-- Missing entries are skipped. A vector whose entries are all missing gives `null` for `sum`, `min` and `max`.
-- An empty vector: `sum` is `0.0`; `min` and `max` are runtime errors.
-- The result is always a float: `sum(vec [1, 2, 3, 4])` is `10.0`, `min(vec [1, 2])` is `1.0`. Int vectors are summed in floating point, so sums above 2^53 lose precision (changelog.md Known issues).
-- NaN is not skipped: a float vector containing NaN sums to `nan`.
+- Missing entries are skipped, and NaN in float vectors too.
+- `min`, `max` and `stats::mean` (`std/stats`) of a vector with no present values (empty, all missing, or all NaN) are runtime errors: `min() of a vec with no present values`. A value taken out of a vector must be present (D12); in a table, `summarize` gives a missing value instead, since a column can hold one.
 
 ```quark
 vi = vec [1, 2, 3, 4]
-print(sum(vi))                      // 10.0
-print(min(vi))                      // 1.0
-print(sum(vec [10, 20] - vec [1, 2]))   // 27.0
-print(any(vi > 3))                  // true
+print(sum(vi))                          // 10
+print(min(vi))                          // 1
+print(max(vi) - min(vi))                // 3, an int
+print(sum(vec [10, 20] - vec [1, 2]))   // 27
+print(sum(vi > 2))                      // 2: true values count 1
+print(sum(vec [1.5, to_float('nan')]))  // 1.5: NaN is skipped
+print(max(vec ['pear', 'apple']))       // pear
+print(any(vi > 3))                      // true
 ```
-
-**Planned change** (`tables_v0_1_spec.md` D13, decided, not implemented): reductions will follow the table aggregate rules. An int vector will sum exactly to an int (overflow is a runtime error), `min`/`max` will keep the element type, NaN will be skipped, a sum of no values will be `0`, and `min`/`max`/`mean` of no values will be `null` instead of an error. This is a breaking change.
 
 ---
 
@@ -541,6 +555,24 @@ when csv::read('sales.csv'):
 
 ---
 
+## `std/stats`
+
+Statistics on vectors. Import with `incl 'std/stats'`. The functions follow the table aggregates (`tables_v0_1_spec.md` D6), so they agree with `summarize`.
+
+| Function | Signature | Description |
+|---|---|---|
+| `mean` | `v: vec -> float` | Mean of the present values of a numeric or bool vector (a bool vector gives the share of `true` values): floats summed as `sum` sums them, ints summed exactly, then divided once. Missing entries and NaN are skipped; a vector with no present values, and a `vec[str]`, are runtime errors |
+
+```quark
+incl 'std/stats'
+
+print(stats::mean(vec [1, 2, 3, 4]))                  // 2.5
+print(stats::mean(list [1, null, 4].to_vec()))        // 2.5
+print(stats::mean(vec [true, false, false, true]))    // 0.5
+```
+
+---
+
 ## `std/time`
 
 Wall-clock and monotonic time. Import with `incl 'std/time' as time`.
@@ -641,14 +673,14 @@ list [1, 2] | len() | print()                                         // 2
 | `null` for a `list`/`dict`/`vec`/`fn` parameter | Compile-time error; runtime error from untyped code | `fmt::show_list(null)` |
 | Using a result as a value | Compile-time error | `x: int = f()` where `f` returns a result |
 | Invalid value at runtime | Runtime error | `to_int('abc')`, `unwrap(err('x'))`, `range(1, 5, 0)` |
-| Domain error | Runtime error | `list [].pop()`, `sqrt(-1)`, `min()` of an empty vector, `xs.set(99, 1)` |
+| Domain error | Runtime error | `list [].pop()`, `sqrt(-1)`, `min()` of an empty vector, `xs.set(99, 1)`, `xs[99]`, `'abc'[5]` |
 | Missing dict key read with `d.key` | Runtime error | `dict {a: 1}.zz` |
 | Failure caused by the environment | `err(...)` result | `io::open('missing.txt')`, `csv::read(path)` |
 
 Truthiness is not an error: `if 1:` and `while 'yes':` follow `to_bool`.
 
 These return `null` by design:
-- `xs.get(i)` out of range, `d.get(k)` for a missing key, `v.get(i)` of a missing vector entry.
+- `xs.get(i)` out of range, `d.get(k)` for a missing key, `v.get(i)` of a missing vector entry. All three have type `any`, so the result is checked where it meets a type (`n: int = xs.get(i)`).
 - `sys::env(name)` for an unset variable.
 
 ---

@@ -22,7 +22,7 @@ Scope: the import unit, name scoping and qualification (`::`), `fn` declarations
   - [5.1 Loader and the name table](#51-loader-and-the-name-table)
   - [5.2 Internal names](#52-internal-names)
   - [5.3 Analyzer](#53-analyzer)
-  - [5.4 Codegen and runtime](#54-codegen-and-runtime)
+  - [5.4 Back end and runtime](#54-back-end-and-runtime)
   - [5.5 Interactions](#55-interactions)
 - [6. Tests](#6-tests)
 - [7. Deferred](#7-deferred)
@@ -164,7 +164,7 @@ The analyzer never sees `::` or `incl`: the loader resolves every name and hands
 5. Splice the files into one tree and drop `incl`.
 6. Return a `names.Table` (package `names`) in `driver.Unit.Names`: internal name → `Origin{File, Module, Name, Kind}`, with `Kind` one of `Func`, `Struct`, `Extern`, `Value`, `Module`, `Local`.
 
-Everything user-facing goes through the table: `Table.Display(internal)` gives `geo::Point` or `fmt::show_vec`, and `Table.DisplayText(msg)` rewrites every internal name in a message. The analyzer gets the table with `SetNames`, applies `DisplayText` to every diagnostic, and passes it on in `Analysis.Names`; codegen uses it for `QFnInfo` and struct display names.
+Everything user-facing goes through the table: `Table.Display(internal)` gives `geo::Point` or `fmt::show_vec`, and `Table.DisplayText(msg)` rewrites every internal name in a message. The analyzer gets the table with `SetNames`, applies `DisplayText` to every diagnostic, and passes it on in `Analysis.Names`; lowering uses it for `QFnInfo` and struct display names.
 
 ### 5.2 Internal names
 
@@ -176,18 +176,18 @@ Everything user-facing goes through the table: `Table.Display(internal)` gives `
 | Main-script module member | `module__name` | `mathx__square` |
 | Local of an imported file named like any main-script name | `q<N>__name__l` | `q2__x__l` |
 
-The local rename exists because the spliced tree has one global scope in which main-script names are bare. Two definitions that would get the same internal name are a load error, never merged. Codegen prefixes internal names with `quark_` for functions and variables (`quark_q2_lib2__sq`), emits `_qfi_<internal>` for each `QFnInfo` and `_sdef_quark_<internal>` / `_sfields_quark_<internal>` for each struct. Names the compiler generates itself (lambdas, nested declarations, duplicate variables) start with `quark___`.
+The local rename exists because the spliced tree has one global scope in which main-script names are bare. Two definitions that would get the same internal name are a load error, never merged. The back end prefixes internal names with `quark_` for functions and variables (`quark_q2_lib2__sq`), emits `_qfi_<internal>` for each `QFnInfo` and `_sdef_quark_<internal>` / `_sfields_quark_<internal>` for each struct. Names the compiler generates itself (lambdas, nested declarations, duplicate variables) start with `quark___`.
 
 ### 5.3 Analyzer
 
 - **Symbols.** Every variable, parameter, loop variable, `when` binding and `fn` declaration is one `types.Symbol`; `Analysis.Refs` maps every resolved identifier node to it, and `finalizeSymbols` decides its storage and C++ name once (`architecture.md` §1.6).
 - **Fixed declarations** (`types/analyzer_fixed.go`): `declareFixedFns` declares a scope's `fn` declarations as non-mutable symbols before its statements and checks rules 18 and 20; rule 19 is checked at assignments and typed declarations. Signatures (parameter types, annotations, defaults) are known before any body is analyzed, so forward and recursive calls see the real `FunctionType`, including `ParamCalls`.
-- **Definite assignment** (rule 23): `checkDefiniteAssignment` orders statements per statement list, follows direct calls through declared functions transitively, and records each `HoistScope`: the cells codegen creates unassigned and the closures it creates at the scope's start. The top level and module bodies are one hoisting unit, since they all run in `main`.
+- **Definite assignment** (rule 23): `checkDefiniteAssignment` orders statements per statement list, follows direct calls through declared functions transitively, and records each `HoistScope`: the cells lowering creates unassigned and the closures it creates at the scope's start. The top level and module bodies are one hoisting unit, since they all run in `main`.
 - **Module bodies** are analyzed in the file scope (their members already have unique internal names), and their declarations are hoisted with the top level. Structs are predeclared per file, including those in module bodies.
 - **Externs** are registered under their internal names, which are unique per file, so an `extern fn` is scoped to its file like any other definition. Extern *methods* (`extern fn str.shout()`) are not names: they are attached to the receiver type for the whole program (see §7).
 - **Dispatch** (`finalizeFixedFns`, once the program is analyzed): a declaration that captures nothing, directly or through another declaration, is a plain C++ function, called with `DispatchDirect` or, when fully annotated, `DispatchNative`, and never captured. A declaration that captures stays a closure in a binding that never changes, called with `DispatchClosure`.
 
-### 5.4 Codegen and runtime
+### 5.4 Back end and runtime
 
 - `hoistScopes` creates every scope's closures at the scope's start; variables they capture start as unassigned cells (`q_new_unassigned_cell`, read with `q_cell_get`, `core/cell.hpp`).
 - One `QStructDef` is emitted per struct definition, and `QStructDef.name` holds the display name. `q_param_struct(v, &_sdef_X, fn, param)` and `q_field_struct` compare `QStructDef` pointers, so pointer identity is type identity.

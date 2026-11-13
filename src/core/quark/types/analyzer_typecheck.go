@@ -50,28 +50,44 @@ func (a *Analyzer) inferBuiltinReturnType(name string, argTypes []Type, callNode
 		}
 		return TypeAny
 	case "sum":
+		// Like the table aggregate (tables_v0_1_spec.md D13): an int for int
+		// and bool vectors, a float for float vectors.
 		if len(argTypes) >= 1 && !isUnknownType(argTypes[0]) {
 			t := argTypes[0]
 			switch st := t.(type) {
 			case *VectorType:
-				if !IsNumeric(st.ElementType) && st.ElementType != TypeBool && !isUnknownType(st.ElementType) {
+				switch el := st.ElementType; {
+				case el.Equals(TypeInt), el.Equals(TypeBool):
+					return TypeInt
+				case el.Equals(TypeFloat):
+					return TypeFloat
+				case !isUnknownType(el):
 					a.errorAt(callNode, "argument 1 of 'sum' expects numeric or bool vec, got %s", t.String())
+					return TypeError
 				}
 			default:
 				a.errorAt(callNode, "argument 1 of 'sum' expects numeric or bool vec, got %s", t.String())
+				return TypeError
 			}
 		}
 		return TypeAny
 	case "min", "max":
+		// min(v) / max(v) of a vec keep its element type; a vec with no present
+		// values is a runtime error, never a null typed as the element (D13).
 		if len(argTypes) == 1 && !isUnknownType(argTypes[0]) {
 			t := argTypes[0]
 			if vec, isVec := t.(*VectorType); isVec {
-				if !IsNumeric(vec.ElementType) && !isUnknownType(vec.ElementType) {
-					a.errorAt(callNode, "argument 1 of '%s' with single argument expects numeric vec, got %s", name, t.String())
+				el := vec.ElementType
+				if isUnknownType(el) {
+					return TypeAny
 				}
-				return TypeFloat
+				if IsNumeric(el) || el.Equals(TypeBool) || el.Equals(TypeString) {
+					return el
+				}
+				a.errorAt(callNode, "argument 1 of '%s' with single argument expects a vec, got %s", name, t.String())
+				return TypeError
 			}
-			a.errorAt(callNode, "argument 1 of '%s' with single argument expects numeric vec, got %s", name, t.String())
+			a.errorAt(callNode, "argument 1 of '%s' with single argument expects a vec, got %s", name, t.String())
 			return TypeAny
 		}
 		if len(argTypes) == 2 {
@@ -220,7 +236,7 @@ func (a *Analyzer) validateReturnType(funcType *FunctionType, inferredType Type,
 			return
 		}
 	}
-	// Otherwise a body of unknown type is checked when it returns (codegen).
+	// Otherwise a body of unknown type is checked when it returns (lowering emits q_ret_*).
 	if isUnknownType(inferredType) {
 		return
 	}

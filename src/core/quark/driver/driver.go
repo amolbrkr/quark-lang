@@ -9,11 +9,12 @@ import (
 	"path/filepath"
 
 	"quark/ast"
-	"quark/codegen"
 	"quark/diagnostics"
+	"quark/emit"
 	"quark/invariants"
 	"quark/lexer"
 	"quark/loader"
+	"quark/lower"
 	"quark/names"
 	"quark/parser"
 	"quark/token"
@@ -102,7 +103,12 @@ func CompileSource(src, file string, upTo Stage) *Unit {
 		u.Err = err
 		return u
 	}
-	u.CPP = Generate(u.AST, u.Analysis, file)
+	cpp, err := Generate(u.AST, u.Analysis, file)
+	if err != nil {
+		u.Err = err
+		return u
+	}
+	u.CPP = cpp
 	return u
 }
 
@@ -121,7 +127,7 @@ func ResolveImports(tree *ast.TreeNode, absPath string) (loader.NativeDeps, name
 	return ml.NativeDeps(), ml.Names(), nil
 }
 
-// Validate checks the pre-codegen invariants on an analyzed tree.
+// Validate checks the pre-lowering invariants on an analyzed tree.
 func Validate(tree *ast.TreeNode, an *types.Analysis) error {
 	if err := invariants.ValidateCallPlans(tree, an.CallPlans); err != nil {
 		return err
@@ -129,12 +135,17 @@ func Validate(tree *ast.TreeNode, an *types.Analysis) error {
 	return invariants.ValidateReturnAnnotations(tree, an.ReturnValidation)
 }
 
-// Generate emits C++ for an analyzed, validated tree.
-func Generate(tree *ast.TreeNode, an *types.Analysis, sourceName string) string {
-	gen := codegen.New()
-	gen.SetSourceName(sourceName)
-	gen.SetAnalysis(an)
-	return gen.Generate(tree)
+// Generate emits C++ for an analyzed, validated tree: it lowers the tree to
+// the IR, verifies the IR and prints it (architecture.md §1.6).
+func Generate(tree *ast.TreeNode, an *types.Analysis, sourceName string) (string, error) {
+	prog, err := lower.Lower(tree, an, sourceName)
+	if err != nil {
+		return "", err
+	}
+	if err := lower.Verify(prog); err != nil {
+		return "", err
+	}
+	return emit.Program(prog), nil
 }
 
 // PrintDiagnostics writes u's diagnostics and error to stderr.

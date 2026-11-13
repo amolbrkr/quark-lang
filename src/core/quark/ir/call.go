@@ -2,7 +2,7 @@ package ir
 
 import "quark/ast"
 
-// DispatchMode tells codegen how to lower an analyzed call without re-deriving semantics.
+// DispatchMode tells lowering how to lower an analyzed call without re-deriving semantics.
 type DispatchMode int
 
 const (
@@ -13,7 +13,7 @@ const (
 	DispatchExtern // Native-typed extern fn call
 	DispatchNative // Native-typed user-defined function (fully annotated)
 	// DispatchDynamicMethod is a builtin method call on a receiver whose type is
-	// unknown at compile time (e.g. the result of unwrap). Codegen switches on the
+	// unknown at compile time (e.g. the result of unwrap). Lowering tests the
 	// receiver's runtime type tag over MethodCandidates.
 	DispatchDynamicMethod
 )
@@ -25,8 +25,8 @@ type MethodCandidate struct {
 	RuntimeSymbol   string // runtime function for this receiver type
 }
 
-// CallPlan is a call-focused IR node produced by the analyzer and consumed by codegen.
-// It freezes call semantics so codegen doesn't have to re-derive them.
+// CallPlan is a call-focused IR node produced by the analyzer and consumed by lowering.
+// It freezes call semantics so lowering doesn't have to re-derive them.
 type CallPlan struct {
 	CalleeName      string
 	MinArity        int

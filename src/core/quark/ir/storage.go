@@ -3,7 +3,7 @@ package ir
 import "fmt"
 
 // Storage is how a variable (or parameter, loop variable, binding) is held in
-// generated C++. The analyzer decides it once per symbol (types.Symbol); codegen
+// generated C++. The analyzer decides it once per symbol (types.Symbol); lowering
 // only reads it.
 type Storage int
 

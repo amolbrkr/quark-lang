@@ -1,6 +1,6 @@
 # Quark Tables v0.1 Spec
 
-Status: Draft, revision 3 (2026-11-13). The design is the set of decisions taken on 2026-11-13 (§2, D1-D17). The runtime engine (§7), the CSV/TSV reader and writer (§8) the missing-value rule for vectors (D12) and the vector reductions (D13) are implemented and tested (`TestTableEngine`, `TestSemanticsSafety_Rejected`). The compiler side is not: `tbl` is not a keyword or a type yet (`x: tbl = ...` is `unknown type 'tbl'`), and no Quark program can create a table. Revision 3 replaces the 2026-04-02 first draft (literal-first, `orders: Order = tbl { ... }`, `as` aliases, pluggable backends), which is in git history.
+Status: Draft, revision 3 (2026-11-13). The design is the set of decisions taken on 2026-11-13 (§2, D1-D21). The runtime engine (§7), the CSV/TSV reader and writer (§8) the missing-value rule for vectors (D12) and the vector reductions (D13) are implemented and tested (`TestTableEngine`, `TestSemanticsSafety_Rejected`). The compiler side is not: `tbl` is not a keyword or a type yet (`x: tbl = ...` is `unknown type 'tbl'`), and no Quark program can create a table. Revision 3 replaces the 2026-04-02 first draft (literal-first, `orders: Order = tbl { ... }`, `as` aliases, pluggable backends), which is in git history.
 Last Updated: 2026-11-13
 Related: `structs_v0_1_spec.md` (row types), `architecture.md` §1.6 (the lowering pass and IR the compiler work targets), `ffi_v0_1_spec.md` P5/P6 (Arrow export, DuckDB).
 
@@ -46,11 +46,15 @@ Stats and ML come after this. DuckDB is a later, optional backend, not the found
 | D15 | **The old `std/csv` is removed** (`csv::parse` and `csv::read`, which return lists of str lists). `std/csv` is rebuilt on the new reader (`csv::read_file`, `csv::write_file`, and a text form such as `csv::parse_text`, all with tables). Breaking. Empty and `NA` cells are missing in every column, as in readr. |
 | D16 | **`list[T]` is planned.** A typed list of scalars (`list[float]`) would be stored like `vec` today (columnar, with a mask), plain `list` stays `list[any]`, and `vec` can then be folded into `list[T]`. Not part of the first table implementation. |
 | D17 | **Columns are matched to struct fields by name; a mapping renames them.** By default a field `id` reads the header column `id`, exactly; a missing column is an error (`employee.csv: no column named 'id' in the header (columns: EmpID, EmpDept, EmpSalary); map it with dict { id: 'EmpID' }`). A literal `dict` argument maps fields to header text: `csv::read_file('employee.csv', dict { id: 'EmpID', dept: 'EmpDept', sal: 'Salary ($)' })`. Its keys are checked against the struct at compile time (an unknown field is a compile error), its values against the header at read time; unmapped fields match by their own name. The mapping must be a literal; a dict built at runtime is a compile error. The table's column names are always the struct's field names. Nothing is matched by position unless the file has no header. |
+| D18 | **`csv::read_file` takes its row struct from the expected type** (decided 2026-11-13). In `staff: tbl[Employee] = unwrap(csv::read_file('staff.csv'))` the annotation's type flows down through `unwrap` into the call, so the file is read with `Employee`'s column types (a bad cell is a parse error naming the line and column) and a D17 mapping's keys are checked against `Employee` at compile time. The checker carries an expected type from annotated assignments, parameters and return annotations; `csv::read_file` is known to the compiler, which passes the row's `QStructDef` and schema to the reader (an `extern fn` can't receive them). Without an expected type the table's row is unknown (D11); a table reaching a `tbl[R]` slot through `any` is checked at runtime (§3.4). In v0.1 a `when` over the read (`when csv::read_file(p): ok t -> ...`) has no expected type, so the file is read with inferred column types and `t` is checked when it reaches a `tbl[R]` slot; a typed `ok` binding may come later. |
+| D19 | **A table literal is column-wise, and comes after v0.1** (decided 2026-11-13): `tbl[Employee] { id: vec [1, 2], name: vec ['Ann', 'Bo'], ... }`, one vec per field, so missing values come with the vecs; `tbl` becomes a keyword then. v0.1 has no literal: tables come from `csv::read_file` and `csv::parse_text`, which is enough to test reading, writing and the verbs. |
+| D20 | **A bare `tbl` is a table of unknown row** (decided 2026-11-13), as a bare `list` holds any element type: `fn save(t: tbl, path: str)` accepts any table, which can be printed, written and passed on; a query on it is a compile-time error that says to name the row struct (D11). |
+| D21 | **Verb expressions may call functions** (decided 2026-11-13): builtins, methods and user functions with known signatures, besides arithmetic, comparisons, `and`/`or`/`!`, literals and outer scalar variables: `filter(e.name.startswith('A'))`, `mutate(id = to_str(e.id), band = grade(e.salary))`. Each call runs once per row, in row order; a row with a missing argument gets a missing result without the call, as arithmetic does (§5). |
 
 ## 3. Type model
 
 - `tbl[R]`, where `R` is a struct, is a table whose columns are `R`'s fields, in field order, with the field types (D2, D10). Column types are `int`, `float`, `bool` and `str` in v0.1 (`date` and others later, §9).
-- A table whose row struct the compiler doesn't know (D11) can be printed, rendered and written, but not queried.
+- A table whose row struct the compiler doesn't know has type `tbl` (D20): it can be printed, rendered, written and passed to a `tbl` parameter, but not queried (D11).
 - `t.col` on a `tbl[R]` is the column as a `vec` (D1); an unknown column is a compile-time error.
 - A table value is immutable; there is no cell assignment.
 
@@ -88,7 +92,7 @@ A row type produced by `mutate` or `summarize` is anonymous: generated by the co
 
 ### 3.4 At runtime
 
-Tables that pass through `any`, lists, dicts or native code are checked the same way when they reach a `tbl[Emp]` parameter or annotated variable. Every table carries its row definition (`QStructDef`), and every column its physical type. The check passes when the definition is `Emp`'s (pointer identity, as for struct values), or when the row is anonymous and its names and column types match `Emp` exactly, in which case the table is relabeled `Emp` and its columns reordered. Anything else is a runtime error: `argument 't' of 'top' expects tbl[Emp], got tbl[{dept: str, avg: float}]`. The back end emits one static `QStructDef` per anonymous row type, marked as anonymous.
+Tables that pass through `any`, lists, dicts or native code are checked the same way when they reach a `tbl[Emp]` parameter or annotated variable. Every table carries its row definition (`QStructDef`), and every column its physical type. The check passes when the definition is `Emp`'s (pointer identity, as for struct values), or when the row is anonymous and its names and column types match `Emp` exactly, in which case the table is relabeled `Emp` and its columns reordered. An int column also matches a float field and is converted (a copy of the column), as an int argument widens to a float parameter. A bare `tbl` slot accepts any table. Anything else is a runtime error: `argument 't' of 'top' expects tbl[Emp], got tbl[{dept: str, avg: float}]`. The back end emits one static `QStructDef` per anonymous row type, marked as anonymous.
 
 ## 4. Query surface (planned)
 
@@ -111,10 +115,12 @@ stats = staff | e ->
 
 - After `|`, an `ID ->` pair starts a query; the chain parses into one query node. Each step must be a verb: anything else, `e` used as a value (`f(e)`), an unknown column, a type mismatch, an aggregate outside `summarize`, or a non-table source is a compile-time error.
 - `name = expr` inside `mutate` and `summarize` defines a column (Quark has no keyword arguments elsewhere).
-- Verb expressions are arithmetic, comparisons, `and`/`or`/`!`, literals and outer scalar variables in v0.1. Lowering compiles each one into a typed loop over the column buffers (no expression interpreter, no temporary columns).
+- Verb expressions are arithmetic, comparisons, `and`/`or`/`!`, literals, outer scalar variables and function calls (D21). Lowering compiles each one into a typed loop over the column buffers (no expression interpreter, no temporary columns).
 - Aggregates: `count()`, `count(e.col)` (non-missing values), `sum`, `mean`, `min`, `max`. `sum` of int is int (overflow is a runtime error), of bool counts true values, of float is float; `mean` is float (a bool mean is the share of true values); `min`/`max` keep the column's type and also work on str (byte order).
 - `sort(e.a, desc(e.b))`: stable, several keys.
-- `100_000` needs digit separators in the lexer (planned with the query work).
+- `group_by` keys are columns (`group_by(e.dept, e.year)`); to group by a computed value, `mutate` it first.
+- The row name follows the parameter rules: inside the query it shadows an outer variable of the same name.
+- Digit separators (planned with the query work): `_` between two digits, in ints and floats (`100_000`, `1_000.5`); `_1`, `1_`, `1__0` and `1_.5` are lexer errors.
 
 ## 5. Missing values
 
@@ -134,7 +140,7 @@ This is fixed behaviour, documented for users, not an option.
 - `print(t)` shows the row count, the column names with types, and the first 10 rows (like a tibble). Today the runtime prints a table as `[table<T> rows=N]`.
 - `head(t, n = 6)` / `tail(t, n = 6)` return a `tbl`, and also work as query steps.
 - `describe(t, n = 5)` prints one line per column: name, type, and the first `n` values (R `str`, `dplyr::glimpse`).
-- `summary(t)` returns a table with one row per column, which prints like any table. Number columns get count, missing, mean, sd, min, q1, median, q3 and max; str and bool columns get count, missing, distinct count and the most common value. It is computed with the engine's aggregates, so it follows §5. Median and quartiles need a quantile kernel (on a sorted copy of the present values, R's default type 7 interpolation), which the engine doesn't have yet.
+- `summary(t)` (after v0.1, §9) returns a table with one row per column, which prints like any table. Number columns get count, missing, mean, sd, min, q1, median, q3 and max; str and bool columns get count, missing, distinct count and the most common value. It is computed with the engine's aggregates, so it follows §5. Median and quartiles need a quantile kernel (on a sorted copy of the present values, R's default type 7 interpolation), which the engine doesn't have yet.
 
 ## 7. Runtime engine (implemented)
 
@@ -160,22 +166,23 @@ Measured on 500K rows (`-O2`, one core, Linux x86_64, 2026-11-13): `group_by` + 
 - `read_table(path, options, def, schema)` / `parse_table(text, ...)`: typed when a schema (column names and types) is given, otherwise every column's type is inferred from all of its values (int, else float, else bool, else str).
 - `write_table(t, path, options)` / `format_table(t, sep)`.
 - Accepted input: `,` or `\t` (from a `.tsv`/`.tab` path, or set explicitly); quoted fields with separators, line breaks and `""`; `\n`, `\r\n` and `\r` line endings; a UTF-8 BOM; blank lines (skipped); spaces around values and quotes (trimmed). `""` and `NA`, quoted or not, are missing in every column (as in readr); the list is an option. Header columns are matched to the schema by name, so a file may have more columns than the schema needs; without a header, by position.
-- Errors name the file, line, column and text, and count the rest: `staff.csv:412: column 'salary': '12k' is not a float (and 3 more problems)`. A row with the wrong number of fields, an unterminated quote, text after a closing quote, a missing or duplicated column, an empty file and an int that overflows are all errors; nothing becomes null silently.
+- Errors name the file, line, column and text, and count the rest: `staff.csv:412: column 'salary': '12k' is not a float (and 3 more problems)`. `std/csv` returns them as `err(message)`; `unwrap` of one reports `QK-RUNTIME-001` with the message, and CSV failures have no code of their own (decided 2026-11-13). A row with the wrong number of fields, an unterminated quote, text after a closing quote, a missing or duplicated column, an empty file and an int that overflows are all errors; nothing becomes null silently.
 - Writing: a header line, missing values as empty fields, strings quoted only when needed, floats in shortest round-trip form.
 - Measured: a 27.6 MB file of 500K rows reads in 219 ms typed and 480 ms inferred.
-- Not yet: the D17 field-to-header mapping, and UTF-8 validation (§9).
+- Not yet: the D17 field-to-header mapping, and input validation (UTF-8 and NUL bytes in str cells, §9).
 
 ## 9. Plan
 
-**Prerequisites, before `tbl` compiler work starts:**
-1. CSV reader: validate UTF-8 in str columns (Arrow's `utf8` requires it); report `line 12: column 'name' is not valid UTF-8 (the file may be Latin-1)`, or transcode with an encoding option.
-
 **The first implementation**, in the lowering pass and IR (`lower/`, `emit/`, `architecture.md` §1.6):
 - The `tbl[T]` type (D10), the query node and verb checks (D3-D5, D11), digit separators.
-- `std/csv` rebuilt on the new reader, with the D17 mapping (D15).
-- Printing and the inspection functions (§6).
+- Expected types in the checker, and `csv::read_file` typed by them (D18).
+- `std/csv` rebuilt on the new reader, with the D17 mapping (D15), and the part of FFI P6 it needs: a `tbl` type in native signatures and building a table in glue code.
+- Input validation in the reader, in the same step, since a file read without it gives silent wrong results: a Latin-1 `José` never equals the UTF-8 literal `'José'`, so a `filter` on it drops every row and a `group_by` over files in two encodings splits one name in two. Str cells must be valid UTF-8 (Arrow's `utf8` requires it too): `line 12: column 'name' is not valid UTF-8 (the file may be Latin-1)`; an encoding option that transcodes can come later. A cell may not contain a NUL byte, which a Quark `str` can't hold (`known_issues.md`).
+- Printing, `head`, `tail` and `describe` (§6).
 
 **After v0.1:**
+- The column-wise table literal (D19).
+- `summary(t)` (§6), with the quantile kernel it needs (decided 2026-11-13: after v0.1, so the first implementation ships `head`, `tail` and `describe`).
 - Verbs: joins, `select`/`rename`, `distinct`, `n_distinct`, `slice`/`head`.
 - Column types: `date` (int32 days, Arrow `date32`), then timestamps and categoricals.
 - `map` over vecs and tables (D4), `list[T]` (D16).
@@ -196,15 +203,12 @@ Columns follow the Arrow columnar format for the types used: float64 (`g`), int6
 
 Known differences:
 - Buffer lengths are exact, not padded to 64 bytes (Arrow recommends it; the IPC format requires 8-byte padding). In-memory sharing through the C Data Interface doesn't need it; writing IPC/Parquet would pad while serializing.
-- str columns aren't yet checked for valid UTF-8 (§9, prerequisite 1).
+- str columns aren't yet checked for valid UTF-8 (planned with the `std/csv` rebuild, §9).
 - int32 offsets cap a str column at 2 GiB of text (Arrow `large_utf8` isn't used).
 - Conformance is checked byte by byte (`TestVectorArrowLayout`), not yet against an Arrow implementation. FFI P5 (the C Data Interface export) should come with a round-trip test through pyarrow or the Arrow C library, and must keep exported buffers alive for the GC until the consumer's release callback runs.
 
 ## 12. Open questions
 
-1. **Table literals.** The first draft proposed `tbl { ... }` literals in three forms: rows mapped positionally to the struct fields, a typed header line followed by rows, and a header followed by one column source (a vec or list) per column. Under D10 that would read `orders: tbl[Order] = tbl { 1, 'c1', 10.0, 2 ... }`. Are literals needed in v0.1, given that tables come from CSV files, and which forms? `tbl` would become a keyword (it isn't one today).
-2. **Row access.** Should `t[i]` return the row as a struct value (D12 already says a missing value in it is a runtime error)? And is an out-of-range `t[i]` fatal or `null`? Today the two sequence types disagree: `list [1, 2][5]` is `null`, `vec [1, 2][5]` is a runtime error. Tables should follow whichever rule the language settles on.
-3. **Slicing and masks outside queries.** The first draft proposed `t[0:10]` (Quark has no slice syntax; `head`/`tail`/`slice` are planned as verbs) and `t[t.qty > 1]` (a `vec[bool]` mask, as for vectors). Keep the mask form alongside `filter`, or only `filter`?
-4. **An annotation for a table of unknown row type.** D11 allows such tables to be printed and written. Can a parameter accept one (a bare `tbl`), or must every annotation name a row struct?
-5. **Diagnostics.** Tables reuse `QK-PARSE-001`, `QK-CHECK-001` and `QK-RUNTIME-001`; does the CSV reader's error deserve its own code (it is an environment failure returned as an `err`, not a crash)?
-6. **Typed lists, `vec` and `list[any]`.** Quark has three sequence kinds: typed lists (`list[int]`, element type fixed at creation, boxed `QValue` elements), `vec` (columnar, with a missing-value mask) and lists of any value (`xs: list = ...`). Is it worth keeping all three? D16 would fold `vec` into `list[T]`; the other direction is a slow but Python-like `list[any]` as the general list, with `vec`/`list[T]` as the fast typed form. To decide after the first table implementation, with the D12 behaviour (a missing entry taken out is an error, `to_list()` of a vec with missing entries included) as a constraint.
+1. **Row access.** Not in v0.1, where tables are used through queries and columns (`t.salary`). Should `t[i]` later return the row as a struct value (D12 already says a missing value in it is a runtime error)? If it does, an out-of-range `t[i]` is a runtime error, as `xs[i]`, `s[i]` and `v[i]` are (decided 2026-11-13), and a probing `t.get(i)` would return `null` with type `any`, like `xs.get(i)`.
+2. **Slicing and masks outside queries.** Not in v0.1, where `filter` is the one way to select rows. The first draft proposed `t[0:10]` (Quark has no slice syntax; `head`/`tail`/`slice` are planned as verbs) and `t[t.qty > 1]` (a `vec[bool]` mask, as for vectors). Add the mask form later, or keep only `filter`?
+3. **Typed lists, `vec` and `list[any]`.** Quark has three sequence kinds: typed lists (`list[int]`, element type fixed at creation, boxed `QValue` elements), `vec` (columnar, with a missing-value mask) and lists of any value (`xs: list = ...`). Is it worth keeping all three? D16 would fold `vec` into `list[T]`; the other direction is a slow but Python-like `list[any]` as the general list, with `vec`/`list[T]` as the fast typed form. To decide after the first table implementation, with the D12 behaviour (a missing entry taken out is an error, `to_list()` of a vec with missing entries included) as a constraint.

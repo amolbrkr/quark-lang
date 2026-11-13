@@ -83,8 +83,7 @@ add_row(prices, 'n/a')
 
 The goal is that a program that compiles runs as intended, and a wrong
 program fails loudly instead of giving a wrong answer. The compiler doesn't
-reach that everywhere yet: the known cases are listed under "Known issues" at
-the top of [changelog.md](changelog.md).
+reach that everywhere yet: the known cases are listed in [known_issues.md](known_issues.md).
 
 **Typed code compiles to plain C++.** Variables the compiler has typed `int`,
 `float` or `bool`, and that no closure captures, are C++ `long long`, `double`
@@ -573,8 +572,8 @@ for i in range(4):
 print(squares)                    // [0, 1, 4, 9]
 ```
 
-An int written into a list of floats is stored as a float. Changing a list
-while a `for` loop runs over it isn't checked yet (see Known issues). The
+An int written into a list of floats is stored as a float. A `for` loop whose
+body changes the length of the list it iterates stops with a runtime error. The
 methods are in the [method table](#methods).
 
 ### Dicts
@@ -902,8 +901,7 @@ and don't. An `INV-*` diagnostic is a compiler bug.
 - A `vec` literal can't contain `null`.
 
 **Known issues.** Bugs, including the cases where the compiler still gives a
-wrong result without an error, are listed with reproductions under "Known
-issues" at the top of [changelog.md](changelog.md).
+wrong result without an error, are listed with reproductions in [known_issues.md](known_issues.md).
 
 ## Troubleshooting
 
@@ -944,7 +942,8 @@ shows the problem. `'foo.h' file not found` usually needs `--include-path`.
 - [stdlib.md](stdlib.md): builtin and module behavior.
 - [architecture.md](architecture.md): compiler and runtime internals.
 - [error_codes.md](error_codes.md): diagnostic codes.
-- [changelog.md](changelog.md): what changed, and the known issues.
+- [changelog.md](changelog.md): what changed.
+- [known_issues.md](known_issues.md): bugs not fixed yet, with reproductions.
 - [src/benchmarks/README.md](src/benchmarks/README.md): performance against
   Python (NumPy, pandas, Polars) and R (base, data.table), and how it is
   measured.

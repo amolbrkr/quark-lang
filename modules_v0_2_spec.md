@@ -214,7 +214,7 @@ The local rename exists because the spliced tree has one global scope in which m
 - **Mutable module-level state.**
 - **Resolution without renaming:** the analyzer already resolves identifiers to symbols (§5.3), but the loader still renames strings and diagnostics go through `DisplayText`. Resolving `::` names to symbols directly would remove the renaming pass and the string-keyed tables.
 
-Known gaps (changelog, Known issues): a call written above a `fn` declaration is checked less than one below it; a syntax error in an imported file is reported at the importer's `incl` line. **Known bug (found 2026-11-13):** two `extern fn` methods with the same receiver and name (`extern fn str.shout() str` in two imported files, or twice in one file) are not rejected; the later one silently replaces the earlier for callers analyzed after it, and the main script can call another file's method unqualified (`'a'.shout()`).
+Known gaps (`known_issues.md`): a call written above a `fn` declaration is checked less than one below it; a syntax error in an imported file is reported at the importer's `incl` line. **Known bug (found 2026-11-13):** two `extern fn` methods with the same receiver and name (`extern fn str.shout() str` in two imported files, or twice in one file) are not rejected; the later one silently replaces the earlier for callers analyzed after it, and the main script can call another file's method unqualified (`'a'.shout()`).
 
 ## 8. Decisions
 

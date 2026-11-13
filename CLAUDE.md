@@ -34,14 +34,22 @@ Quark is compiled so that it doesn't share the weakness of R and Python codebase
 
 ## Robustness Bar (read before every change)
 
-The goal is a language any developer can trust: a wrong program fails loudly and clearly, never "works" with a wrong answer. Hold every change to these rules:
+The goal is a language any developer can trust: a wrong program fails loudly and clearly, never "works" with a wrong answer. Hold every change to these rules. They apply to the code the task writes or changes; bugs found elsewhere along the way are recorded, not fixed (rule 7), and an issue that stands in the way of the task stops it (rule 8).
 
 1. **No silent wrong results.** Misuse is a compile-time error when the compiler can know, otherwise a runtime error with a source location. Never garbage values, undefined behavior, crashes, or a user's definition being silently ignored. Reading a `QValue` union field (`.data.int_val`, ...) without a tag check is only allowed where the analyzer has *proven* the type; values from untyped paths (`any`, callbacks, struct fields, native code) go through the checked `q_as_*`/`q_param_*` helpers.
 2. **Probe the misuse paths of anything you add or make more reachable.** For a new feature, test what happens with: the wrong type, the wrong number of arguments, `null`, an untyped (`any`) value, default parameters, a value from another module, and a call from or into native code. Each gets a negative test (`TestSemanticsSafety_Rejected` or similar) before the work is called done.
-3. **A soundness hole on the path you're opening blocks the change.** If your feature makes an existing silent-wrong-result bug easier to hit, fix it in the same change, or stop and ask the user before continuing. Don't ship the feature with the hole only documented: "Known limitations" in the README is for deliberate gaps (missing features), not for unsoundness.
-4. **Report pre-existing soundness bugs up front**, at the top of your summary with a reproduction, not as a footnote.
+3. **A hole your change makes easier to hit is the user's call.** If your feature makes an existing silent-wrong-result bug easier to hit, record it in `known_issues.md` with its reach (which change, and how), finish the task, and put it first in your summary: the user decides whether it blocks the change. Never present such a feature as done without saying so. "Known limitations" in the README is for deliberate gaps (missing features), not for unsoundness.
+4. **Report what you found at the end, up front**: every issue you added to `known_issues.md` goes at the top of your final summary, with its reproduction, not as a footnote.
 5. **Same rule everywhere.** New behavior must match the closest existing behavior (for example, if parameters widen int→float, so must struct fields and returns); if it can't, raise the inconsistency instead of adding another one.
 6. **Names never collide silently.** Every top-level name of an `incl`uded file is reachable from the importer, qualified with `::`, by design (there are no access modifiers; stdlib `extern fn` bindings such as `fmt::fmt_vec` are reachable too). Names are resolved per file (modules v0.2), so two files can't clash; within one file, a clash (a name defined twice, a module member named like a top-level name, an import binding named like a definition) must be a compile-time error, never one definition silently winning. Nothing from another file may be visible unqualified. Compiler-internal names (`q<N>_<stem>__name`, `module__member`, `q_`/`quark_` C++ symbols) must never be reachable from user code: every generated name contains `__`, which the loader rejects in user names (`checkReservedNames`).
+7. **Record, don't fix, what you find along the way.** A bug in code the task doesn't change (a soundness hole, a wrong doc, a misleading message, a slow path) goes into `known_issues.md` with a reproduction, and the task continues; don't fix it in the same run, however small it looks. Known issues are fixed in runs of their own, which the user starts. Two things are part of the task and get fixed: a defect in your own new code, and a doc sentence your change has to touch anyway; say so in the summary. An issue that stands in the way of the task is rule 8, not a fix-on-the-fly.
+8. **Stop when the task can't be done well.** If, while implementing X, you find an issue that prevents a sensible implementation of X (a bug or a design gap underneath it), stop before going further and tell the user:
+   - what the issue is, with a minimal reproduction and the code involved (file and function, a short excerpt);
+   - why it blocks a clean X, and what X would look like on top of it;
+   - the options and their trade-offs (fix the issue first, narrow or reshape X, wait), each with a short code snippet of what it would look like;
+   - your recommendation.
+
+   Don't route around it to make X work: no special cases, duplicated logic, checks in the wrong layer or other workarounds that add complexity or technical debt. A new feature lands with a clean implementation, or waits for the user's decision. Record the issue in `known_issues.md` as well.
 
 ## Changelog (update every day there are changes)
 
@@ -50,7 +58,7 @@ The goal is a language any developer can trust: a wrong program fails loudly and
 - Add today's section (`## YYYY-MM-DD: <short title>`) if it doesn't exist; otherwise add to it. Use the subsections in this order: Breaking, Added, Changed, Fixed, Removed, Internal. Put the commit hashes on a `Commits:` line once they exist.
 - Describe what the change actually does, from the diff and the tests, not the commit message. Write it for a Quark user, with a short code example where it helps; compiler and runtime details go under Internal.
 - Breaking means anything that makes a program that worked before fail to compile, fail at runtime, or print something different. Name each removed or renamed thing and what to use instead.
-- Keep the "Known issues" section at the top current: add soundness bugs you find but don't fix (with a reproduction), and remove the ones you fix.
+- Bugs that aren't fixed go in `known_issues.md`, not here. When a change fixes one, delete its entry there and describe the fix under Fixed here.
 - If the user commits without you, check `git log` for commits since the last changelog entry and add them before starting new work.
 
 ## Docs (keep them current)
@@ -66,7 +74,8 @@ Each doc owns one topic; others link to it instead of repeating it:
 | `architecture.md` | Compiler and runtime internals, the soundness contract (§12), the back-end roadmap (§13), performance findings from the benchmarks (§15) |
 | `error_codes.md` | Every `QK-*` and `INV-*` code |
 | `*_spec.md` | One feature's design and decisions; a status line at the top says what is implemented |
-| `changelog.md` | History. Known issues (soundness bugs) live here |
+| `changelog.md` | History: what changed, and when |
+| `known_issues.md` | Bugs not fixed yet, each with a reproduction, and how to add one (Robustness Bar, rules 3, 4, 7 and 8) |
 | `src/benchmarks/README.md` | The benchmark suite against Python and R: what each benchmark measures, the fairness rules, how to run and extend it. `src/benchmarks/RESULTS.md` holds the latest measurements |
 
 Rules: docs describe the current state only. No "used to", no superseded designs, no finished to-do lists; history is in `changelog.md` and git. Every doc starts with a table of contents. A change that alters behavior updates the doc that owns it in the same change. When a decision supersedes part of a spec, rewrite that part; don't add an override section on top of it.

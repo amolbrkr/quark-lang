@@ -408,7 +408,7 @@ These are not part of Quark, by decision or because they are planned in a spec:
 | Written element types (`list[int]`) | Planned: `tables_v0_1_spec.md` D16 |
 | `extern source` | Planned: `ffi_v0_1_spec.md` P2 |
 | Digit separators in numbers | Planned: `tables_v0_1_spec.md` §9 |
-| `struct` inside a function body | Not supported; currently an internal error (changelog.md Known issues) |
+| `struct` inside a function body | Not supported; currently an internal error (known_issues.md) |
 | `return` | None: a function's value is its last statement (semantics.md §6.1) |
 | `in` as an operator | None: use `any(v == x)`, `d.get(k) != null`, `s.contains(sub)` |
 | String interpolation, varargs, keyword arguments | None (`stdlib_expansion_v0_1_spec.md` §1) |

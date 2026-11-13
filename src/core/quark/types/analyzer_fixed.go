@@ -1,7 +1,6 @@
 package types
 
 import (
-	"fmt"
 	"sort"
 
 	"quark/ast"
@@ -35,7 +34,7 @@ type FixedFn struct {
 	Captures bool         // needs a closure (and a binding holding it)
 	Native   *ir.CallPlan // non-nil when compiled with a native C++ signature
 
-	sym      *Symbol
+	Sym      *Symbol // the declaration's symbol (its binding, when it needs a closure)
 	scope    *Scope
 	topLevel bool // declared in the root scope or a module body
 }
@@ -46,7 +45,7 @@ type FixedFn struct {
 // assigned), then the closures of its capturing functions.
 type HoistScope struct {
 	Fns   []*FixedFn // every declaration of the scope, in source order
-	Cells []string   // variables of the scope captured by its capturing functions
+	Cells []*Symbol  // variables of the scope captured by its capturing functions
 }
 
 type fixedCall struct {
@@ -129,14 +128,14 @@ func (a *Analyzer) declareFixedFns(scopeNode *ast.TreeNode, stmts []*ast.TreeNod
 			}
 		}
 		ft := functionTypeFromLambdaNodeWithStructs(stmt.Children[1], a.structTypes)
-		sym := a.currentScope.Define(name, ft, false)
+		sym := a.declareSym(name, ft, false, SymFn, nil, nameNode)
 		f := &FixedFn{
 			Name:     name,
 			Decl:     stmt,
 			Lambda:   stmt.Children[1],
 			Line:     nodeLine(nameNode),
 			Type:     ft,
-			sym:      sym,
+			Sym:      sym,
 			scope:    a.currentScope,
 			topLevel: a.currentScope == a.rootScope,
 		}
@@ -159,7 +158,7 @@ func (a *Analyzer) analyzeFnDecl(node *ast.TreeNode) Type {
 	if f := a.fixedByLambda[lambda]; f != nil {
 		if ft, ok := t.(*FunctionType); ok {
 			f.Type = ft
-			f.sym.Type = ft
+			f.Sym.Type = ft
 		}
 	}
 	return t
@@ -213,7 +212,7 @@ func (a *Analyzer) finalizeFixedFns() {
 			f.CName = f.Name
 		} else {
 			seq++
-			f.CName = fmt.Sprintf("%s__%d", f.Name, seq)
+			f.CName = ir.NestedFnName(seq, f.Name)
 		}
 		if !f.Captures && isFullyAnnotated(f.Type) {
 			nativeParams := make([]string, len(f.Type.ParamTypes))
@@ -239,22 +238,18 @@ func (a *Analyzer) finalizeFixedFns() {
 	// 4. Closures don't capture functions that need no closure; those are
 	//    referred to by their C++ name.
 	for lambda, syms := range a.captureSyms {
-		names := a.captures[lambda]
-		keptNames := make([]string, 0, len(names))
-		keptSyms := make([]*Symbol, 0, len(syms))
-		for i, s := range syms {
+		kept := make([]*Symbol, 0, len(syms))
+		for _, s := range syms {
 			if g := a.fixedBySym[s]; g != nil && !g.Captures {
 				continue
 			}
-			keptNames = append(keptNames, names[i])
-			keptSyms = append(keptSyms, s)
+			kept = append(kept, s)
 		}
-		if len(keptNames) == 0 {
-			delete(a.captures, lambda)
+		if len(kept) == 0 {
+			delete(a.captureSyms, lambda)
 		} else {
-			a.captures[lambda] = keptNames
+			a.captureSyms[lambda] = kept
 		}
-		a.captureSyms[lambda] = keptSyms
 	}
 
 	// 5. Calls and references.
@@ -290,7 +285,6 @@ func (a *Analyzer) finalizeFixedFns() {
 // before the variable's first assignment are rejected here; anything else
 // reads the variable through a cell that starts unassigned.
 func (a *Analyzer) checkDefiniteAssignment() {
-	hoisted := map[*Symbol]bool{}
 	for _, sc := range a.fnScopes {
 		inScope := map[*FixedFn]bool{}
 		for _, f := range sc.fns {
@@ -368,29 +362,57 @@ func (a *Analyzer) checkDefiniteAssignment() {
 		// main, where their closures are created before the first statement.)
 		hoistVar := isScopeVar
 		hs := &HoistScope{Fns: sc.fns}
-		seen := map[string]bool{}
 		for _, f := range sc.fns {
 			if !f.Captures {
 				continue
 			}
 			for _, s := range a.captureSyms[f.Lambda] {
-				if hoistVar(s) && !seen[s.Name] {
-					seen[s.Name] = true
-					hs.Cells = append(hs.Cells, s.Name)
-					hoisted[s] = true
+				if hoistVar(s) && !s.Hoisted {
+					s.Hoisted = true
+					hs.Cells = append(hs.Cells, s)
 				}
 			}
 		}
 		a.hoistScopes[sc.node] = hs
 	}
-	for lambda, syms := range a.captureSyms {
+}
+
+// finalizeSymbols decides, once the program is analyzed and the captures are
+// final, how each symbol is stored and what its C++ variable is called.
+//
+// A symbol a closure captures is a cell. Any other symbol is a raw C++ scalar
+// when its StoreType is int, float or bool (every value it gets is converted,
+// and checked when its type wasn't proven), otherwise a QValue. The first
+// symbol of each name is quark_<name>; later ones get a generated name, so two
+// variables with one name never share a C++ variable.
+func (a *Analyzer) finalizeSymbols() {
+	captured := map[*Symbol]bool{}
+	for _, syms := range a.captureSyms {
 		for _, s := range syms {
-			if hoisted[s] {
-				if a.checkedCaptures[lambda] == nil {
-					a.checkedCaptures[lambda] = map[string]bool{}
-				}
-				a.checkedCaptures[lambda][s.Name] = true
-			}
+			captured[s] = true
+		}
+	}
+	taken := map[string]bool{}
+	for _, s := range a.symbols {
+		switch {
+		case captured[s]:
+			s.Storage = ir.StorageCell
+		case s.Kind == SymFn || s.StoreType == nil:
+			s.Storage = ir.StorageValue
+		case s.StoreType.Equals(TypeInt):
+			s.Storage = ir.StorageInt
+		case s.StoreType.Equals(TypeFloat):
+			s.Storage = ir.StorageFloat
+		case s.StoreType.Equals(TypeBool):
+			s.Storage = ir.StorageBool
+		default:
+			s.Storage = ir.StorageValue
+		}
+		if !taken[s.Name] {
+			taken[s.Name] = true
+			s.CName = "quark_" + s.Name
+		} else {
+			s.CName = ir.VarCName(s.ID, s.Name)
 		}
 	}
 }

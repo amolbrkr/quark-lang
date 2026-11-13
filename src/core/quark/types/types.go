@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"quark/ast"
+	"quark/ir"
 )
 
 // Type represents a Quark type
@@ -244,13 +247,50 @@ func (t *StructType) FieldByName(name string) (*StructField, int) {
 	return nil, -1
 }
 
-// Symbol represents a variable or function in the symbol table
+// SymKind says what declared a symbol.
+type SymKind int
+
+const (
+	SymBuiltin SymKind = iota // a prelude builtin or extern fn (no C++ variable)
+	SymLocal                  // a variable, defined by its first assignment or a typed declaration
+	SymParam                  // a function or lambda parameter
+	SymLoop                   // a for loop variable
+	SymBinding                // an ok/err binding of a when arm
+	SymFn                     // a fn declaration (its binding, when it needs a closure)
+)
+
+// Symbol is one declaration: a variable, parameter, loop variable, when
+// binding, fn declaration or builtin. Every identifier the analyzer resolves
+// maps to one (Analysis.Refs), so two variables with one name are never
+// confused, and how a symbol is stored is decided once, by the analyzer.
 type Symbol struct {
 	Name    string
-	Type    Type
+	Type    Type // current type (flow typing may narrow it after the declaration)
 	Mutable bool
 	Defined bool // Whether it has been assigned a value
+
+	// Set for every kind but SymBuiltin:
+	ID   int
+	Kind SymKind
+	// StoreType is the type every value the symbol holds is known to have:
+	// its annotation (checked where the value comes in), or the type of its
+	// first value. nil means any value.
+	StoreType Type
+	// Decl is the identifier node where codegen declares the C++ variable
+	// (the first assignment, the declaration, the parameter, ...).
+	Decl *ast.TreeNode
+
+	// Set once analysis is done (finalizeSymbols):
+	Storage ir.Storage
+	CName   string // C++ variable name
+	// Hoisted marks a captured variable whose cell is created unassigned at
+	// the start of its scope (a hoisted fn captures it); closures read it
+	// with q_cell_get.
+	Hoisted bool
 }
+
+// IsVariable reports whether the symbol has a C++ variable of its own.
+func (s *Symbol) IsVariable() bool { return s != nil && s.Kind != SymBuiltin }
 
 // Scope represents a lexical scope
 type Scope struct {

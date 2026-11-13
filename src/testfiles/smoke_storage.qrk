@@ -1,0 +1,66 @@
+print('== smoke: variable storage ==')
+
+// A typed declaration stores its declared type: an int value widens to float.
+l = list [1, 2, 3]
+x: float = len(l)
+print(x)
+y: float = 3
+y = 2.5
+print(y)
+print(type(y))
+
+// A float variable assigned an int holds the widened float, whether it is a
+// plain local, a parameter, a loop variable or captured by a closure.
+z = 1.5
+z = len(l)
+print(z)
+fn half(a: float) ->
+    a = 2
+    a / 2
+print(half(1.5))
+for v in list [1.5, 2.5]:
+    v = 1
+    print(v)
+c = 1.5
+get_c = fn() -> c
+c = 2
+print(get_c())
+
+// A typed declaration of a value of unknown type is checked, then stored.
+fn id(v) -> v
+n: int = id(41)
+print(n + 1)
+f: float = id(2)
+print(f)
+
+// Two variables with one name in different scopes are different variables.
+i = 0
+while i < 1:
+    w = 5
+    i = i + 1
+w = 'outer'
+print(w)
+s = 1
+if true:
+    s: str = 'inner'
+    print(s)
+print(s)
+
+// Generated names can't collide with user names.
+_lambda1 = 5
+inc = fn(q) -> q + 1
+print(inc(_lambda1))
+
+// fn declarations work in loop bodies.
+for k in range(2):
+    fn tenfold() -> k * 10
+    print(tenfold())
+j = 0
+while j < 2:
+    fn sq() -> j * j
+    print(sq())
+    j = j + 1
+
+// A parameter typed by a literal default widens like an annotated one.
+fn scale(r = 0.5) -> r * 2
+print(scale(id(3)))

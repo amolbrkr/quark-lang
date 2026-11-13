@@ -48,10 +48,10 @@ Two-pass semantic analysis:
 
 The analyzer returns one `types.Analysis` struct (`types/analyzer_modules.go`) with eight outputs, consumed by the invariant checks and by codegen (via `SetAnalysis`):
 - **CallPlans**: Per-call-site metadata (dispatch mode, arity, defaults to inject)
-- **Captures**: Per-lambda map of captured variable names
+- **Refs**: the symbol (`types.Symbol`) of every identifier node the analyzer resolved: reads, assignment targets, typed declarations, parameters, loop variables, `when` bindings and `fn` names. Each variable-like declaration is one symbol, with its `Kind`, `StoreType` (the type every value it holds is known to have: its annotation, a literal default's type, or its first value's type), and `Decl`, the identifier node where codegen declares it. `finalizeSymbols` then decides each symbol's `Storage` (`ir.Storage`, below) and C++ name (`CName`) once, after the captures are final.
+- **Captures**: Per-lambda list of captured symbols, in capture-slot order
 - **ReturnValidation**: Per-function declared-vs-inferred return type checks
-- **CapturedByFunction**: Inverted capture map — per-function/lambda, the set of variable names that any directly-nested lambda captures from it. Used by codegen to decide `QCell*` vs scalar storage per variable.
-- **NodeTypes**: Per-AST-node inferred type (`map[*ast.TreeNode]Type`). Every expression node has its analyzer-computed type recorded here. Codegen reads this to drive scalar storage selection and native operator lowering without re-deriving type information.
+- **NodeTypes**: Per-AST-node inferred type (`map[*ast.TreeNode]Type`). Every expression node has its analyzer-computed type recorded here. Codegen reads this for native operator lowering and to decide when a stored value needs a conversion or a check.
 - **NativeFns**: Prototype CallPlans for fully annotated user functions (`DispatchNative`)
 - **ExternFns**: Prototype CallPlans for `extern fn` declarations (`DispatchExtern`), keyed by name or `"type.method"`
 - **StructTypes**: Declared struct types and their fields
@@ -86,26 +86,24 @@ Walks the annotated AST and emits C++17 code using the runtime headers.
 - User identifiers prefixed with `quark_` (e.g., `quark_x`, `quark_main`)
 - Runtime builtins use `q_` prefix
 - Value constructors use `qv_` prefix
-- Lambdas: `quark__lambda1`, `quark__lambda2`, etc.
+- Generated names start with `quark___` (`ir/storage.go`): lambdas are `quark___lambda1`, nested `fn` declarations `quark___fn1_name`, and a variable whose plain `quark_<name>` is taken by another variable of that name `quark___v<id>_<name>`. User names never contain `__` and no loader internal name starts with `__`, so none of these can collide with a user's name.
 - Exceptions: `extern fn` symbols are called by their own C++ name (e.g. `qei_sqrt`), and their first-class thunks are named `_thunk_<symbol>`. Native (fully annotated) functions get a `quark_<name>__thunk`.
 
-**Variables**: Storage is chosen per variable at first declaration using two criteria: (1) whether a nested lambda captures it, and (2) the static type from `NodeTypes`. Five storage tiers:
+**Variables**: The analyzer decides each symbol's storage once (`finalizeSymbols`, `types/analyzer_fixed.go`); codegen only reads it (`codegen/storage.go`). Five storage kinds (`ir.Storage`):
 
-| Tier | C++ type | Condition |
+| Storage | C++ type | Condition |
 |------|----------|-----------|
-| `QCell*` | heap reference cell | captured by any nested lambda; `->value` for reads/writes |
-| `long long` | native int | not captured + static type `int` + no `any` annotation |
-| `double` | native float | not captured + static type `float` + no `any` annotation |
-| `bool` | native bool | not captured + static type `bool` + no `any` annotation |
-| `QValue` | tagged union | not captured + unknown/any/composite type, or `any`-annotated |
+| `StorageCell` | `QCell*` | captured by any closure; `->value` for reads/writes |
+| `StorageInt` | `long long` | not captured, `StoreType` is `int` |
+| `StorageFloat` | `double` | not captured, `StoreType` is `float` |
+| `StorageBool` | `bool` | not captured, `StoreType` is `bool` |
+| `StorageValue` | `QValue` | everything else (untyped, `any`, composite, `when` bindings, `fn` bindings) |
 
-Closure captures received from an enclosing scope (extracted from `_cl->captures[i]`) are always `QCell*` — the cell is shared with the outer scope regardless of type.
+`StoreType` is a parameter's annotation (or the type of its literal default), a typed declaration's type, a loop variable's element type, or a variable's first value's type. Every value stored into a symbol is made to have that type (`storeValue`): an int is widened to a float, and a value whose type the analyzer didn't prove (from `any`, a union) is checked: `q_param_*` on function entry, `q_var_*` for a typed declaration (`variable 'x' is declared int but got str`). Struct fields use the same check table (`checkFor`) with `q_field_*`.
 
-`generateIdentifier` boxes scalar vars back to `QValue` at read sites (e.g., `qv_int(quark_x)`) so the rest of codegen always operates on `QValue` expressions. The exception is operator lowering (below): an expression made only of scalars is emitted unboxed and assigned directly to a scalar-tier variable (`long long quark_c = q_checked_add(quark_a, quark_b);`).
+Codegen declares a symbol's C++ variable at its `Decl` node (a hoisted cell, created unassigned at its scope's start, is only assigned there) and otherwise assigns it, so it needs no scope state of its own; two variables with one name never share a C++ variable. Closure captures received from an enclosing scope (`_cl->captures[i]`) are `QCell*` under the same `CName`. Reads go through `readVar`, which boxes scalars back to `QValue` (e.g. `qv_int(quark_x)`) so the rest of codegen always operates on `QValue` expressions. The exception is operator lowering (below): an expression made only of scalars is emitted unboxed and assigned directly to a scalar variable (`long long quark_c = q_checked_add(quark_a, quark_b);`).
 
-Parameters follow the same capture rule: a parameter of an ordinary Quark function is `QCell*` if captured, otherwise `QValue`. A native (fully annotated) function receives scalar parameters as `int64_t`/`double`/`bool` and keeps them at that tier unless captured. Loop variables use a scalar tier when the element type is statically known; `range()` loop variables are always `long long`.
-
-Codegen tracks storage choices in `cellVars` (names stored as `QCell*`) and `varTiers` (names stored as a named C++ scalar type), both scoped and stacked with the scope stack.
+A native (fully annotated) function receives scalar parameters as `int64_t`/`double`/`bool` and keeps them raw unless captured. Loop variables over a list or vec read the element type the analyzer inferred (§12.6); `range()` loop variables are `long long` unless captured.
 
 **Function calls**: Lowered according to the CallPlan's dispatch mode:
 - `DispatchBuiltin` → `q_print(arg)` (direct C++ call)
@@ -126,15 +124,8 @@ If codegen encounters an unexpected dispatch/runtime-symbol invariant break, it 
 - **Lambdas**: Emitted as top-level C++ functions with closure allocation at the capture site
 - **for loops**: Lowered to index-based iteration (`q_iter_get` with incrementing counter); loop variable uses scalar tier when the iterable's element type is statically known. `range()` calls are lowered to raw C++ loops unless the loop variable is captured. Vector iteration has a fast path (see §9).
 - **if/while**: Conditions are wrapped in `q_truthy()` (truthiness rules; `result` and `vec` conditions are rejected), or emitted as a raw C++ `bool` when `scalarExpr` lowers the condition
-- **when**: Lowered to a chain of if/else with result payload extraction; pattern bindings use `isCaptured` to choose `QCell*` vs `QValue`
-
-**Scope management**:
-- `pushScope()` — Isolate function scope (clean slate for `declaredVars`, `cellVars`, `varTiers`)
-- `pushBlockScope()` — Copy parent scope for nested blocks (allows shadowing)
-- `popScope()` — Restore previous scope
-- `declaredVars` — Tracks which names have been declared to prevent redeclaration
-- `cellVars` — Tracks which declared names are stored as `QCell*`
-- `varTiers` — Tracks which declared names use a native C++ scalar type (`"long long"`, `"double"`, `"bool"`); names absent from this map use `QValue`
+- **when**: Lowered to a chain of if/else with result payload extraction; a binding is a `QCell*` or a `QValue` per its symbol's storage
+- **Bodies**: every block, including `for` and `while` bodies, goes through `generateBlock`, which hoists the block's `fn` declarations and sets each statement's source location.
 
 **Generation order**:
 1. Collect all function declarations (forward declarations)
@@ -233,7 +224,7 @@ struct QCell {
 - A variable captured by at least one nested lambda is allocated as `QCell*`. Multiple closures over the same variable share the same cell pointer, enabling shared mutable state.
 - A variable that is never captured lives on the stack — as a native scalar (`long long`, `double`, `bool`) when its static type allows, otherwise as a `QValue`. No heap allocation, no GC pressure.
 
-`Analysis.CapturedByFunction` drives the cell decision. Codegen records which variables are cells in `cellVars` and uses that to emit correct read/write patterns.
+The symbol's `Storage` (`ir.StorageCell`) records the decision; codegen reads and writes a cell as `->value`.
 
 ### 2.4 Container Types
 
@@ -275,7 +266,7 @@ There is **no manual free**. The GC reclaims unreachable objects automatically. 
 | Prefix | Domain | Examples |
 |--------|--------|---------|
 | `q_` | Runtime builtins/helpers (C++ runtime code) | `q_add()`, `q_print()`, `q_malloc()` |
-| `quark_` | User-defined names in generated C++ (except `extern fn` symbols and their `_thunk_` wrappers, see §1.6) | `quark_main()`, `quark_x`, `quark__lambda1` |
+| `quark_` | User-defined names in generated C++ (except `extern fn` symbols and their `_thunk_` wrappers, see §1.6); compiler-generated ones start with `quark___` | `quark_main()`, `quark_x`, `quark___lambda1` |
 | `qv_` | Value constructors | `qv_int()`, `qv_string()`, `qv_null()` |
 | `QValue`, `QList`, `QClosure` | Type names (PascalCase) | — |
 
@@ -692,6 +683,8 @@ Each step ends with the full suite green and is committed on its own.
 
    *Done 2026-11-12.* Highest scores after it: `inferBuiltinReturnType` 40, `CanAssign` 37, `loader.collect` 37, `checkDefiniteAssignment` 34, `codegen.scalarExpr` 34 (`analyzeOperator` 159 → split into `analyzeMember`, `analyzeUnary`, `analyzeAssign` with `assignName`/`assignMember`/`assignIndex`, `analyzeBinary` with `analyzeVectorArith`/`analyzeArith`/`analyzeOrdering`/`analyzeEquality`; loader `walk` 66 → 15; `nextRawToken` 48 → 21 with token tables; `ValidateCallPlans` 48 → split per dispatch mode). Behavior changes: `x | d.f()` is the same error as `d.f(x)`; a pipe target that isn't a call is a parse error; arity messages read `function 'f' expects 1 argument but got 2`.
 2. **Symbols.** The analyzer creates an `ir.Symbol` per declaration, maps identifier nodes to symbols, and decides storage once. Codegen reads storage and C++ names from symbols and drops `declaredVars`, `varTiers`, `cellVars` and its scope stack. Exit: the storage known issues are fixed (`x: float = len(l)`, an int assigned to a float variable, `_lambda1`, a variable first assigned in a `while` body).
+
+   *Done 2026-11-13.* The symbol is `types.Symbol` (it holds a `types.Type`, and `ir` can't import `types`); the storage kind is `ir.Storage`. Codegen's storage code is in `codegen/storage.go`. Also fixed on the way, since they were on the same path: typed declarations and default-typed parameters now check values of unknown type, loop bodies go through `generateBlock` (so `fn` works in loop bodies and errors have the right line), and every generated C++ name starts with `quark___`.
 3. **Lower, IR, verify, emit.** Build `lower/` and the emitter next to `codegen/`, selected by a driver switch while in progress. Run the smoke and integration suites through both back ends and compare outputs; switch the default once they match, then delete `codegen/`. Exit: the expression-timing and loop-body known issues are fixed, and the verifier runs on every compile.
 4. **Element types** (12.6): implement the chosen answer in lowering as `Unbox`/`Check`, plus the analyzer changes it needs.
 

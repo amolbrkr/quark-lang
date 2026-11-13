@@ -94,4 +94,44 @@ inline QValue q_field_struct(QValue v, const QStructDef* expected, const char* s
     q_field_type_error(v, expected->name, structName, field);
 }
 
+// Typed declarations (`x: int = value`). The value is checked when the
+// compiler couldn't prove its type, with the same rules as parameters, so the
+// variable can be stored and read as its declared type. Scalars return the
+// raw value (float widens an int).
+[[noreturn]] inline void q_var_type_error(QValue v, const char* expected, const char* var) {
+    QValue got = q_type(v);
+    q_runtime_reportf("runtime error: variable '%s' is declared %s but got %s\n",
+                      var, expected, got.data.string_val ? got.data.string_val : "unknown");
+    std::exit(1);
+}
+
+inline long long q_var_int(QValue v, const char* var) {
+    if (v.type != QValue::VAL_INT) q_var_type_error(v, "int", var);
+    return v.data.int_val;
+}
+
+inline double q_var_float(QValue v, const char* var) {
+    if (v.type == QValue::VAL_FLOAT) return v.data.float_val;
+    if (v.type == QValue::VAL_INT) return static_cast<double>(v.data.int_val);
+    q_var_type_error(v, "float", var);
+}
+
+inline bool q_var_bool(QValue v, const char* var) {
+    if (v.type != QValue::VAL_BOOL) q_var_type_error(v, "bool", var);
+    return v.data.bool_val;
+}
+
+inline QValue q_var_check(QValue v, QValue::ValueType tag, bool allowNull, const char* expected, const char* var) {
+    if (v.type == tag || (allowNull && v.type == QValue::VAL_NULL)) return v;
+    q_var_type_error(v, expected, var);
+}
+
+inline QValue q_var_struct(QValue v, const QStructDef* def, const char* var) {
+    if (v.type == QValue::VAL_NULL) return v;
+    if (v.type == QValue::VAL_STRUCT && v.data.struct_val && v.data.struct_val->def == def) {
+        return v;
+    }
+    q_var_type_error(v, def->name, var);
+}
+
 #endif // QUARK_BUILTINS_PARAMS_HPP

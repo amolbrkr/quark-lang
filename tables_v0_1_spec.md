@@ -1,10 +1,89 @@
 # Quark Tables v0.1 Spec (Draft)
 
-Status: Draft. Work is paused (2026-11-04) while FFI comes first (`ffi_v0_1_spec.md`).
+Status: Draft, revision 2 (2026-11-13). The runtime engine and CSV reader of the revision 2 design are implemented; the compiler side is not. See "Revision 2" below, which takes precedence over the original draft where they differ.
 
 Implementation state: only the runtime representation exists: `QTable` in `runtime/include/quark/types/table.hpp` and the `VAL_TABLE` value tag, which `fmt.table` can render. The lexer, parser, analyzer and codegen have no table support: `tbl` is not a keyword, a `tbl { ... }` literal is a parse error (`QK-PARSE-001`), and `tbl` is not accepted as a type annotation.
 Last Updated: 2026-04-02
 Scope: Core table type, typed table literals, and in-memory vector-backed backend. This spec also defines a backend abstraction for future lazy and database-backed execution.
+
+## Revision 2 (2026-11-13): eager engine and query surface
+
+This section records the decisions of 2026-11-13. It supersedes the rest of this draft where they conflict (relation aliases in §5.6, the backend abstraction in §10 for v0.1, and §15 Q1). The runtime engine and CSV reader are implemented; the compiler side (the `tbl` type, queries, `std/csv` bindings) is not, and will target the lowering/IR pipeline (`architecture.md` §12.8) rather than today's codegen.
+
+### R2.1 Decisions
+
+| # | Decision |
+|---|---|
+| D1 | **Eager, in-memory, columnar.** Every verb runs to completion and returns a new immutable table; there is no lazy plan in v0.1. Columns use the existing `QVector` buffers (Arrow layout: f64/i64 values, bit-packed bool, int32 offsets + UTF-8 for str, validity bitmaps), so `t.salary` is a `vec` without copying. Only the flat primitive layouts are used; no Arrow library. |
+| D2 | **Typed by a struct.** `t: Employee = csv::read_file(path)`: the struct gives column names and types, and the compiler checks every column reference and expression against it. The schema flows through each verb, so the compiler knows every intermediate table's columns. |
+| D3 | **Query syntax: one row name per pipe** (`t \| e -> verb(...) \| verb(...)`), re-bound at each verb to that verb's input row. `e` may only appear as `e.col` inside verb arguments. |
+| D4 | **Verbs v0.1:** `filter`, `mutate` (add or replace columns), `sort`, `group_by`, `summarize`. No `reduce`: `summarize` without `group_by` aggregates the whole table into one row. `map` over vecs/tables (like `purrr::map`) comes later. |
+| D5 | **`summarize` returns an ungrouped table**, so there is no `ungroup()`. `group_by` returns a grouped table that only `summarize` accepts (a compile-time error otherwise). |
+| D6 | **Missing values follow `na.rm = TRUE`**: aggregates skip nulls (and NaN in float columns). `sum` of no values is 0; `mean`, `min`, `max` of no values are null; `count()` counts rows. `filter` drops rows whose predicate is null. Sort and group keys put nulls last (NaN after numbers, before nulls). All of this is documented behaviour, not configuration. |
+| D7 | **Row indices are int32**: a table holds at most 2,147,483,647 rows (typical healthcare/pharma data is 100K-500K rows). |
+| D8 | **CSV/TSV reader written in-house**, parsing straight into typed column buffers; no third-party CSV library. |
+| D9 | **Group order is key order** (ascending, nulls last), as in dplyr, so `summarize` output is deterministic. |
+
+### R2.2 Query surface (planned)
+
+```quark
+struct Employee:
+    id: int
+    name: str
+    dept: str
+    salary: float
+
+staff: Employee = unwrap(csv::read_file('staff.csv'))
+
+stats = staff | e ->
+    filter(e.salary >= 100_000)
+    | mutate(bonus = e.salary * 0.1)
+    | group_by(e.dept)
+    | summarize(avg = mean(e.salary), top = max(e.bonus), n = count())
+    | sort(desc(e.avg))            // e is now the summarize row: {dept, avg, top, n}
+```
+
+- After `|`, an `ID ->` pair starts a query; the chain parses into one query node. Each step must be a verb: anything else, `e` used as a value (`f(e)`), an unknown column, a type mismatch, an aggregate outside `summarize`, or a non-table source is a compile-time error.
+- `name = expr` inside `mutate` and `summarize` defines a column (Quark has no keyword arguments elsewhere).
+- Verb expressions are arithmetic, comparisons, `and`/`or`/`!`, literals and outer scalar variables in v0.1. Codegen compiles each one into a typed loop over the column buffers (no expression interpreter, no temporary columns).
+- Aggregates: `count()`, `count(e.col)` (non-missing values), `sum`, `mean`, `min`, `max`. `sum` of int is int (overflow is a runtime error), of bool counts true values, of float is float; `mean` is float (a bool mean is the share of true values); `min`/`max` keep the column's type and also work on str (byte order).
+- `sort(e.a, desc(e.b))`: stable, several keys.
+- `100_000` needs digit separators in the lexer (planned with the query work).
+
+### R2.3 Runtime engine (implemented)
+
+`runtime/include/quark/table/engine.hpp` (namespace `quark::tbl`), header-only and not part of `quark.hpp` (generated programs include it only when they use tables):
+
+| Function | Does |
+|---|---|
+| `make_table(def, cols)` | Builds a table from equal-length columns |
+| `take` / `take_table(t, idx, n)` | Gathers rows by index (filter, sort); taking every row in order returns the input |
+| `sort_perm` / `sort_table(t, keys, n)` | Stable multi-key sort; a fast path for one dense numeric key |
+| `group_rows(t, key_cols, n)` | Hash grouping (open addressing), groups renumbered in key order; `whole_table(n)` for summarize without `group_by` |
+| `group_keys(t, g, col)` | The key column of the summarize output |
+| `agg_count`, `agg_count_values`, `agg_sum`, `agg_mean`, `agg_min`, `agg_max` | Per-group aggregates (D6) |
+
+Filter predicates and mutate expressions are not engine functions: codegen writes their loops and feeds the selected row indices to `take_table`.
+
+Measured on 500K rows (`-O2`, one core, Linux x86_64, 2026-11-13): `group_by` + `mean` 23 ms, sort by one float key 97 ms, sort by two keys 271 ms.
+
+### R2.4 CSV / TSV (implemented)
+
+`runtime/include/quark/table/csv.hpp` (namespace `quark::csv`):
+
+- `read_table(path, options, def, schema)` / `parse_table(text, ...)`: typed when a schema (column names and types) is given, otherwise every column's type is inferred from all of its values (int, else float, else bool, else str).
+- `write_table(t, path, options)` / `format_table(t, sep)`.
+- Accepted input: `,` or `\t` (from a `.tsv`/`.tab` path, or set explicitly); quoted fields with separators, line breaks and `""`; `\n`, `\r\n` and `\r` line endings; a UTF-8 BOM; blank lines (skipped); spaces around values and quotes (trimmed). `""` and `NA`, quoted or not, are missing in every column (as in readr); the list is an option. Header columns are matched to the schema by name, so a file may have more columns than the schema needs; without a header, by position.
+- Errors name the file, line, column and text, and count the rest: `staff.csv:412: column 'salary': '12k' is not a float (and 3 more problems)`. A row with the wrong number of fields, an unterminated quote, text after a closing quote, a missing or duplicated column, an empty file and an int that overflows are all errors; nothing becomes null silently.
+- Writing: a header line, missing values as empty fields, strings quoted only when needed, floats in shortest round-trip form.
+- Measured: a 27.6 MB file of 500K rows reads in 219 ms typed and 480 ms inferred.
+
+### R2.5 Not yet
+
+- Compiler: `tbl` type and struct-typed tables, the query node, digit separators, `std/csv` bindings returning `result`, printing.
+- Verbs after v0.1: joins, `select`/`rename`, `distinct`, `n_distinct`, `slice`/`head`.
+- Column types: `date` (int32 days, Arrow `date32`), then timestamps and categoricals.
+- Header names that aren't identifiers (`Employee ID`) need a renaming option on read.
 
 ## 1. Purpose
 

@@ -85,7 +85,11 @@ func (a *Analyzer) analyzeWhenStatement(node *ast.TreeNode) Type {
 		}
 		if hasBinding && bindName != "" {
 			a.pushScope()
-			a.currentScope.Define(bindName, bindingType, true)
+			var bindNode *ast.TreeNode
+			if len(resultPatternNode.Children) > 0 {
+				bindNode = resultPatternNode.Children[0]
+			}
+			a.declareSym(bindName, bindingType, true, SymBinding, nil, bindNode)
 			branchType := a.Analyze(resultExpr)
 			a.popScope()
 			merge(branchType)
@@ -183,7 +187,7 @@ func (a *Analyzer) analyzeForLoop(node *ast.TreeNode) Type {
 			a.errorAt(iterNode, "value of type '%s' is not iterable", iterType.String())
 		}
 	}
-	a.currentScope.Define(varName, varType, false)
+	a.declareSym(varName, varType, false, SymLoop, varType, varNode)
 	a.Analyze(bodyNode)
 	a.popScope()
 	a.loopDepth--

@@ -173,10 +173,10 @@ func collectParamSpecs(argsNode *ast.TreeNode) []paramSpec {
 			if nameNode != nil {
 				name = nameNode.TokenLiteral()
 			}
-			specs = append(specs, paramSpec{name: name, typeNode: typeNode, defaultValue: child.DefaultValue})
+			specs = append(specs, paramSpec{name: name, nameNode: nameNode, typeNode: typeNode, defaultValue: child.DefaultValue})
 		case ast.IdentifierNode:
 			name := child.TokenLiteral()
-			specs = append(specs, paramSpec{name: name})
+			specs = append(specs, paramSpec{name: name, nameNode: child})
 		}
 	}
 	return specs

@@ -67,28 +67,14 @@ type Generator struct {
 	lambdaUserNames map[*ast.TreeNode]string
 	tempCounter     int
 	lambdaCounter   int
-	declaredVars    map[string]bool            // Tracks declared variables to avoid redeclaration
-	cellVars        map[string]bool            // Subset of declaredVars that are QCell* (vs QValue)
-	scopeStack      []map[string]bool          // Stack of variable scopes for nested blocks
-	cellStack       []map[string]bool          // Mirrors scopeStack for cellVars
-	captures        map[*ast.TreeNode][]string // Lambda node → captured variable names (from analyzer)
-	callPlans       map[*ast.TreeNode]*ir.CallPlan
-	// capturedByFunction maps each function/lambda node to the set of variable
-	// names that any directly-nested lambda captures from it. A variable NOT in
-	// this set for the current function can be emitted as a stack QValue instead
-	// of a heap-allocated QCell*.
-	capturedByFunction map[*ast.TreeNode]map[string]bool
-	// currentFuncNode is the AST node for the function/lambda currently being
-	// generated. Used to look up capturedByFunction.
-	currentFuncNode *ast.TreeNode
+	// refs maps identifier nodes to their symbols; captures lists each
+	// lambda's captured symbols (from the analyzer).
+	refs      map[*ast.TreeNode]*types.Symbol
+	captures  map[*ast.TreeNode][]*types.Symbol
+	callPlans map[*ast.TreeNode]*ir.CallPlan
 	// nodeTypes maps every AST expression node to the type the analyzer inferred
-	// for it. Codegen uses this to decide scalar storage and native operator lowering.
+	// for it. Codegen uses this for native operator lowering and conversions.
 	nodeTypes map[*ast.TreeNode]types.Type
-	// varTiers tracks the C++ storage tier chosen for each declared variable in
-	// the current scope: "long long", "double", "bool", or "" (meaning QValue).
-	// Mirrors declaredVars / scopeStack.
-	varTiers  map[string]string
-	tierStack []map[string]string
 	// nativeFns maps function name → CallPlan for fully-annotated user functions.
 	// Used by collectFunctions and generateLambdaFunc to emit native signatures + thunks.
 	nativeFns map[string]*ir.CallPlan
@@ -101,36 +87,29 @@ type Generator struct {
 	// names maps internal names to the names users write (runtime messages).
 	names names.Table
 	// Fixed `fn` declarations, from the analyzer (types/analyzer_fixed.go).
-	fixedFns        map[*ast.TreeNode]*types.FixedFn
-	fnRefs          map[*ast.TreeNode]*types.FixedFn
-	hoists          map[*ast.TreeNode]*types.HoistScope
-	checkedCaptures map[*ast.TreeNode]map[string]bool
+	fixedFns map[*ast.TreeNode]*types.FixedFn
+	fnRefs   map[*ast.TreeNode]*types.FixedFn
+	hoists   map[*ast.TreeNode]*types.HoistScope
 	// checkedCells holds the captured variables of the lambda being generated
 	// that may still be unassigned; they are read with q_cell_get.
-	checkedCells map[string]bool
+	checkedCells map[*types.Symbol]bool
 }
 
 func New() *Generator {
 	return &Generator{
-		funcDecls:          make([]funcDecl, 0),
-		lambdas:            make([]*ast.TreeNode, 0),
-		lambdaNames:        make(map[*ast.TreeNode]string),
-		lambdaUserNames:    make(map[*ast.TreeNode]string),
-		tempCounter:        0,
-		sourceName:         "<unknown>",
-		declaredVars:       make(map[string]bool),
-		cellVars:           make(map[string]bool),
-		scopeStack:         make([]map[string]bool, 0),
-		cellStack:          make([]map[string]bool, 0),
-		captures:           make(map[*ast.TreeNode][]string),
-		callPlans:          make(map[*ast.TreeNode]*ir.CallPlan),
-		capturedByFunction: make(map[*ast.TreeNode]map[string]bool),
-		nodeTypes:          make(map[*ast.TreeNode]types.Type),
-		varTiers:           make(map[string]string),
-		tierStack:          make([]map[string]string, 0),
-		nativeFns:          make(map[string]*ir.CallPlan),
-		externFns:          make(map[string]*ir.CallPlan),
-		structTypes:        make(map[string]*types.StructType),
+		funcDecls:       make([]funcDecl, 0),
+		lambdas:         make([]*ast.TreeNode, 0),
+		lambdaNames:     make(map[*ast.TreeNode]string),
+		lambdaUserNames: make(map[*ast.TreeNode]string),
+		tempCounter:     0,
+		sourceName:      "<unknown>",
+		refs:            make(map[*ast.TreeNode]*types.Symbol),
+		captures:        make(map[*ast.TreeNode][]*types.Symbol),
+		callPlans:       make(map[*ast.TreeNode]*ir.CallPlan),
+		nodeTypes:       make(map[*ast.TreeNode]types.Type),
+		nativeFns:       make(map[string]*ir.CallPlan),
+		externFns:       make(map[string]*ir.CallPlan),
+		structTypes:     make(map[string]*types.StructType),
 	}
 }
 
@@ -140,14 +119,14 @@ func (g *Generator) SetAnalysis(an *types.Analysis) {
 	if an == nil {
 		return
 	}
+	if an.Refs != nil {
+		g.refs = an.Refs
+	}
 	if an.Captures != nil {
 		g.captures = an.Captures
 	}
 	if an.CallPlans != nil {
 		g.callPlans = an.CallPlans
-	}
-	if an.CapturedByFunction != nil {
-		g.capturedByFunction = an.CapturedByFunction
 	}
 	if an.NodeTypes != nil {
 		g.nodeTypes = an.NodeTypes
@@ -165,7 +144,6 @@ func (g *Generator) SetAnalysis(an *types.Analysis) {
 	g.fixedFns = an.FixedFns
 	g.fnRefs = an.FnRefs
 	g.hoists = an.HoistScopes
-	g.checkedCaptures = an.CheckedCaptures
 }
 
 // nodeType returns the analyzer-inferred type for a given AST node, or nil if unknown.
@@ -174,34 +152,6 @@ func (g *Generator) nodeType(node *ast.TreeNode) types.Type {
 		return nil
 	}
 	return g.nodeTypes[node]
-}
-
-// nativeCType returns the C++ scalar type string for a Quark type, or "" if the
-// type must stay boxed as QValue (any, unknown, composite, or nil).
-func nativeCType(t types.Type) string {
-	if t == nil {
-		return ""
-	}
-	if t.Equals(types.TypeInt) {
-		return "long long"
-	}
-	if t.Equals(types.TypeFloat) {
-		return "double"
-	}
-	if t.Equals(types.TypeBool) {
-		return "bool"
-	}
-	return ""
-}
-
-// markTier records the C++ storage tier for varName in the current scope.
-func (g *Generator) markTier(name string, ctype string) {
-	g.varTiers[name] = ctype
-}
-
-// tierOf returns the C++ storage tier for varName, or "" for QValue/unknown.
-func (g *Generator) tierOf(name string) string {
-	return g.varTiers[name]
 }
 
 // boxExpr wraps a C++ expression of the given tier into a QValue.
@@ -230,38 +180,6 @@ func nativeCppTypeToTier(cppType string) string {
 		return "bool"
 	}
 	return ""
-}
-
-// unboxForTier extracts the raw scalar value from a QValue expression.
-// generateExpr always returns QValue, so we always use .data field access.
-func unboxForTier(expr string, tier string, _ types.Type) string {
-	field := unboxFieldAccessor(tier)
-	if field != "" {
-		return fmt.Sprintf("(%s).data.%s", expr, field)
-	}
-	return expr
-}
-
-// isCaptured returns true if the named variable is captured by a nested lambda
-// within the function currently being generated, meaning it must stay a QCell*.
-func (g *Generator) isCaptured(name string) bool {
-	if g.currentFuncNode == nil {
-		return false
-	}
-	if captured := g.capturedByFunction[g.currentFuncNode]; captured != nil {
-		return captured[name]
-	}
-	return false
-}
-
-// markCell records that varName is stored as QCell* in the current scope.
-func (g *Generator) markCell(name string) {
-	g.cellVars[name] = true
-}
-
-// isCell reports whether varName is stored as QCell* in the current scope.
-func (g *Generator) isCell(name string) bool {
-	return g.cellVars[name]
 }
 
 // SetSourceName configures the source file label used for runtime diagnostics.
@@ -304,10 +222,6 @@ func (g *Generator) sourceFileOf(node *ast.TreeNode) string {
 // user-defined functions, giving a uniform naming scheme in generated code.
 func sanitizeVarName(name string) string {
 	return "quark_" + name
-}
-
-func sanitizeArgName(name string) string {
-	return "_arg_" + sanitizeVarName(name)
 }
 
 func isFunctionBindingAssignmentNode(node *ast.TreeNode) bool {
@@ -356,67 +270,7 @@ func (g *Generator) newTemp() string {
 
 func (g *Generator) newLambda() string {
 	g.lambdaCounter++
-	return fmt.Sprintf("_lambda%d", g.lambdaCounter)
-}
-
-func (g *Generator) paramName(node *ast.TreeNode) string {
-	if node == nil {
-		return ""
-	}
-	if node.NodeType == ast.ParameterNode && len(node.Children) > 0 {
-		return node.Children[0].TokenLiteral()
-	}
-	return node.TokenLiteral()
-}
-
-// pushScope saves current variable scope and creates an isolated one (used for functions)
-func (g *Generator) pushScope() {
-	g.scopeStack = append(g.scopeStack, g.declaredVars)
-	g.cellStack = append(g.cellStack, g.cellVars)
-	g.tierStack = append(g.tierStack, g.varTiers)
-	g.declaredVars = make(map[string]bool)
-	g.cellVars = make(map[string]bool)
-	g.varTiers = make(map[string]string)
-}
-
-func (g *Generator) pushBlockScope() {
-	parent := g.declaredVars
-	parentCells := g.cellVars
-	parentTiers := g.varTiers
-	g.scopeStack = append(g.scopeStack, parent)
-	g.cellStack = append(g.cellStack, parentCells)
-	g.tierStack = append(g.tierStack, parentTiers)
-	child := make(map[string]bool)
-	for k, v := range parent {
-		child[k] = v
-	}
-	childCells := make(map[string]bool)
-	for k, v := range parentCells {
-		childCells[k] = v
-	}
-	childTiers := make(map[string]string)
-	for k, v := range parentTiers {
-		childTiers[k] = v
-	}
-	g.declaredVars = child
-	g.cellVars = childCells
-	g.varTiers = childTiers
-}
-
-// popScope restores the previous variable scope
-func (g *Generator) popScope() {
-	if len(g.scopeStack) > 0 {
-		g.declaredVars = g.scopeStack[len(g.scopeStack)-1]
-		g.scopeStack = g.scopeStack[:len(g.scopeStack)-1]
-	}
-	if len(g.cellStack) > 0 {
-		g.cellVars = g.cellStack[len(g.cellStack)-1]
-		g.cellStack = g.cellStack[:len(g.cellStack)-1]
-	}
-	if len(g.tierStack) > 0 {
-		g.varTiers = g.tierStack[len(g.tierStack)-1]
-		g.tierStack = g.tierStack[:len(g.tierStack)-1]
-	}
+	return ir.LambdaFnName(g.lambdaCounter)
 }
 
 // collectExternSources gathers all resolved extern source paths from the AST
@@ -586,8 +440,6 @@ func (g *Generator) Generate(node *ast.TreeNode) string {
 	// Generate main function
 	g.emit("\nint main(int argc, char** argv) {\n")
 	g.indentLevel++
-	// Set root as currentFuncNode so isCaptured() works for module-scope variables.
-	g.currentFuncNode = node
 	g.emitLine("q_gc_init();")
 	g.emitLine("q_set_args(argc, argv);")
 	// Hoist the declarations of the top level and of every module body: all
@@ -644,26 +496,18 @@ func (g *Generator) hoistScopes(nodes ...*ast.TreeNode) {
 		}
 	}
 	for _, hs := range scopes {
-		for _, name := range hs.Cells {
-			if g.declaredVars[name] {
-				continue
-			}
-			g.emitLine("QCell* %s = q_new_unassigned_cell();", sanitizeVarName(name))
-			g.declaredVars[name] = true
-			g.markCell(name)
+		for _, sym := range hs.Cells {
+			g.emitLine("QCell* %s = q_new_unassigned_cell();", sym.CName)
 		}
 		for _, f := range hs.Fns {
-			if !f.Captures || g.declaredVars[f.Name] {
+			if !f.Captures {
 				continue
 			}
-			cName := sanitizeVarName(f.Name)
-			if g.isCaptured(f.Name) {
-				g.emitLine("QCell* %s = q_new_cell(qv_null());", cName)
-				g.markCell(f.Name)
+			if f.Sym.Storage == ir.StorageCell {
+				g.declareCaptured(f.Sym, "qv_null()")
 			} else {
-				g.emitLine("QValue %s = qv_null();", cName)
+				g.emitLine("QValue %s = qv_null();", f.Sym.CName)
 			}
-			g.declaredVars[f.Name] = true
 		}
 	}
 	for _, hs := range scopes {
@@ -672,10 +516,10 @@ func (g *Generator) hoistScopes(nodes ...*ast.TreeNode) {
 				continue
 			}
 			value := g.generateLambdaExpr(f.Lambda)
-			if g.isCell(f.Name) {
-				g.emitLine("%s->value = %s;", sanitizeVarName(f.Name), value)
+			if f.Sym.Storage == ir.StorageCell {
+				g.emitLine("%s->value = %s;", f.Sym.CName, value)
 			} else {
-				g.emitLine("%s = %s;", sanitizeVarName(f.Name), value)
+				g.emitLine("%s = %s;", f.Sym.CName, value)
 			}
 		}
 	}
@@ -913,19 +757,6 @@ func (g *Generator) lambdaDisplayName(node *ast.TreeNode) string {
 	return "lambda"
 }
 
-// paramAnnotation returns the type name a parameter is annotated with, or "".
-func paramAnnotation(param *ast.TreeNode) string {
-	if param == nil || param.NodeType != ast.ParameterNode {
-		return ""
-	}
-	for _, c := range param.Children[min(1, len(param.Children)):] {
-		if c != nil && c.NodeType == ast.TypeNode {
-			return c.TokenLiteral()
-		}
-	}
-	return ""
-}
-
 // paramTagChecks maps non-scalar annotations to their QValue tag and whether
 // null is accepted (reference types other than result accept null, as in the
 // checker).
@@ -942,71 +773,74 @@ var paramTagChecks = map[string]struct {
 	"fn":       {"VAL_FUNC", true},
 }
 
-// emitParamBindings binds a QValue-convention function's parameters. Every
-// annotated parameter is enforced on entry (q_param_* reports the caller's
-// line, since the callee hasn't set a location yet); int, float and bool
-// parameters are unboxed to native C++ locals (float widens an int) so the
-// body works on raw values. Unannotated and `any` parameters stay QValue.
-func (g *Generator) emitParamBindings(argsNode *ast.TreeNode, fnDisplay string) {
+// paramNameNode is the identifier node of a parameter.
+func paramNameNode(param *ast.TreeNode) *ast.TreeNode {
+	if param == nil {
+		return nil
+	}
+	if param.NodeType == ast.ParameterNode {
+		if len(param.Children) == 0 {
+			return nil
+		}
+		return param.Children[0]
+	}
+	return param
+}
+
+// paramArgName is the C++ parameter that receives sym's argument; the body's
+// variable (sym.CName) is bound from it.
+func paramArgName(sym *types.Symbol) string { return "_arg_" + sym.CName }
+
+// paramSyms is the symbol of each parameter of a parameter list.
+func (g *Generator) paramSyms(argsNode *ast.TreeNode) []*types.Symbol {
+	var syms []*types.Symbol
 	if argsNode == nil {
-		return
+		return nil
 	}
 	for _, param := range argsNode.Children {
-		paramName := g.paramName(param)
-		if paramName == "" {
+		nameNode := paramNameNode(param)
+		if nameNode == nil || nameNode.TokenLiteral() == "" {
 			continue
 		}
-		cName := sanitizeVarName(paramName)
-		argName := sanitizeArgName(paramName)
-		fn := escapeCppString(fnDisplay)
-		pn := escapeCppString(g.names.Display(paramName))
+		syms = append(syms, g.varSym(nameNode))
+	}
+	return syms
+}
 
-		value := argName // checked QValue expression
-		scalarExpr, tier := "", ""
-		switch ann := paramAnnotation(param); ann {
-		case "", "any":
-		case "int":
-			scalarExpr, tier = fmt.Sprintf("q_param_int(%s, \"%s\", \"%s\")", argName, fn, pn), "long long"
-			value = fmt.Sprintf("qv_int(%s)", scalarExpr)
-		case "float":
-			scalarExpr, tier = fmt.Sprintf("q_param_float(%s, \"%s\", \"%s\")", argName, fn, pn), "double"
-			value = fmt.Sprintf("qv_float(%s)", scalarExpr)
-		case "bool":
-			scalarExpr, tier = fmt.Sprintf("q_param_bool(%s, \"%s\", \"%s\")", argName, fn, pn), "bool"
-			value = fmt.Sprintf("qv_bool(%s)", scalarExpr)
-		default:
-			if c, ok := paramTagChecks[ann]; ok {
-				value = fmt.Sprintf("q_param_check(%s, QValue::%s, %t, \"%s\", \"%s\", \"%s\")", argName, c.tag, c.allowNull, ann, fn, pn)
-			} else {
-				// A struct (the checker rejects unknown type names): checked
-				// by definition, so two structs with the same name differ.
-				value = fmt.Sprintf("q_param_struct(%s, &_sdef_%s, \"%s\", \"%s\")", argName, sanitizeVarName(ann), fn, pn)
-			}
+// emitParamBindings binds a QValue-convention function's parameters. Every
+// typed parameter (annotated, or typed by a literal default) is enforced on
+// entry (q_param_* reports the caller's line, since the callee hasn't set a
+// location yet); int, float and bool parameters are unboxed to native C++
+// locals (float widens an int) so the body works on raw values. Untyped and
+// `any` parameters stay QValue.
+func (g *Generator) emitParamBindings(argsNode *ast.TreeNode, fnDisplay string) {
+	for _, sym := range g.paramSyms(argsNode) {
+		arg := paramArgName(sym)
+		args := fmt.Sprintf("\"%s\", \"%s\"", escapeCppString(fnDisplay), escapeCppString(g.names.Display(sym.Name)))
+		c, checked := checkFor(sym.StoreType)
+		value := arg
+		if checked {
+			value = c.boxedCall("param", arg, args)
 		}
-
 		switch {
-		case g.isCaptured(paramName):
-			g.emitLine("QCell* %s = q_new_cell(%s);", cName, value)
-			g.markCell(paramName)
-		case tier != "":
-			g.emitLine("%s %s = %s;", tier, cName, scalarExpr)
-			g.markTier(paramName, tier)
+		case sym.Storage.IsScalar():
+			g.emitLine("%s %s = %s;", sym.Storage.CType(), sym.CName, c.call("param", arg, args))
+		case sym.Storage == ir.StorageCell:
+			g.declareCaptured(sym, value)
 		default:
-			g.emitLine("QValue %s = %s;", cName, value)
+			g.emitLine("QValue %s = %s;", sym.CName, value)
 		}
-		g.declaredVars[paramName] = true
 	}
 }
 
 // generateNativeFunction emits a native-typed function body and a QValue thunk.
-func (g *Generator) generateNativeFunction(node *ast.TreeNode, funcName string, argsNode *ast.TreeNode, bodyNode *ast.TreeNode, proto *ir.CallPlan) {
-	g.currentFuncNode = node
-	g.pushScope()
-
-	// Collect param names in order
-	paramNames := make([]string, 0, len(argsNode.Children))
-	for _, param := range argsNode.Children {
-		paramNames = append(paramNames, g.paramName(param))
+func (g *Generator) generateNativeFunction(funcName string, argsNode *ast.TreeNode, bodyNode *ast.TreeNode, proto *ir.CallPlan) {
+	syms := g.paramSyms(argsNode)
+	nativeTypeOf := func(i int) string {
+		if i < len(proto.NativeParamTypes) {
+			return proto.NativeParamTypes[i]
+		}
+		return "QValue"
 	}
 
 	// Native-typed signature
@@ -1015,49 +849,27 @@ func (g *Generator) generateNativeFunction(node *ast.TreeNode, funcName string, 
 		retType = "QValue"
 	}
 	params := []string{"QClosure* _cl"}
-	for i, paramName := range paramNames {
-		if paramName == "" {
-			continue
-		}
-		nativeType := "QValue"
-		if i < len(proto.NativeParamTypes) {
-			nativeType = proto.NativeParamTypes[i]
-		}
-		params = append(params, fmt.Sprintf("%s %s", nativeType, sanitizeArgName(paramName)))
+	for i, sym := range syms {
+		params = append(params, fmt.Sprintf("%s %s", nativeTypeOf(i), paramArgName(sym)))
 	}
 
 	g.emit("%s quark_%s(%s) {\n", retType, funcName, strings.Join(params, ", "))
 	g.indentLevel++
 	g.emitLine("QSourceLocGuard _loc_guard;")
 
-	for i, paramName := range paramNames {
-		if paramName == "" {
-			continue
+	// Scalar parameters (int64_t/double/bool) stay raw scalars so scalarExpr
+	// can lower them; other native types (const char*, QList*, ...) are boxed
+	// back to QValue so the body works uniformly with generateExpr.
+	for i, sym := range syms {
+		arg := paramArgName(sym)
+		switch {
+		case sym.Storage == ir.StorageCell:
+			g.declareCaptured(sym, boxNative(arg, nativeTypeOf(i)))
+		case sym.Storage.IsScalar():
+			g.emitLine("%s %s = %s;", sym.Storage.CType(), sym.CName, arg)
+		default:
+			g.emitLine("QValue %s = %s;", sym.CName, boxNative(arg, nativeTypeOf(i)))
 		}
-		cName := sanitizeVarName(paramName)
-		argName := sanitizeArgName(paramName)
-		nativeType := "QValue"
-		if i < len(proto.NativeParamTypes) {
-			nativeType = proto.NativeParamTypes[i]
-		}
-		// For native params with a scalar tier (int64_t/double/bool), store at
-		// that tier so scalarExpr can optimise. For non-scalar native types
-		// (const char*, QList*, etc.) box back to QValue so the body works
-		// uniformly with generateExpr.
-		tier := nativeCppTypeToTier(nativeType)
-		if g.isCaptured(paramName) {
-			boxed := boxNative(argName, nativeType)
-			g.emitLine("QCell* %s = q_new_cell(%s);", cName, boxed)
-			g.markCell(paramName)
-		} else if tier != "" {
-			// Scalar: store at native tier
-			g.emitLine("%s %s = %s;", nativeType, cName, argName)
-			g.markTier(paramName, tier)
-		} else {
-			// Non-scalar native (str, list, etc.): box to QValue
-			g.emitLine("QValue %s = %s;", cName, boxNative(argName, nativeType))
-		}
-		g.declaredVars[paramName] = true
 	}
 
 	// For the return value, try scalarExpr on the last body expression to avoid
@@ -1076,15 +888,13 @@ func (g *Generator) generateNativeFunction(node *ast.TreeNode, funcName string, 
 		if rawVal, tier := g.scalarExpr(lastStmt); tier == retTier {
 			// Emit all but the last body statement, then return raw.
 			if bodyNode != nil && bodyNode.NodeType == ast.BlockNode {
-				g.pushBlockScope()
 				g.hoistScopes(bodyNode)
 				for i, child := range bodyNode.Children {
-					if i < len(bodyNode.Children)-1 && child.NodeType != ast.FnDeclNode {
+					if i < len(bodyNode.Children)-1 {
 						g.emitSourceLoc(child)
-						g.emitLine("%s;", g.generateExpr(child))
+						g.emitStmtExpr(child, g.generateExpr(child))
 					}
 				}
-				g.popScope()
 			}
 			nativeResult = rawVal
 		}
@@ -1101,49 +911,35 @@ func (g *Generator) generateNativeFunction(node *ast.TreeNode, funcName string, 
 	g.indentLevel--
 	g.emit("}\n\n")
 
-	g.popScope()
-	g.currentFuncNode = nil
-
 	// Emit QValue thunk so the function can be used as a first-class value.
-	g.generateNativeThunk(funcName, paramNames, proto)
+	g.generateNativeThunk(funcName, len(syms), proto)
 }
 
 // generateNativeThunk emits a QValue-typed wrapper that unboxes args, calls the
 // native function, and boxes the result back. Used when the function is passed as
 // a first-class value.
-func (g *Generator) generateNativeThunk(funcName string, paramNames []string, proto *ir.CallPlan) {
+func (g *Generator) generateNativeThunk(funcName string, paramCount int, proto *ir.CallPlan) {
 	retType := proto.NativeReturnType
 	if retType == "" {
 		retType = "QValue"
 	}
 
 	thunkParams := []string{"QClosure* _cl"}
-	for _, paramName := range paramNames {
-		if paramName == "" {
-			continue
-		}
-		thunkParams = append(thunkParams, fmt.Sprintf("QValue %s", sanitizeArgName(paramName)))
-	}
-	g.emit("QValue quark_%s__thunk(%s) {\n", funcName, strings.Join(thunkParams, ", "))
-	g.indentLevel++
-
-	// Adapt each QValue arg to its native type
 	adaptedArgs := []string{"nullptr"}
-	for i, paramName := range paramNames {
-		if paramName == "" {
-			continue
-		}
-		argName := sanitizeArgName(paramName)
+	for i := 0; i < paramCount; i++ {
+		argName := fmt.Sprintf("_a%d", i)
+		thunkParams = append(thunkParams, "QValue "+argName)
 		nativeType := "QValue"
 		if i < len(proto.NativeParamTypes) {
 			nativeType = proto.NativeParamTypes[i]
 		}
+		// Adapt each QValue argument to its native type (checked).
 		adaptedArgs = append(adaptedArgs, adaptArgForExtern(argName, nativeType))
 	}
-
+	g.emit("QValue quark_%s__thunk(%s) {\n", funcName, strings.Join(thunkParams, ", "))
+	g.indentLevel++
 	callExpr := fmt.Sprintf("quark_%s(%s)", funcName, strings.Join(adaptedArgs, ", "))
 	g.emitLine("return %s;", boxNative(callExpr, retType))
-
 	g.indentLevel--
 	g.emit("}\n\n")
 }
@@ -1206,8 +1002,6 @@ func (g *Generator) generateBlock(node *ast.TreeNode) string {
 	if node == nil {
 		return "qv_null()"
 	}
-	g.pushBlockScope()
-	defer g.popScope()
 	g.hoistScopes(node)
 	var lastExpr string = "qv_null()"
 	for idx, child := range node.Children {
@@ -1322,17 +1116,10 @@ func (g *Generator) generateIdentifier(node *ast.TreeNode) string {
 	if f := g.fnRefs[node]; f != nil {
 		return directFnValue(f)
 	}
-	if g.declaredVars[name] {
-		if g.isCell(name) {
-			if g.checkedCells[name] {
-				return fmt.Sprintf("q_cell_get(%s, \"%s\")", sanitizeVarName(name), escapeCppString(g.names.Display(name)))
-			}
-			return fmt.Sprintf("%s->value", sanitizeVarName(name))
-		}
-		cName := sanitizeVarName(name)
-		// Box scalar variables back to QValue at read sites so the rest of
-		// codegen always works with QValue expressions.
-		return boxExpr(cName, g.tierOf(name))
+	// Scalar variables are boxed back to QValue at read sites so the rest of
+	// codegen always works with QValue expressions.
+	if sym := g.refs[node]; sym.IsVariable() {
+		return g.readVar(sym)
 	}
 	// Extern fn free functions used as first-class values: wrap the thunk.
 	if proto, isExtern := g.externFns[name]; isExtern && !proto.IsMethod {
@@ -1373,12 +1160,8 @@ func (g *Generator) scalarExpr(node *ast.TreeNode) (string, string) {
 		}
 
 	case ast.IdentifierNode:
-		name := node.TokenLiteral()
-		if g.declaredVars[name] && !g.isCell(name) {
-			tier := g.tierOf(name)
-			if tier != "" {
-				return sanitizeVarName(name), tier
-			}
+		if sym := g.refs[node]; sym.IsVariable() && sym.Storage.IsScalar() {
+			return sym.CName, sym.Storage.CType()
 		}
 
 	case ast.UnaryNode, ast.BinaryNode:
@@ -1523,22 +1306,6 @@ func unboxFieldAccessor(tier string) string {
 	return ""
 }
 
-// loopVarTier returns the C++ scalar tier for a for-loop variable based on the
-// analyzer-inferred type of the range expression. Returns "" if not scalar.
-func (g *Generator) loopVarTier(rangeNode *ast.TreeNode) string {
-	t := g.nodeType(rangeNode)
-	if t == nil {
-		return ""
-	}
-	switch v := t.(type) {
-	case *types.ListType:
-		return nativeCType(v.ElementType)
-	case *types.VectorType:
-		return nativeCType(v.ElementType)
-	}
-	return ""
-}
-
 // generateUnary emits `-x` and `!x`.
 func (g *Generator) generateUnary(node *ast.TreeNode) string {
 	if node.Token == nil || len(node.Children) != 1 {
@@ -1674,63 +1441,10 @@ func (g *Generator) generateAssign(node *ast.TreeNode) string {
 			return right
 		}
 	case ast.IdentifierNode:
-		return g.assignVar(lhs.TokenLiteral(), rhs)
+		return g.assignSym(lhs, rhs)
 	}
 	panicICEf("INV-ASSIGN-TARGET", node, "unhandled assignment target '%s'", lhs.NodeType.String())
 	return "qv_null()"
-}
-
-// assignVar emits `name = value`, declaring the variable on its first
-// assignment with the storage its type and capture allow.
-func (g *Generator) assignVar(varName string, rhs *ast.TreeNode) string {
-	cName := sanitizeVarName(varName)
-	// The first assignment of a captured variable declares its cell before
-	// the value is built: a lambda assigned to it (`fib = fn(n) -> fib(n - 1)`)
-	// captures that cell.
-	if !g.declaredVars[varName] && g.isCaptured(varName) {
-		g.emitLine("QCell* %s = q_new_cell(qv_null());", cName)
-		g.declaredVars[varName] = true
-		g.markCell(varName)
-		g.emitLine("%s->value = %s;", cName, g.generateExpr(rhs))
-		return fmt.Sprintf("%s->value", cName)
-	}
-	right := g.generateExpr(rhs)
-	if g.declaredVars[varName] {
-		// Already declared — write using whichever storage type was used at declaration.
-		if g.isCell(varName) {
-			g.emitLine("%s->value = %s;", cName, right)
-			return fmt.Sprintf("%s->value", cName)
-		}
-		tier := g.tierOf(varName)
-		if tier != "" {
-			// Scalar variable: try to get a raw RHS expression directly.
-			// If scalarExpr succeeds the assignment is pure scalar — no box/unbox.
-			rawRight, rawTier := g.scalarExpr(rhs)
-			if rawTier == "" {
-				rawRight = unboxForTier(right, tier, nil)
-			}
-			g.emitLine("%s = %s;", cName, rawRight)
-			return boxExpr(cName, tier)
-		}
-		g.emitLine("%s = %s;", cName, right)
-		return cName
-	}
-	// First declaration: use scalar storage when the RHS has a statically-known
-	// primitive type.
-	if tier := nativeCType(g.nodeType(rhs)); tier != "" {
-		rawRight, rawTier := g.scalarExpr(rhs)
-		if rawTier == "" {
-			// RHS is a compound QValue expression — unbox it.
-			rawRight = unboxForTier(right, tier, nil)
-		}
-		g.emitLine("%s %s = %s;", tier, cName, rawRight)
-		g.declaredVars[varName] = true
-		g.markTier(varName, tier)
-		return boxExpr(cName, tier)
-	}
-	g.emitLine("QValue %s = %s;", cName, right)
-	g.declaredVars[varName] = true
-	return cName
 }
 
 func panicMissingCallPlan(callNode *ast.TreeNode) {
@@ -2012,7 +1726,7 @@ func (g *Generator) generateWhen(node *ast.TreeNode) string {
 		// Build condition from patterns
 		conditions := make([]string, 0)
 		bindings := make([]struct {
-			name string
+			node *ast.TreeNode
 			isOk bool
 		}, 0)
 		for j := 0; j < resultIdx; j++ {
@@ -2037,9 +1751,9 @@ func (g *Generator) generateWhen(node *ast.TreeNode) string {
 						name := bindNode.TokenLiteral()
 						if name != "" && name != "_" {
 							bindings = append(bindings, struct {
-								name string
+								node *ast.TreeNode
 								isOk bool
-							}{name: name, isOk: patternExpr.Token == nil || patternExpr.Token.Type != token.ERR})
+							}{node: bindNode, isOk: patternExpr.Token == nil || patternExpr.Token.Type != token.ERR})
 						}
 					}
 				}
@@ -2060,24 +1774,21 @@ func (g *Generator) generateWhen(node *ast.TreeNode) string {
 			g.emit(g.indent()+"} else if (%s) {\n", condStr)
 		}
 		g.indentLevel++
-		g.pushBlockScope()
 		for _, bind := range bindings {
 			accessor := "q_result_value"
 			if !bind.isOk {
 				accessor = "q_result_error"
 			}
-			cName := sanitizeVarName(bind.name)
-			if g.isCaptured(bind.name) {
-				g.emitLine("QCell* %s = q_new_cell(%s(%s));", cName, accessor, matchTemp)
-				g.markCell(bind.name)
+			sym := g.varSym(bind.node)
+			value := fmt.Sprintf("%s(%s)", accessor, matchTemp)
+			if sym.Storage == ir.StorageCell {
+				g.declareCaptured(sym, value)
 			} else {
-				g.emitLine("QValue %s = %s(%s);", cName, accessor, matchTemp)
+				g.emitLine("QValue %s = %s;", sym.CName, value)
 			}
-			g.declaredVars[bind.name] = true
 		}
 		result := g.generateExpr(resultExprNode)
 		g.emitLine("%s = %s;", temp, result)
-		g.popScope()
 		g.indentLevel--
 	}
 
@@ -2120,7 +1831,7 @@ func (g *Generator) emitRangeScalar(argNode *ast.TreeNode, sig, what string) str
 }
 
 // generateForRange emits a raw C++ for-loop for `for i in range(...)`.
-func (g *Generator) generateForRange(cVarName string, varName string, args []*ast.TreeNode, bodyNode *ast.TreeNode) string {
+func (g *Generator) generateForRange(cVarName string, args []*ast.TreeNode, bodyNode *ast.TreeNode) string {
 	startTemp := g.newTemp()
 	endTemp := g.newTemp()
 	stepTemp := g.newTemp()
@@ -2148,26 +1859,28 @@ func (g *Generator) generateForRange(cVarName string, varName string, args []*as
 		stepTemp, cVarName, endTemp, cVarName, endTemp,
 		cVarName, stepTemp)
 	g.indentLevel++
-
-	g.pushBlockScope()
-	g.declaredVars[varName] = true
-	g.markTier(varName, "long long")
-
-	if bodyNode.NodeType == ast.BlockNode {
-		for _, stmt := range bodyNode.Children {
-			expr := g.generateExpr(stmt)
-			g.emitStmtExpr(stmt, expr)
-		}
-	} else {
-		expr := g.generateExpr(bodyNode)
-		g.emitStmtExpr(bodyNode, expr)
-	}
-
-	g.popScope()
+	g.emitBody(bodyNode)
 	g.indentLevel--
 	g.emitLine("}")
 
 	return "qv_null()"
+}
+
+// emitBody emits a loop body as statements: through generateBlock, so its
+// `fn` declarations are hoisted and each statement sets its source location.
+func (g *Generator) emitBody(body *ast.TreeNode) {
+	if body == nil {
+		return
+	}
+	if body.NodeType != ast.BlockNode {
+		g.emitSourceLoc(body)
+		g.emitStmtExpr(body, g.generateExpr(body))
+		return
+	}
+	last := g.generateBlock(body)
+	if n := len(body.Children); n > 0 {
+		g.emitStmtExpr(body.Children[n-1], last)
+	}
 }
 
 func (g *Generator) generateFor(node *ast.TreeNode) string {
@@ -2179,24 +1892,14 @@ func (g *Generator) generateFor(node *ast.TreeNode) string {
 	rangeNode := node.Children[1]
 	bodyNode := node.Children[2]
 
-	varName := varNode.TokenLiteral()
-	cVarName := sanitizeVarName(varName)
-	emitLoopBody := func() {
-		if bodyNode.NodeType == ast.BlockNode {
-			for _, stmt := range bodyNode.Children {
-				expr := g.generateExpr(stmt)
-				g.emitStmtExpr(stmt, expr)
-			}
-		} else {
-			expr := g.generateExpr(bodyNode)
-			g.emitStmtExpr(bodyNode, expr)
-		}
-	}
+	sym := g.varSym(varNode)
+	cVarName := sym.CName
+	emitLoopBody := func() { g.emitBody(bodyNode) }
 
 	// Range lowering: emit raw C++ loop instead of list allocation.
-	if !g.isCaptured(varName) {
+	if sym.Storage == ir.StorageInt {
 		if rangeArgs, isRange := g.isRangeCall(rangeNode); isRange {
-			return g.generateForRange(cVarName, varName, rangeArgs, bodyNode)
+			return g.generateForRange(cVarName, rangeArgs, bodyNode)
 		}
 	}
 
@@ -2213,28 +1916,19 @@ func (g *Generator) generateFor(node *ast.TreeNode) string {
 		g.emitLine("for (long long %s = 0; %s < %s; %s++) {", idxTemp, idxTemp, lenTemp, idxTemp)
 		g.indentLevel++
 
-		g.pushBlockScope()
-		g.declaredVars[varName] = true // Loop variable is declared
-		if g.isCaptured(varName) {
-			g.emitLine("QCell* %s = q_new_cell(q_iter_get(%s, qv_int(%s)));", cVarName, listTemp, idxTemp)
-			g.markCell(varName)
-		} else {
-			// Use scalar storage for loop variable if the iterable has a known element type.
-			loopVarTier := g.loopVarTier(rangeNode)
-			if loopVarTier != "" {
-				field := unboxFieldAccessor(loopVarTier)
-				g.emitLine("%s %s = q_iter_get(%s, qv_int(%s)).data.%s;",
-					loopVarTier, cVarName, listTemp, idxTemp, field)
-				g.markTier(varName, loopVarTier)
-			} else {
-				g.emitLine("QValue %s = q_iter_get(%s, qv_int(%s));", cVarName, listTemp, idxTemp)
-				delete(g.varTiers, varName) // clear any inherited scalar tier from outer scope
-			}
+		elem := fmt.Sprintf("q_iter_get(%s, qv_int(%s))", listTemp, idxTemp)
+		switch {
+		case sym.Storage == ir.StorageCell:
+			g.declareCaptured(sym, elem)
+		case sym.Storage.IsScalar():
+			// The element type the analyzer inferred (architecture.md §12.6).
+			g.emitLine("%s %s = %s.data.%s;", sym.Storage.CType(), cVarName, elem, unboxFieldAccessor(sym.Storage.CType()))
+		default:
+			g.emitLine("QValue %s = %s;", cVarName, elem)
 		}
 
 		emitLoopBody()
 
-		g.popScope()
 		g.indentLevel--
 		g.emitLine("}")
 	}
@@ -2242,8 +1936,8 @@ func (g *Generator) generateFor(node *ast.TreeNode) string {
 	// Fast path: avoid per-element q_iter_get boxing for scalar-tier loops over
 	// valid null-free vectors of the exact matching dtype. Reads the vector's
 	// Arrow-layout buffers directly.
-	if !g.isCaptured(varName) {
-		loopVarTier := g.loopVarTier(rangeNode)
+	if sym.Storage.IsScalar() {
+		loopVarTier := sym.Storage.CType()
 		dtype := ""
 		elemExpr := ""
 		switch loopVarTier {
@@ -2272,12 +1966,8 @@ func (g *Generator) generateFor(node *ast.TreeNode) string {
 			g.emitLine("for (long long %s = 0; %s < (long long)%s.count; %s++) {", idxTemp, idxTemp, vecRef, idxTemp)
 			g.indentLevel++
 
-			g.pushBlockScope()
-			g.declaredVars[varName] = true
 			g.emitLine("%s %s = %s;", loopVarTier, cVarName, elemExpr)
-			g.markTier(varName, loopVarTier)
 			emitLoopBody()
-			g.popScope()
 
 			g.indentLevel--
 			g.emitLine("}")
@@ -2311,17 +2001,7 @@ func (g *Generator) generateWhile(node *ast.TreeNode) string {
 	}
 	g.emitLine("while (%s) {", whileCond)
 	g.indentLevel++
-
-	// Generate body
-	if bodyNode.NodeType == ast.BlockNode {
-		for _, stmt := range bodyNode.Children {
-			expr := g.generateExpr(stmt)
-			g.emitStmtExpr(stmt, expr)
-		}
-	} else {
-		expr := g.generateExpr(bodyNode)
-		g.emitStmtExpr(bodyNode, expr)
-	}
+	g.emitBody(bodyNode)
 
 	g.indentLevel--
 	g.emitLine("}")
@@ -2431,52 +2111,14 @@ func (g *Generator) generateResult(node *ast.TreeNode) string {
 	return fmt.Sprintf("qv_ok(%s)", value)
 }
 
+// generateVarDecl emits `name: T = value`. The variable is stored as its
+// declared type, and the value is checked against it when the analyzer
+// couldn't prove its type (storeValue).
 func (g *Generator) generateVarDecl(node *ast.TreeNode) string {
 	if len(node.Children) < 3 {
 		return "qv_null()"
 	}
-	nameNode := node.Children[0]
-	valueNode := node.Children[2]
-	name := nameNode.TokenLiteral()
-	cName := sanitizeVarName(name)
-	value := g.generateExpr(valueNode)
-	if g.declaredVars[name] {
-		if g.isCell(name) {
-			g.emitLine("%s->value = %s;", cName, value)
-			return fmt.Sprintf("%s->value", cName)
-		}
-		tier := g.tierOf(name)
-		if tier != "" {
-			g.emitLine("%s = %s;", cName, unboxForTier(value, tier, g.nodeType(valueNode)))
-			return cName
-		}
-		g.emitLine("%s = %s;", cName, value)
-		return cName
-	}
-	if g.isCaptured(name) {
-		g.emitLine("QCell* %s = q_new_cell(qv_null());", cName)
-		g.emitLine("%s->value = %s;", cName, value)
-		g.declaredVars[name] = true
-		g.markCell(name)
-		return fmt.Sprintf("%s->value", cName)
-	}
-	declType := g.nodeType(node)
-	rhsType := g.nodeType(valueNode)
-	if declType == nil || !declType.Equals(types.TypeAny) {
-		if tier := nativeCType(rhsType); tier != "" {
-			rawValue, rawTier := g.scalarExpr(valueNode)
-			if rawTier == "" {
-				rawValue = unboxForTier(value, tier, nil)
-			}
-			g.emitLine("%s %s = %s;", tier, cName, rawValue)
-			g.declaredVars[name] = true
-			g.markTier(name, tier)
-			return cName
-		}
-	}
-	g.emitLine("QValue %s = %s;", cName, value)
-	g.declaredVars[name] = true
-	return cName
+	return g.assignSym(node.Children[0], node.Children[2])
 }
 
 func (g *Generator) generateLambdaExpr(node *ast.TreeNode) string {
@@ -2500,8 +2142,8 @@ func (g *Generator) generateLambdaExpr(node *ast.TreeNode) string {
 		// Emit closure allocation with captured values
 		clTemp := g.newTemp()
 		g.emitLine("QClosure* %s = q_alloc_closure((void*)quark_%s, &%s, %d);", clTemp, lambdaName, fnInfoSymbol(lambdaName), len(caps))
-		for i, capName := range caps {
-			g.emitLine("%s->captures[%d] = %s;", clTemp, i, sanitizeVarName(capName))
+		for i, sym := range caps {
+			g.emitLine("%s->captures[%d] = %s;", clTemp, i, sym.CName)
 		}
 		valTemp := g.newTemp()
 		g.emitLine("QValue %s; %s.type = QValue::VAL_FUNC; %s.data.func_val = %s;", valTemp, valTemp, valTemp, clTemp)
@@ -2528,22 +2170,14 @@ func (g *Generator) generateLambdaFunc(node *ast.TreeNode) {
 	// If this lambda is a named native function, delegate to the native path.
 	// generateNativeFunction already emits the thunk at the end.
 	if proto, isNative := g.nativeFns[lambdaName]; isNative {
-		g.generateNativeFunction(node, lambdaName, argsNode, bodyNode, proto)
+		g.generateNativeFunction(lambdaName, argsNode, bodyNode, proto)
 		return
 	}
 
-	g.currentFuncNode = node
-	g.pushScope() // Create new scope for lambda
-
 	// Build parameter list: QClosure* _cl as hidden first param, then user params
 	params := []string{"QClosure* _cl"}
-	for _, param := range argsNode.Children {
-		paramName := g.paramName(param)
-		if paramName == "" {
-			continue
-		}
-		cParamName := sanitizeArgName(paramName)
-		params = append(params, fmt.Sprintf("QValue %s", cParamName))
+	for _, sym := range g.paramSyms(argsNode) {
+		params = append(params, "QValue "+paramArgName(sym))
 	}
 
 	g.emit("QValue quark_%s(%s) {\n", lambdaName, strings.Join(params, ", "))
@@ -2552,16 +2186,16 @@ func (g *Generator) generateLambdaFunc(node *ast.TreeNode) {
 
 	g.emitParamBindings(argsNode, g.lambdaDisplayName(node))
 
-	// Extract captured variables from closure — always QCell* (shared with outer scope)
+	// Captured variables are cells shared with the scope that declared them.
+	// One that a hoisted fn captures may still be unassigned when this runs,
+	// so it is read with q_cell_get.
 	savedChecked := g.checkedCells
-	g.checkedCells = g.checkedCaptures[node]
+	g.checkedCells = map[*types.Symbol]bool{}
 	defer func() { g.checkedCells = savedChecked }()
-	if caps, ok := g.captures[node]; ok {
-		for i, capName := range caps {
-			cName := sanitizeVarName(capName)
-			g.emitLine("QCell* %s = _cl->captures[%d];", cName, i)
-			g.declaredVars[capName] = true
-			g.markCell(capName)
+	for i, sym := range g.captures[node] {
+		g.emitLine("QCell* %s = _cl->captures[%d];", sym.CName, i)
+		if sym.Hoisted {
+			g.checkedCells[sym] = true
 		}
 	}
 
@@ -2572,9 +2206,6 @@ func (g *Generator) generateLambdaFunc(node *ast.TreeNode) {
 
 	g.indentLevel--
 	g.emit("}\n\n")
-
-	g.popScope() // Restore previous scope
-	g.currentFuncNode = nil
 }
 
 // emitStructDefs emits static QStructDef constants for each registered struct type.
@@ -2619,72 +2250,15 @@ func (g *Generator) emitStructDefs() {
 // mismatch is a runtime error instead of a garbage read.
 func (g *Generator) checkedFieldValue(st *types.StructType, field types.StructField, valueNode *ast.TreeNode, value string) string {
 	ft := field.Type
-	if ft == nil || ft.Equals(types.TypeAny) {
+	if ft == nil || ft.Equals(types.TypeAny) || g.proven(ft, valueNode) {
 		return value
 	}
-	vt := g.nodeType(valueNode)
-	proven := vt != nil && !types.IsErrorType(vt) && !vt.Equals(types.TypeAny)
-	if _, isUnion := vt.(*types.UnionType); isUnion {
-		proven = false
-	}
-	sname := escapeCppString(g.names.Display(st.Name))
-	fname := escapeCppString(field.Name)
-	switch {
-	case ft.Equals(types.TypeInt):
-		if proven && vt.Equals(types.TypeInt) {
-			return value
-		}
-		return fmt.Sprintf("q_field_int(%s, \"%s\", \"%s\")", value, sname, fname)
-	case ft.Equals(types.TypeFloat):
-		if proven && vt.Equals(types.TypeFloat) {
-			return value
-		}
-		return fmt.Sprintf("q_field_float(%s, \"%s\", \"%s\")", value, sname, fname)
-	case ft.Equals(types.TypeBool):
-		if proven && vt.Equals(types.TypeBool) {
-			return value
-		}
-		return fmt.Sprintf("q_field_bool(%s, \"%s\", \"%s\")", value, sname, fname)
-	}
-	if fst, ok := ft.(*types.StructType); ok {
-		if vst, ok := vt.(*types.StructType); proven && ok && vst.Name == fst.Name {
-			return value
-		}
-		if proven && vt.Equals(types.TypeNull) {
-			return value
-		}
-		return fmt.Sprintf("q_field_struct(%s, &_sdef_%s, \"%s\", \"%s\")", value, sanitizeVarName(fst.Name), sname, fname)
-	}
-	var key string
-	switch t := ft.(type) {
-	case *types.ListType:
-		key = "list"
-	case *types.DictType:
-		key = "dict"
-	case *types.VectorType:
-		key = "vec"
-	case *types.ResultType:
-		key = "result"
-	case *types.FunctionType:
-		key = "fn"
-	default:
-		switch {
-		case t.Equals(types.TypeString):
-			key = "str"
-		case t.Equals(types.TypeResource):
-			key = "resource"
-		case t.Equals(types.TypeFn):
-			key = "fn"
-		}
-	}
-	check, ok := paramTagChecks[key]
+	c, ok := checkFor(ft)
 	if !ok {
 		return value
 	}
-	if proven && types.CanAssign(ft, vt) {
-		return value
-	}
-	return fmt.Sprintf("q_field_check(%s, QValue::%s, %t, \"%s\", \"%s\", \"%s\")", value, check.tag, check.allowNull, key, sname, fname)
+	args := fmt.Sprintf("\"%s\", \"%s\"", escapeCppString(g.names.Display(st.Name)), escapeCppString(field.Name))
+	return c.call("field", value, args)
 }
 
 // generateStructLiteral emits code to construct a struct value.

@@ -24,6 +24,7 @@ func (a *Analyzer) analyzeCompilationUnit(node *ast.TreeNode) Type {
 	}
 	lastType := a.analyzeStatements(node, node.Children)
 	a.finalizeFixedFns()
+	a.finalizeSymbols()
 	return lastType
 }
 
@@ -165,6 +166,8 @@ func (a *Analyzer) analyzeLambda(node *ast.TreeNode) Type {
 		if spec.name == "" {
 			continue
 		}
+		// An annotation, or else a literal default, gives the parameter its
+		// type; either is checked on entry, however the function is called.
 		var paramType Type
 		if spec.typeNode != nil {
 			paramType = a.resolveTypeNode(spec.typeNode)
@@ -173,7 +176,7 @@ func (a *Analyzer) analyzeLambda(node *ast.TreeNode) Type {
 		} else {
 			paramType = TypeAny
 		}
-		sym := a.currentScope.Define(spec.name, paramType, true)
+		sym := a.declareSym(spec.name, paramType, true, SymParam, paramType, spec.nameNode)
 		a.trackParam(sym, owner, len(paramSyms))
 		paramSyms = append(paramSyms, sym)
 		paramTypes = append(paramTypes, paramType)
@@ -196,8 +199,7 @@ func (a *Analyzer) analyzeLambda(node *ast.TreeNode) Type {
 	freeSyms := []*Symbol{}
 	seen := map[string]bool{}
 	a.collectFreeVars(bodyNode, lambdaScope, paramNames, seen, &freeVars, &freeSyms)
-	if len(freeVars) > 0 {
-		a.captures[node] = freeVars
+	if len(freeSyms) > 0 {
 		a.captureSyms[node] = freeSyms
 	}
 

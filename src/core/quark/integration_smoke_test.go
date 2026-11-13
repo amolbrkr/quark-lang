@@ -646,6 +646,20 @@ func TestSmokePrograms_Run(t *testing.T) {
 			),
 		},
 		{
+			name: "storage",
+			file: filepath.Join(testfilesDir, "smoke_storage.qrk"),
+			expected: join(
+				"== smoke: variable storage ==",
+				"3.0", "2.5", "float",
+				"3.0", "1.0", "1.0", "1.0", "2.0",
+				"42", "2.0",
+				"outer", "inner", "1",
+				"6",
+				"0", "10", "0", "1",
+				"6.0",
+			),
+		},
+		{
 			name: "shadowing",
 			file: filepath.Join(testfilesDir, "smoke_shadowing.qrk"),
 			expected: join(
@@ -873,6 +887,23 @@ func TestSemanticsSafety_Rejected(t *testing.T) {
 		{"dynamic_method_unknown", "fn id(x) -> x\nid(5).frobnicate()\n", "no type has a method 'frobnicate'"},
 		{"dynamic_method_arity", "fn id(x) -> x\nid('a').split()\n", "method 'split' expects 1 argument but got 0"},
 		{"dynamic_method_arg_type", "fn id(x) -> x\nid('a').split(5)\n", "argument 1 of 'split' expects str, got int"},
+		// A typed declaration holds a value of its type: a value of unknown
+		// type is checked when it is stored (an int widens to float).
+		{"decl_int_from_any", "fn id(v) -> v\nx: int = id('hello')\ny = x\nprint(y + 1)\n", "variable 'x' is declared int but got str"},
+		{"decl_float_from_any", "fn id(v) -> v\nx: float = id('s')\n", "variable 'x' is declared float but got str"},
+		{"decl_bool_from_any", "fn id(v) -> v\nb: bool = id(1)\n", "variable 'b' is declared bool but got int"},
+		{"decl_str_from_any", "fn id(v) -> v\nx: str = id(5)\nprint(x)\n", "variable 'x' is declared str but got int"},
+		{"decl_str_from_null", "fn id(v) -> v\ns: str = id(null)\n", "variable 's' is declared str but got null"},
+		{"decl_list_from_any", "fn id(v) -> v\nl: list = id('s')\n", "variable 'l' is declared list but got str"},
+		{"decl_result_from_any", "fn id(v) -> v\nr: result = id(5)\n", "variable 'r' is declared result but got int"},
+		{"decl_struct_other", "struct P:\n    n: int\nstruct Q:\n    n: int\nfn id(v) -> v\np: P = id(Q { n: 1 })\n", "variable 'p' is declared P but got Q"},
+		{"decl_captured_from_any", "fn id(v) -> v\nx: int = id('s')\nf = fn() -> x\nprint(f())\n", "variable 'x' is declared int but got str"},
+		{"decl_in_fn_from_any", "fn id(v) -> v\nfn f(a) ->\n    n: int = a\n    n + 1\nprint(f(id('s')))\n", "variable 'n' is declared int but got str"},
+		// A parameter typed by a literal default is checked on entry like an
+		// annotated one.
+		{"default_typed_param_int", "fn foo(y = 0) ->\n    z = y\n    z + 1\nfn id(v) -> v\nprint(foo(id('abc')))\n", "argument 'y' of 'foo' expects int, got str"},
+		{"default_typed_param_str", "fn id(v) -> v\nfn g(s = 'a') -> s.upper()\nprint(g(id(5)))\n", "argument 's' of 'g' expects str, got int"},
+		{"default_typed_lambda_param", "fn id(v) -> v\nh = fn(n = 1) -> n * 2\nprint(h(id('x')))\n", "argument 'n' of 'h' expects int, got str"},
 		// A pipe is the call with the piped input as its first argument, and is
 		// checked like one.
 		{"pipe_target_not_call", "x = 1\nprint(x | len)\n", "pipe target must be a function call"},
@@ -1558,6 +1589,8 @@ func TestRuntimeErrorLocations(t *testing.T) {
 		"lib/helpers.qrk": "module helpers:\n    fn bad(x) ->\n        x + 'oops'\n",
 		"in_module.qrk":   "incl './lib/helpers' as h\nprint(h::bad(1))\n",
 		"in_stdlib.qrk":   "incl 'std/random' as random\n\nprint(random::randint(5, 1))\n",
+		"in_for_body.qrk": "for r in list [1, 2]:\n    x = r\n    print(r % 0)\n",
+		"in_while.qrk":    "i = 0\nwhile i < 1:\n    i = i + 1\n    print(i + 'a')\n",
 	}
 	for name, src := range files {
 		if err := os.WriteFile(filepath.Join(tmp, name), []byte(src), 0o644); err != nil {
@@ -1569,6 +1602,9 @@ func TestRuntimeErrorLocations(t *testing.T) {
 		{"in_module.qrk", "lib/helpers.qrk:3:11"},
 		// Errors raised inside std/ modules point at the user's call.
 		{"in_stdlib.qrk", "in_stdlib.qrk:3:6"},
+		// Loop bodies set the location of each statement, not just the loop's.
+		{"in_for_body.qrk", "in_for_body.qrk:3:"},
+		{"in_while.qrk", "in_while.qrk:4:"},
 	}
 	for _, tc := range cases {
 		cmd := exec.Command(quarkExePath, "run", tc.file)

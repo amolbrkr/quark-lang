@@ -33,14 +33,20 @@ func (a *Analyzer) analyzeModule(node *ast.TreeNode) Type {
 // Analysis is everything the analyzer hands to the invariant checks and to
 // codegen. New analyzer outputs belong here so every consumer picks them up.
 type Analysis struct {
-	Captures           map[*ast.TreeNode][]string
-	CallPlans          map[*ast.TreeNode]*ir.CallPlan
-	ReturnValidation   map[*ast.TreeNode]bool
-	CapturedByFunction map[*ast.TreeNode]map[string]bool
-	NodeTypes          map[*ast.TreeNode]Type
-	NativeFns          map[string]*ir.CallPlan
-	ExternFns          map[string]*ir.CallPlan
-	StructTypes        map[string]*StructType
+	CallPlans        map[*ast.TreeNode]*ir.CallPlan
+	ReturnValidation map[*ast.TreeNode]bool
+	NodeTypes        map[*ast.TreeNode]Type
+	// Refs maps every identifier node the analyzer resolved (reads,
+	// assignment targets, declarations, parameters, loop variables, when
+	// bindings, fn names) to its symbol. A symbol's Storage and CName say how
+	// codegen declares and accesses it; its Decl node is where it is declared.
+	Refs map[*ast.TreeNode]*Symbol
+	// Captures lists, per lambda, the symbols its closure captures, in
+	// capture-slot order.
+	Captures    map[*ast.TreeNode][]*Symbol
+	NativeFns   map[string]*ir.CallPlan
+	ExternFns   map[string]*ir.CallPlan
+	StructTypes map[string]*StructType
 	// Names maps the loader's internal names to the names users write.
 	Names names.Table
 
@@ -49,31 +55,27 @@ type Analysis struct {
 	// declaration needing no closure to it: codegen emits its C++ function
 	// (or thunk) instead of reading a binding. HoistScopes is keyed by the
 	// CompilationUnit, module body or block that declares functions.
-	// CheckedCaptures lists, per lambda, the captured variables whose cells
-	// may still be unassigned when the lambda runs.
-	FixedFns        map[*ast.TreeNode]*FixedFn
-	FnRefs          map[*ast.TreeNode]*FixedFn
-	HoistScopes     map[*ast.TreeNode]*HoistScope
-	CheckedCaptures map[*ast.TreeNode]map[string]bool
+	FixedFns    map[*ast.TreeNode]*FixedFn
+	FnRefs      map[*ast.TreeNode]*FixedFn
+	HoistScopes map[*ast.TreeNode]*HoistScope
 }
 
 // Analysis returns the analyzer outputs for root, which must be the tree
 // passed to Analyze.
 func (a *Analyzer) Analysis(root *ast.TreeNode) *Analysis {
 	return &Analysis{
-		Captures:           a.captures,
-		CallPlans:          a.callPlans,
-		ReturnValidation:   a.returnValidated,
-		CapturedByFunction: a.GetCapturedByFunction(root),
-		NodeTypes:          a.nodeTypes,
-		NativeFns:          a.nativeFns,
-		ExternFns:          a.externFns,
-		StructTypes:        a.structTypes,
-		Names:              a.names,
-		FixedFns:           a.fixedByLambda,
-		FnRefs:             a.fixedRefs,
-		HoistScopes:        a.hoistScopes,
-		CheckedCaptures:    a.checkedCaptures,
+		CallPlans:        a.callPlans,
+		ReturnValidation: a.returnValidated,
+		Refs:             a.refs,
+		Captures:         a.captureSyms,
+		NodeTypes:        a.nodeTypes,
+		NativeFns:        a.nativeFns,
+		ExternFns:        a.externFns,
+		StructTypes:      a.structTypes,
+		Names:            a.names,
+		FixedFns:         a.fixedByLambda,
+		FnRefs:           a.fixedRefs,
+		HoistScopes:      a.hoistScopes,
 	}
 }
 
@@ -287,48 +289,4 @@ func receiverStringToNativeCType(s string) string {
 		return "QVector*"
 	}
 	return "QValue"
-}
-
-// GetCapturedByFunction returns, for each function or lambda node, the set of
-// variable names that any directly-nested lambda captures from that scope.
-// Codegen uses this to decide: QCell* (captured) vs QValue (stack-local).
-func (a *Analyzer) GetCapturedByFunction(root *ast.TreeNode) map[*ast.TreeNode]map[string]bool {
-	result := make(map[*ast.TreeNode]map[string]bool)
-	if root == nil || len(a.captures) == 0 {
-		return result
-	}
-
-	// Walk the AST tracking the immediately enclosing function/lambda for each node.
-	// When we hit a LambdaNode that has captures, attribute those names to its
-	// enclosing function/lambda — that is the scope that owns the variables.
-	var walk func(n *ast.TreeNode, enclosing *ast.TreeNode)
-	walk = func(n *ast.TreeNode, enclosing *ast.TreeNode) {
-		if n == nil {
-			return
-		}
-		if n.NodeType == ast.LambdaNode {
-			if enclosing != nil {
-				if names, ok := a.captures[n]; ok {
-					if result[enclosing] == nil {
-						result[enclosing] = make(map[string]bool)
-					}
-					for _, name := range names {
-						result[enclosing][name] = true
-					}
-				}
-			}
-			// Children of this lambda are now enclosed by it.
-			for _, child := range n.Children {
-				walk(child, n)
-			}
-			return
-		}
-		for _, child := range n.Children {
-			walk(child, enclosing)
-		}
-	}
-	// Pass root as the enclosing scope so module-level variables captured
-	// by lambdas are attributed to the root (main) scope.
-	walk(root, root)
-	return result
 }

@@ -8,15 +8,13 @@ Sections follow [Keep a Changelog](https://keepachangelog.com/): **Breaking**, *
 
 ---
 
-## Known issues (as of `5c3d662` plus uncommitted changes)
+## Known issues (as of `b46be3d` plus uncommitted changes)
 
 These were checked against the current compiler on 2026-11-12, in a codebase health review; all of them predate modules v0.2. The structural causes and the plan for them are in `architecture.md` §12.
 
 ### Wrong results with no error
 
-**A value is read with the wrong type.** The compiler trusts a type it inferred wrongly and reads the raw value (codegen `unboxForTier` and the `for` loop element read). Which fix to use is an open design question (`architecture.md` §12.6).
-- Reassigning an int to a variable that held a float: `x = 1.5`, then `x = len(list [1, 2, 3])`, `print(x)` prints `1.5e-323`. The same happens to a `float` parameter or loop variable.
-- A `float` variable declared with an int value is stored as an int: `x: float = len(l)` prints `3`, not `3.0`; `y: float = 3`, then `y = 2.5`, `print(y)` prints `2`, and `type(y)` is `int`.
+**A value is read with the wrong type.** The compiler trusts an element type or narrowed type it inferred wrongly and reads the raw value (codegen `toScalar` for values the analyzer typed exactly, and the `for` loop element read). Which fix to use is an open design question (`architecture.md` §12.6).
 - A list or dict changed through another name keeps its old element type: `a = list [1, 2]`, `b = a`, `b.push('s')`, `for x in a: print(x)` prints `1`, `2`, then a number such as `139966802534384`. The same happens when the change goes through a function (`fn add(xs) -> xs.push('x')`, then `add(l)`), through `l[0] = 'str'` on a list of ints, through `d.b = 'hello'` on a dict of ints (only a warning), through `d.set` inside a function, and for the results of `l.concat(list ['a'])` and `l.push('x')`. In a loop, a read before a `push` gets garbage on the second iteration.
 - Pushing an int into a float list: `l = list [1.5]`, `l.push(2)`, `for e in l: print(e)` prints `1.5`, then `1e-323`. `d.b = 2` on a dict of floats does the same.
 - Pushing an `any` value into a list: `fn id(v) -> v`, `zs = list [1, 2]`, `zs.push(id('hello'))`, `w = zs[2]`, `print(w + 1)` prints a number.
@@ -34,9 +32,6 @@ These were checked against the current compiler on 2026-11-12, in a codebase hea
 - A `while` condition containing a method call is computed once: `while x.contains('a'):` / `x = x.replace('a', 'b')` never ends.
 - `f().contains(g().upper())` calls `g` before `f`.
 
-**Names.**
-- A variable named `_lambda1` collides with the compiler's first lambda: `_lambda1 = 5`, `f = fn(x) -> x + 1`, `print(f(_lambda1))` crashes with exit code 255 and no message. `fn _lambda1()` plus any lambda fails in clang (`redefinition`).
-
 **Runtime numbers and edge cases.**
 - List and string indexes are cut to 32 bits: `list [10, 20, 30].get(4294967296)` returns `10`, `xs.set(4294967297, 99)` writes element 1, `'abc'[4294967297]` is `'b'`.
 - `abs(-9223372036854775807 - 1)` returns `0`.
@@ -53,11 +48,8 @@ These were checked against the current compiler on 2026-11-12, in a codebase hea
 
 ### Fails loudly, but with a C++ error, a wrong location or a misleading message
 
-- A `fn` declared inside a `for` or `while` body fails in clang: `for i in range(3):` / `fn f() -> i * 10` / `print(f())` gives `use of undeclared identifier 'quark_f'`. In an `if` body it works.
-- A variable first assigned in a `while` body and assigned again after the loop fails in clang: `while i < 1:` / `y = 5` / ..., then `y = 6` gives `use of undeclared identifier 'quark_y'`.
 - An `elseif` whose condition calls a method fails in clang: `elseif name().upper() == 'B':` gives `expected expression`.
 - A prelude builtin used as a value passes the checker and fails in clang: `f = len`, then `print(f('ab'))`, or `print(len)`, gives `use of undeclared identifier 'quark_len'`. Extern fns used as values work (they have thunks).
-- A runtime error inside a `for` loop body is reported at the `for` line, not at the statement that failed. For example, `print(r % 0)` on line 4 of a loop starting on line 2 reports `modulo by zero at file.qrk:2:1`.
 - `struct S` inside a `fn` body fails with `internal: struct 'S' not pre-declared`.
 - A call written above a `fn` declaration is checked less than one below it. `print(apply(fn(a, b) -> a + b))` above `fn apply(k) -> k(1)` is a runtime error, below it a compile error. The same for `print(f(5))` above `fn f(r: result)`.
 - Calling a function value with more than 12 arguments compiles and always fails at runtime (`function call supports up to 12 arguments, got 13`); it could be a compile error.
@@ -67,9 +59,49 @@ These were checked against the current compiler on 2026-11-12, in a codebase hea
 
 ---
 
+## 2026-11-13: Table engine and CSV reader (runtime only)
+
+Commits: not yet committed
+
+Nothing here is reachable from Quark code yet: the `tbl` type, queries and the `std/csv` bindings are the next step (`tables_v0_1_spec.md`, Revision 2, which records the design decisions of this day).
+
+### Internal
+- **Table engine** (`runtime/include/quark/table/engine.hpp`, namespace `quark::tbl`): the kernels behind the planned verbs, working on raw column buffers. `make_table`, `take`/`take_table` (row gathering for filter and sort), `sort_perm`/`sort_table` (stable, several keys, nulls last, a fast path for one dense numeric key), `group_rows` (hash grouping, groups in key order, nulls last) and the aggregates `agg_count`, `agg_count_values`, `agg_sum`, `agg_mean`, `agg_min`, `agg_max`. Missing values follow `na.rm = TRUE`. Row indices are int32. On 500K rows: group + mean 23 ms, sort by one float key 97 ms.
+- **CSV/TSV reader and writer** (`runtime/include/quark/table/csv.hpp`, namespace `quark::csv`): parses straight into typed columns, with a schema or with types inferred from every value. Handles quoted separators and line breaks, `""` escapes, CRLF/CR/LF, a BOM, blank lines, spaces around values, and `""`/`NA` as missing. Columns are matched to the header by name. Malformed input is an error naming the file, line, column and text (`staff.csv:412: column 'salary': '12k' is not a float (and 3 more problems)`), never a silent null. A 27.6 MB, 500K-row file reads in 219 ms typed. Float parsing uses `std::from_chars` where the standard library supports it.
+- Neither header is included by `quark.hpp`, so programs that don't use tables don't compile them.
+- Tests: `TestTableEngine` compiles and runs `src/testfiles/table/engine_test.cpp` (53 checks) and `csv_test.cpp` (52 checks, including messy input, every error path, inference and a TSV round trip) at `-O2` with `-Werror`; `TestTableEngine_FatalErrors` checks the engine's runtime errors (int overflow in `sum`, `sum`/`mean` of a str column, columns of different lengths).
+
+## 2026-11-13: Variable storage decided by the analyzer (architecture §12.8 step 2)
+
+Commits: not yet committed
+
+### Breaking
+- **A typed declaration checks its value.** `x: int = v`, where the compiler can't know `v`'s type (a value from an unannotated function, `unwrap`, a dict), is now a runtime error when `v` isn't an int: `variable 'x' is declared int but got str`. It used to store the value unchecked, so `x` held a string the compiler treated as an int (see Fixed). The rules are those of parameters: an int widens to `float`, `list`/`dict`/`vec`/`fn`/`resource` and structs accept `null`, `str` and `result` don't.
+- **A parameter typed by a literal default is checked on entry.** `fn foo(y = 0)` makes `y` an `int` parameter, as calls with a known argument type already showed (`foo('a')` was a compile error). A call with a value of unknown type is now checked like an annotated parameter: `fn id(v) -> v`, then `foo(id('abc'))` stops with `argument 'y' of 'foo' expects int, got str`. A float default widens an int: `fn scale(r = 0.5) -> r * 2`, `scale(id(3))` returns `6.0`.
+- **A `float` variable always holds a float.** An int assigned to it is widened, so it prints with a decimal point: `x = 1.5`, then `x = 2`, `print(x)` prints `2.0`. This also applies to a captured variable (`c = 1.5`, `f = fn() -> c`, `c = 2`, `f()` returns `2.0`, was `2`) and to a `x: float = 3` declaration (`type(x)` is `float`, was `int`).
+
+### Fixed
+- **An int assigned to a `float` variable read back as garbage.** `x = 1.5`, then `x = len(list [1, 2, 3])`, `print(x)` printed `1.5e-323`. The same happened to a `float` parameter (`fn f(a: float) -> a = 2`) and a loop variable over floats. It now prints `3.0`.
+- **A `float` declaration with an int value was stored as an int.** `x: float = len(l)` printed `3`; `y: float = 3`, then `y = 2.5`, printed `2`. They now print `3.0` and `2.5`.
+- **A typed declaration of a value of unknown type wasn't checked**, so reads trusted a type the value didn't have: `fn id(v) -> v`, `x: int = id('hello')`, `y = x`, `print(y + 1)` printed a large number; `x: str = id(5)` gave a `str` variable of type `int`. Both are now runtime errors (see Breaking).
+- **A parameter typed by a literal default wasn't checked at runtime**: `fn foo(y = 0) ->` / `z = y` / `z + 1`, called as `foo(id('abc'))`, printed a large number, and `fn foo(y = 0.5)` called as `foo(id(3))` printed `1.5e-323`.
+- **A variable first assigned in a `while` body and assigned again after the loop failed in clang** (`use of undeclared identifier 'quark_y'`). The two are different variables, as the checker already said, and now compile as two.
+- **A `fn` declared inside a `for` or `while` body failed in clang**: `for i in range(3):` / `fn f() -> i * 10` / `print(f())` now prints `0`, `10`, `20`.
+- **A runtime error inside a `for` or `while` body was reported at the loop's line.** `for r in list [1, 2]:` / `x = r` / `print(r % 0)` now reports `modulo by zero at file.qrk:3:10`.
+- **A variable named `_lambda1` collided with the compiler's first lambda**: `_lambda1 = 5`, `f = fn(x) -> x + 1`, `print(f(_lambda1))` crashed with exit code 255 and no message, and `fn _lambda1()` plus any lambda failed in clang. Every name the compiler generates now starts with `quark___`, which no user name can produce. This also removes a rarer clash between a nested `fn` declaration and a module member (`fn f_` nested in a function, and `module f` with a member `_2`, could get the same C++ name).
+
+### Internal
+- **Symbols** (`architecture.md` §12.8 step 2). Every variable, parameter, loop variable, `when` binding and `fn` declaration is one `types.Symbol` with an `ID`, `Kind`, `StoreType` (the type all its values are known to have) and `Decl` (where codegen declares it). `Analysis.Refs` maps every resolved identifier node to its symbol, and `Analysis.Captures` lists each lambda's captured symbols. `finalizeSymbols` decides each symbol's `ir.Storage` (`ir/storage.go`: cell, int, float, bool or QValue) and its C++ name once, after the captures are final. `Analysis.CapturedByFunction`, `Analysis.CheckedCaptures` and the name-keyed capture lists are removed; `HoistScope.Cells` holds symbols, `FixedFn.Sym` is exported.
+- Codegen no longer keeps scope state: `declaredVars`, `cellVars`, `varTiers`, the scope stacks, `currentFuncNode`, `isCaptured` and `loopVarTier` are removed. `codegen/storage.go` holds what's left of storage handling: `varSym`, `readVar`, `assignSym` (declares at `Decl`, assigns otherwise; used by assignments and typed declarations), `storeValue`/`toScalar` (conversion and checks), and one type→check table (`checkFor`) shared by parameters (`q_param_*`), struct fields (`q_field_*`) and typed declarations (`q_var_*`). Loop bodies go through `generateBlock` (`emitBody`).
+- Runtime: `q_var_int`, `q_var_float`, `q_var_bool`, `q_var_check` and `q_var_struct` (`builtins/params.hpp`).
+- Generated names: lambdas `quark___lambdaN`, nested `fn` declarations `quark___fnN_name` (was `quark_name__N`), and a variable sharing its name with an earlier one `quark___v<id>_name`; native thunks name their parameters `_a0`, `_a1`, ...
+- Tests: `smoke_storage.qrk`; 13 `TestSemanticsSafety_Rejected` cases (typed declarations of each kind from `any` and `null`, captured and in-function declarations, default-typed parameters of functions and lambdas); two loop-body cases in `TestRuntimeErrorLocations`.
+
+---
+
 ## 2026-11-12: Function values, `fn` type, call-shape checking, keyword renames, struct field checks, name clashes, `input()` result, fixed `fn` declarations, modules v0.2, compiler cleanup
 
-Commits: `c0ac8cd`, `ac274c0`, `6dc11a0` (keyword renames), `2e62209` (struct fields, dict keys), `4294dab` (name clashes, shadowing, `input()`), `b52660f` (fixed `fn` declarations, modules v0.2 step 1), `5c3d662` (the rest of modules v0.2: `::` names, one scope per file); the compiler cleanup (`architecture.md` §12.8 step 1) not yet committed
+Commits: `c0ac8cd`, `ac274c0`, `6dc11a0` (keyword renames), `2e62209` (struct fields, dict keys), `4294dab` (name clashes, shadowing, `input()`), `b52660f` (fixed `fn` declarations, modules v0.2 step 1), `5c3d662` (the rest of modules v0.2: `::` names, one scope per file); `b46be3d` (compiler cleanup, `architecture.md` §12.8 step 1)
 
 ### Breaking
 - **A pipe is exactly the call it stands for.** `x | f(a)` is parsed as `f(x, a)` and `x | obj.m(a)` as `obj.m(x, a)`, so a pipe can no longer behave differently from the call. The one difference there was: `3 | d.f()` called a function stored under the dict key `f`, while `d.f(3)` was `type 'dict[...]' has no method 'f'`. Both are now that error. To call a function held in a dict, read it first:

@@ -917,7 +917,7 @@ func TestCodegen_IncludesQuarkHeader(t *testing.T) {
 // --- Forward declarations ---
 
 func TestCodegen_ForwardDeclaresLambdas(t *testing.T) {
-	// Anonymous lambdas get generated quark__lambdaN names and forward declarations.
+	// Anonymous lambdas get generated quark___lambdaN names and forward declarations.
 	src := "add = fn(x, y) -> x + y\nprint(add(1, 2))\n"
 	res := testutil.GenerateCPP(src)
 	if len(res.ParserErrors) > 0 {
@@ -927,7 +927,7 @@ func TestCodegen_ForwardDeclaresLambdas(t *testing.T) {
 		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
 	}
 	// Forward declarations should appear before main
-	declIdx := strings.Index(res.CPP, "QValue quark__lambda1(QClosure*")
+	declIdx := strings.Index(res.CPP, "QValue quark___lambda1(QClosure*")
 	mainIdx := strings.Index(res.CPP, "int main(int argc, char** argv)")
 	if declIdx == -1 {
 		t.Fatalf("expected forward declaration for lambda, cpp=\n%s", res.CPP)

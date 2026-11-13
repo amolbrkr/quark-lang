@@ -557,7 +557,9 @@ Each annotated parameter is enforced, whether or not the function's other parame
 - An `int` passed to a `float` parameter is converted to `float`.
 - Reference-type annotations (`list`, `dict`, `vec`, `resource`, `fn`, struct names) also accept `null`, as at compile time. `result` doesn't: a result is always `ok(...)` or `err(...)`, so `null` can't be passed, stored, returned or used as a default where a `result` is expected, and `r == null` / `r != null` on a result is a compile error (use `is_ok`, `is_err` or `when`).
 
-Unannotated parameters accept any value. Inside the body, annotated `int`, `float` and `bool` parameters are native C++ values, so arithmetic on them is unboxed. Fully annotated functions are compiled to native C++ functions, and calls with arguments already known to have the right types pay no check.
+A parameter without an annotation but with a literal default takes the default's type and is enforced the same way: `fn foo(y = 0)` has an `int` parameter, so `foo('a')` is a compile-time error and `foo(v)` with a `v` of unknown type is checked on entry. A `null` default gives no type.
+
+Other unannotated parameters accept any value. Inside the body, annotated `int`, `float` and `bool` parameters are native C++ values, so arithmetic on them is unboxed. Fully annotated functions are compiled to native C++ functions, and calls with arguments already known to have the right types pay no check.
 
 If a parameter has both a type annotation and a default value, the default's type must be assignable to the annotated type.
 
@@ -579,7 +581,9 @@ r: result = ok 1
 v: any = 1
 ```
 
-The annotated type constrains future assignments. Assigning a value of incompatible type is a compile-time error.
+The annotated type constrains the initial value and future assignments. A value of incompatible type is a compile-time error. An initial value whose type isn't known at compile time (from `any`, for example the result of an unannotated function) is checked when it is stored, with the same rules as a parameter (an `int` widens to `float`, reference types accept `null`): `x: int = id('a')` is a runtime error, `variable 'x' is declared int but got str`. So a typed variable never holds a value of another type.
+
+A variable keeps the type of its first value (or its annotation) for its whole life. A `float` variable assigned an `int` holds the widened float: `x = 1.5`, then `x = 2`, `print(x)` prints `2.0`.
 
 Builtin function names (`sum`, `len`, `max`, ...) are bindings that can't be reassigned, so `sum = 0` is a compile-time error, also inside a function body. A parameter may reuse a builtin's name (`fn f(sum) -> sum`). Names declared with `fn` are fixed the same way: `f = ...` or `f: int = ...` after `fn f` is an error.
 

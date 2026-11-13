@@ -15,6 +15,7 @@ func (a *Analyzer) analyzeIdentifier(node *ast.TreeNode) Type {
 		a.errorAt(node, "undefined identifier '%s'", name)
 		return TypeError
 	}
+	a.refs[node] = sym
 	if f := a.fixedFnOf(sym); f != nil {
 		a.fixedRefs[node] = f
 	}
@@ -221,16 +222,17 @@ func (a *Analyzer) assignName(target, value *ast.TreeNode) Type {
 		// analyzed so the lambda can call itself through it.
 		if a.currentScope.LookupLocal(varName) == nil {
 			funcType := functionTypeFromLambdaNodeWithStructs(value, a.structTypes)
-			a.recordDef(a.currentScope.Define(varName, funcType, true), target)
+			a.recordDef(a.declareSym(varName, funcType, true, SymLocal, nil, target), target)
 		}
 		a.pendingFuncName = varName
 	}
 	rightType := a.Analyze(value)
 	sym := a.currentScope.Lookup(varName)
 	if sym == nil {
-		a.recordDef(a.currentScope.Define(varName, rightType, true), target)
+		a.recordDef(a.declareSym(varName, rightType, true, SymLocal, rightType, target), target)
 		return rightType
 	}
+	a.refs[target] = sym
 	a.markParamReassigned(sym)
 	if _, dstIsFunc := sym.Type.(*FunctionType); dstIsFunc {
 		if srcFunc, srcIsFunc := rightType.(*FunctionType); srcIsFunc {
@@ -568,7 +570,7 @@ func (a *Analyzer) analyzeVarDecl(node *ast.TreeNode) Type {
 	if _, srcIsResult := valueType.(*ResultType); srcIsResult {
 		if _, dstIsResult := declType.(*ResultType); !dstIsResult && !isUnknownType(declType) {
 			a.errorAt(nameNode, "[C-TYPE] cannot assign result to '%s'; use 'unwrap()' or 'when' to extract the value", declType.String())
-			a.currentScope.Define(varName, declType, true)
+			a.declareSym(varName, declType, true, SymLocal, declType, nameNode)
 			return declType
 		}
 	}
@@ -583,6 +585,6 @@ func (a *Analyzer) analyzeVarDecl(node *ast.TreeNode) Type {
 		a.errorAt(nameNode, "symbol '%s' already defined in this scope", varName)
 		return declType
 	}
-	a.recordDef(a.currentScope.Define(varName, declType, true), nameNode)
+	a.recordDef(a.declareSym(varName, declType, true, SymLocal, declType, nameNode), nameNode)
 	return declType
 }

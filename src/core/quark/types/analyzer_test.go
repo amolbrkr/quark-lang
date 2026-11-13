@@ -649,7 +649,7 @@ func TestCaptures_ShadowingBindingsAreLocal(t *testing.T) {
 		}
 		for _, names := range analyzer.Analysis.Captures {
 			for _, n := range names {
-				if n == tc.name {
+				if n.Name == tc.name {
 					t.Fatalf("source %q: %q is a local binding but was captured", tc.src, tc.name)
 				}
 			}

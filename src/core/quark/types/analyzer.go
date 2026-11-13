@@ -17,6 +17,7 @@ type builtinSignature struct {
 
 type paramSpec struct {
 	name         string
+	nameNode     *ast.TreeNode
 	typeNode     *ast.TreeNode
 	defaultValue *ast.TreeNode
 }
@@ -27,7 +28,6 @@ type Analyzer struct {
 	errors          []diagnostics.Diagnostic
 	builtins        map[string]*builtinSignature
 	methods         map[builtins.TypeKey]map[string]*builtinSignature // receiver type -> method name -> sig
-	captures        map[*ast.TreeNode][]string                        // Lambda node -> captured variable names
 	callPlans       map[*ast.TreeNode]*ir.CallPlan
 	returnValidated map[*ast.TreeNode]bool
 	nodeTypes       map[*ast.TreeNode]Type // Inferred type of every expression node
@@ -56,23 +56,27 @@ type Analyzer struct {
 	builtinSyms map[string]*Symbol
 
 	// Fixed `fn` declarations (analyzer_fixed.go).
-	rootScope       *Scope
-	curList         *ast.TreeNode // statement list being analyzed, and the index in it
-	curIdx          int
-	fixedBySym      map[*Symbol]*FixedFn
-	fixedByLambda   map[*ast.TreeNode]*FixedFn
-	fixedList       []*FixedFn
-	fixedCalls      []fixedCall
-	fixedRefs       map[*ast.TreeNode]*FixedFn  // identifier nodes naming a declaration
-	captureSyms     map[*ast.TreeNode][]*Symbol // lambda -> symbol of each captured name
-	fnScopes        []*fnScope
-	symDefs         map[*Symbol]symDef
-	hoistScopes     map[*ast.TreeNode]*HoistScope
-	checkedCaptures map[*ast.TreeNode]map[string]bool
+	rootScope     *Scope
+	curList       *ast.TreeNode // statement list being analyzed, and the index in it
+	curIdx        int
+	fixedBySym    map[*Symbol]*FixedFn
+	fixedByLambda map[*ast.TreeNode]*FixedFn
+	fixedList     []*FixedFn
+	fixedCalls    []fixedCall
+	fixedRefs     map[*ast.TreeNode]*FixedFn  // identifier nodes naming a declaration
+	captureSyms   map[*ast.TreeNode][]*Symbol // lambda -> symbol of each captured name
+	fnScopes      []*fnScope
+	symDefs       map[*Symbol]symDef
+	hoistScopes   map[*ast.TreeNode]*HoistScope
 
 	// names maps the loader's internal names back to the names users write;
 	// every diagnostic goes through it.
 	names names.Table
+
+	// Symbols (finalizeSymbols): every declared symbol in declaration order,
+	// and the symbol each resolved identifier node refers to.
+	symbols []*Symbol
+	refs    map[*ast.TreeNode]*Symbol
 }
 
 func NewAnalyzer() *Analyzer {
@@ -109,7 +113,6 @@ func NewAnalyzer() *Analyzer {
 		errors:          make([]diagnostics.Diagnostic, 0),
 		builtins:        builtinSigs,
 		methods:         methodSigs,
-		captures:        make(map[*ast.TreeNode][]string),
 		callPlans:       make(map[*ast.TreeNode]*ir.CallPlan),
 		returnValidated: make(map[*ast.TreeNode]bool),
 		nodeTypes:       make(map[*ast.TreeNode]Type),
@@ -126,8 +129,24 @@ func NewAnalyzer() *Analyzer {
 		captureSyms:     make(map[*ast.TreeNode][]*Symbol),
 		symDefs:         make(map[*Symbol]symDef),
 		hoistScopes:     make(map[*ast.TreeNode]*HoistScope),
-		checkedCaptures: make(map[*ast.TreeNode]map[string]bool),
+		refs:            make(map[*ast.TreeNode]*Symbol),
 	}
+}
+
+// declareSym defines name in the current scope as a symbol of the given kind,
+// declared (in generated C++) at node at. store is the type every value it
+// holds is known to have (nil for any value).
+func (a *Analyzer) declareSym(name string, typ Type, mutable bool, kind SymKind, store Type, at *ast.TreeNode) *Symbol {
+	sym := a.currentScope.Define(name, typ, mutable)
+	sym.ID = len(a.symbols) + 1
+	sym.Kind = kind
+	sym.StoreType = store
+	sym.Decl = at
+	a.symbols = append(a.symbols, sym)
+	if at != nil {
+		a.refs[at] = sym
+	}
+	return sym
 }
 
 // refersToBuiltin reports whether name, read in scope, is the builtin or

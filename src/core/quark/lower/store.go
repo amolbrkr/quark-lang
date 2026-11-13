@@ -50,7 +50,7 @@ func (l *lowerer) storeValue(sym *types.Symbol, valueNode *ast.TreeNode, v Expr)
 	if l.proven(want, valueNode) {
 		return boxed(v)
 	}
-	if c, ok := checkFor(want); ok {
+	if c, ok := l.checkFor(want); ok {
 		return c.check("var", v, []string{cstr(what)})
 	}
 	return boxed(v)
@@ -141,6 +141,11 @@ func (l *lowerer) proven(want types.Type, valueNode *ast.TreeNode) bool {
 		}
 		return vt.Equals(types.TypeNull)
 	}
+	// A table with another (anonymous) row the analyzer accepted by shape
+	// still has to be relabeled, so only a subtype is stored as it is.
+	if _, ok := want.(*types.TableType); ok {
+		return types.IsSubtype(want, vt)
+	}
 	if st := scalarStorage(want); st.IsScalar() {
 		return vt.Equals(want)
 	}
@@ -169,17 +174,26 @@ type typeCheck struct {
 	tag        string
 	allowNull  bool
 	key        string
+	// table is set for tbl annotations; structName is then the row ("" for
+	// a bare tbl).
+	table bool
 }
 
 // checkFor is the check of values of type t; ok is false when any value is
 // allowed.
-func checkFor(t types.Type) (typeCheck, bool) {
+func (l *lowerer) checkFor(t types.Type) (typeCheck, bool) {
 	if t == nil {
 		return typeCheck{}, false
 	}
 	switch tt := t.(type) {
 	case *types.StructType:
 		return typeCheck{structName: tt.Name}, true
+	case *types.TableType:
+		c := typeCheck{table: true, key: l.names.DisplayText(t.String())}
+		if tt.Row != nil {
+			c.structName = tt.Row.Name
+		}
+		return c, true
 	case *types.ListType:
 		return tagCheck("list")
 	case *types.DictType:
@@ -226,6 +240,11 @@ func (c typeCheck) check(family string, v Expr, args []string) Expr {
 		if family != "field" {
 			ch.R = map[string]Rep{"int": RepInt, "float": RepFloat, "bool": RepBool}[c.scalar]
 		}
+	case c.table:
+		ch.Kind = CheckTable
+		if c.structName != "" {
+			ch.StructDef = "_sdef_" + structCName(c.structName)
+		}
 	case c.structName != "":
 		ch.Kind, ch.StructDef = CheckStruct, "_sdef_"+structCName(c.structName)
 	default:
@@ -242,7 +261,7 @@ func (l *lowerer) checkedField(st *types.StructType, field types.StructField, va
 	if ft == nil || ft.Equals(types.TypeAny) || l.proven(ft, valueNode) {
 		return boxed(v)
 	}
-	c, ok := checkFor(ft)
+	c, ok := l.checkFor(ft)
 	if !ok {
 		return boxed(v)
 	}
@@ -275,7 +294,7 @@ func (l *lowerer) checkedReturn(lambda, body *ast.TreeNode, result Expr, display
 	} else if l.proven(want, body) {
 		return boxed(result)
 	}
-	c, ok := checkFor(want)
+	c, ok := l.checkFor(want)
 	if !ok {
 		return boxed(result)
 	}
@@ -310,6 +329,11 @@ func (l *lowerer) elemDesc(t types.Type) string {
 		tag, elem, errDesc = "VAL_RESULT", l.elemDesc(v.OkType), l.elemDesc(v.ErrType)
 	case *types.StructType:
 		tag, sdef = "VAL_STRUCT", "&_sdef_"+structCName(v.Name)
+	case *types.TableType:
+		tag = "VAL_TABLE"
+		if v.Row != nil {
+			sdef = "&_sdef_" + structCName(v.Row.Name)
+		}
 	case *types.VectorType:
 		tag = "VAL_VECTOR"
 		switch {

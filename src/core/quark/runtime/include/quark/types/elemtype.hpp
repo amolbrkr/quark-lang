@@ -27,6 +27,9 @@
 
 // Defined in dict.hpp, after QDict.
 inline const QElemType* q_dict_elem(const QDict* d);
+// Defined in table.hpp, after QTable.
+inline const QStructDef* q_table_def(const QTable* t);
+inline const char* q_table_type_name(const QTable* t);
 
 // q_elem_sub reports whether every value a container with element type have
 // can hold is a value of type want, without conversion.
@@ -41,6 +44,9 @@ inline bool q_elem_sub(const QElemType* have, const QElemType* want) {
             return q_elem_sub(have->elem, want->elem) && q_elem_sub(have->err, want->err);
         case QValue::VAL_STRUCT:
             return have->sdef == want->sdef;
+        case QValue::VAL_TABLE:
+            // A bare `tbl` (sdef nullptr) holds tables of any row.
+            return want->sdef == nullptr || have->sdef == want->sdef;
         case QValue::VAL_VECTOR:
             return want->vdtype < 0 || have->vdtype == want->vdtype;
         default:
@@ -65,6 +71,10 @@ inline bool q_elem_is(const QElemType* t, const QValue& v) {
                    q_elem_is(v.data.result_val->is_ok ? t->elem : t->err, v.data.result_val->payload);
         case QValue::VAL_STRUCT:
             return v.data.struct_val && v.data.struct_val->def == t->sdef;
+        case QValue::VAL_TABLE:
+            // Containers share their elements, so an anonymous row isn't
+            // relabeled here: a tbl[R] element is a table of row R.
+            return v.data.table_val && (t->sdef == nullptr || q_table_def(v.data.table_val) == t->sdef);
         case QValue::VAL_VECTOR:
             return t->vdtype < 0 || (v.data.vector_val && static_cast<int>(v.data.vector_val->type) == t->vdtype);
         default:
@@ -91,6 +101,8 @@ inline const char* q_value_type_name(const QValue& v, char* buf, size_t n) {
         case QValue::VAL_STRUCT:
             if (v.data.struct_val && v.data.struct_val->def) return v.data.struct_val->def->name;
             return "struct";
+        case QValue::VAL_TABLE:
+            return q_table_type_name(v.data.table_val);
         default:
             return q_type_name(v.type);
     }

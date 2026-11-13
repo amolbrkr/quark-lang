@@ -932,6 +932,14 @@ func (l *lowerer) member(node *ast.TreeNode) Expr {
 			return &Call{Fn: "q_struct_get_field", Args: []Expr{obj, &Const{R: RepInt, Text: fmt.Sprint(idx)}}, R: RepValue}
 		}
 	}
+	// t.col on a tbl[R]: every way into a tbl[R] slot gives the table R's
+	// definition (the runtime checks relabel anonymous rows), so the column
+	// is at R's field index.
+	if tt, ok := l.nodeType(node.Children[0]).(*types.TableType); ok && tt.Row != nil {
+		if _, idx := tt.Row.FieldByName(name); idx >= 0 {
+			return &Call{Fn: "q_table_get_col", Args: []Expr{obj, &Const{R: RepInt, Text: fmt.Sprint(idx)}}, R: RepValue}
+		}
+	}
 	return &Call{Fn: "q_member_get", Args: []Expr{obj, &Const{R: RepStr, Text: cstr(name)}}, R: RepValue}
 }
 

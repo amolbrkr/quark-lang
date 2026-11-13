@@ -253,13 +253,125 @@ type StructField struct {
 
 // StructType represents a named struct type with ordered fields.
 // Identity is nominal: two structs with identical fields but different names are distinct.
+//
+// An anonymous struct is a table row the compiler derived (a query step's
+// output, tables_v0_1_spec.md §3.2). It has an internal Name (row__N), one
+// per distinct shape, so two anonymous rows are equal when their columns
+// and column types are, in order; it is shown as its shape,
+// {dept: str, n: int}, and matches a named struct by shape where a value is
+// stored (RowMatch).
 type StructType struct {
-	Name   string
-	Fields []StructField
+	Name      string
+	Fields    []StructField
+	Anonymous bool
 }
 
 func (t *StructType) String() string {
+	if t.Anonymous {
+		parts := make([]string, len(t.Fields))
+		for i, f := range t.Fields {
+			parts[i] = f.Name + ": " + f.Type.String()
+		}
+		return "{" + strings.Join(parts, ", ") + "}"
+	}
 	return t.Name
+}
+
+// TableType is a table (tables_v0_1_spec.md §3): tbl[R] when Row is the
+// struct R, a named struct or an anonymous row a query derived. Row is nil
+// for the bare `tbl` annotation, a table whose row the compiler doesn't know
+// (D20): it can be printed, written and passed on, but not queried.
+type TableType struct {
+	Row *StructType
+}
+
+func (t *TableType) String() string {
+	if t.Row == nil {
+		return "tbl"
+	}
+	return "tbl[" + t.Row.String() + "]"
+}
+
+func (t *TableType) Equals(other Type) bool {
+	o, ok := other.(*TableType)
+	if !ok {
+		return false
+	}
+	if t.Row == nil || o.Row == nil {
+		return t.Row == nil && o.Row == nil
+	}
+	return t.Row.Equals(o.Row)
+}
+
+// columnList is a row's column names, for messages: "id, name, salary".
+func columnList(row *StructType) string {
+	names := make([]string, len(row.Fields))
+	for i, f := range row.Fields {
+		names[i] = f.Name
+	}
+	return strings.Join(names, ", ")
+}
+
+// IsColumnType reports whether t can be the type of a table column (v0.1:
+// int, float, bool, str).
+func IsColumnType(t Type) bool {
+	return t != nil && (t.Equals(TypeInt) || t.Equals(TypeFloat) || t.Equals(TypeBool) || t.Equals(TypeString))
+}
+
+// RowMatch reports whether a table of row src can be stored where a table of
+// the named row dst is expected, after relabeling (§3.2): src is anonymous,
+// and its columns are exactly dst's fields by name, each of the field's type
+// or an int column for a float field (widened). The order may differ. why
+// says what doesn't match, for messages.
+func RowMatch(dst, src *StructType) (ok bool, why string) {
+	if dst == nil || src == nil {
+		return false, ""
+	}
+	if dst.Equals(src) {
+		return true, ""
+	}
+	if dst.Anonymous {
+		return false, ""
+	}
+	if !src.Anonymous {
+		return false, fmt.Sprintf("%s and %s are different structs", src.String(), dst.String())
+	}
+	for _, f := range src.Fields {
+		df, _ := dst.FieldByName(f.Name)
+		if df == nil {
+			return false, fmt.Sprintf("the table has a column '%s', but %s has no field '%s'", f.Name, dst.Name, f.Name)
+		}
+		if !df.Type.Equals(f.Type) && !(df.Type.Equals(TypeFloat) && f.Type.Equals(TypeInt)) {
+			return false, fmt.Sprintf("column '%s' is %s, but %s declares it %s", f.Name, f.Type.String(), dst.Name, df.Type.String())
+		}
+	}
+	for _, f := range dst.Fields {
+		if sf, _ := src.FieldByName(f.Name); sf == nil {
+			return false, fmt.Sprintf("%s has a field '%s', but the table has no column '%s'", dst.Name, f.Name, f.Name)
+		}
+	}
+	return true, ""
+}
+
+// TableMismatch explains why a value of type src can't be stored where dst
+// is expected, when both are tables ("" otherwise).
+func TableMismatch(dst, src Type) string {
+	d, ok1 := dst.(*TableType)
+	s, ok2 := src.(*TableType)
+	if !ok1 || !ok2 || d.Row == nil || s.Row == nil {
+		return ""
+	}
+	_, why := RowMatch(d.Row, s.Row)
+	return why
+}
+
+// mismatchDetail is the ": reason" a type mismatch message ends with when
+// the reason isn't obvious from the two types (tables), else "".
+func mismatchDetail(dst, src Type) string {
+	if why := TableMismatch(dst, src); why != "" {
+		return ": " + why
+	}
+	return ""
 }
 
 func (t *StructType) Equals(other Type) bool {
@@ -424,6 +536,21 @@ func CanAssign(dstType, srcType Type) bool {
 			}
 		}
 	}
+	// A table with an anonymous row of R's shape becomes a tbl[R] where it
+	// is stored (its columns relabeled and reordered, an int column widened
+	// for a float field), like an int stored where a float is expected.
+	// A table whose row the compiler doesn't know (a bare tbl) is checked
+	// when it is stored, as a value of type any is (§3.4).
+	if d, ok := dstType.(*TableType); ok && d.Row != nil {
+		if s, ok := srcType.(*TableType); ok {
+			if s.Row == nil {
+				return true
+			}
+			if m, _ := RowMatch(d.Row, s.Row); m {
+				return true
+			}
+		}
+	}
 	return IsSubtype(dstType, srcType)
 }
 
@@ -504,6 +631,14 @@ func IsSubtype(dstType, srcType Type) bool {
 		return IsSubtype(dst.ReturnType, src.ReturnType)
 	case *StructType:
 		return dst.Equals(srcType)
+	case *TableType:
+		// A bare `tbl` holds a table of any row; a tbl[R] only tables of row
+		// R (an anonymous row of R's shape needs relabeling, CanAssign).
+		src, ok := srcType.(*TableType)
+		if !ok {
+			return false
+		}
+		return dst.Row == nil || (src.Row != nil && dst.Row.Equals(src.Row))
 	}
 	return dstType.Equals(srcType)
 }
@@ -721,6 +856,11 @@ func typeKey(t Type) string {
 		return "result[" + typeKey(v.OkType) + "," + typeKey(v.ErrType) + "]"
 	case *StructType:
 		return "struct:" + v.Name
+	case *TableType:
+		if v.Row == nil {
+			return "tbl"
+		}
+		return "tbl[struct:" + v.Row.Name + "]"
 	case *UnionType:
 		parts := make([]string, len(v.Options))
 		for i, opt := range v.Options {

@@ -1,13 +1,26 @@
 extern 'csv.hpp'
 
-extern fn csv_parse(text: str, sep: str) list as 'q_csv_parse'
-extern fn csv_read(path: str, sep: str) result as 'q_csv_read'
+extern fn csv_read_file(path: str, columns: dict) result as 'q_csv_read_file'
+extern fn csv_parse_text(text: str, columns: dict) result as 'q_csv_parse_text'
+extern fn csv_write_file(t: tbl, path: str) result as 'q_csv_write_file'
+extern fn csv_format_text(t: tbl) str as 'q_csv_format_text'
 
 module csv:
-    // Rows of a CSV string, each a list of str. Quoted fields ("a, b", "say ""hi""")
-    // may contain the separator, quotes and newlines.
-    fn parse(text: str, sep: str = ',') list -> csv_parse(text, sep)
+    // ok(table) for the CSV file at `path` (tab-separated when it ends in
+    // .tsv or .tab), or err(message). Where the table's type is known
+    // (staff: tbl[Employee] = unwrap(csv::read_file('staff.csv'))) the
+    // columns are read with the row struct's field types; otherwise each
+    // column's type is inferred from its values. `columns` maps fields to
+    // header names that differ from them: dict { id: 'EmpID' }.
+    fn read_file(path: str, columns: dict = dict {}) result -> csv_read_file(path, columns)
 
-    // ok(rows) for the CSV file at `path`, or err(message) if it can't be read
-    // or is malformed.
-    fn read(path: str, sep: str = ',') result -> csv_read(path, sep)
+    // csv::read_file for CSV text.
+    fn parse_text(text: str, columns: dict = dict {}) result -> csv_parse_text(text, columns)
+
+    // Writes the table to `path` (tab-separated for .tsv and .tab): a header
+    // line, then one line per row, missing values as empty fields.
+    // ok(null), or err(message).
+    fn write_file(t: tbl, path: str) result -> csv_write_file(t, path)
+
+    // The table as CSV text, as write_file writes it.
+    fn format_text(t: tbl) str -> csv_format_text(t)

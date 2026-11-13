@@ -242,7 +242,7 @@ func (a *Analyzer) validateReturnType(funcType *FunctionType, inferredType Type,
 	}
 	SettleContainers(annotated, inferredType)
 	if !CanAssign(annotated, inferredType) {
-		a.errorAt(errorNode, "function '%s' declares return type '%s' but body returns '%s'", funcName, annotated.String(), inferredType.String())
+		a.errorAt(errorNode, "function '%s' declares return type '%s' but body returns '%s'%s", funcName, annotated.String(), inferredType.String(), mismatchDetail(annotated, inferredType))
 	}
 }
 

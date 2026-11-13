@@ -25,7 +25,7 @@ func (a *Analyzer) checkArgTypes(calleeName string, paramTypes []Type, argTypes 
 			if i < len(argNodes) {
 				errorNode = argNodes[i]
 			}
-			a.errorAt(errorNode, "argument %d of '%s' expects %s, got %s", i+1, calleeName, paramType.String(), argType.String())
+			a.errorAt(errorNode, "argument %d of '%s' expects %s, got %s%s", i+1, calleeName, paramType.String(), argType.String(), mismatchDetail(paramType, argType))
 		}
 	}
 }
@@ -234,6 +234,7 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 	argNodes := node.Children[1].Children
 	argCount := len(argNodes)
 	argTypes := make([]Type, 0, argCount)
+	a.expectArgs(node, funcNode, argNodes)
 	for _, arg := range argNodes {
 		argTypes = append(argTypes, a.Analyze(arg))
 	}
@@ -323,6 +324,9 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 	a.settleArgs(funcType.ParamTypes, argTypes, argNodes)
 	a.checkArgTypes(calleeName, funcType.ParamTypes, argTypes, argNodes)
 	a.checkCallbackArgs(calleeName, funcType, argTypes, argNodes)
+	if native := a.tableReaderOf(funcNode); native != "" {
+		return a.tableRead(node, native, argNodes)
+	}
 	return funcType.ReturnType
 }
 

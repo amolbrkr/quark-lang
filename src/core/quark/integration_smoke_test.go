@@ -738,12 +738,17 @@ func TestSmokePrograms_Run(t *testing.T) {
 			file: filepath.Join(testfilesDir, "smoke_csv.qrk"),
 			expected: join(
 				"== smoke: csv ==",
-				"3",
-				"name | note",
-				"Smith, J | say \"hi\"",
+				"2",
+				"Smith, J",
 				"multi",
-				"line | x",
-				"1+2",
+				"line",
+				"['say \"hi\"', 'x']",
+				"name,note",
+				"\"Smith, J\",\"say \"\"hi\"\"\"",
+				"\"multi",
+				"line\",x",
+				"",
+				"tbl[{n: int, x: float, ok: bool}]",
 				"true",
 			),
 		},
@@ -1017,8 +1022,7 @@ func TestSemanticsSafety_Rejected(t *testing.T) {
 		{"pipe_callback_arity", "fn h(a, b) -> b\nfn apply(k) -> 1 | k()\nprint(apply(h))\n", "but 'h' takes 2 arguments"},
 		// Ordering compares two numbers or two strings; mixes are runtime errors.
 		{"order_str_int", "print('a' < 1)\n", "operator '<' expects two numbers or two strings"},
-		{"csv_unterminated_quote", "incl 'std/csv' as csv\nprint(csv::parse('a,\"b\\n'))\n", "csv.parse: unterminated quoted field"},
-		{"csv_bad_separator", "incl 'std/csv' as csv\nprint(csv::parse('a', ';;'))\n", "separator must be a single character"},
+		{"csv_unterminated_quote", "incl 'std/csv'\nt = unwrap(csv::parse_text('a\\n\"b\\n'))\n", "unwrap on err: text:2: a quoted field is never closed"},
 		// `fn` declarations are fixed (modules v0.2, rules 18-20).
 		{"fn_declared_twice", "fn f(x) -> x\nfn f(x) -> x + 1\nprint(f(1))\n", "'f' is already defined on line 1"},
 		{"fn_declared_twice_in_fn", "fn outer() ->\n    fn g() -> 1\n    fn g() -> 2\n    g()\nprint(outer())\n", "'g' is already defined on line 2"},
@@ -1824,7 +1828,7 @@ func TestModuleNamespacing(t *testing.T) {
 			"io::write(f, 'x,y\\n')",
 			"io::close(f)",
 			"g = unwrap(io::open('t.csv'))",
-			"print(unwrap(io::read(g, 100)).trim() + ' ' + to_str(len(unwrap(csv::read('t.csv')))))",
+			"print(unwrap(io::read(g, 100)).trim() + ' ' + csv::format_text(unwrap(csv::read_file('t.csv'))).trim())",
 			"print(to_str(open) + ' ' + to_str(len(args)))",
 			"",
 		}, "\n"),
@@ -1838,7 +1842,7 @@ func TestModuleNamespacing(t *testing.T) {
 		}
 	}
 	got := strings.TrimSpace(normalizeNewlines(runQuarkIn(t, tmp, "run", "ok.qrk")))
-	want := "from a from b mine from afrom a\nx,y 1\n5 0"
+	want := "from a from b mine from afrom a\nx,y x,y\n5 0"
 	if got != want {
 		t.Fatalf("ok.qrk output:\n%s\nwant:\n%s", got, want)
 	}

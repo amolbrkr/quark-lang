@@ -256,7 +256,7 @@ A lambda can capture variables from any enclosing scope; a lambda nested in a la
 
 ### 6.4 Default parameters
 
-Default values must be literals: an int, float, string, bool, `null`, a negated number, or an empty `list []`. Required parameters must come before defaulted ones. A default must fit the parameter's annotation, so `xs: list = null` is an error (write `xs: list = list []`).
+Default values must be literals: an int, float, string, bool, `null`, a negated number, an empty `list []` or an empty `dict {}` (a new list or dict for every call). Required parameters must come before defaulted ones. A default must fit the parameter's annotation, so `xs: list = null` is an error (write `xs: list = list []`).
 
 When the compiler knows which function is called, omitted trailing arguments are filled in at the call site. A call through a function value fills them in at runtime (§6.5). Either way a default is built fresh for every call, so an empty-list default is never shared between calls. A pipe counts its input as the first argument: `5 | add_n()` fills the default of `add_n`'s second parameter.
 

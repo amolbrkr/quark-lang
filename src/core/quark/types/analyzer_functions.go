@@ -193,6 +193,9 @@ func (a *Analyzer) analyzeLambda(node *ast.TreeNode) Type {
 	}
 
 	lambdaScope := a.currentScope
+	if annotatedReturnType != nil {
+		a.expect(lastValue(bodyNode), annotatedReturnType)
+	}
 	returnType := a.Analyze(bodyNode)
 
 	freeVars := []string{}

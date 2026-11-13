@@ -412,9 +412,19 @@ func (l *lowerer) structDefs() {
 	sort.Strings(keys)
 	for _, k := range keys {
 		st := l.an.StructTypes[k]
-		d := StructDef{CName: structCName(st.Name), Display: l.names.Display(st.Name)}
+		d := StructDef{CName: structCName(st.Name), Display: l.names.Display(st.Name), Anonymous: st.Anonymous}
+		if st.Anonymous {
+			d.Display = l.names.DisplayText(st.String())
+		}
+		anyColumn := false
 		for _, f := range st.Fields {
 			d.Fields = append(d.Fields, f.Name)
+			dt := ColumnDtype(f.Type)
+			d.Dtypes = append(d.Dtypes, dt)
+			anyColumn = anyColumn || dt >= 0
+		}
+		if !anyColumn {
+			d.Dtypes = nil
 		}
 		l.prog.Structs = append(l.prog.Structs, d)
 	}
@@ -531,7 +541,7 @@ func (l *lowerer) paramBindings(f *Func, fnDisplay string) {
 		sym := p.Sym
 		var arg Expr = &ParamRef{P: p}
 		args := []string{cstr(fnDisplay), cstr(l.names.Display(sym.Name))}
-		c, checked := checkFor(sym.StoreType)
+		c, checked := l.checkFor(sym.StoreType)
 		switch {
 		case sym.Storage.IsScalar():
 			l.add(&DeclVar{Sym: sym, Value: c.check("param", arg, args)})

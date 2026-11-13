@@ -409,7 +409,7 @@ parameter accepts any value; misuse inside the body (`x.upper()` on an int)
 is a runtime error.
 
 **Default parameters** are literals (a number, string, bool, `null`, a negated
-number or an empty `list []`) and follow the required parameters. A literal
+number, an empty `list []` or an empty `dict {}`) and follow the required parameters. A literal
 default also types its parameter (`n = 1` makes `n` an int):
 
 ```quark

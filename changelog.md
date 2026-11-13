@@ -40,11 +40,41 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 
 Implements `tables_v0_1_spec.md` §9 (the first implementation), on branch `worktree-tbl-v01`.
 
+### Breaking
+- **`std/csv` is rebuilt on the table reader** (D15): `csv::parse(text, sep)` and `csv::read(path, sep)`, which returned lists of str lists, are removed. Use `csv::parse_text(text)` and `csv::read_file(path)`, which return `ok(table)` (below); a `;`-separated text has no form yet (a path ending in `.tsv` or `.tab` is tab-separated).
+- `tbl` is a type name: a program with its own `struct tbl:` now gets confusing messages where it writes `tbl` as an annotation (`known_issues.md`); rename the struct.
+
 ### Added
 - **Digit separators** (`grammar.md` §2): `_` may stand between two digits of a number, in any part of it, and is ignored: `100_000`, `1_000.5`, `0.000_1`, `1e1_0`. Anywhere else in a number it is an error: `x = 1__0` is `'_' in a number must be between two digits: '1__0' (write 100_000)`, as are `1_`, `1_.5`, `1._5` and `1_e5`. `_1` is still a name.
+- **The table type** (D10, D20): `tbl[Employee]` is a table whose rows are `Employee` structs (every field an `int`, `float`, `bool` or `str`), and a bare `tbl` is a table of any row. `t.salary` on a `tbl[Employee]` is the column as a `vec[float]`; an unknown column is a compile error that lists the columns (`tbl[Emp] has no column 'wage' (columns: id, name, dept, salary)`), and so is a column of a bare `tbl` (`the row type of this table isn't known`). `null` is not a table. `type(t)` is `tbl[Employee]`, or the shape for a table whose row has no name: `tbl[{id: int, name: str}]`.
+  ```quark
+  incl 'std/csv'
+
+  struct Employee:
+      id: int
+      name: str
+      salary: float
+
+  staff: tbl[Employee] = unwrap(csv::read_file('staff.csv'))
+  print(sum(staff.salary))
+  ```
+- **A table with an anonymous row matches a named one by shape** where it is stored (§3.2-3.4): its columns must be the struct's fields exactly (names and types, in any order; an int column fills a float field), and it is relabeled with the struct and its columns put in field order. The compiler checks what it can see and names the difference (`cannot assign value of type 'tbl[Emp]' to 'tbl[Emp2]': Emp and Emp2 are different structs`); a table whose row it doesn't know (a bare `tbl`, a value of type `any`) is checked when it reaches a `tbl[R]` parameter, variable, field or return value: `variable 'v' is declared tbl[Emp] but got tbl[{id: int, name: str}]`.
+- **`csv::read_file(path)` and `csv::parse_text(text)` are typed by where their table goes** (D18): with `staff: tbl[Employee] = unwrap(csv::read_file('staff.csv'))`, a `tbl[Employee]` parameter, struct field or return annotation, the file is read with `Employee`'s columns and types, and a bad cell names its line and column (`staff.csv:3: column 'salary': '12k' is not a float`). Elsewhere every column's type is inferred from its values (int, else float, else bool, else str). Empty and `NA` cells are missing values in every column.
+- **A column mapping** (D17): `csv::read_file('emp.csv', dict { id: 'EmpID', salary: 'Salary ($)' })` reads fields from header columns with other names. The mapping must be a dict literal of string literals; its fields are checked against the row struct at compile time. A field missing from the header says how to map it: `emp.csv: no column named 'id' in the header (columns: EmpID, name); map field 'id' to one of them with dict { id: '...' }`.
+- **`csv::write_file(t, path)`** (a header line, missing values as empty fields; tab-separated for `.tsv` and `.tab`) returns `ok(null)` or `err(message)`, and **`csv::format_text(t)`** returns the same text.
+- **CSV text must be UTF-8**: a str cell or header name that isn't valid UTF-8 (`emp.csv:2: column 'name' is not valid UTF-8 (the file may be Latin-1 or another encoding)`) or holds a NUL byte is an error, so a Latin-1 `José` can't silently fail to equal `'José'`.
+- An empty `dict {}` may be a parameter default, like `list []`, and is a new dict on every call.
+- An `extern fn` may take and return a bare `tbl`, as a `QTable*` (FFI P6); `tbl[R]` in an extern signature is a compile error.
+
+### Fixed
+- A struct or table passed to a native function that expects another type was reported as `expected int, got unknown`; it now names `struct` or `tbl`.
 
 ### Internal
 - `lexer.readNumber` reads digit runs with separators and drops them from the literal, so later stages see `100000`. The editor grammar highlights separators and exponents (`1e3` was highlighted as `1`).
+- Types: `types.TableType{Row}` (nil row for `tbl`); `StructType.Anonymous` for derived rows, one per shape (`row__N`), shown as their shape; `RowMatch` is the shape rule, used by `CanAssign` (a conversion, like int to float) but not `IsSubtype`, so containers never hold a relabeled table. `annotationType` is the one annotation resolver behind `resolveTypeNode` and the error-free `resolveTypeNodeStatic`; a `TypeNode` may have one type argument (the parser reads `name[T]`, the checker accepts it on `tbl` only). Struct field types are resolved twice, so a `tbl[R]` field sees `R`'s fields whatever the definition order.
+- Expected types: the analyzer records the type a node's value is stored as (`Analyzer.expected`: typed declarations, assignments to typed variables, arguments of functions with known signatures, struct literal fields, the last statement of a body with a return annotation; `unwrap` passes `result[T]` to its argument). The std/csv reads are recognized by their definition (`names.Origin` in `std/csv.qrk`) and recorded in `Analysis.TableReads`; lowering calls the native reader (`q_csv_read_file`, `q_csv_parse_text`) with the row's `QStructDef`, which now carries each field's column type (`field_dtypes`) and an `anonymous` flag.
+- Runtime: `q_table_conform` is the shape rule at runtime, behind `q_param_table`, `q_var_table`, `q_field_table` and `q_ret_table` (IR `CheckTable`); element descriptors check tables by row definition. `q_member_get` reads a column of a table of unknown type by name. The reader takes a header name per schema column (`csv::Column::header`) and renames for untyped reads (`Options::rename`), and validates text (`csv::text_problem`). A function whose signature has a `tbl[R]` keeps the QValue convention: a `QTable*` can't carry the row check.
+- Tests: `integration_tables_test.go` (`TestTables_TypeRejected`, `TestTables_CSV`, `TestTables_CSVRejected`, parallel subtests), new cases in `src/testfiles/table/csv_test.cpp` (UTF-8 edge cases, NUL, mapping), `smoke_csv.qrk` on the new API.
 
 ## 2026-11-13: A statement ends at the end of its line; indented pipe lines
 

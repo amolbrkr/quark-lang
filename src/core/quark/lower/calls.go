@@ -5,6 +5,7 @@ import (
 
 	"quark/ast"
 	"quark/ir"
+	"quark/types"
 )
 
 // call lowers a call by its plan. Operands are evaluated left to right: the
@@ -15,6 +16,9 @@ func (l *lowerer) call(node *ast.TreeNode) Expr {
 		return nullValue()
 	}
 	funcNode, argsNode := node.Children[0], node.Children[1]
+	if tr := l.an.TableReads[node]; tr != nil {
+		return l.tableRead(argsNode, tr)
+	}
 	plan := l.an.CallPlans[node]
 	if plan == nil {
 		l.ice("INV-CALLPLAN-MISSING", node, "missing call plan")
@@ -123,6 +127,22 @@ func (l *lowerer) call(node *ast.TreeNode) Expr {
 	}
 	l.ice("INV-CALLPLAN-DISPATCH", node, "unknown dispatch for '%s'", funcNode.TokenLiteral())
 	return nil
+}
+
+// tableRead lowers a csv::read_file or csv::parse_text call to its native
+// reader with the row's definition (D18), or nullptr when the column types
+// come from the file. The wrapper's default mapping is no mapping (nullptr).
+func (l *lowerer) tableRead(argsNode *ast.TreeNode, tr *types.TableRead) Expr {
+	vals := l.operands(argsNode.Children)
+	args := []Expr{toNative(vals[0], RepStr), nullptrExpr}
+	if len(vals) > 1 {
+		args[1] = toNative(vals[1], RepDict)
+	}
+	row := &Const{R: Rep("const QStructDef*"), Text: "nullptr"}
+	if tr.Row != nil {
+		row.Text = "&_sdef_" + structCName(tr.Row.Name)
+	}
+	return &Call{Fn: tr.Native, Args: append(args, row), R: RepValue}
 }
 
 func boxedAll(vs []Expr) []Expr {

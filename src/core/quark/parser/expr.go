@@ -542,6 +542,12 @@ func (p *Parser) parsePipe(left *ast.TreeNode) *ast.TreeNode {
 		p.addErrorAt(&tok, "a line can't end with '|'; start the next line with it instead (x on one line, then '    | f()')")
 		return nil
 	}
+	if p.curToken.Type == token.ID && p.peek(1).Type == token.ARROW {
+		if left == nil {
+			return nil
+		}
+		return p.parseQuery(left, tok)
+	}
 	right := p.parseExpression(ast.PrecPipe + 1)
 	if right == nil || left == nil {
 		return nil
@@ -554,6 +560,172 @@ func (p *Parser) parsePipe(left *ast.TreeNode) *ast.TreeNode {
 	args.Children = append([]*ast.TreeNode{left}, args.Children...)
 	right.Piped = true
 	return right
+}
+
+// parseQuery parses a table query after `source |` (tables_v0_1_spec.md
+// §4): `e ->`, then one or more steps `verb(...)` separated by `|`, on one
+// line, on following lines that start with `|`, or as an indented block
+// (`t | e ->` on its own line, then a step per line):
+//
+//	stats = staff | e ->
+//	    filter(e.salary > 100_000)
+//	    | summarize(n = count())
+//
+// Every step after `e ->` belongs to the query; to pipe its result into a
+// function, put the query in parentheses.
+func (p *Parser) parseQuery(source *ast.TreeNode, pipeTok token.Token) *ast.TreeNode {
+	rowTok := p.curToken
+	p.nextToken() // the row name
+	p.nextToken() // '->'
+	node := ast.NewNode(ast.QueryNode, &pipeTok)
+	node.AddChildren(source, ast.NewNode(ast.IdentifierNode, &rowTok))
+	block := p.curToken.Type == token.NEWLINE && p.peek(1).Type == token.INDENT
+	if block {
+		p.nextToken()
+		p.nextToken()
+	}
+	for {
+		step := p.parseQueryStep()
+		if step == nil {
+			return nil
+		}
+		node.AddChild(step)
+		switch {
+		case p.curToken.Type == token.PIPE:
+			p.nextToken()
+		case p.curToken.Type == token.NEWLINE && p.peek(1).Type == token.PIPE:
+			p.nextToken()
+			p.nextToken()
+		default:
+			if block {
+				if p.curToken.Type == token.NEWLINE {
+					p.nextToken()
+				}
+				if !p.expect(token.DEDENT) {
+					return nil
+				}
+				p.blockExprEnded = true
+			}
+			return node
+		}
+		if p.curToken.Type == token.NEWLINE || p.curToken.Type == token.EOF {
+			p.addError("a line can't end with '|'; start the next line with it instead")
+			return nil
+		}
+		if p.curToken.Type == token.ID && p.peek(1).Type == token.ARROW {
+			p.addError("a query names its row once ('%s ->'); write the next step as '| verb(...)'", rowTok.Literal)
+			return nil
+		}
+	}
+}
+
+// parseQueryStep parses `verb(args)`. In mutate and summarize an argument
+// may be `name = value` (a ColumnDefNode); summarize values are aggregates
+// and sort arguments sort keys, so neither is resolved as a function call.
+func (p *Parser) parseQueryStep() *ast.TreeNode {
+	if p.curToken.Type != token.ID || p.peek(1).Type != token.LPAR {
+		p.addError("expected a query step, verb(...) (filter, mutate, sort, group_by, summarize, head or tail), but got %s; to pipe a query's result into a function, put the query in parentheses", sourceText(p.curToken))
+		return nil
+	}
+	verbTok := p.curToken
+	step := ast.NewNode(ast.QueryStepNode, &verbTok)
+	p.nextToken() // verb
+	p.nextToken() // '('
+	for p.curToken.Type != token.RPAR {
+		arg := p.parseStepArg(verbTok.Literal)
+		if arg == nil {
+			return nil
+		}
+		step.AddChild(arg)
+		if p.curToken.Type != token.COMMA {
+			break
+		}
+		p.nextToken()
+	}
+	if !p.expect(token.RPAR) {
+		return nil
+	}
+	return step
+}
+
+func (p *Parser) parseStepArg(verb string) *ast.TreeNode {
+	if p.curToken.Type == token.ID && p.peek(1).Type == token.EQUALS {
+		nameTok := p.curToken
+		p.nextToken()
+		p.nextToken()
+		def := ast.NewNode(ast.ColumnDefNode, &nameTok)
+		var value *ast.TreeNode
+		if verb == "summarize" {
+			value = p.parseAggregate()
+		} else {
+			value = p.parseExpression(ast.PrecPipe)
+		}
+		if value == nil {
+			return nil
+		}
+		def.AddChild(value)
+		return def
+	}
+	switch verb {
+	case "summarize":
+		// A column without a name; the checker asks for one.
+		return p.parseAggregate()
+	case "sort":
+		key := ast.NewNode(ast.SortKeyNode, nil)
+		if p.curToken.Type == token.ID && p.curToken.Literal == "desc" && p.peek(1).Type == token.LPAR {
+			tok := p.curToken
+			key.Token = &tok
+			key.Descending = true
+			p.nextToken()
+			p.nextToken()
+			e := p.parseExpression(ast.PrecPipe)
+			if e == nil || !p.expect(token.RPAR) {
+				return nil
+			}
+			key.AddChild(e)
+			return key
+		}
+		e := p.parseExpression(ast.PrecPipe)
+		if e == nil {
+			return nil
+		}
+		key.Token = e.Token
+		key.AddChild(e)
+		return key
+	}
+	return p.parseExpression(ast.PrecPipe)
+}
+
+// parseAggregate parses a summarize aggregate: `agg(args)`, nothing more
+// (tables D24: one aggregate of a column per summarize column).
+func (p *Parser) parseAggregate() *ast.TreeNode {
+	if p.curToken.Type != token.ID || p.peek(1).Type != token.LPAR {
+		p.addError("a summarize column is one aggregate, name = agg(e.col): count(), count(e.col), sum, mean, min or max; got %s", sourceText(p.curToken))
+		return nil
+	}
+	tok := p.curToken
+	node := ast.NewNode(ast.AggregateNode, &tok)
+	p.nextToken()
+	p.nextToken()
+	for p.curToken.Type != token.RPAR {
+		arg := p.parseExpression(ast.PrecPipe)
+		if arg == nil {
+			return nil
+		}
+		node.AddChild(arg)
+		if p.curToken.Type != token.COMMA {
+			break
+		}
+		p.nextToken()
+	}
+	if !p.expect(token.RPAR) {
+		return nil
+	}
+	if p.curToken.Type != token.COMMA && p.curToken.Type != token.RPAR {
+		p.addError("a summarize column is exactly one aggregate of a column (%s(...) followed by %s); compute other values with mutate first, or in a second step", tok.Literal, sourceText(p.curToken))
+		return nil
+	}
+	return node
 }
 
 func (p *Parser) parseMemberAccess(left *ast.TreeNode) *ast.TreeNode {

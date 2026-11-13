@@ -9,11 +9,17 @@
 #include <cstdio>
 
 // QStructDef: static metadata for a struct type. One per struct definition,
-// emitted as a global constant by the compiler.
+// emitted as a global constant by the compiler. It is also the row type of a
+// table (tables_v0_1_spec.md §3): field_dtypes gives each field's column type
+// (a QVector::Type as int, -1 for a field that can't be a column), and
+// anonymous marks a row the compiler derived for a query step or the reader
+// inferred from a file, which matches a named row by shape (§3.4).
 struct QStructDef {
     const char* name;              // struct type name (e.g. "Customer")
     const char* const* field_names; // array of field name strings
     int field_count;
+    const signed char* field_dtypes = nullptr; // nullptr: no field is a column type
+    bool anonymous = false;
 };
 
 // QStruct: a runtime struct instance. Allocated via GC with trailing QValue fields.

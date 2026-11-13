@@ -27,6 +27,7 @@ const (
 	RepVector Rep = "QVector*"
 	RepFunc   Rep = "QClosure*"
 	RepStruct Rep = "QStruct*"
+	RepTable  Rep = "QTable*"
 	RepVecRef Rep = "const QVector&"
 	RepLoc    Rep = "const QSourceLoc*"
 )
@@ -175,6 +176,7 @@ const (
 	CheckScalar CheckKind = iota // int, float or bool: result is the raw scalar for param/var/ret
 	CheckStruct                  // a struct type, by its QStructDef
 	CheckTag                     // a QValue tag (str, list, dict, vec, result, resource, fn)
+	CheckTable                   // a table of a row type (StructDef; "" for a bare tbl), relabeling an anonymous row
 )
 
 // Check is a runtime type check of a value against an annotated type:
@@ -452,11 +454,33 @@ type DefaultCase struct {
 	Body  *Block
 }
 
-// StructDef is the static QStructDef of a struct type.
+// StructDef is the static QStructDef of a struct type, which is also a table
+// row type: Dtypes is each field's column type (QVector::Type as int, -1 for
+// a field that can't be a column), nil when no field can; Anonymous marks a
+// row a query derived.
 type StructDef struct {
-	CName   string // quark_<internal>, as in _sdef_quark_<internal>
-	Display string
-	Fields  []string
+	CName     string // quark_<internal>, as in _sdef_quark_<internal>
+	Display   string
+	Fields    []string
+	Dtypes    []int
+	Anonymous bool
+}
+
+// ColumnDtype is the QVector::Type (as int) of a column of type t, or -1.
+func ColumnDtype(t types.Type) int {
+	switch {
+	case t == nil:
+		return -1
+	case t.Equals(types.TypeFloat):
+		return 0
+	case t.Equals(types.TypeInt):
+		return 1
+	case t.Equals(types.TypeBool):
+		return 2
+	case t.Equals(types.TypeString):
+		return 3
+	}
+	return -1
 }
 
 // ElemDesc is a static QElemType descriptor.

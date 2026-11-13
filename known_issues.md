@@ -48,6 +48,7 @@ When a change fixes an issue, delete its entry here and describe the fix under F
 
 ## Fails loudly, but with a C++ error, a wrong location or a misleading message
 
+- A struct named like a builtin type is accepted, and the annotation then means the builtin: `struct int:` / `    x: int`, then `p: int = int { x: 1 }` is `cannot assign value of type 'int' to 'int'`, and `struct vec:` is a parse error (`expected struct name after 'struct'`). It should be a clear error at the `struct` (`'int' is a builtin type; choose another name`). Found 2026-11-13 while adding the `tbl` type (tables v0.1). Reach: `tbl` is now a builtin type name, so a program with `struct tbl:`, which worked before, now gets these messages where it uses `tbl` as an annotation.
 - A prelude builtin used as a value passes the checker and fails in clang: `f = len`, then `print(f('ab'))`, or `print(len)`, gives `use of undeclared identifier 'quark_len'`. Extern fns used as values work (they have thunks).
 - `struct S` inside a `fn` body fails with `internal: struct 'S' not pre-declared`.
 - A call written above a `fn` declaration is checked less than one below it. `print(apply(fn(a, b) -> a + b))` above `fn apply(k) -> k(1)` is a runtime error, below it a compile error.

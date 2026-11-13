@@ -50,11 +50,18 @@ struct Options {
     bool header = true;
     bool trim = true;
     std::vector<std::string> na = {"", "NA"};
+    // Untyped reads: (name, header) pairs giving the header column `header`
+    // the column name `name` (tables_v0_1_spec.md D17). Typed reads map
+    // with Column::header.
+    std::vector<std::pair<std::string, std::string>> rename;
 };
 
+// Column is one column of a typed read: the table's column `name`, read
+// from the header column `header` (empty: the one named `name`).
 struct Column {
     std::string name;
     QVector::Type type;
+    std::string header;
 };
 
 // ------------------------------------------------------------
@@ -312,6 +319,49 @@ inline bool parse_bool(std::string_view s, bool* out) {
     return false;
 }
 
+// text_problem checks text that becomes a str (a cell of a str column, a
+// header name): it must be valid UTF-8, as Arrow's utf8 type and Quark's
+// string literals are, and hold no NUL byte, which a Quark str can't. A
+// Latin-1 'José' would otherwise never equal the literal 'José', so a filter
+// on it would drop every row. Returns nullptr when the text is fine.
+inline const char* text_problem(std::string_view s) {
+    const unsigned char* p = reinterpret_cast<const unsigned char*>(s.data());
+    const size_t n = s.size();
+    for (size_t i = 0; i < n;) {
+        const unsigned char c = p[i];
+        if (c < 0x80) {
+            if (c == 0) return "contains a NUL byte, which a str can't hold";
+            i++;
+            continue;
+        }
+        size_t len;
+        uint32_t cp;
+        if (c >= 0xC2 && c <= 0xDF) {
+            len = 2;
+            cp = c & 0x1F;
+        } else if (c >= 0xE0 && c <= 0xEF) {
+            len = 3;
+            cp = c & 0x0F;
+        } else if (c >= 0xF0 && c <= 0xF4) {
+            len = 4;
+            cp = c & 0x07;
+        } else {
+            return "is not valid UTF-8 (the file may be Latin-1 or another encoding)";
+        }
+        if (i + len > n) return "is not valid UTF-8 (the file may be Latin-1 or another encoding)";
+        for (size_t k = 1; k < len; k++) {
+            if ((p[i + k] & 0xC0) != 0x80) return "is not valid UTF-8 (the file may be Latin-1 or another encoding)";
+            cp = (cp << 6) | (p[i + k] & 0x3F);
+        }
+        // Overlong forms, UTF-16 surrogates and code points past U+10FFFF.
+        if ((len == 3 && cp < 0x800) || (len == 4 && (cp < 0x10000 || cp > 0x10FFFF)) || (cp >= 0xD800 && cp <= 0xDFFF)) {
+            return "is not valid UTF-8 (the file may be Latin-1 or another encoding)";
+        }
+        i += len;
+    }
+    return nullptr;
+}
+
 inline const char* type_word(QVector::Type t) {
     switch (t) {
         case QVector::Type::I64: return "an int";
@@ -455,11 +505,18 @@ inline QTable* parse_table(const char* text, size_t len, const std::string& sour
         return nullptr;
     }
     const size_t width = header.size();
+    for (size_t i = 0; i < header.size() && opt.header; i++) {
+        if (const char* why = text_problem(header[i])) {
+            *error = source + ":" + std::to_string(line) + ": column " + std::to_string(i + 1) + " of the header " + why;
+            return nullptr;
+        }
+    }
 
     // Map the output columns to file columns.
     std::vector<int> file_col;
     std::vector<QVector::Type> types;
-    std::vector<std::string> names;
+    std::vector<std::string> names;  // the table's column names
+    std::vector<std::string> labels; // how messages name each column: its header text
     if (schema) {
         if (!opt.header && !have_first) {
             // An empty file without a header is an empty table.
@@ -474,19 +531,25 @@ inline QTable* parse_table(const char* text, size_t len, const std::string& sour
             for (size_t c = 0; c < width; c++) file_col.push_back(static_cast<int>(c));
         } else {
             for (const Column& c : *schema) {
+                const std::string& want = c.header.empty() ? c.name : c.header;
                 int found = -1, seen = 0;
                 for (size_t i = 0; i < header.size(); i++) {
-                    if (header[i] == c.name) {
+                    if (header[i] == want) {
                         if (found < 0) found = static_cast<int>(i);
                         seen++;
                     }
                 }
                 if (found < 0) {
-                    *error = source + ": no column named '" + c.name + "' in the header (columns: " + quoted_list(header) + ")";
+                    *error = source + ": no column named '" + want + "' in the header (columns: " + quoted_list(header) + ")";
+                    if (c.header.empty()) {
+                        *error += "; map field '" + c.name + "' to one of them with dict { " + c.name + ": '...' }";
+                    } else {
+                        *error += "; field '" + c.name + "' is mapped to it";
+                    }
                     return nullptr;
                 }
                 if (seen > 1) {
-                    *error = source + ": the header has " + std::to_string(seen) + " columns named '" + c.name + "'";
+                    *error = source + ": the header has " + std::to_string(seen) + " columns named '" + want + "'";
                     return nullptr;
                 }
                 file_col.push_back(found);
@@ -495,6 +558,7 @@ inline QTable* parse_table(const char* text, size_t len, const std::string& sour
         for (const Column& c : *schema) {
             types.push_back(c.type);
             names.push_back(c.name);
+            labels.push_back(c.header.empty() ? c.name : c.header);
         }
     } else {
         for (size_t i = 0; i < header.size(); i++) {
@@ -510,6 +574,26 @@ inline QTable* parse_table(const char* text, size_t len, const std::string& sour
             }
             file_col.push_back(static_cast<int>(i));
             names.push_back(header[i]);
+            labels.push_back(header[i]);
+        }
+        for (const auto& r : opt.rename) {
+            size_t i = 0;
+            while (i < header.size() && header[i] != r.second) i++;
+            if (i == header.size()) {
+                *error = source + ": no column named '" + r.second + "' in the header (columns: " + quoted_list(header) +
+                         "); '" + r.first + "' is mapped to it";
+                return nullptr;
+            }
+            names[i] = r.first;
+        }
+        for (size_t i = 0; i < names.size(); i++) {
+            for (size_t j = 0; j < i; j++) {
+                if (names[j] == names[i]) {
+                    *error = source + ": the table would have two columns named '" + names[i] + "' (header columns '" +
+                             header[j] + "' and '" + header[i] + "')";
+                    return nullptr;
+                }
+            }
         }
     }
     const size_t ncols = file_col.size();
@@ -590,9 +674,13 @@ inline QTable* parse_table(const char* text, size_t len, const std::string& sour
                     break;
                 }
                 case QVector::Type::STR:
+                    if (const char* why = text_problem(v)) {
+                        problems.add(rl, "column '" + labels[c] + "' " + why);
+                        return;
+                    }
                     bld.bytes.append(v.data(), v.size());
                     if (bld.bytes.size() > static_cast<size_t>(INT32_MAX)) {
-                        problems.add(rl, "column '" + names[c] + "' holds more than 2 GiB of text");
+                        problems.add(rl, "column '" + labels[c] + "' holds more than 2 GiB of text");
                         return;
                     }
                     bld.offsets.push_back(static_cast<int32_t>(bld.bytes.size()));
@@ -600,7 +688,7 @@ inline QTable* parse_table(const char* text, size_t len, const std::string& sour
             }
             bld.count++;
             if (!ok) {
-                problems.add(rl, "column '" + names[c] + "': '" + std::string(v) + "' is not " + type_word(bld.type));
+                problems.add(rl, "column '" + labels[c] + "': '" + std::string(v) + "' is not " + type_word(bld.type));
             }
         }
     };
@@ -626,11 +714,17 @@ inline QTable* parse_table(const char* text, size_t len, const std::string& sour
     // The table's schema: the given one, or one built from the header.
     if (!def) {
         const char** fnames = static_cast<const char**>(q_malloc(sizeof(char*) * (ncols == 0 ? 1 : ncols)));
-        for (size_t c = 0; c < ncols; c++) fnames[c] = q_strdup(names[c].c_str());
+        signed char* dtypes = static_cast<signed char*>(q_malloc_atomic(ncols == 0 ? 1 : ncols));
+        for (size_t c = 0; c < ncols; c++) {
+            fnames[c] = q_strdup(names[c].c_str());
+            dtypes[c] = static_cast<signed char>(types[c]);
+        }
         QStructDef* d = static_cast<QStructDef*>(q_malloc(sizeof(QStructDef)));
         d->name = "tbl";
         d->field_names = fnames;
         d->field_count = static_cast<int>(ncols);
+        d->field_dtypes = dtypes;
+        d->anonymous = true; // matched by shape where a tbl[R] is expected
         def = d;
     }
     QVector** vecs = static_cast<QVector**>(q_malloc(sizeof(QVector*) * (ncols == 0 ? 1 : ncols)));

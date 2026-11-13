@@ -77,6 +77,13 @@ type Analyzer struct {
 	// and the symbol each resolved identifier node refers to.
 	symbols []*Symbol
 	refs    map[*ast.TreeNode]*Symbol
+
+	// Tables (analyzer_tables.go): the type each expression node is
+	// expected to have where its value is stored (D18), the std/csv reads
+	// and their row types, and the anonymous rows by shape.
+	expected   map[*ast.TreeNode]Type
+	tableReads map[*ast.TreeNode]*TableRead
+	anonRows   map[string]*StructType
 }
 
 func NewAnalyzer() *Analyzer {
@@ -130,6 +137,9 @@ func NewAnalyzer() *Analyzer {
 		symDefs:         make(map[*Symbol]symDef),
 		hoistScopes:     make(map[*ast.TreeNode]*HoistScope),
 		refs:            make(map[*ast.TreeNode]*Symbol),
+		expected:        make(map[*ast.TreeNode]Type),
+		tableReads:      make(map[*ast.TreeNode]*TableRead),
+		anonRows:        make(map[string]*StructType),
 	}
 }
 

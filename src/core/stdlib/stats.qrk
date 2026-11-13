@@ -1,0 +1,10 @@
+extern 'stats.hpp'
+
+extern fn stats_mean(v: vec) float as 'q_stats_mean'
+
+module stats:
+    // Mean of the present values of a numeric or bool vec, as a float: missing
+    // entries and NaN are skipped, and a bool vec gives the share of true
+    // values (like summarize's mean). A vec with no present values is a
+    // runtime error.
+    fn mean(v: vec) float -> stats_mean(v)

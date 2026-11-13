@@ -29,7 +29,7 @@ func walk(node *ast.TreeNode, fn func(*ast.TreeNode)) {
 	}
 }
 
-// ValidateCallPlans enforces analyzer->codegen call invariants before emission.
+// ValidateCallPlans enforces analyzer->lowering call invariants before emission.
 func ValidateCallPlans(root *ast.TreeNode, plans map[*ast.TreeNode]*ir.CallPlan) error {
 	if root == nil {
 		return nil
@@ -152,7 +152,7 @@ func ValidateReturnAnnotations(root *ast.TreeNode, validated map[*ast.TreeNode]b
 			return
 		}
 		if !validated[n] {
-			firstErr = invError("INV-RETURN-VALIDATE", n, "annotated return type was not validated before codegen")
+			firstErr = invError("INV-RETURN-VALIDATE", n, "annotated return type was not validated before lowering")
 		}
 	})
 	return firstErr

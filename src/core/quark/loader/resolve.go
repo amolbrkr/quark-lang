@@ -86,7 +86,7 @@ func mainScriptNames(main *srcFile) map[string]bool {
 //
 // The name, q<N>__<name>__l, can't be produced by anything else: an imported
 // file's names are q<N>_<stem>__... (a stem starts with a letter), main-script
-// members have one "__", and codegen's suffixes (__thunk, __default_arg,
+// members have one "__", and the back end's suffixes (__thunk, __default_arg,
 // __<n>) don't end in __l.
 func (ml *ModuleLoader) renameLocal(n *ast.TreeNode, c rctx) {
 	if n == nil || c.f.info.Main {

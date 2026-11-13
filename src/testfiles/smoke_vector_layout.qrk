@@ -52,6 +52,6 @@ print(f.get(2))
 print(all((vec [1, 2, 3] < 2.5) == vec [true, true, false]))
 print(any(vec [1, 2, 3] == vec [1.0, 5.0, 6.0]))
 
-// --- to_list round trip ---
-print(n.to_list().get(3))
-print(n.to_list().get(4))
+// --- to_list round trip: missing entries are filled or dropped first (D12) ---
+print(n.fillna(0).to_list().get(3))
+print(n.drop_na().to_list().get(3))

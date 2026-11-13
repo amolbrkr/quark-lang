@@ -247,6 +247,10 @@
         "signature": "fillna() vec"
       },
       {
+        "name": "drop_na",
+        "signature": "drop_na() vec"
+      },
+      {
         "name": "astype",
         "signature": "astype() vec"
       },
@@ -425,6 +429,16 @@
           "name": "shuffle",
           "signature": "shuffle(xs: list) list",
           "doc": "Shuffle a list in place and return it."
+        }
+      ]
+    },
+    {
+      "name": "stats",
+      "functions": [
+        {
+          "name": "mean",
+          "signature": "mean(v: vec) float",
+          "doc": "runtime error."
         }
       ]
     },

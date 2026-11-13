@@ -39,7 +39,7 @@ type FixedFn struct {
 	topLevel bool // declared in the root scope or a module body
 }
 
-// HoistScope is what codegen emits at the start of a scope that declares
+// HoistScope is what lowering emits at the start of a scope that declares
 // functions: the variables its capturing functions capture (as unassigned
 // cells, since the closures are created before those variables are
 // assigned), then the closures of its capturing functions.
@@ -277,7 +277,7 @@ func (a *Analyzer) finalizeFixedFns() {
 }
 
 // checkDefiniteAssignment implements rule 23 for every scope that declares
-// functions, and records the cells codegen must create unassigned.
+// functions, and records the cells lowering must create unassigned.
 //
 // A declared function's closure exists from the start of its scope, so a
 // call to it can run before a variable it captures is assigned. Direct calls

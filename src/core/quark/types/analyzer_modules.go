@@ -31,7 +31,7 @@ func (a *Analyzer) analyzeModule(node *ast.TreeNode) Type {
 }
 
 // Analysis is everything the analyzer hands to the invariant checks and to
-// codegen. New analyzer outputs belong here so every consumer picks them up.
+// lowering. New analyzer outputs belong here so every consumer picks them up.
 type Analysis struct {
 	CallPlans        map[*ast.TreeNode]*ir.CallPlan
 	ReturnValidation map[*ast.TreeNode]bool
@@ -39,7 +39,7 @@ type Analysis struct {
 	// Refs maps every identifier node the analyzer resolved (reads,
 	// assignment targets, declarations, parameters, loop variables, when
 	// bindings, fn names) to its symbol. A symbol's Storage and CName say how
-	// codegen declares and accesses it; its Decl node is where it is declared.
+	// lowering declares and accesses it; its Decl node is where it is declared.
 	Refs map[*ast.TreeNode]*Symbol
 	// Captures lists, per lambda, the symbols its closure captures, in
 	// capture-slot order.
@@ -52,7 +52,7 @@ type Analysis struct {
 
 	// Fixed `fn` declarations (analyzer_fixed.go). FixedFns is keyed by the
 	// declaration's lambda node. FnRefs maps identifier nodes that name a
-	// declaration needing no closure to it: codegen emits its C++ function
+	// declaration needing no closure to it: lowering emits its C++ function
 	// (or thunk) instead of reading a binding. HoistScopes is keyed by the
 	// CompilationUnit, module body or block that declares functions.
 	FixedFns    map[*ast.TreeNode]*FixedFn

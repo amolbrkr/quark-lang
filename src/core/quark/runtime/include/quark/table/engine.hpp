@@ -18,7 +18,7 @@
 // aggregates skip them. sum of no values is 0; mean, min and max of no values
 // are null; count counts rows. Group keys and sort keys put nulls last.
 //
-// Codegen evaluates filter predicates and mutate expressions with its own
+// Generated code evaluates filter predicates and mutate expressions with its own
 // typed loops over the column buffers; this header supplies the column
 // builders and the row gathering they feed.
 #ifndef QUARK_TABLE_ENGINE_HPP
@@ -453,8 +453,42 @@ inline QVector* agg_count_values(const QVector& col, const Grouping& g) {
     return out;
 }
 
+// is_whole_table reports whether g is the single group of whole_table, whose
+// aggregates are the vec reductions of the column itself.
+inline bool is_whole_table(const Grouping& g) { return g.ngroups == 1 && g.group_of_row == nullptr; }
+
+// GroupValues are the present values of a float column, group by group in
+// row order: group i's are vals[start[i] .. start[i + 1]).
+struct GroupValues {
+    std::vector<int64_t> start;
+    std::vector<double> vals;
+    size_t count(size_t i) const { return static_cast<size_t>(start[i + 1] - start[i]); }
+    const double* of(size_t i) const { return vals.data() + start[i]; }
+};
+
+// gather_f64 collects each group's present values (a counting sort of the
+// rows by group), so a group is summed exactly as sum() sums a vec of the
+// same values (q_vec_f64_present_sum).
+inline GroupValues gather_f64(const QVector& col, const Grouping& g) {
+    const size_t ng = static_cast<size_t>(g.ngroups);
+    GroupValues gv;
+    gv.start.assign(ng + 1, 0);
+    for (int32_t r = 0; r < g.nrows; r++) {
+        if (!is_missing_f64(col, r)) gv.start[static_cast<size_t>(group_of(g, r)) + 1]++;
+    }
+    for (size_t i = 0; i < ng; i++) gv.start[i + 1] += gv.start[i];
+    gv.vals.resize(static_cast<size_t>(gv.start[ng]));
+    std::vector<int64_t> next(gv.start.begin(), gv.start.end() - 1);
+    const double* x = q_vec_f64_data(col);
+    for (int32_t r = 0; r < g.nrows; r++) {
+        if (!is_missing_f64(col, r)) gv.vals[static_cast<size_t>(next[static_cast<size_t>(group_of(g, r))]++)] = x[r];
+    }
+    return gv;
+}
+
 // agg_sum: int and bool columns give an int (bools count as 0/1), float
-// columns a float. A group with no values sums to 0. Int overflow is fatal.
+// columns a float, summed pairwise (core/sum.hpp). A group with no values
+// sums to 0. Int overflow is fatal.
 inline QVector* agg_sum(const QVector& col, const Grouping& g) {
     const size_t ng = static_cast<size_t>(g.ngroups);
     switch (col.type) {
@@ -482,13 +516,13 @@ inline QVector* agg_sum(const QVector& col, const Grouping& g) {
         }
         case Type::F64: {
             QVector* out = q_vec_alloc(Type::F64, ng);
-            std::vector<long double> acc(ng, 0.0L);
-            const double* x = q_vec_f64_data(col);
-            for (int32_t r = 0; r < g.nrows; r++) {
-                if (!is_missing_f64(col, r)) acc[static_cast<size_t>(group_of(g, r))] += x[r];
-            }
             double* d = q_vec_f64_data_mut(*out);
-            for (size_t i = 0; i < ng; i++) d[i] = static_cast<double>(acc[i]);
+            if (is_whole_table(g)) {
+                d[0] = q_vec_f64_present_sum(col);
+                return out;
+            }
+            const GroupValues gv = gather_f64(col, g);
+            for (size_t i = 0; i < ng; i++) d[i] = q_pairwise_sum(gv.of(i), gv.count(i));
             return out;
         }
         case Type::STR: break;
@@ -496,38 +530,41 @@ inline QVector* agg_sum(const QVector& col, const Grouping& g) {
     fail("sum needs a number or bool column, got str");
 }
 
-// agg_mean: a float per group; null for a group with no values. Bools give
-// the share of true values.
+// agg_mean: a float per group; null for a group with no values. Float
+// values are summed pairwise, int values exactly (128-bit), and bools give the
+// share of true values, as q_vec_mean_present does for a whole column.
 inline QVector* agg_mean(const QVector& col, const Grouping& g) {
     if (col.type == Type::STR) fail("mean needs a number or bool column, got str");
     const size_t ng = static_cast<size_t>(g.ngroups);
-    std::vector<long double> acc(ng, 0.0L);
-    std::vector<int64_t> cnt(ng, 0);
-    for (int32_t r = 0; r < g.nrows; r++) {
-        double x;
-        switch (col.type) {
-            case Type::I64:
-                if (is_null(col, r)) continue;
-                x = static_cast<double>(q_vec_i64_data(col)[r]);
-                break;
-            case Type::F64:
-                if (is_missing_f64(col, r)) continue;
-                x = q_vec_f64_data(col)[r];
-                break;
-            default:
-                if (is_null(col, r)) continue;
-                x = q_vec_bool_at(col, static_cast<size_t>(r)) ? 1.0 : 0.0;
-                break;
-        }
-        const size_t gi = static_cast<size_t>(group_of(g, r));
-        acc[gi] += x;
-        cnt[gi]++;
-    }
     QVector* out = q_vec_alloc(Type::F64, ng);
     double* d = q_vec_f64_data_mut(*out);
+    if (is_whole_table(g)) {
+        size_t n = 0;
+        const double m = q_vec_mean_present(col, &n);
+        if (n == 0) set_null(*out, 0);
+        else d[0] = m;
+        return out;
+    }
+    if (col.type == Type::F64) {
+        const GroupValues gv = gather_f64(col, g);
+        for (size_t i = 0; i < ng; i++) {
+            const size_t n = gv.count(i);
+            if (n == 0) set_null(*out, static_cast<int32_t>(i));
+            else d[i] = q_pairwise_sum(gv.of(i), n) / static_cast<double>(n);
+        }
+        return out;
+    }
+    std::vector<__int128> acc(ng, 0);  // int values, or the number of trues
+    std::vector<int64_t> cnt(ng, 0);
+    for (int32_t r = 0; r < g.nrows; r++) {
+        if (is_null(col, r)) continue;
+        const size_t gi = static_cast<size_t>(group_of(g, r));
+        acc[gi] += col.type == Type::I64 ? q_vec_i64_data(col)[r] : (q_vec_bool_at(col, static_cast<size_t>(r)) ? 1 : 0);
+        cnt[gi]++;
+    }
     for (size_t i = 0; i < ng; i++) {
         if (cnt[i] == 0) set_null(*out, static_cast<int32_t>(i));
-        else d[i] = static_cast<double>(acc[i] / static_cast<long double>(cnt[i]));
+        else d[i] = q_i128_to_double(acc[i]) / static_cast<double>(cnt[i]);
     }
     return out;
 }

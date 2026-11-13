@@ -1,5 +1,5 @@
 // quark/core/checked.hpp - Checked integer arithmetic shared by operators,
-// scalar-lowered codegen output, and i64 vector kernels.
+// raw scalar arithmetic in generated code, and i64 vector kernels.
 #ifndef QUARK_CORE_CHECKED_HPP
 #define QUARK_CORE_CHECKED_HPP
 
@@ -12,7 +12,7 @@
 //
 // Signed overflow is undefined behavior in C++, so int arithmetic must never
 // overflow silently. Every int path (boxed operators, scalar-lowered locals
-// emitted by codegen, and i64 vector kernels) goes through these helpers so
+// emitted by the compiler, and i64 vector kernels) goes through these helpers so
 // overflow is a deterministic fatal error everywhere.
 // ------------------------------------------------------------
 [[noreturn]] inline void q_int_overflow(const char* op) {

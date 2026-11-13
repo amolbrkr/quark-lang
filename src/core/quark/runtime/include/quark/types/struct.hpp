@@ -9,7 +9,7 @@
 #include <cstdio>
 
 // QStructDef: static metadata for a struct type. One per struct definition,
-// emitted as a global constant by codegen.
+// emitted as a global constant by the compiler.
 struct QStructDef {
     const char* name;              // struct type name (e.g. "Customer")
     const char* const* field_names; // array of field name strings

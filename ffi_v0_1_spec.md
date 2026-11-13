@@ -54,7 +54,7 @@ extern fn list.shuffle2(seed: int) list as 'q_shuf'  // a method on list
 - `extern '<path>'` includes a header, resolved relative to the declaring `.qrk` file, or in the stdlib for `std/...`. Text after the string is a parse error.
 - `extern fn name(params) [ReturnType] as 'symbol'` binds `name` to the C++ function `symbol`. `as 'symbol'` is required. An unannotated parameter or return is `any` (`QValue`).
 - `extern fn type.name(...)` adds a method to `str`, `list`, `dict` or `vec`; the receiver is passed as the first C++ argument. A prelude method can't be redefined.
-- An `extern fn` can be declared at the top level of a file, in a module body or in a function body. It is a definition of its file like any other (`modules_v0_2_spec.md`): reached as `file::name` from an importer, file-scoped, and an error to define twice in one file. Free extern fns are first-class values (`g = io::exists`, `x | kid()`): codegen emits a `QValue` thunk for each.
+- An `extern fn` can be declared at the top level of a file, in a module body or in a function body. It is a definition of its file like any other (`modules_v0_2_spec.md`): reached as `file::name` from an importer, file-scoped, and an error to define twice in one file. Free extern fns are first-class values (`g = io::exists`, `x | kid()`): the back end emits a `QValue` thunk for each.
 
 ### 2.2 Type mapping and checks
 

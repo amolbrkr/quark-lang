@@ -223,6 +223,17 @@ inline QValue q_eq(QValue a, QValue b) {
     return qv_bool(quark::detail::values_equal(a, b, 0));
 }
 
+// q_match_eq is a `when` value pattern, `a == b` as a C++ bool. == on a vec
+// compares elementwise, so matching a vec is a runtime error, as using one as
+// a condition is.
+inline bool q_match_eq(QValue a, QValue b) {
+    if (a.type == QValue::VAL_VECTOR || b.type == QValue::VAL_VECTOR) {
+        q_runtime_reportf("runtime error: when can't match a vec (== on a vec compares elementwise); test all(v == x) or any(v == x) with if instead\n");
+        std::exit(1);
+    }
+    return quark::detail::values_equal(a, b, 0);
+}
+
 // Not equal
 inline QValue q_neq(QValue a, QValue b) {
     if (a.type == QValue::VAL_VECTOR || b.type == QValue::VAL_VECTOR) {

@@ -1,3 +1,5 @@
+incl 'std/stats'
+
 print('== smoke: vec soundness ==')
 
 a = vec [1, 2, 3]
@@ -30,3 +32,22 @@ acc = 0
 for x in vec [1, 2, 3, 4, 5]:
     acc = acc + x
 print(acc)
+
+// Missing entries stay in the vec; taking one out needs fillna or drop_na (D12).
+print(vn.drop_na())
+print(len(vn.drop_na()))
+print(vn.get(1))
+total = 0
+for x in vn.drop_na():
+    total = total + x
+print(total)
+for x in vn.fillna(10):
+    print(x)
+print(vn.fillna(0).to_list())
+print(vn[2])
+
+// Reductions follow the table aggregates (D13): int sums stay exact ints.
+print(sum(vec [9007199254740993, 1]))
+print(max(vec ['pear', 'apple', 'fig']))
+print(stats::mean(vn))
+print(stats::mean(vec [true, false, false, true]))

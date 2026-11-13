@@ -173,7 +173,7 @@ A container in a field is still mutable through its own methods (`p.xs.push(1)` 
 ## 6. Runtime Semantics
 
 - A struct value is a `QStruct` (`runtime/include/quark/types/struct.hpp`): a pointer to its `QStructDef` plus one `QValue` slot per field, in declaration order. Values are GC-allocated and boxed with the `VAL_STRUCT` tag.
-- Codegen emits one `static const QStructDef _sdef_<name>` per definition (`{display name, field names, field count}`). Pointer identity of the def is type identity: the runtime checks `q_param_struct` (parameters, `builtins/params.hpp`) and `q_field_struct` (struct-typed fields) compare `QStructDef*`, never names. `QStructDef.name` holds the display name (`geo::Point`) used by `print`, `type()` and messages.
+- The back end emits one `static const QStructDef _sdef_<name>` per definition (`{display name, field names, field count}`). Pointer identity of the def is type identity: the runtime checks `q_param_struct` (parameters, `builtins/params.hpp`) and `q_field_struct` (struct-typed fields) compare `QStructDef*`, never names. `QStructDef.name` holds the display name (`geo::Point`) used by `print`, `type()` and messages.
 - Field values of unproven type are wrapped in `q_field_int`/`_float`/`_bool`/`_check`/`_struct` when the literal is built; proven values are stored unchanged.
 - Printing uses declaration order: `Point {x: 1.0, y: 2.0}`. A struct is always truthy.
 

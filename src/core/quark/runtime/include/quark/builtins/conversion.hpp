@@ -55,7 +55,68 @@ inline QValue q_iter_get(QValue iterable, QValue index) {
         return qv_null();
     }
 
-    return q_vec_box_at(*iterable.data.vector_val, static_cast<size_t>(idx));
+    // A missing entry is an error (D12), as for v[i].
+    QValue out = q_vec_box_at(*iterable.data.vector_val, static_cast<size_t>(idx));
+    if (out.type == QValue::VAL_NULL) q_vec_missing(idx);
+    return out;
+}
+
+// A list keeps its length for the whole for loop over it: a body that pushes,
+// pops, inserts or removes is a runtime error at the `for` (loc; nullptr
+// keeps the current location, for loops in std/ code). Writes that keep the
+// length (`xs[i] = v`) are allowed. Strings and vecs can't change length.
+[[noreturn]] inline void q_list_resized(long long was, long long now, const QSourceLoc* loc) {
+    if (loc != nullptr) q_runtime_loc = loc;
+    q_runtime_reportf("runtime error: list changed size during the for loop over it (length %lld at the start, %lld now)\n", was, now);
+    std::exit(1);
+}
+
+// The length of a `for` loop's iterable of unknown type: anything but a list,
+// string or vec is an error before the first iteration, also when it is empty.
+inline long long q_for_len(QValue it) {
+    switch (it.type) {
+        case QValue::VAL_LIST:
+            if (it.data.list_val != nullptr) return static_cast<long long>(it.data.list_val->size());
+            break;
+        case QValue::VAL_STRING:
+            if (it.data.string_val != nullptr) return static_cast<long long>(strlen(it.data.string_val));
+            break;
+        case QValue::VAL_VECTOR:
+            return static_cast<long long>(q_vec_size(it));
+        default:
+            break;
+    }
+    q_runtime_reportf("runtime error: for-loop iterable must be list, string, or vec, got %s\n", q_type_name(it.type));
+    std::exit(1);
+}
+
+// The list a `for` over a value the analyzer typed as a list iterates.
+inline QList* q_for_list(QValue v) {
+    if (v.type != QValue::VAL_LIST || v.data.list_val == nullptr) {
+        q_runtime_reportf("runtime error: for-loop iterable must be list, string, or vec\n");
+        std::exit(1);
+    }
+    return v.data.list_val;
+}
+
+inline long long q_list_len(const QList* xs) { return static_cast<long long>(xs->size()); }
+
+// Element i of a list the loop test has kept in range.
+inline QValue q_list_at(const QList* xs, long long i) { return (*xs)[static_cast<size_t>(i)]; }
+
+// The test of an index loop over a list with n elements at the start.
+inline bool q_for_list_more(const QList* xs, long long n, long long i, const QSourceLoc* loc) {
+    const long long now = static_cast<long long>(xs->size());
+    if (__builtin_expect(now != n, 0)) q_list_resized(n, now, loc);
+    return i < n;
+}
+
+// The same test for an iterable of unknown type (q_iter_get loops).
+inline bool q_for_more(QValue it, long long n, long long i, const QSourceLoc* loc) {
+    if (it.type == QValue::VAL_LIST && it.data.list_val != nullptr) {
+        return q_for_list_more(it.data.list_val, n, i, loc);
+    }
+    return i < n;
 }
 
 // Convert value to string

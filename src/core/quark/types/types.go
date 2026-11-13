@@ -155,9 +155,9 @@ type FunctionType struct {
 	ParamCalls [][]*CallShape
 }
 
-// DefaultValueInfo stores info about a default parameter value for codegen
+// DefaultValueInfo stores info about a default parameter value for lowering
 type DefaultValueInfo struct {
-	Node interface{} // The AST node for the default expression (used by codegen)
+	Node interface{} // The AST node for the default expression (used by lowering)
 }
 
 // ResultType represents an explicit ok/err result value
@@ -248,7 +248,7 @@ type StructField struct {
 	Name        string
 	Type        Type
 	HasDefault  bool
-	DefaultNode interface{} // *ast.TreeNode — codegen uses this to emit default values
+	DefaultNode interface{} // *ast.TreeNode — lowering uses this to emit default values
 }
 
 // StructType represents a named struct type with ordered fields.
@@ -308,7 +308,7 @@ type Symbol struct {
 	// its annotation (checked where the value comes in), or the type of its
 	// first value. nil means any value.
 	StoreType Type
-	// Decl is the identifier node where codegen declares the C++ variable
+	// Decl is the identifier node where lowering declares the C++ variable
 	// (the first assignment, the declaration, the parameter, ...).
 	Decl *ast.TreeNode
 

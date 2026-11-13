@@ -382,7 +382,7 @@ inline QValue call(QClosure* fn, QValue a0, QValue a1, QValue a2) {
 } // namespace qext
 
 // ============================================================
-// Unboxing helpers used by DispatchExtern call sites in codegen
+// Unboxing helpers used by DispatchExtern call sites in generated code
 // ============================================================
 // These are emitted directly by the compiler at extern call sites and must
 // therefore be available as plain C-linkage inline functions (not in a
@@ -443,7 +443,7 @@ inline QClosure* q_as_closure(QValue v) {
     return static_cast<QClosure*>(v.data.func_val);
 }
 
-// Boxing wrappers for native return values back to QValue (codegen
+// Boxing wrappers for native return values back to QValue (generated code
 // boxNative). A native function declared to return a str, list, dict, vec or
 // fn that returns nullptr is an error: those types don't include null.
 [[noreturn]] inline void q_native_null_return(const char* type) {

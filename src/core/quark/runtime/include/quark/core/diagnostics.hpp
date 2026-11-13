@@ -6,25 +6,28 @@
 #include <cstring>
 #include <cstdio>
 
+// A source location. Generated code keeps every location of the program in
+// one static table and records the current one as a pointer into it, so
+// marking a statement is a single store.
 struct QSourceLoc {
     const char* file;
     int line;
     int col;
 };
 
-inline thread_local QSourceLoc q_runtime_loc = {"<unknown>", 0, 0};
+inline constexpr QSourceLoc q_no_source_loc = {"<unknown>", 0, 0};
 
-inline void q_set_source_loc(const char* file, int line, int col) {
-    q_runtime_loc.file = file != nullptr ? file : "<unknown>";
-    q_runtime_loc.line = line;
-    q_runtime_loc.col = col;
+inline thread_local const QSourceLoc* q_runtime_loc = &q_no_source_loc;
+
+inline void q_set_source_loc(const QSourceLoc* loc) {
+    q_runtime_loc = loc != nullptr ? loc : &q_no_source_loc;
 }
 
 // QSourceLocGuard restores the caller's source location when a generated
 // function returns, so a runtime error later in the calling statement is
 // reported there and not at the last statement that ran inside the callee.
 struct QSourceLocGuard {
-    QSourceLoc saved;
+    const QSourceLoc* saved;
     QSourceLocGuard() : saved(q_runtime_loc) {}
     ~QSourceLocGuard() { q_runtime_loc = saved; }
     QSourceLocGuard(const QSourceLocGuard&) = delete;
@@ -52,10 +55,11 @@ inline void q_runtime_reportf(const char* fmt, ...) {
         message += std::strlen(prefix);
     }
 
-    if (q_runtime_loc.line > 0 && q_runtime_loc.col > 0) {
-        std::fprintf(stderr, "error[QK-RUNTIME-001] (runtime): %s at %s:%d:%d\n", message, q_runtime_loc.file, q_runtime_loc.line, q_runtime_loc.col);
-    } else if (q_runtime_loc.line > 0) {
-        std::fprintf(stderr, "error[QK-RUNTIME-001] (runtime): %s at %s:%d\n", message, q_runtime_loc.file, q_runtime_loc.line);
+    const QSourceLoc& loc = *q_runtime_loc;
+    if (loc.line > 0 && loc.col > 0) {
+        std::fprintf(stderr, "error[QK-RUNTIME-001] (runtime): %s at %s:%d:%d\n", message, loc.file, loc.line, loc.col);
+    } else if (loc.line > 0) {
+        std::fprintf(stderr, "error[QK-RUNTIME-001] (runtime): %s at %s:%d\n", message, loc.file, loc.line);
     } else {
         std::fprintf(stderr, "error[QK-RUNTIME-001] (runtime): %s\n", message);
     }

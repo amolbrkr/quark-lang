@@ -1,8 +1,8 @@
 # Quark Tables v0.1 Spec
 
-Status: Draft, revision 3 (2026-11-13). The design is the set of decisions taken on 2026-11-13 (§2, D1-D17). The runtime engine (§7) and the CSV/TSV reader and writer (§8) are implemented and tested (`TestTableEngine`). The compiler side is not: `tbl` is not a keyword or a type yet (`x: tbl = ...` is `unknown type 'tbl'`), and no Quark program can create a table. Revision 3 replaces the 2026-04-02 first draft (literal-first, `orders: Order = tbl { ... }`, `as` aliases, pluggable backends), which is in git history.
+Status: Draft, revision 3 (2026-11-13). The design is the set of decisions taken on 2026-11-13 (§2, D1-D17). The runtime engine (§7), the CSV/TSV reader and writer (§8) the missing-value rule for vectors (D12) and the vector reductions (D13) are implemented and tested (`TestTableEngine`, `TestSemanticsSafety_Rejected`). The compiler side is not: `tbl` is not a keyword or a type yet (`x: tbl = ...` is `unknown type 'tbl'`), and no Quark program can create a table. Revision 3 replaces the 2026-04-02 first draft (literal-first, `orders: Order = tbl { ... }`, `as` aliases, pluggable backends), which is in git history.
 Last Updated: 2026-11-13
-Related: `structs_v0_1_spec.md` (row types), `architecture.md` §13 (the lowering/IR pipeline the compiler work targets), `ffi_v0_1_spec.md` P5/P6 (Arrow export, DuckDB).
+Related: `structs_v0_1_spec.md` (row types), `architecture.md` §1.6 (the lowering pass and IR the compiler work targets), `ffi_v0_1_spec.md` P5/P6 (Arrow export, DuckDB).
 
 ## Contents
 
@@ -40,8 +40,8 @@ Stats and ML come after this. DuckDB is a later, optional backend, not the found
 | D9 | **Group order is key order** (ascending, nulls last), as in dplyr, so `summarize` output is deterministic. |
 | D10 | **The table type is written `tbl[Employee]`**: `staff: tbl[Employee] = ...`, `fn top(t: tbl[Employee]) tbl[Employee] -> ...`. A bare struct annotation (`t: Employee`) always means one struct value, never a table. It is the first bracketed type; `list[T]` follows the same form (D16). |
 | D11 | **Queries need a known row type** (first implementation). A query on a table whose row struct the compiler doesn't know (`t = csv::read_file(path)` with no annotation) is a compile-time error that says to give the table a row struct. Such tables can still be printed, rendered with `fmt::table` and written. Runtime-checked queries on them come with the inference extension (§10). |
-| D12 | **Missing values stay in columns; a value taken out must be present** (the "middle path"). Vectors and table columns keep their validity mask, so CSV gaps and `vec [1, null, 3]` are allowed (a `null` in a vec literal is a compile error today; `list [1, null, 3].to_vec()` works), and vectorized code handles them (arithmetic and comparisons propagate nulls, aggregates skip them, `filter` drops null predicates). Reading one element as a scalar (`for x in v`, `v[i]`, later a row as a struct) checks it, and a null is a runtime error (`v[3] is missing; use fillna or drop_na first`). There are no nullable types (`T?`). `fillna` stays and `drop_na` is added, as the bridges from "may be missing" to "present". The analyzer may later skip the check where it can prove a vector has no nulls (a literal without `null`, the result of `fillna`, arithmetic on such vectors). |
-| D13 | **Vector reductions follow the table aggregate rules** (D6), since `sum(t.salary)` and `summarize(s = sum(e.salary))` must agree: an int vec sums exactly to an int (overflow is a runtime error), `min`/`max` keep the element type, NaN is skipped, an all-missing sum is 0, and `min`/`max`/`mean` of no values are null instead of an error. A breaking change for programs using vec reductions (today they return a float). |
+| D12 | **Missing values stay in columns; a value taken out must be present** (the "middle path"). Vectors and table columns keep their validity mask, so CSV gaps and `vec [1, null, 3]` are allowed (a `null` in a vec literal is a compile error today; `list [1, null, 3].to_vec()` works), and vectorized code handles them (arithmetic and comparisons propagate nulls, aggregates skip them, `filter` drops null predicates). Reading one element as a scalar (`for x in v`, `v[i]`, `to_list()`, `enumerate()`, later a row as a struct) checks it, and a null is a runtime error (`vec element 3 is missing; use fillna or drop_na first`); the check is in the runtime, so it holds for vecs of unknown type too. `v.get(i)` returns `null` for a missing entry and is typed `any`. *Implemented 2026-11-13* (`q_vec_get_scalar`, `q_iter_get`, `q_to_list`, `q_drop_na` in the runtime). There are no nullable types (`T?`). `fillna` stays and `drop_na` is added, as the bridges from "may be missing" to "present". The analyzer may later skip the check where it can prove a vector has no nulls (a literal without `null`, the result of `fillna`, arithmetic on such vectors). |
+| D13 | **Vector reductions follow the table aggregate rules** (D6), since `sum(t.salary)` and `summarize(s = sum(e.salary))` must agree: an int or bool vec sums exactly to an int (overflow is a runtime error), a float vec, a float column and each group of one sum their present values pairwise in `double` (decided 2026-11-13: the same bits on every platform, unlike `long double`, at SIMD speed), `min`/`max` keep the element type (strings in byte order), NaN is skipped, and a sum of no values is 0. `min`/`max`/`mean` of a vec with no present values are a runtime error (decided 2026-11-13): a value taken out of a vec must be present (D12), and their results are typed exactly; `summarize` gives a missing value instead, since a column can hold one. The mean is `stats::mean` in `std/stats`, not a prelude builtin, so `mean` stays free as a user name. *Implemented 2026-11-13*; `src/testfiles/table/reduce_test.cpp` checks that the vec reductions and the engine's aggregates agree. |
 | D14 | **One null rule for container parameters**, which `tbl` follows. *Done 2026-11-13:* `list`, `dict`, `vec` and `fn` annotations reject `null` everywhere (`architecture.md` §12), so a `tbl[T]` parameter will too. |
 | D15 | **The old `std/csv` is removed** (`csv::parse` and `csv::read`, which return lists of str lists). `std/csv` is rebuilt on the new reader (`csv::read_file`, `csv::write_file`, and a text form such as `csv::parse_text`, all with tables). Breaking. Empty and `NA` cells are missing in every column, as in readr. |
 | D16 | **`list[T]` is planned.** A typed list of scalars (`list[float]`) would be stored like `vec` today (columnar, with a mask), plain `list` stays `list[any]`, and `vec` can then be folded into `list[T]`. Not part of the first table implementation. |
@@ -88,7 +88,7 @@ A row type produced by `mutate` or `summarize` is anonymous: generated by the co
 
 ### 3.4 At runtime
 
-Tables that pass through `any`, lists, dicts or native code are checked the same way when they reach a `tbl[Emp]` parameter or annotated variable. Every table carries its row definition (`QStructDef`), and every column its physical type. The check passes when the definition is `Emp`'s (pointer identity, as for struct values), or when the row is anonymous and its names and column types match `Emp` exactly, in which case the table is relabeled `Emp` and its columns reordered. Anything else is a runtime error: `argument 't' of 'top' expects tbl[Emp], got tbl[{dept: str, avg: float}]`. Codegen emits one static `QStructDef` per anonymous row type, marked as anonymous.
+Tables that pass through `any`, lists, dicts or native code are checked the same way when they reach a `tbl[Emp]` parameter or annotated variable. Every table carries its row definition (`QStructDef`), and every column its physical type. The check passes when the definition is `Emp`'s (pointer identity, as for struct values), or when the row is anonymous and its names and column types match `Emp` exactly, in which case the table is relabeled `Emp` and its columns reordered. Anything else is a runtime error: `argument 't' of 'top' expects tbl[Emp], got tbl[{dept: str, avg: float}]`. The back end emits one static `QStructDef` per anonymous row type, marked as anonymous.
 
 ## 4. Query surface (planned)
 
@@ -111,7 +111,7 @@ stats = staff | e ->
 
 - After `|`, an `ID ->` pair starts a query; the chain parses into one query node. Each step must be a verb: anything else, `e` used as a value (`f(e)`), an unknown column, a type mismatch, an aggregate outside `summarize`, or a non-table source is a compile-time error.
 - `name = expr` inside `mutate` and `summarize` defines a column (Quark has no keyword arguments elsewhere).
-- Verb expressions are arithmetic, comparisons, `and`/`or`/`!`, literals and outer scalar variables in v0.1. Codegen compiles each one into a typed loop over the column buffers (no expression interpreter, no temporary columns).
+- Verb expressions are arithmetic, comparisons, `and`/`or`/`!`, literals and outer scalar variables in v0.1. Lowering compiles each one into a typed loop over the column buffers (no expression interpreter, no temporary columns).
 - Aggregates: `count()`, `count(e.col)` (non-missing values), `sum`, `mean`, `min`, `max`. `sum` of int is int (overflow is a runtime error), of bool counts true values, of float is float; `mean` is float (a bool mean is the share of true values); `min`/`max` keep the column's type and also work on str (byte order).
 - `sort(e.a, desc(e.b))`: stable, several keys.
 - `100_000` needs digit separators in the lexer (planned with the query work).
@@ -149,7 +149,7 @@ This is fixed behaviour, documented for users, not an option.
 | `group_keys(t, g, col)` | The key column of the summarize output |
 | `agg_count`, `agg_count_values`, `agg_sum`, `agg_mean`, `agg_min`, `agg_max` | Per-group aggregates (§5) |
 
-Filter predicates and mutate expressions are not engine functions: codegen writes their loops and feeds the selected row indices to `take_table`.
+Filter predicates and mutate expressions are not engine functions: generated code runs their loops and feeds the selected row indices to `take_table`.
 
 Measured on 500K rows (`-O2`, one core, Linux x86_64, 2026-11-13): `group_by` + `mean` 23 ms, sort by one float key 97 ms, sort by two keys 271 ms.
 
@@ -168,12 +168,9 @@ Measured on 500K rows (`-O2`, one core, Linux x86_64, 2026-11-13): `group_by` + 
 ## 9. Plan
 
 **Prerequisites, before `tbl` compiler work starts:**
-1. D12: checked element reads of vectors (`for x in v`, `v[i]`), fixing the known issue where a null element is read as `0` (`changelog.md`, Known issues). Plus `drop_na`.
-2. D13: vector reductions aligned with the table aggregates.
-3. ~~D14: one null rule for `list`/`dict`/`vec`/`fn` parameters~~ (done 2026-11-13).
-4. CSV reader: validate UTF-8 in str columns (Arrow's `utf8` requires it); report `line 12: column 'name' is not valid UTF-8 (the file may be Latin-1)`, or transcode with an encoding option.
+1. CSV reader: validate UTF-8 in str columns (Arrow's `utf8` requires it); report `line 12: column 'name' is not valid UTF-8 (the file may be Latin-1)`, or transcode with an encoding option.
 
-**The first implementation**, targeting the lowering/IR pipeline (`architecture.md` §13) rather than today's codegen:
+**The first implementation**, in the lowering pass and IR (`lower/`, `emit/`, `architecture.md` §1.6):
 - The `tbl[T]` type (D10), the query node and verb checks (D3-D5, D11), digit separators.
 - `std/csv` rebuilt on the new reader, with the D17 mapping (D15).
 - Printing and the inspection functions (§6).
@@ -199,7 +196,7 @@ Columns follow the Arrow columnar format for the types used: float64 (`g`), int6
 
 Known differences:
 - Buffer lengths are exact, not padded to 64 bytes (Arrow recommends it; the IPC format requires 8-byte padding). In-memory sharing through the C Data Interface doesn't need it; writing IPC/Parquet would pad while serializing.
-- str columns aren't yet checked for valid UTF-8 (§9, prerequisite 4).
+- str columns aren't yet checked for valid UTF-8 (§9, prerequisite 1).
 - int32 offsets cap a str column at 2 GiB of text (Arrow `large_utf8` isn't used).
 - Conformance is checked byte by byte (`TestVectorArrowLayout`), not yet against an Arrow implementation. FFI P5 (the C Data Interface export) should come with a round-trip test through pyarrow or the Arrow C library, and must keep exported buffers alive for the GC until the consumer's release callback runs.
 
@@ -210,3 +207,4 @@ Known differences:
 3. **Slicing and masks outside queries.** The first draft proposed `t[0:10]` (Quark has no slice syntax; `head`/`tail`/`slice` are planned as verbs) and `t[t.qty > 1]` (a `vec[bool]` mask, as for vectors). Keep the mask form alongside `filter`, or only `filter`?
 4. **An annotation for a table of unknown row type.** D11 allows such tables to be printed and written. Can a parameter accept one (a bare `tbl`), or must every annotation name a row struct?
 5. **Diagnostics.** Tables reuse `QK-PARSE-001`, `QK-CHECK-001` and `QK-RUNTIME-001`; does the CSV reader's error deserve its own code (it is an environment failure returned as an `err`, not a crash)?
+6. **Typed lists, `vec` and `list[any]`.** Quark has three sequence kinds: typed lists (`list[int]`, element type fixed at creation, boxed `QValue` elements), `vec` (columnar, with a missing-value mask) and lists of any value (`xs: list = ...`). Is it worth keeping all three? D16 would fold `vec` into `list[T]`; the other direction is a slow but Python-like `list[any]` as the general list, with `vec`/`list[T]` as the fast typed form. To decide after the first table implementation, with the D12 behaviour (a missing entry taken out is an error, `to_list()` of a vec with missing entries included) as a constraint.

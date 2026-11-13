@@ -76,6 +76,9 @@ func (a *Analyzer) analyzeWhenStatement(node *ast.TreeNode) Type {
 			}
 			if pc.NodeType != ast.ResultPatternNode && !isLiteralPattern(pc) {
 				a.errorAt(pc, "when patterns must be literal values (numbers, strings, booleans, null), '_', or ok/err patterns")
+			} else if _, isVec := matchType.(*VectorType); isVec && pc.NodeType != ast.ResultPatternNode {
+				// q_match_eq is a runtime error for a vec of unknown type.
+				a.errorAt(pc, "when can't match a vec (== on a vec compares elementwise); test all(v == x) or any(v == x) with if instead")
 			}
 		}
 		bindName, hasBinding, bindingIsErr, resultPatternNode := extractResultPatternBinding(pattern)

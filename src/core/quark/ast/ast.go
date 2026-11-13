@@ -133,7 +133,7 @@ type TreeNode struct {
 
 	// SourceFile is the display name of the file the node was parsed from, set
 	// by the loader for nodes spliced in from imported modules (empty for the
-	// root file). Codegen uses it for runtime error locations.
+	// root file). Lowering uses it for runtime error locations.
 	SourceFile string
 }
 

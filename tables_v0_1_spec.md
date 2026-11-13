@@ -8,7 +8,7 @@ Related: `structs_v0_1_spec.md` (row types), `architecture.md` §13 (the lowerin
 
 1. [Purpose](#1-purpose)
 2. [Decisions](#2-decisions)
-3. [Type model](#3-type-model)
+3. [Type model](#3-type-model) (schema through verbs and functions: §3.1-3.4)
 4. [Query surface (planned)](#4-query-surface-planned)
 5. [Missing values](#5-missing-values)
 6. [Inspection (planned)](#6-inspection-planned)
@@ -21,7 +21,7 @@ Related: `structs_v0_1_spec.md` (row types), `architecture.md` §13 (the lowerin
 
 ## 1. Purpose
 
-Quark's first data workload is replacing R/dplyr wrangling of a few CSV files (healthcare and pharma data, typically 100K-500K rows): read, filter, derive columns, group, summarize, sort, write. A `tbl` is a native, eager, in-memory columnar table for that work. Its row type is a struct, so the compiler checks every column reference and expression in a query, and each query step compiles to a typed loop over column buffers.
+Tables cover the everyday data-wrangling loop: read tabular files, filter, derive columns, group, summarize, sort, write. A `tbl` is a native, eager, in-memory columnar table for that work. Its row type is a struct, so the compiler checks every column reference and expression in a query, and each query step compiles to a typed loop over column buffers.
 
 Stats and ML come after this. DuckDB is a later, optional backend, not the foundation.
 
@@ -30,7 +30,7 @@ Stats and ML come after this. DuckDB is a later, optional backend, not the found
 | # | Decision |
 |---|---|
 | D1 | **Eager, in-memory, columnar.** Every verb runs to completion and returns a new immutable table; there is no lazy plan in v0.1. Columns use the existing `QVector` buffers (Arrow layout: f64/i64 values, bit-packed bool, int32 offsets + UTF-8 for str, validity bitmaps), so `t.salary` is a `vec` without copying. Only the flat primitive layouts are used; no Arrow library. |
-| D2 | **Typed by a struct.** The struct gives column names and types, and the compiler checks every column reference and expression against it. The schema flows through each verb, so the compiler knows every intermediate table's columns. There is no separate schema type (decided 2026-11-12: schema is folded into struct). |
+| D2 | **Typed by a struct.** The struct gives column names and types, and the compiler checks every column reference and expression against it. The schema flows through each verb, so the compiler knows every intermediate table's columns (rules in §3.1-3.4). There is no separate schema type (decided 2026-11-12: schema is folded into struct). |
 | D3 | **Query syntax: one row name per pipe** (`t \| e -> verb(...) \| verb(...)`), re-bound at each verb to that verb's input row. `e` may only appear as `e.col` inside verb arguments. |
 | D4 | **Verbs v0.1:** `filter`, `mutate` (add or replace columns), `sort`, `group_by`, `summarize`. No `reduce`: `summarize` without `group_by` aggregates the whole table into one row. `map` over vecs/tables (like `purrr::map`) comes later. |
 | D5 | **`summarize` returns an ungrouped table**, so there is no `ungroup()`. `group_by` returns a grouped table that only `summarize` accepts (a compile-time error otherwise). |
@@ -50,11 +50,45 @@ Stats and ML come after this. DuckDB is a later, optional backend, not the found
 ## 3. Type model
 
 - `tbl[R]`, where `R` is a struct, is a table whose columns are `R`'s fields, in field order, with the field types (D2, D10). Column types are `int`, `float`, `bool` and `str` in v0.1 (`date` and others later, §9).
-- Every verb's result type is known at compile time: `filter` and `sort` keep `R`; `mutate` adds or replaces columns; `summarize` produces the group keys followed by the named aggregates. These intermediate row types have no name the user writes; they exist so the compiler can check the next step.
-- A grouped table (the result of `group_by`) is a compile-time state, not a type a user can annotate. Only `summarize` accepts it (D5).
 - A table whose row struct the compiler doesn't know (D11) can be printed, rendered and written, but not queried.
 - `t.col` on a `tbl[R]` is the column as a `vec` (D1); an unknown column is a compile-time error.
 - A table value is immutable; there is no cell assignment.
+
+### 3.1 Schema through verbs (decided 2026-11-13)
+
+The compiler knows every table's row type: column names, column types and their order. Each verb produces its output row type at compile time:
+
+| Verb | Output row type |
+|---|---|
+| `filter`, `sort`, `head`, `tail` | Unchanged: `tbl[Emp]` stays `tbl[Emp]` |
+| `mutate(bonus = e.salary * 0.1)` | The input's columns, then each new column at the end, in the order written (`bonus: float`) |
+| `mutate(salary = e.salary * 1.1)` | A replaced column keeps its position and takes the expression's type, which may differ from the old one: `mutate(id = to_str(e.id))` makes `id` a `str` (common in cleaning, as in dplyr) |
+| `group_by(e.dept)` | The input row, marked as grouped by `dept`; only `summarize` accepts it |
+| `summarize(avg = mean(e.salary), n = count())` | The group keys first (in `group_by` order, with their types), then the aggregates in the order written: `{dept: str, avg: float, n: int}` |
+
+- **Column types** follow the expression rules (§4): int arithmetic stays int, `/` gives float, `mean` is float, `count` is int, `min`/`max` keep the column's type, `sum` of int or bool is int.
+- **Compile-time errors:** two columns with one name in one `mutate` or `summarize`; a summarize column named like a group key; an unknown column; any verb but `summarize` after `group_by`.
+- **Grouped tables exist only inside one query chain.** `group_by` must be followed directly by `summarize` in the same chain; `g = t | e -> group_by(e.dept)` on its own is a compile-time error. A grouped table is a compile-time state, not a type a user can annotate, store or pass (may be relaxed later).
+
+### 3.2 Anonymous and named rows
+
+A row type produced by `mutate` or `summarize` is anonymous: generated by the compiler and shown in messages as `{dept: str, avg: float, n: int}`. Anonymous rows match named structs by shape; named structs match only themselves.
+
+- `stats: tbl[DeptStats] = staff | e -> ... | summarize(...)` is accepted when the derived row has exactly `DeptStats`'s field names and types. Strict: no extra and no missing columns (dropping columns is an explicit `select`, so a typo can't lose one silently). Column order doesn't matter: the columns are reordered to the struct's order, which only moves column pointers. From then on the value is a `tbl[DeptStats]`.
+- Two named structs never match each other, even with identical fields (`geo::Point` and `other::Point`, as for struct values).
+- A mismatch is a compile-time error naming the difference: `the query produces {dept: str, avg: float, n: int}, but DeptStats has no column 'n'`, or `column 'avg' is float, but DeptStats declares it int`.
+
+### 3.3 Functions
+
+- A parameter `t: tbl[Emp]` accepts a `tbl[Emp]`, or a table with an anonymous row of exactly `Emp`'s shape. Queries in the body are checked against `Emp`.
+- An unannotated parameter (`fn top(t)`) is `any`; a query on it is the D11 compile-time error (`give the table a row struct: t: tbl[Emp]`).
+- A return annotation (`fn stats(t: tbl[Emp]) tbl[DeptStats] ->`) checks the body's derived row against `DeptStats`, as an assignment does.
+- Without a return annotation, the inferred return type is the anonymous row, so callers get the full schema. A call above the function's declaration (hoisting) sees only its signature; a query on such a result is an error that suggests adding the return annotation.
+- No row polymorphism in v0.1: a parameter can't mean "any table with at least a `salary: float` column". A possible later feature.
+
+### 3.4 At runtime
+
+Tables that pass through `any`, lists, dicts or native code are checked the same way when they reach a `tbl[Emp]` parameter or annotated variable. Every table carries its row definition (`QStructDef`), and every column its physical type. The check passes when the definition is `Emp`'s (pointer identity, as for struct values), or when the row is anonymous and its names and column types match `Emp` exactly, in which case the table is relabeled `Emp` and its columns reordered. Anything else is a runtime error: `argument 't' of 'top' expects tbl[Emp], got tbl[{dept: str, avg: float}]`. Codegen emits one static `QStructDef` per anonymous row type, marked as anonymous.
 
 ## 4. Query surface (planned)
 

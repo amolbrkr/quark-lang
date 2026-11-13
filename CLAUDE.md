@@ -70,6 +70,8 @@ Each doc owns one topic; others link to it instead of repeating it:
 
 Rules: docs describe the current state only. No "used to", no superseded designs, no finished to-do lists; history is in `changelog.md` and git. Every doc starts with a table of contents. A change that alters behavior updates the doc that owns it in the same change. When a decision supersedes part of a spec, rewrite that part; don't add an override section on top of it.
 
+Quark is general-purpose for data work and not tied to any domain. Examples the user gives in conversation (a field they work in, typical data sizes, their own tools or workflow) are context for you, not content: don't put them in user-facing docs, and don't present them as Quark's target use case.
+
 ## Build & Test Commands
 
 ```bash

@@ -6,11 +6,31 @@ Quark has no tagged releases yet, so entries are grouped by date and by piece of
 
 Sections follow [Keep a Changelog](https://keepachangelog.com/): **Breaking**, **Added**, **Changed**, **Fixed**, **Removed**, **Internal**. "Breaking" covers anything that can make a program that worked before fail to compile, fail at runtime, or print something different.
 
+## Contents
+
+- [Known issues (as of `fd6822c`)](#known-issues-as-of-fd6822c)
+- [2026-11-13: Docs overhaul](#2026-11-13-docs-overhaul)
+- [2026-11-13: Element types are fixed, variables don't narrow, return annotations are checked (architecture §12)](#2026-11-13-element-types-are-fixed-variables-dont-narrow-return-annotations-are-checked-architecture-12)
+- [2026-11-13: Table engine and CSV reader (runtime only)](#2026-11-13-table-engine-and-csv-reader-runtime-only)
+- [2026-11-13: Variable storage decided by the analyzer (architecture §12.8 step 2)](#2026-11-13-variable-storage-decided-by-the-analyzer-architecture-128-step-2)
+- [2026-11-12: Function values, `fn` type, call-shape checking, keyword renames, struct field checks, name clashes, `input()` result, fixed `fn` declarations, modules v0.2, compiler cleanup](#2026-11-12-function-values-fn-type-call-shape-checking-keyword-renames-struct-field-checks-name-clashes-input-result-fixed-fn-declarations-modules-v02-compiler-cleanup)
+- [2026-11-11: Value printing, float formatting, `**` precedence, parameter enforcement](#2026-11-11-value-printing-float-formatting--precedence-parameter-enforcement)
+- [2026-11-11: Core cleanup; file I/O moved to `std/io`](#2026-11-11-core-cleanup-file-io-moved-to-stdio)
+- [2026-11-10: Module namespacing, dynamic methods, sorting, new stdlib modules](#2026-11-10-module-namespacing-dynamic-methods-sorting-new-stdlib-modules)
+- [2026-11-06: Vendored Boehm GC, VS Code extension 0.1.0](#2026-11-06-vendored-boehm-gc-vs-code-extension-010)
+- [2026-11-04: FFI phase 1 and `std/blas`](#2026-11-04-ffi-phase-1-and-stdblas)
+- [2026-10-07: Compilation pipeline rewrite](#2026-10-07-compilation-pipeline-rewrite)
+- [2026-10-06: Arrow-compatible vectors](#2026-10-06-arrow-compatible-vectors)
+- [2026-10-06: Structural equality, overflow checks, stricter conditions, `all`/`any`](#2026-10-06-structural-equality-overflow-checks-stricter-conditions-allany)
+- [2026-04-03: Table runtime scaffolding; struct fixes](#2026-04-03-table-runtime-scaffolding-struct-fixes)
+- [2026-04-02: Structs v0.1](#2026-04-02-structs-v01)
+- [2026-03-28: Vector soundness, `std/fmt` on `extern`, build output](#2026-03-28-vector-soundness-stdfmt-on-extern-build-output)
+
 ---
 
-## Known issues (as of `0cf468d` plus uncommitted changes)
+## Known issues (as of `fd6822c`)
 
-These were checked against the current compiler on 2026-11-12, in a codebase health review; all of them predate modules v0.2. The structural causes and the plan for them are in `architecture.md` §12.
+Checked against the compiler on 2026-11-12 and 2026-11-13. The structural causes and the plan for them are in `architecture.md` §12-14.
 
 ### Wrong results with no error
 
@@ -18,6 +38,18 @@ These were checked against the current compiler on 2026-11-12, in a codebase hea
 - A list read past its end, stored in a variable: `w = list [1, 2][5]`, `print(w)` prints `0` (`null` is documented). The same for `xs.get(i)` and `d.get(k)` on a missing key, and for a list changed during a `for` loop over it (`for y in xs: xs.pop()`).
 - A `null` inside a vector read by a loop: `for x in list [1, null, 3].to_vec(): print(x)` prints `1`, `0`, `3` (`0.0` for floats, `false` for bools). `to_list()` of such a vec gives a `list[int]` with a `null` in it.
 - `when` on a vec compares elementwise and reads the first result: `fn g(a) -> when a:` / `1 -> 'one'` / `_ -> 'other'` returns `'other'` for `g(vec [1, 1])` with no error. `if a == 1` correctly fails with "vec used as a condition".
+
+**The parser accepts two expressions with no separator.**
+- Several statements on one line run as separate statements: `price = 4`, `qty = 3`, then `total = price qty` / `print(total)` prints `4` with no error (`total = price`, then `qty` as a statement). `y = 'a' 'b'` gives `'a'`. `fn f(x) -> x + 1 print(9)` gives `f` a two-statement body, so `f(1)` prints `9` and returns `null`.
+- An unclosed string ends at the end of the line with no error: `msg = "hello` then `print(msg)` prints `hello`.
+
+**Structs and extern methods.**
+- `==` on structs reached through an untyped path is always `false`, with no error: `struct P:` / `x: int`, `fn id(v) -> v`, `a = P { x: 1 }`, then `print(id(a) == id(a))` and `print(list [a] == list [a])` both print `false`. A direct `a == a` is a compile error (structs have no `==`).
+- Extern methods with one receiver and name collide silently and leak across files. If `e1.qrk` declares `extern fn str.shout() str as 'h1_shout'` and `e2.qrk` declares the same method as `'h2_shout'`, a script that includes both can call `'a'.shout()` unqualified and gets e2's function, while `e1::one('a')` (which calls `s.shout()` inside e1) gets h1's. Declaring the same method twice in one file is accepted too. Methods are registered by `(receiver, name)` in one table (`a.methods`, `types/analyzer_modules.go`), and the loader doesn't resolve them per file.
+
+**Stdlib lookup and `print`.**
+- Any directory named `stdlib` in the script's directory or a parent is used as the standard library, before the real one and with no warning (`findStdlibRoot`, `loader/loader.go`). With `/tmp/x/stdlib/io.qrk` present, `incl 'std/io'` in `/tmp/x/a/main.qrk` silently loads that file; without one it fails with `cannot find module 'std/io': file '/tmp/x/stdlib/io.qrk' does not exist`.
+- A misspelled `print` alignment is ignored: `print('x', '|\n', 5, 'rigth', '.')` prints `x....|` (left-aligned) with no error.
 
 **Part of an expression runs at the wrong time.** A method call's receiver is computed before the whole statement, not where the expression needs it.
 - `and`, `or` and `x if c else y` run both sides: `false and noisy().upper()` and `'x' if true else noisy().upper()` both call `noisy()`.
@@ -33,7 +65,7 @@ These were checked against the current compiler on 2026-11-12, in a codebase hea
 - `sys::exit(256)` exits with status 0.
 - `io::read` stops at a NUL byte: on a file containing `ab\0cd`, the first read returns `ab` and the next returns `''`.
 - `csv::parse('a,"b"x,c')` returns `[['a', 'bx', 'c']]` instead of an error.
-- `'abc'[i]` with a non-int `i` returns `null`; the list version is an error.
+- `'abc'[i]` with a non-int `i` of unknown type returns `null` (`fn id(v) -> v`, `'abc'[id(1.5)]`); a known non-int is a compile error, and the list version is a runtime error.
 - `sum(vec [9007199254740993, 1])` is `9007199254740992.0`: int vecs are summed in floating point.
 - `min(n, 1.0)` with `n = to_float('nan')` is `1.0`, but `min(1.0, n)` is `nan`. Sorting a list that contains NaN is undefined behavior in the C++ sort.
 
@@ -49,15 +81,34 @@ These were checked against the current compiler on 2026-11-12, in a codebase hea
 - **Loop bodies are about 9% slower since `0cf468d`** (step 2). Every statement in a `for` or `while` body now sets its source location, so a runtime error there reports the right line; the three stores per statement measured +9% on a loop that only reads list elements. Storing one integer that indexes a static table of locations measured no slower than no location (`architecture.md` §12.9).
 - Native code that appends to a list with `push_back`, or writes `d->entries` directly, skips the element-type check; `qext::list_push` and `qext::dict_set` check it.
 - Tooling: the integration tests share one binary, `src/core/quark/quark_test`, which `TestMain` deletes at the start and end of every run. A second `go test` in the same checkout (another session, an editor) deletes it mid-run, and every integration test then fails with `fork/exec .../quark_test: no such file or directory`. Each run should build into its own temporary directory.
+- A field read on a struct of unknown type that lacks the field says `dot access is only supported on dict; got type 'struct'` (`fn id(v) -> v`, `p = id(P { x: 1 })`, `p.y`).
+- A wrong argument type for a fully annotated function or an `extern fn`, from an untyped value, reports `expected int, got str` without the function or parameter name (ordinary functions say `argument 'x' of 'f' expects int, got str`).
+- Stdlib runtime errors use the old `.` spelling: `io::read` on a closed file says `io.read() expects an open file (resource is closed)`; `csv.read`, `random.randint` and `blas.dot` likewise.
 - `qext::box(int)` in native code doesn't compile (ambiguous between the `int64_t`, `double` and `bool` overloads); pass an `int64_t`.
 
 ---
 
-## 2026-11-13: Element types are fixed, variables don't narrow, return annotations are checked (architecture §12.9)
+## 2026-11-13: Docs overhaul
 
 Commits: not yet committed
 
-Implements rules A-E of `architecture.md` §12.9 and the `null` decision. Together they close the largest group of known issues: values read with a type the compiler had inferred wrongly, which printed garbage numbers.
+No compiler, runtime or stdlib changes. Every doc was rewritten against the current compiler, and each claim was checked by running programs or reading the code. Each doc now starts with a table of contents and describes only the current state; superseded designs and finished plans are removed (git history keeps them).
+
+### Docs
+- **README.md**: describes Quark as what it is: a data language whose compiler infers types and checks them at compile time, with runtime checks only as the backstop (it opened with "dynamically-typed"). Every sample was run against the compiler. Stale items are removed: the `QK-CHECK-002` dict warning, "return annotations are only checked on native functions", `::` listed as planned, the "inline lambda doesn't parse" caveat, and string interpolation as planned (not decided). Known limitations now list only deliberate gaps; bugs link to Known issues here.
+- **tables_v0_1_spec.md** (revision 3): the 2026-11-13 decisions are now the spec itself, rather than a "Revision 2" section over the April draft that still contradicted them (`orders: Order = tbl {...}`, `as` aliases, backends, schemas). Sections are renumbered (§2 decisions, §7 engine, §8 CSV, §9 plan, §10 inference, §11 Arrow). Literals, row access, masks and an annotation for untyped tables are listed as open questions.
+- **architecture.md**: named functions are fixed declarations, called directly when they capture nothing (it said they were mutable closure bindings, called through `DispatchClosure`). Runtime errors are report-and-exit (it said ops return `qv_null()` on a mismatch). Also brought up to date: the analyzer pass order, `types.Analysis` fields, `QClosure`/`QFnInfo`, the `qext` API, the codegen output order and tests. The old §12 health review is replaced by §12 Soundness contract, §13 Roadmap (the lowering/IR plan, remaining steps only) and §14 Structural debt (only items still true).
+- **semantics.md, grammar.md**: fixed declarations, block scoping and assignment to outer names, element and value types, the `null` rules, unannotated extern parameters being `any`, structs across files. Duplication removed: precedence and syntax live in grammar.md, behaviour in semantics.md, builtins in stdlib.md.
+- **stdlib.md, error_codes.md, stdlib_expansion_v0_1_spec.md**: element types of returned lists, dict value-type errors, vec reductions as they behave today (with the planned D13 change), `std/csv` marked for replacement; `INV-SYMBOL`, `INV-STORAGE`, `INV-FIXED-FN`, `INV-OPERATOR` and `INV-ASSIGN-TARGET` added, and `INV-ARGCHECK` removed; the expansion spec's CSV section points to the tables spec, and every name uses `::`.
+- **structs, modules and FFI specs, editor extension README**: rewritten as current references, with the implementation deviations folded into the rules. Structs: imported and module structs, widening, `null` rules, `fn` fields, no separate schema type. FFI: the current interface, callbacks, the `qext` API; DuckDB after native tables.
+- **CLAUDE.md**: new "Docs" section: which doc owns which topic, and the current-state-only rule. It also stops calling Quark dynamically typed, and the `qv_null()` rule is fixed.
+- **Known issues** (above) gains bugs found while checking: two expressions with no separator are accepted (`total = price qty`), unclosed strings, struct `==` through untyped values, extern methods colliding across files, the `stdlib/` folder hijack, a misspelled `print` alignment being ignored, and four misleading messages.
+
+## 2026-11-13: Element types are fixed, variables don't narrow, return annotations are checked (architecture §12)
+
+Commits: `fd6822c`
+
+Implements rules A-E of `architecture.md` §12 (§12.9 at the time) and the `null` decision. Together they close the largest group of known issues: values read with a type the compiler had inferred wrongly, which printed garbage numbers.
 
 ### Breaking
 - **A list keeps the element type it was created with** (rule B), through every name for it. Writing a value of another type is a compile-time error when the compiler knows the value's type:
@@ -125,7 +176,7 @@ Nothing here is reachable from Quark code yet: the `tbl` type, queries and the `
 
 ## 2026-11-13: Variable storage decided by the analyzer (architecture §12.8 step 2)
 
-Commits: `0cf468d`; the Docs entry below not yet committed
+Commits: `0cf468d`, `fd6822c` (the Docs entry)
 
 ### Breaking
 - **A typed declaration checks its value.** `x: int = v`, where the compiler can't know `v`'s type (a value from an unannotated function, `unwrap`, a dict), is now a runtime error when `v` isn't an int: `variable 'x' is declared int but got str`. It used to store the value unchecked, so `x` held a string the compiler treated as an int (see Fixed). The rules are those of parameters: an int widens to `float`, `list`/`dict`/`vec`/`fn`/`resource` and structs accept `null`, `str` and `result` don't.
@@ -144,7 +195,7 @@ Commits: `0cf468d`; the Docs entry below not yet committed
 - **A variable named `_lambda1` collided with the compiler's first lambda**: `_lambda1 = 5`, `f = fn(x) -> x + 1`, `print(f(_lambda1))` crashed with exit code 255 and no message, and `fn _lambda1()` plus any lambda failed in clang. Every name the compiler generates now starts with `quark___`, which no user name can produce. This also removes a rarer clash between a nested `fn` declaration and a module member (`fn f_` nested in a function, and `module f` with a member `_2`, could get the same C++ name).
 
 ### Docs
-- `architecture.md` §12.9: why silent wrong results keep appearing (the analyzer's types are used both as guesses for diagnostics and as guarantees for raw reads), the soundness contract (a type is trusted only when every way into the slot is guarded), and the decided rules: variables don't narrow (A), element types are fixed when a list or dict is created (B), writes from untyped code into a typed list or dict are checked (C), return annotations are checked (D), a wrong-typed dict value is an error (E). With the measurements behind them: a tag check costs about 1.5% in a loop that does nothing else, a direct list element read is about 4x faster than `q_iter_get`, and the per-statement source location costs about 9%. None of this is implemented yet. §12.6 is marked decided and step 4 of §12.8 updated.
+- `architecture.md` §12.9: why silent wrong results keep appearing (the analyzer's types are used both as guesses for diagnostics and as guarantees for raw reads), the soundness contract (a type is trusted only when every way into the slot is guarded), and the decided rules: variables don't narrow (A), element types are fixed when a list or dict is created (B), writes from untyped code into a typed list or dict are checked (C), return annotations are checked (D), a wrong-typed dict value is an error (E). With the measurements behind them: a tag check costs about 1.5% in a loop that does nothing else, a direct list element read is about 4x faster than `q_iter_get`, and the per-statement source location costs about 9%. Implemented later the same day (`fd6822c`, entry above). §12.6 is marked decided and step 4 of §12.8 updated.
 
 ### Internal
 - **Symbols** (`architecture.md` §12.8 step 2). Every variable, parameter, loop variable, `when` binding and `fn` declaration is one `types.Symbol` with an `ID`, `Kind`, `StoreType` (the type all its values are known to have) and `Decl` (where codegen declares it). `Analysis.Refs` maps every resolved identifier node to its symbol, and `Analysis.Captures` lists each lambda's captured symbols. `finalizeSymbols` decides each symbol's `ir.Storage` (`ir/storage.go`: cell, int, float, bool or QValue) and its C++ name once, after the captures are final. `Analysis.CapturedByFunction`, `Analysis.CheckedCaptures` and the name-keyed capture lists are removed; `HoistScope.Cells` holds symbols, `FixedFn.Sym` is exported.

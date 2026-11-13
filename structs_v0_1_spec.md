@@ -1,58 +1,50 @@
-# Quark Struct-Lite v0.1 Spec
+# Quark Structs v0.1 Spec
 
-Status: Implemented (2026-04-02, commit 7fd7670). Sections 9.4 (schema integration) and the table references remain planned. Implementation differences are noted inline.
-Last Updated: 2026-04-02
-Scope: Struct-lite only (data modeling). Schema/table integration is referenced but not specified here.
+Status: Implemented. Structs landed on 2026-04-02; the modules v0.2 rules for structs (qualified names, structs in module bodies, identity by definition), int→float widening of fields and checks on field values of unknown type landed on 2026-11-12; the `null` rules for field types on 2026-11-13. Not implemented: structs defined inside a function body (§9). Tables typed by a struct (`tbl[Employee]`) are specified, not implemented, in `tables_v0_1_spec.md`. There is no separate schema type: it was folded into `struct` (decided 2026-11-12).
+Last Updated: 2026-11-13
+Scope: struct declarations, literals, field access, and how structs interact with modules, annotations, containers and tables.
+
+## Contents
+
+- [1. Purpose](#1-purpose)
+- [2. Design Rules](#2-design-rules)
+- [3. Syntax](#3-syntax)
+  - [3.1 Declaration](#31-declaration)
+  - [3.2 Construction](#32-construction)
+  - [3.3 Update by reconstruction](#33-update-by-reconstruction)
+  - [3.4 Grammar](#34-grammar)
+- [4. Where Structs Live and How They Are Named](#4-where-structs-live-and-how-they-are-named)
+- [5. Static Semantics](#5-static-semantics)
+  - [5.1 Type identity](#51-type-identity)
+  - [5.2 Field types](#52-field-types)
+  - [5.3 Default values](#53-default-values)
+  - [5.4 Construction checks](#54-construction-checks)
+  - [5.5 Field access](#55-field-access)
+  - [5.6 Immutability](#56-immutability)
+  - [5.7 Equality](#57-equality)
+- [6. Runtime Semantics](#6-runtime-semantics)
+- [7. Diagnostics](#7-diagnostics)
+- [8. Interaction with Other Features](#8-interaction-with-other-features)
+  - [8.1 Annotations, parameters and returns](#81-annotations-parameters-and-returns)
+  - [8.2 Containers](#82-containers)
+  - [8.3 Tables](#83-tables)
+- [9. Limitations](#9-limitations)
+- [10. Tests](#10-tests)
 
 ## 1. Purpose
 
-Define a minimal struct system for Quark that fills the fixed-shape domain-model gap between dynamic `dict` values and columnar `tbl` workflows.
+A struct is a fixed-shape, typed record: the domain model between dynamic `dict` values and columnar tables (customer, order, job and config records, and the row type of a table). The design keeps the language surface small and checks field shape and types at compile time wherever it can.
 
-This spec prioritizes:
+## 2. Design Rules
 
-1. Small language surface area.
-2. Strong compile-time guarantees for field shape and types.
-3. DSL alignment with pipeline/data-contract goals.
-4. Low implementation complexity for v0.1.
+- Structs are nominal, immutable values with named, typed fields.
+- No methods, `impl` blocks, inheritance, embedding, traits or generic structs.
+- No destructuring patterns and no field assignment (`obj.field = ...`); a changed value is a new literal (§3.3).
+- `struct` and `dict` stay separate types (decided 2026-11-12): a dict is a dynamic map, a struct a checked record.
 
-## 2. Design Constraints
+## 3. Syntax
 
-### 2.1 Product constraints
-
-Structs must:
-
-1. Be useful for real pipeline-domain modeling (customer, order, job, config records).
-2. Avoid turning Quark into class-oriented OOP.
-3. Integrate cleanly with upcoming schemas.
-
-### 2.2 Engineering constraints
-
-1. Avoid parser-heavy features (no impl blocks, no inheritance, no generics in v0.1).
-2. Reuse existing typed declaration and field-access model where possible.
-3. Keep analyzer and runtime changes incremental and testable.
-
-## 3. Goals and Non-Goals
-
-### 3.1 Goals
-
-1. Introduce a `struct` declaration form with typed fields.
-2. Support optional default values for fields.
-3. Support named field construction using `TypeName { ... }` literals.
-4. Support deterministic update through reconstruction using the same literal form.
-5. Enforce field shape and type checks at compile time whenever possible.
-
-### 3.2 Non-goals (v0.1)
-
-1. No methods on structs.
-2. No impl blocks.
-3. No inheritance/embedding/traits.
-4. No generic structs.
-5. No pattern destructuring syntax.
-6. No mutable field-assignment syntax like `obj.field = ...` for structs.
-
-## 4. Syntax
-
-### 4.1 Declaration
+### 3.1 Declaration
 
 ```quark
 struct Customer:
@@ -62,14 +54,11 @@ struct Customer:
     city: str
 ```
 
-Rules:
+- `struct` introduces a named type. The body contains only field declarations.
+- A field is `name: Type` with an optional `= default` (§5.3).
+- Field names are unique within the struct. Like every user name, they can't contain `__` (§9).
 
-1. `struct` introduces a named nominal type.
-2. Body contains only field declarations.
-3. A field declaration is `name: Type` with optional `= default_expr`.
-4. Field names must be unique within the struct.
-
-### 4.2 Construction
+### 3.2 Construction
 
 ```quark
 c1 = Customer {
@@ -77,20 +66,16 @@ c1 = Customer {
     name: 'Alice'
     city: 'NYC'
 }
+c2 = Customer { id: 2, name: 'Bob', city: 'SF' }
 ```
 
-Rules:
+- Literals are named-field only, inline (comma-separated) or one field per line.
+- Missing required fields, unknown fields and duplicate fields are compile-time errors. Omitted fields with a default get it.
 
-1. Constructor literals are named-field only.
-2. Missing required fields are compile-time errors.
-3. Missing optional fields use defaults.
-4. Unknown fields are compile-time errors.
-5. Duplicate fields in one literal are compile-time errors.
-
-### 4.3 Update by reconstruction (same syntax as construction)
+### 3.3 Update by reconstruction
 
 ```quark
-c2 = Customer {
+c3 = Customer {
     id: c1.id
     name: c1.name
     age: c1.age + 1
@@ -98,214 +83,165 @@ c2 = Customer {
 }
 ```
 
-Notes:
+A changed value is built with the same literal form; there is no update keyword or helper.
 
-1. v0.1 uses reconstruction as the canonical update pattern.
-2. No new update keyword is introduced.
-3. This keeps syntax minimal and parser changes small.
-
-## 5. Grammar Additions (EBNF)
+### 3.4 Grammar
 
 ```ebnf
-Statement        ::= ...
-                 |   StructDef
-
 StructDef        ::= "struct" ID ":" NEWLINE INDENT
                      FieldDecl { NEWLINE FieldDecl } NEWLINE?
                      DEDENT
+FieldDecl        ::= ID ":" Type [ "=" ConstDefault ]
 
-FieldDecl        ::= ID ":" Type [ "=" DefaultExpr ]
-
-DefaultExpr      ::= Expression
-
-Expression       ::= ...
-                 |   StructLiteral
-
-StructLiteral    ::= ID "{" [ StructFieldInit { "," StructFieldInit } [ "," ] ] "}"
-                 |   ID "{" NEWLINE INDENT StructFieldInitLine { NEWLINE StructFieldInitLine } NEWLINE? DEDENT "}"
-
-StructFieldInit  ::= ID ":" Expression
-StructFieldInitLine ::= ID ":" Expression
+StructLiteral    ::= StructName "{" [ FieldInit { "," FieldInit } [ "," ] ] "}"
+                 |   StructName "{" NEWLINE INDENT FieldInit { NEWLINE FieldInit } NEWLINE? DEDENT "}"
+StructName       ::= ID { "::" ID }
+FieldInit        ::= ID ":" Expression
 ```
 
-Implementation note:
+`Name {` and `a::b::Name {` always parse as a struct literal: `{` after a name has no other meaning, so the parser doesn't need to know which structs exist. The analyzer resolves the name; a name that isn't a struct is a check error (`unknown struct type 'Pnt'`).
 
-1. `ID { ... }` is always parsed as a struct literal: `{` after a name has no other meaning, so the parser doesn't need to know which structs exist.
-2. The analyzer resolves `ID`. A name that isn't a known struct is a check error (`unknown struct type 'Pnt'`). Struct names are global, so a struct defined at the top level of an imported file can be built with its bare name in the importer.
+## 4. Where Structs Live and How They Are Named
 
-## 6. Static Semantics
+The naming rules are those of `modules_v0_2_spec.md` §3.7:
 
-### 6.1 Type identity
+- A struct can be defined at the top level of a file or inside a `module` block.
+- Inside its file it is written bare (`Point`), or `module::Point` from outside its module.
+- From an importing file it is `file::Point` or `file::module::Point`, in literals, annotations and return types alike:
 
-1. Structs are nominal types.
-2. Two structs with identical fields are still different types.
+  ```quark
+  incl './lib/geo'
+  p = geo::Point { x: 1.0, y: 2.0 }
+  fn shift(p: geo::Point) geo::Point -> geo::Point { x: p.x + 1, y: p.y }
+  s = geo::shapes::Sq { side: 2 }
+  ```
 
-### 6.2 Field types
+- `geo.Point { ... }` is a parse error that points to `::`: `a struct from a module or imported file is written geo::Point { ... }, with '::'`.
+- `print`, `type()` and diagnostics show an imported struct qualified by its file's stem (`geo::Point`, also when the file was imported `as g`), a struct of a main-script module as `m::S`, and a main-script top-level struct bare (`Point`).
 
-1. Field types may be builtins (`int`, `float`, `str`, `bool`, `list`, `dict`, `vec`, `result`, `any`) or user types.
-2. Self-referential and mutually recursive structs are deferred from v0.1.
+## 5. Static Semantics
 
-### 6.3 Default values
+### 5.1 Type identity
 
-v0.1 default values allow constant expressions:
+- Structs are nominal: two structs with identical fields are different types.
+- Identity is the definition, not the name. `a::Point` and `b::Point` are different types at compile time and at runtime (§6): `argument 1 of 'f' expects g1::Point, got g2::Point`. A file imported along several paths is loaded once, so its structs are one type.
 
-1. Allowed defaults include literals and constant expressions, for example `60 * 60`, `1 + 2`; `'a' + 'b'` is not allowed in v0.1.
-2. A constant expression default must be side-effect free and may not reference runtime symbols.
-3. Function calls are not allowed in default expressions in v0.1.
-4. Default must be type-compatible with field annotation.
+### 5.2 Field types
 
-### 6.4 Construction checks
+- Any annotation type: `int`, `float`, `str`, `bool`, `any`, `list`, `dict`, `vec`, `result`, `resource`, `fn`, or a struct name (bare or qualified).
+- A field type can name a struct declared later, and structs can refer to each other and to themselves (`struct Node:` / `next: Node`), since a struct field accepts `null`.
+- `fn` fields hold any function value. The value is read with `.` and then called: `f = h.run`, `f(2)`. Calling it directly (`h.run(2)`) is a compile error, `dot-call syntax is not supported on values of type 'H'`.
 
-At each struct literal site, analyzer must validate:
+### 5.3 Default values
 
-1. Target type exists and is a struct.
-2. Every provided field exists in the struct.
-3. No field appears more than once.
-4. All required fields are provided or have defaults.
-5. Each field expression type is compatible with annotated field type.
+A default is a constant expression, checked by the parser (`struct field default values must be constant expressions`):
 
-### 6.5 Field access checks
+- a literal: `int`, `float`, `str`, `bool` or `null`;
+- unary minus on a constant (`-1`);
+- `+ - * / %` over constants (`60 * 60`, `'a' + 'b'`);
+- an empty `list []` or `dict {}`. Each struct value gets a fresh one, so two values never share a default container.
 
-Given `x: Customer`, `x.name` is valid only if `name` is a declared field.
+Names, calls, `**` and `!` are not allowed. The default must match the field type (`default value type 'float' is not compatible with field type 'int'`); an int default for a `float` field is widened (`weight: float = 2` stores `2.0`). A `null` default is accepted only where the field type accepts `null` (§8.1).
 
-Rules:
+### 5.4 Construction checks
 
-1. Unknown field access on known struct type is compile-time error.
-2. Known field access returns the declared field type.
-3. Dot access resolution priority should remain deterministic with existing dict/module/method rules.
+At each literal the analyzer checks that:
 
-### 6.6 Assignment and mutability
+1. the name resolves to a struct;
+2. every given field exists and appears once;
+3. every field without a default is given;
+4. each value's type fits the field's type. A known wrong type is a compile error (`cannot assign value of type 'str' to field 'x' of type 'int'`). An int for a `float` field is widened.
 
-v0.1 struct values are immutable from user syntax.
+A value whose type the compiler doesn't know (from `any`, an unannotated parameter, `unwrap`, native code) is checked when the literal is built: `fn mk(a) -> P { x: a }`, then `mk('hello')` stops with `field 'x' of P expects int, got str`. A field therefore always holds a value of its declared type, and field reads need no further check.
 
-1. `x.field = expr` where `x` is struct-typed is a compile-time error.
-2. Update is expressed by constructing a new struct value.
+### 5.5 Field access
 
-## 7. Runtime Semantics
+- On a value whose struct type is known, `x.name` must be a declared field (`struct P has no field 'y'`) and has the field's declared type. The read is by position, resolved at compile time.
+- Reading a field of a `null` struct value is a runtime error: `cannot read a field of null (expected a struct value)`.
+- Field access needs the struct type to be known at compile time (an annotation, a literal, a typed list element, a function's return type). On a value of unknown type (`fn get(o) -> o.x`), `.` only reads dict keys, so a struct is a runtime error (`dot access is only supported on dict; got type 'struct'`).
 
-### 7.1 Representation
+### 5.6 Immutability
 
-Proposed runtime representation:
+`x.field = expr` on a struct-typed value is a compile error (`cannot assign to field 'x' of immutable struct P`). On a value of unknown type it is a runtime error (`cannot set member 'x' on non-dict type`). Since no code can change a field, values can share storage freely.
 
-1. Add a new runtime type tag for struct values.
-2. A struct value stores:
-   - type-id (or symbol id)
-   - fixed field layout metadata reference
-   - contiguous storage for field `QValue` slots
+A container in a field is still mutable through its own methods (`p.xs.push(1)` on a `list` field), following the container's element-type rules.
 
-### 7.2 Copy and alias behavior
+### 5.7 Equality
 
-1. Struct values are treated as immutable from Quark code.
-2. Assignment/call passing may share underlying storage internally as an optimization.
-3. Because user-level mutation is disallowed, sharing cannot create visible aliasing bugs.
+`==` and `!=` on struct values are compile errors: `operator '==' is not defined for struct values; compare fields explicitly`. Compare fields (`a.id == b.id`). See §9 for comparisons the compiler can't see.
 
-### 7.3 Equality
+## 6. Runtime Semantics
 
-v0.1 behavior:
+- A struct value is a `QStruct` (`runtime/include/quark/types/struct.hpp`): a pointer to its `QStructDef` plus one `QValue` slot per field, in declaration order. Values are GC-allocated and boxed with the `VAL_STRUCT` tag.
+- Codegen emits one `static const QStructDef _sdef_<name>` per definition (`{display name, field names, field count}`). Pointer identity of the def is type identity: the runtime checks `q_param_struct` (parameters, `builtins/params.hpp`) and `q_field_struct` (struct-typed fields) compare `QStructDef*`, never names. `QStructDef.name` holds the display name (`geo::Point`) used by `print`, `type()` and messages.
+- Field values of unproven type are wrapped in `q_field_int`/`_float`/`_bool`/`_check`/`_struct` when the literal is built; proven values are stored unchanged.
+- Printing uses declaration order: `Point {x: 1.0, y: 2.0}`. A struct is always truthy.
 
-1. Whole-struct `==` and `!=` are not supported.
-2. Comparing struct values with `==` or `!=` is a compile-time error.
-3. Users must compare explicit fields (for example `a.id == b.id`).
+## 7. Diagnostics
 
-### 7.4 Field order
+Struct errors use `QK-PARSE-001` (shape, including a non-constant default), `QK-CHECK-001` (types and fields) and `QK-RUNTIME-001` (checks on values of unknown type).
 
-1. Struct declaration field order is preserved in compiler metadata.
-2. Runtime field lookup semantics are by field name, not by ordinal position.
-3. Any tooling or serialization that renders struct fields should use declaration order for deterministic output.
+| Error | Message |
+|---|---|
+| Unknown struct | `unknown struct type 'Pnt'` (in an annotation: `unknown type 'Pnt'`) |
+| Duplicate field in a declaration | `duplicate field 'x' in struct 'P'` |
+| Non-constant default | `struct field default values must be constant expressions` |
+| Wrong default type | `default value type 'float' is not compatible with field type 'int'` |
+| Unknown field in a literal | `unknown field 'zipcode' in Customer literal` |
+| Missing field | `missing required field 'city' in Customer literal` |
+| Duplicate field in a literal | `duplicate field 'id' in Customer literal` |
+| Wrong field value type | `cannot assign value of type 'str' to field 'x' of type 'int'` |
+| Field value of unknown type (runtime) | `field 'x' of P expects int, got str` |
+| Unknown field read | `struct Customer has no field 'foo'` |
+| Field assignment | `cannot assign to field 'age' of immutable struct Customer` |
+| Struct equality | `operator '==' is not defined for struct values; compare fields explicitly` |
+| Field of `null` (runtime) | `cannot read a field of null (expected a struct value)` |
+| Wrong struct (compile / runtime) | `argument 1 of 'f' expects g1::Point, got g2::Point` / `argument 'p' of 'f' expects g1::Point, got g2::Point` |
+| `.` in a qualified literal | `a struct from a module or imported file is written geo::Point { ... }, with '::'` |
 
-## 8. Diagnostics
+## 8. Interaction with Other Features
 
-Struct-related failures should reuse stable frontend/runtime code families:
-
-1. Parse shape errors: `QK-PARSE-001`. As implemented, this includes a non-constant field default (`struct field default values must be constant expressions`), which the parser rejects.
-2. Type/semantic errors: `QK-CHECK-001`.
-3. Runtime struct misuse (if any dynamic-path checks remain): `QK-RUNTIME-001`.
-
-Recommended error messages:
-
-1. Unknown field: `struct Customer has no field 'foo'`.
-2. Missing required field: `missing required field 'city' in Customer literal`.
-3. Extra field: `unknown field 'zipcode' in Customer literal`.
-4. Duplicate init: `duplicate field 'id' in Customer literal`.
-5. Illegal assignment: `cannot assign to field 'age' of immutable struct Customer`.
-6. Illegal struct equality: `operator '==' is not defined for struct values; compare fields explicitly`.
-
-## 9. Interaction with Existing Language Features
-
-### 9.1 Typed declarations
+### 8.1 Annotations, parameters and returns
 
 ```quark
 cust: Customer = Customer { id: 1, name: 'A', city: 'X' }
-```
-
-### 9.2 Function parameters and returns
-
-```quark
 fn is_adult(c: Customer) bool -> c.age >= 18
 ```
 
-### 9.3 Lists/dicts/vectors containing structs
+- A struct annotation (parameter, typed declaration, field, return) is checked like any annotation: at compile time when the value's type is known, otherwise on entry (`q_param_struct`, `q_var_struct`, `q_ret_struct`).
+- Struct and `resource` annotations accept `null`; `list`, `dict`, `vec`, `fn` and `result` annotations don't, in fields as everywhere else (`cannot assign value of type 'null' to field 'v' of type 'vec[any]'`).
 
-1. `list` can hold struct values (boxed as `QValue`).
-2. `dict` values can be structs.
-3. `vec` does not accept struct dtype in v0.1.
+### 8.2 Containers
 
-### 9.4 Schema integration (planned, not normative here)
+- A `list` can hold struct values, and a `dict` can map keys to them; the element type includes the struct type, so `for c in customers: c.name` is checked.
+- A `vec` can't hold structs (`vec elements must be homogeneous int, float, bool, or str`).
 
-1. `schema X for Customer` references this struct type as contract base.
-2. Schema checks can target either `Customer` rows or tables whose rows are `Customer` values. (`tables_v0_1_spec.md` does not use a `table Customer` syntax; how a table names its row type is left to that spec.)
+### 8.3 Tables
 
-## 10. Compiler Work Plan (Implementation-Oriented)
+A table's row type is a struct (`tables_v0_1_spec.md` D2 and D10; planned):
 
-1. Lexer: add `struct` keyword token.
-2. AST: add nodes for struct definition and struct literal.
-3. Parser: parse `struct` blocks and typed field initializers.
-4. Analyzer:
-   - register struct symbols
-   - type-check field declarations/defaults
-   - type-check struct literals and field access
-   - reject struct field assignment targets
-5. Codegen/runtime:
-   - introduce struct runtime tag and storage layout
-   - emit construction and field-read code paths
-6. Tests:
-   - parser tests
-   - analyzer negative/positive tests
-   - smoke tests covering defaults and reconstruction updates
+```quark
+struct Employee:
+    id: int
+    name: str
+    salary: float
 
-## 11. Acceptance Criteria for v0.1
+staff: tbl[Employee] = unwrap(csv::read_file('staff.csv'))
+```
 
-1. Struct declaration parses and type-checks.
-2. Struct literal construction enforces field completeness/type correctness.
-3. Defaults are applied deterministically.
-4. Field access is statically checked when type info is available.
-5. Struct field assignment is rejected.
-6. Reconstruction update pattern works in smoke tests.
-7. No regressions in existing dict dot access/module-qualified call behavior.
-8. Whole-struct `==` / `!=` are rejected with a clear compile-time diagnostic.
-9. Both inline and multiline struct literal forms parse and type-check.
+- The struct gives the column names and types, and the compiler checks every column reference in a query against it. A bare struct annotation (`t: Employee`) always means one struct value, never a table.
+- CSV columns are matched to fields by name, with an optional literal `dict` mapping fields to header text (D17).
+- There is no `schema` declaration: the struct is the schema.
 
-## 12. Open Questions (Need Decision)
+## 9. Limitations
 
-None for the v0.1 struct-lite baseline in this spec.
+- A `struct` inside a function body is not supported and fails with `internal: struct 'S' not pre-declared` (changelog, Known issues). Define it at the top level or in a module.
+- A field named with `__` (`a__b: int`) is accepted in the declaration and rejected only where a literal uses it (changelog, Known issues).
+- A parse error in a field default is reported one line below the field.
+- **Known bug (found 2026-11-13):** struct equality is rejected only where the compiler sees that both operands are structs. Through a value of unknown type, or inside lists, `==` returns `false` even for the same value: `fn id(v) -> v`, `a = P { x: 1 }`, then `id(a) == id(a)` and `list [a] == list [a]` print `false`. It should be a runtime error.
+- Not planned for v0.1: methods, recursive defaults, a struct update helper, `vec` of structs.
 
-## 12.1 Locked Decisions
+## 10. Tests
 
-1. Defaults allow constant expressions in v0.1.
-2. Recursive structs are deferred from v0.1.
-3. No stdlib struct update helper is included in v0.1.
-4. `any`-typed fields are allowed.
-5. Field order is preserved for tooling/serialization determinism.
-6. Whole-struct equality (`==`, `!=`) is rejected in v0.1.
-7. Both inline and multiline struct literal forms are supported in v0.1.
-
-## 13. Suggested Initial Smoke Cases
-
-1. Basic declaration + construction + field access.
-2. Missing required field fails compile.
-3. Unknown field fails compile.
-4. Default field populated when omitted.
-5. Type mismatch in field init fails compile.
-6. Reconstruction update pattern compiles and preserves original value.
-7. Field assignment target fails compile.
-8. Nested struct field access (if nested structs are enabled).
+- Smoke programs: `smoke_structs.qrk` (declaration, inline and multiline literals, defaults, reconstruction), `smoke_struct_fields.qrk` (widening and runtime field checks), and the rejected programs `smoke_structs_err_{assign,equality,missing_field,type_mismatch,unknown_field}.qrk`.
+- `TestStructsAcrossFiles` (imported structs, identity across files, qualified literals) and the struct cases of `TestSemanticsSafety_Rejected` (field values from `any`, `null` per field type).

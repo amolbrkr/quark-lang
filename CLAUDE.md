@@ -2,9 +2,28 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Contents
+
+- [What is Quark](#what-is-quark)
+- [Language Goals: A language with focus on Data where developer productivity and execution speed are equal goals](#language-goals-a-language-with-focus-on-data-where-developer-productivity-and-execution-speed-are-equal-goals)
+- [Design Principle: Catch It at Compile Time](#design-principle-catch-it-at-compile-time)
+- [Robustness Bar (read before every change)](#robustness-bar-read-before-every-change)
+- [Changelog (update every day there are changes)](#changelog-update-every-day-there-are-changes)
+- [Docs (keep them current)](#docs-keep-them-current)
+- [Build & Test Commands](#build--test-commands)
+- [Prerequisites](#prerequisites)
+- [Compiler Pipeline](#compiler-pipeline)
+- [Runtime System](#runtime-system)
+- [Naming Conventions (Critical)](#naming-conventions-critical)
+- [Key Architecture Details](#key-architecture-details)
+- [Adding a New Builtin](#adding-a-new-builtin)
+- [Editor Extension](#editor-extension)
+- [Test Files](#test-files)
+- [Language Notes](#language-notes)
+
 ## What is Quark
 
-Quark is a dynamically-typed language that compiles to C++17 native binaries. The compiler is written in Go. The runtime is a header-only C++ library using Boehm GC for memory management.
+Quark is a language for data work that compiles to C++17 native binaries. Types are inferred (annotations are optional) and checked at compile time; only values the compiler can't know (`any`, native code, data read at runtime) are checked at runtime. The compiler is written in Go. The runtime is a header-only C++ library using Boehm GC for memory management.
 
 ## Language Goals: A language with focus on Data where developer productivity and execution speed are equal goals
 Quark needs to fast and convienent to write AND should also run fast in execution because the goal is to work with large amounts of Data in a safe and reproducible manner. These two goals are equal and can often be contrary to each, so ask the developer questions if you need input in desgin choices which can affect these goals. 
@@ -26,13 +45,30 @@ The goal is a language any developer can trust: a wrong program fails loudly and
 
 ## Changelog (update every day there are changes)
 
-`CHANGELOG.md` at the repo root has one section per day, newest first. On any day you change behavior (language, CLI, stdlib, runtime, toolchain, editor extension), update it as part of the work, not as a later cleanup:
+`changelog.md` at the repo root has one section per day, newest first. On any day you change behavior (language, CLI, stdlib, runtime, toolchain, editor extension), update it as part of the work, not as a later cleanup:
 
 - Add today's section (`## YYYY-MM-DD: <short title>`) if it doesn't exist; otherwise add to it. Use the subsections in this order: Breaking, Added, Changed, Fixed, Removed, Internal. Put the commit hashes on a `Commits:` line once they exist.
 - Describe what the change actually does, from the diff and the tests, not the commit message. Write it for a Quark user, with a short code example where it helps; compiler and runtime details go under Internal.
 - Breaking means anything that makes a program that worked before fail to compile, fail at runtime, or print something different. Name each removed or renamed thing and what to use instead.
 - Keep the "Known issues" section at the top current: add soundness bugs you find but don't fix (with a reproduction), and remove the ones you fix.
 - If the user commits without you, check `git log` for commits since the last changelog entry and add them before starting new work.
+
+## Docs (keep them current)
+
+Each doc owns one topic; others link to it instead of repeating it:
+
+| Doc | Owns |
+|---|---|
+| `README.md` | Onboarding: what Quark is, quickstart, language tour, CLI, troubleshooting |
+| `grammar.md` | Syntax, keywords, precedence |
+| `semantics.md` | Language behaviour (values, types, errors, modules) |
+| `stdlib.md` | Prelude builtins and `std/` modules (`builtins/catalog.go` and `src/core/stdlib/` are the source of truth) |
+| `architecture.md` | Compiler and runtime internals, the soundness contract (§12), the back-end roadmap (§13) |
+| `error_codes.md` | Every `QK-*` and `INV-*` code |
+| `*_spec.md` | One feature's design and decisions; a status line at the top says what is implemented |
+| `changelog.md` | History. Known issues (soundness bugs) live here |
+
+Rules: docs describe the current state only. No "used to", no superseded designs, no finished to-do lists; history is in `changelog.md` and git. Every doc starts with a table of contents. A change that alters behavior updates the doc that owns it in the same change. When a decision supersedes part of a spec, rewrite that part; don't add an override section on top of it.
 
 ## Build & Test Commands
 
@@ -98,7 +134,7 @@ Header-only C++17 library at `src/core/quark/runtime/include/quark/`. Key files:
 - `builtins/` — prelude builtins (console I/O, string, math, list, dict, conversion); each header must be listed in `quark.hpp`
 - `builtins/repr.hpp` — how values print (`print`/`to_str`: contents, 100-item elision); `core/format.hpp` — float text (shortest round-trip)
 - `types/resource.hpp` — generational registry for native handles; every handle has the single Quark type `resource` (the kind, e.g. `file`, is runtime-only)
-- `table/engine.hpp`, `table/csv.hpp` — the eager columnar table engine (gather, sort, group, aggregates) and the CSV/TSV reader/writer (`tables_v0_1_spec.md` Revision 2). Not included by `quark.hpp`; generated code includes them only when it uses tables
+- `table/engine.hpp`, `table/csv.hpp` — the eager columnar table engine (gather, sort, group, aggregates) and the CSV/TSV reader/writer (`tables_v0_1_spec.md` §7-8). Not included by `quark.hpp`; generated code includes them only when it uses tables
 
 The runtime is tested through the Go integration tests, some of which compile C++ programs against the headers: `TestVectorArrowLayout`, and `TestTableEngine`, which builds and runs the C++ test programs in `src/testfiles/table/` (`*_test.cpp`, sharing `check.hpp`). C++ test changes aren't seen by Go's test cache: run with `-count=1`.
 
@@ -117,20 +153,20 @@ The runtime is tested through the Go integration tests, some of which compile C+
 
 ## Key Architecture Details
 
-- **All values are `QValue`** — a tagged union with type field. Runtime ops must check type before accessing union fields; return `qv_null()` on mismatch.
+- **All values are `QValue`** — a tagged union with type field. Runtime ops must check the tag before reading a union field, unless the analyzer proved the type (architecture.md §12). A value the op can't handle is a runtime error (`q_runtime_reportf`, then `exit(1)`), never a `qv_null()` stand-in; `null` is returned only where it is the documented result (`list.get` past the end, `dict.get` of a missing key).
 - **All function values are `QClosure*`** — even non-capturing functions. Generated functions take `QClosure* _cl` as hidden first parameter. `fn f` parses as a `FnDeclNode` `[f, lambda]` (`ast.IsFnDecl`): a fixed, hoisted declaration (`types/analyzer_fixed.go`). Once analysis is done (`finalizeFixedFns`), a declaration that captures nothing (directly or through another declaration) is a plain C++ function `quark_<CName>`, called with `nullptr` (`DispatchDirect`, or `DispatchNative` when fully annotated) and never captured; one that captures stays a closure in a fixed binding, called through `q_callN`. Codegen creates every scope's closures at the scope's start (`hoistScopes`); variables they capture start as unassigned cells (`Symbol.Hoisted`), read with `q_cell_get` inside those closures. Plain `g = fn(...)` variables are always closures.
 - **Variable storage is decided once, by the analyzer**: every variable, parameter, loop variable, `when` binding and `fn` declaration is one `types.Symbol`, and `Analysis.Refs` maps every resolved identifier node to its symbol. `finalizeSymbols` picks its `ir.Storage` — `QCell*` (captured), `long long` / `double` / `bool` (its `StoreType` is `int` / `float` / `bool`), `QValue` (everything else) — and its C++ name (`CName`). Codegen (`codegen/storage.go`) declares the variable at the symbol's `Decl` node, converts every stored value to the `StoreType` (int widens to float; unproven values are checked with `q_param_*` / `q_var_*`), and keeps no scope state of its own. `readVar` boxes scalars back to `QValue` at read sites so all downstream codegen works uniformly with `QValue` expressions. Generated C++ names start with `quark___` (`ir/storage.go`) so they can't collide with user names.
 - **Operator lowering**: `scalarExpr()` recursively lowers arithmetic, unary `-` and comparisons whose operands are all scalars (literals, scalar-tiered locals, or lowered sub-expressions). Int `+ - * %` use overflow-checked `q_checked_add/sub/mul/mod`, `/` uses `q_checked_fdiv` (always `double`), floats use raw C++ operators; `**` is never lowered (`q_pow`). The result stays unboxed when assigned to a scalar-tier variable or used as a condition, otherwise it's boxed to `QValue`.
 - **Conditions** (`if`/`while`/`and`/`or`/`!`) use `q_truthy()` truthiness rules (there is no `not` keyword); `and`/`or` are short-circuit lambdas that return an operand.
 - **Memory** — Boehm GC vendored at `deps/bdwgc/`: only the public headers, prebuilt static libraries in `lib/<GOOS>-<GOARCH>/`, `build-prebuilt.sh` (rebuilds them), `VENDORED.md` and LICENSE are committed; the GC source is gitignored. `toolchain.EnsureGC` uses the prebuilt library, else a local `build-static/` CMake build (see `deps/bdwgc/VENDORED.md`). Use `q_malloc_atomic()` for data without pointers (strings, numeric buffers). The collector never runs destructors and doesn't scan `malloc`'d memory, so a `std::string`/`std::vector`/map stored in (or reachable only from) runtime data must use `q_allocator` (dict keys and the resource registry do); otherwise it leaks or its contents get collected while live. `integration_gc_test.go` (programs in `src/testfiles/gc/`) checks for both by comparing GC heap and peak RSS across repeated rounds.
-- **Element types (architecture.md §12.9)** — a list's element type (a dict's value type) is fixed when it is created; an empty `list []`/`dict {}` is pending until its first write or the typed slot it is stored into (`types.SettleContainers`, `FixElementType`). The analyzer checks every write it can see (`checkElemWrite`); at runtime every `QList`/`QDict` carries a `const QElemType*` (`types/elemtype.hpp`, `nullptr` = any) and every write goes through `q_elem_store`, so element reads can stay raw. New list-creating builtins must pass the element type their catalog return type claims (`qv_list(n, &q_elem_int)`), and new write paths must call `q_elem_store`. Containers nest by subtype without conversion (`types.IsSubtype`: a `list[int]` is not a `list[float]`, a `list[any]` is not a `list[int]`). Variables never narrow, and return annotations are checked on every function (`checkedReturn`, `q_ret_*`).
+- **Element types (architecture.md §12)** — a list's element type (a dict's value type) is fixed when it is created; an empty `list []`/`dict {}` is pending until its first write or the typed slot it is stored into (`types.SettleContainers`, `FixElementType`). The analyzer checks every write it can see (`checkElemWrite`); at runtime every `QList`/`QDict` carries a `const QElemType*` (`types/elemtype.hpp`, `nullptr` = any) and every write goes through `q_elem_store`, so element reads can stay raw. New list-creating builtins must pass the element type their catalog return type claims (`qv_list(n, &q_elem_int)`), and new write paths must call `q_elem_store`. Containers nest by subtype without conversion (`types.IsSubtype`: a `list[int]` is not a `list[float]`, a `list[any]` is not a `list[int]`). Variables never narrow, and return annotations are checked on every function (`checkedReturn`, `q_ret_*`).
 - **Analyzer → codegen handoff** — the analyzer returns one `types.Analysis` struct (captures, call plans, node types, native/extern fns, struct types, ...), passed to codegen with `SetAnalysis`. New analyzer outputs go in that struct, not new setters.
 - **Function values** — every closure points to a static `QFnInfo` (`types/closure.hpp`; codegen `emitFnInfos` emits `_qfi_<name>`, plus `quark_<name>__default_arg` for functions with defaults). `q_callN` (`types/function.hpp`) calls directly when the argument count equals the parameter count, otherwise `q_call_adapt` checks the range and fills defaults; `qext::call` goes through the same path. New closure-creation sites must pass an info (`q_alloc_closure(fn, info, n)`, `qv_func(fn, info)`).
 - **Call shapes** (`types/analyzer_callshapes.go`) — the compile-time half: the analyzer records how a body calls its parameters (`FunctionType.ParamCalls`, propagated through parameters passed on to other functions) and checks function arguments with known signatures against them (arity, argument types, non-functions). Any new call path in the analyzer must call `recordParamCall` and `checkCallbackArgs` like the existing direct, module and pipe paths.
 - **CallPlan** (`ir/call.go`) — IR metadata attached to each call site by the analyzer. Tracks call kind (builtin vs user), arity, default arg filling. Codegen reads these instead of re-analyzing.
 - **Builtin catalog** (`builtins/`) — shared metadata (name, arity, signatures) used by the analyzer and `invariants/`; codegen never reads it and emits `CallPlan.RuntimeSymbol` instead. Methods are indexed by `(ReceiverType, methodName)` pair, separate from free functions.
 - **Stdlib modules** (`src/core/stdlib/`) — each is a `.qrk` file with a primary `module X:` block named like the file (so its members are `X::name`), and most bind native code from a sibling `.hpp` via `extern 'x.hpp'` + `extern fn` (`io`, `sys`, `time`, `random`, `csv`, `fmt`, `blas`). Functionality that isn't needed in the prelude belongs here, not in the catalog; file I/O, for example, is `std/io` only, and there are no `_file_*` builtins.
-- **Native libraries (FFI)** — `extern link 'name'` / `extern include_path 'dir'` are collected by the loader into `driver.Unit.Native` (link order follows the import graph); `toolchain/native.go` resolves libraries before linking (`QK-FFI-002`), adds `-L`/rpath/`-l` args, and maps C++ errors in glue headers to `QK-FFI-003`. `integration_ffi_test.go` builds the C test libraries in `src/testfiles/ffi/` at test time; `TestStdBlas` skips when OpenBLAS isn't installed. Spec: `ffi_v0_1_spec.md`, which is canonical for all native interop (`native_modules_design.md` was removed).
+- **Native libraries (FFI)** — `extern link 'name'` / `extern include_path 'dir'` are collected by the loader into `driver.Unit.Native` (link order follows the import graph); `toolchain/native.go` resolves libraries before linking (`QK-FFI-002`), adds `-L`/rpath/`-l` args, and maps C++ errors in glue headers to `QK-FFI-003`. `integration_ffi_test.go` builds the C test libraries in `src/testfiles/ffi/` at test time; `TestStdBlas` skips when OpenBLAS isn't installed. Spec: `ffi_v0_1_spec.md`, which is canonical for all native interop.
 - **Modules (v0.2)** — `modules_v0_2_spec.md`. The analyzer never sees `::` or `incl`: the loader rewrites qualified names to identifiers and drops `incl`. Module bodies are analyzed in the file scope (their members have unique names) and their declarations are hoisted with the top level. Imported constants are inlined at each use. Struct identity is the definition: `q_param_struct` / `q_field_struct` compare `QStructDef` pointers, and `QStructDef.name` holds the display name.
 - **Method dispatch** — When codegen sees `IsMethod=true` on a CallPlan, the receiver expression is injected as the first runtime argument (e.g., `"hello".upper()` becomes `q_upper(receiver_val)`). When the receiver's type is unknown at compile time (`any`, e.g. from `unwrap`), the plan is `DispatchDynamicMethod` and codegen switches on the runtime type tag over `MethodCandidates`.
 

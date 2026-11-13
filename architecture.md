@@ -1,170 +1,193 @@
 # Quark Architecture & Implementation
 
-This document covers the compiler pipeline, runtime internals, code generation, and memory management. It complements **semantics.md** (language behaviour), **grammar.md** (syntax), and **stdlib.md** (builtins).
+How the compiler and runtime work: the pipeline, the runtime value system, code generation, memory management, the soundness contract between the analyzer and codegen, and the planned back-end rewrite. Language behaviour is in `semantics.md`, syntax in `grammar.md`, builtins in `stdlib.md`.
+
+## Contents
+
+1. [Compilation pipeline](#1-compilation-pipeline)
+   - [1.1 Lexer](#11-lexer--token-stream) · [1.2 Parser](#12-parser--ast) · [1.3 Loader](#13-loader--one-tree-and-a-name-table) · [1.4 Analyzer](#14-analyzer--typesanalysis) · [1.5 Invariants](#15-invariants) · [1.6 Codegen](#16-codegen--c17-source) · [1.7 C++ compiler](#17-c-compiler--binary)
+2. [Runtime value system](#2-runtime-value-system)
+3. [Memory management](#3-memory-management)
+4. [Naming conventions](#4-naming-conventions)
+5. [CallPlan IR](#5-callplan-ir)
+6. [Builtin catalog](#6-builtin-catalog)
+7. [Extern function system](#7-extern-function-system)
+8. [Resource system](#8-resource-system)
+9. [Codegen lowering details](#9-codegen-lowering-details)
+10. [GC bootstrap](#10-gc-bootstrap)
+11. [Testing](#11-testing)
+12. [Soundness contract](#12-soundness-contract)
+13. [Roadmap: lowering pass and typed IR](#13-roadmap-lowering-pass-and-typed-ir)
+14. [Structural debt](#14-structural-debt)
 
 ---
 
 ## 1) Compilation Pipeline
 
-The pipeline has seven stages. Each stage's output feeds the next.
-
 ```
 .qrk source → Lexer → Parser → Loader → Analyzer → Invariants → Codegen → C++ → clang++ → binary
 ```
 
-The front end (lexer through codegen) runs in `driver/`: `driver.CompileFile(path, stage)` runs every stage up to a cutoff (`StageParse`, `StageCheck`, `StageEmit`) and returns a `Unit` with the AST, the analyzer's `types.Analysis`, the C++ and all diagnostics. The `parse`, `check`, `emit`, `build` and `run` commands go through it; `quark lex` calls the lexer directly. `internal/testutil` runs in-memory test sources through `driver.CompileSource` too (only its `Lex` and `Parse` helpers stop before the loader), so tests see the same stage order, early stops and diagnostics as the CLI. The native back end (clang++, runtime headers, GC) lives in `toolchain/`.
+The front end (lexer through codegen) runs in `driver/`: `driver.CompileFile(path, stage)` runs every stage up to a cutoff (`StageParse`, `StageCheck`, `StageEmit`) and returns a `Unit` with the AST, the analyzer's `types.Analysis`, the C++ and all diagnostics. The `parse`, `check`, `emit`, `build` and `run` commands go through it; `quark lex` calls the lexer directly. `internal/testutil` runs in-memory test sources through `driver.CompileSource` (only its `Lex` and `Parse` helpers stop before the loader), so tests see the same stage order, early stops and diagnostics as the CLI. The native back end (clang++, runtime headers, GC) lives in `toolchain/`.
 
 ### 1.1 Lexer → Token Stream
 
-Three-pass tokenization:
-1. **Raw tokenization**: Produces tokens from source characters. Supports single-quoted and double-quoted strings with escapes (`\n`, `\t`, `\r`, `\\`, `\'`, `\"`; `\0` becomes an `ILLEGAL` token because strings are NUL-terminated). Line comments with `//`.
-2. **Line-start tracking**: Marks which tokens begin a new line.
-3. **Indentation injection**: Converts leading whitespace after `:` or `->` + newline into `INDENT`/`DEDENT` tokens. Tracks an indent stack; mismatched dedent levels produce `ILLEGAL` tokens.
+Three passes:
+1. **Raw tokenization**, driven by operator tables. Single- and double-quoted strings with escapes (`\n`, `\t`, `\r`, `\\`, `\'`, `\"`; `\0` is an error because strings are NUL-terminated). Line comments with `//`. `::` is one token (`COLONCOLON`).
+2. **Line-start tracking**: marks which tokens begin a new line.
+3. **Indentation injection**: converts leading whitespace after `:` or `->` + newline into `INDENT`/`DEDENT` tokens, with an indent stack; a mismatched dedent is an error.
 
-Inside brackets (`()`, `[]`, `{}`), indentation processing is suppressed — newlines are ignored and no INDENT/DEDENT is emitted.
+Inside brackets (`()`, `[]`, `{}`) indentation processing is suppressed: newlines are ignored and no `INDENT`/`DEDENT` is emitted.
 
 ### 1.2 Parser → AST
 
-Recursive-descent parser producing a tree of `TreeNode`s. Uses Pratt parsing for expressions with 12 precedence levels. Each construct has its own node kind: `AssignNode` (`target = value`, the target being an identifier, `MemberNode` or `IndexNode`), `MemberNode` (`object.name`), `UnaryNode`, `BinaryNode`, `PairNode` (a dict literal entry) and `FnDeclNode` (`fn name(...)`: `[name, LambdaNode]`).
+Recursive descent producing `ast.TreeNode`s, with Pratt parsing for expressions (12 precedence levels, `grammar.md` §10). Each construct has its own node kind: `AssignNode` (target: identifier, `MemberNode` or `IndexNode`), `MemberNode` (`object.name`), `UnaryNode`, `BinaryNode`, `PairNode` (a dict literal entry), `QualifiedNameNode` (`a::b::c`), and `FnDeclNode` (`fn name(...)`: `[name, LambdaNode]`).
 
-Key parser decisions:
-- `fn name(...)` at statement level → `FnDeclNode`, a fixed, hoisted declaration (`ast.IsFnDecl`)
-- `fn(...)` in expression → lambda
-- `x | f(a)` → the call `f(x, a)` marked `Piped` (`x | obj.m(a)` → `obj.m(x, a)`); no later stage has a pipe path, and `Piped` only adds "(including piped input)" to arity messages. A pipe target that isn't a call is a parse error.
-- `list [...]` → list literal (keyword required, avoids ambiguity with indexing)
-- Dict keys in literals are bare identifiers, interpreted as string keys
+Key decisions:
+- `fn name(...)` at statement level → `FnDeclNode`, a fixed, hoisted declaration (`ast.IsFnDecl`); `fn(...)` in an expression → lambda.
+- `x | f(a)` → the call `f(x, a)` marked `Piped` (`x | obj.m(a)` → `obj.m(x, a)`), built in `parsePipe`. No later stage has a pipe path; `Piped` only adds "(including piped input)" to arity messages. A pipe target that isn't a call is a parse error.
+- `list [...]` → list literal (the keyword avoids ambiguity with indexing).
+- Dict keys in literals are bare identifiers, interpreted as string keys.
+- `Name {` always parses as a struct literal and any name before `->` as a return type; the analyzer checks the name.
 
-### 1.3 Loader → Merged AST
+### 1.3 Loader → One Tree and a Name Table
 
-Resolves all `incl` statements by loading, parsing, and splicing external files into the main AST. See semantics.md §10 for resolution rules.
+Names are resolved per file (`modules_v0_2_spec.md`, `semantics.md` §10).
 
-Names are resolved per file (modules v0.2, `semantics.md` §10). `loader/files.go` loads each imported file once (keyed by absolute path, numbered in load order), checks file names and that imported files only contain definitions, and builds each file's scope: top-level definitions, modules with their members, and import bindings, reporting clashes. `loader/resolve.go` then walks every file: each definition of an imported file gets the internal name `q<N>_<stem>__name` (module members `q<N>_<stem>__<module>__name`; main-script module members `<module>__name`), and every reference, bare (local, then enclosing module, then file, then prelude) or `::`-qualified, is rewritten to that internal name. Constants of imported files are inlined. Parameters, loop variables and ok/err bindings shadow as usual. The files are then spliced into one tree, imported files first, without their `incl` statements. The resulting `names.Table` maps internal names back to the names users write; the analyzer's diagnostics and codegen's runtime names go through it. The loader also tags nodes from imported files with `SourceFile`, which codegen's `q_set_source_loc` calls use so runtime errors name the module's file (code from `std/` sets no location, so its errors point at the user's call). Every generated function starts with a `QSourceLocGuard` that restores the caller's location when it returns.
+- `loader/files.go` loads each `incl`uded file once (identity: the real path, symbolic links resolved; numbered in load order), checks file names and that imported files contain only definitions and constants, and builds each file's scope (top-level definitions, modules with their members, import bindings), reporting clashes as `QK-LOAD-001`.
+- `loader/resolve.go` then walks every file. Each definition of imported file N (stem `s`) gets the internal name `q<N>_s__name` (module members `q<N>_s__module__name`); main-script module members become `module__name`; main-script top-level names are unchanged. Every reference, bare (local, then enclosing module, then file) or `::`-qualified, is rewritten to its internal name. Two definitions that would get the same internal name are a load error. A local of an imported file named like a main-script name becomes `q<N>__name__l`, since the spliced tree has one global scope. Constants of imported files are inlined at each use. User names can't contain `__` (`checkReservedNames`), so no user name can reach an internal one.
+- The files are spliced into one tree, imported files first, without their `incl` statements. The resulting `names.Table` maps internal names back to what users write (`Display`, `DisplayText`); analyzer diagnostics and codegen's runtime names go through it.
+- Nodes from imported files are tagged with `SourceFile`, which codegen's `q_set_source_loc` calls use so runtime errors name the module's file (code from `std/` sets no location, so its errors point at the user's call). Every generated function starts with a `QSourceLocGuard` that restores the caller's location when it returns.
+- `extern link` and `extern include_path` directives of every loaded file are collected into `driver.Unit.Native` (§1.7).
 
-### 1.4 Analyzer → Annotated AST + Metadata
+### 1.4 Analyzer → `types.Analysis`
 
-Two-pass semantic analysis:
-1. **Predeclaration pass**: Scans top-level statements to register all named functions and function-binding assignments. This enables forward references — a function can call another function defined later in the file.
-2. **Full analysis pass**: Walks the entire AST, building scopes, type-checking expressions, computing closure captures, and generating CallPlans.
+`analyzeCompilationUnit` (`types/analyzer_functions.go`) runs in this order:
 
-The analyzer returns one `types.Analysis` struct (`types/analyzer_modules.go`) with eight outputs, consumed by the invariant checks and by codegen (via `SetAnalysis`):
-- **CallPlans**: Per-call-site metadata (dispatch mode, arity, defaults to inject)
-- **Refs**: the symbol (`types.Symbol`) of every identifier node the analyzer resolved: reads, assignment targets, typed declarations, parameters, loop variables, `when` bindings and `fn` names. Each variable-like declaration is one symbol, with its `Kind`, `StoreType` (the type every value it holds is known to have: its annotation, a literal default's type, or its first value's type), and `Decl`, the identifier node where codegen declares it. `finalizeSymbols` then decides each symbol's `Storage` (`ir.Storage`, below) and C++ name (`CName`) once, after the captures are final.
-- **Captures**: Per-lambda list of captured symbols, in capture-slot order
-- **ReturnValidation**: Per-function declared-vs-inferred return type checks
-- **NodeTypes**: Per-AST-node inferred type (`map[*ast.TreeNode]Type`). Every expression node has its analyzer-computed type recorded here. Codegen reads this for native operator lowering and to decide when a stored value needs a conversion or a check.
-- **NativeFns**: Prototype CallPlans for fully annotated user functions (`DispatchNative`)
-- **ExternFns**: Prototype CallPlans for `extern fn` declarations (`DispatchExtern`), keyed by name or `"type.method"`
-- **StructTypes**: Declared struct types and their fields
+1. **Structs**: `predeclareStructTypes` declares the structs of every file and module body, so any struct can be used before its definition.
+2. **Fixed `fn` declarations**: `declareFixedFns` declares the top level's and every module body's `fn`s as non-reassignable symbols before any statement is analyzed (module bodies share the file scope, so they are hoisted together). Every block does the same for its own declarations on entry.
+3. **Statements**, in order: scopes, types, closure captures, call plans, call shapes (§1.4.3), element types (§12).
+4. `finalizeFixedFns` (`types/analyzer_fixed.go`): decides which declarations need a closure (a least fixpoint over captured symbols: a declaration that captures nothing, directly or through another declaration, is a plain C++ function), assigns their C++ names, registers fully annotated non-capturing ones as native functions, and sets each deferred call plan to `DispatchNative`, `DispatchDirect` or `DispatchClosure`. It runs `checkDefiniteAssignment` (modules rule 23: a call that would run a declaration before a variable it uses is assigned) and records the `HoistScope`s codegen needs.
+5. `finalizeSymbols`: decides each symbol's storage and C++ name (§1.6).
 
-Diagnostics emitted by the analyzer are severity-tagged:
-- **Errors** (`QK-CHECK-001`) are fatal and stop `check`/`emit`/`build`/`run`.
-- **Warnings** (`QK-CHECK-002`) are reported to the user but are non-fatal.
+The analyzer returns one `types.Analysis` (`types/analyzer_modules.go`), passed to the invariant checks and to codegen (`SetAnalysis`). New analyzer outputs go in this struct, not new setters.
 
-#### Type checking policy (Knowability Rule)
+| Field | Contents |
+|---|---|
+| `CallPlans` | Per call site: dispatch mode, arity, defaults to inject (§5) |
+| `Refs` | The `types.Symbol` of every resolved identifier node: reads, assignment targets, typed declarations, parameters, loop variables, `when` bindings and `fn` names. A symbol has a `Kind`, a `StoreType` (the type every value it holds is known to have: its annotation, a literal default's type, or its first value's type), a `Decl` node (where codegen declares it), and after `finalizeSymbols` a `Storage` and `CName` |
+| `Captures` | Per lambda, the captured symbols in capture-slot order |
+| `NodeTypes` | The inferred type of every expression node; codegen uses it for operator lowering and to decide when a stored value needs a conversion or a check |
+| `ReturnValidation` | Per function, whether the declared return type was validated |
+| `NativeFns` | Prototype call plans for fully annotated, non-capturing functions (`DispatchNative`) |
+| `ExternFns` | Prototype call plans for `extern fn` (`DispatchExtern`), keyed by name or `"type.method"` |
+| `StructTypes` | Declared structs and their fields |
+| `Names` | The loader's name table |
+| `FixedFns`, `FnRefs`, `HoistScopes` | Fixed declarations (by lambda node), identifier nodes that name a declaration needing no closure, and per scope the cells and closures created at its start |
 
-When either the parameter type or argument type is unknown or `any`, the check is **deferred to runtime**. Only when both types are statically known does the analyzer enforce assignability.
+Diagnostics are severity-tagged: errors (`QK-CHECK-001`) stop `check`/`emit`/`build`/`run`; warnings (`QK-CHECK-002`) are reported and don't. Every message goes through `names.DisplayText`.
 
-#### Assignability rules
+#### 1.4.1 Knowability rule
+
+When either side of a check (parameter and argument, slot and value) has an unknown or `any` type, the check is emitted for runtime. Only when both types are known does the analyzer decide it at compile time.
+
+#### 1.4.2 Assignability
 
 `CanAssign(dst, src)` (`types/types.go`) is the rule for a value stored into a slot (variable, parameter, element, field, return value); `IsSubtype` is the same without conversion, used below the top level:
 
-- `any` accepts everything; a value of type `any` is a subtype of nothing else (it is checked where it is stored, or rejected for an untyped variable)
-- `int` is assignable to `float` (widened where it is stored), but `list[int]` is not a subtype of `list[float]`
-- `null` is a value of struct and `resource` types only (not `list`, `dict`, `vec`, `fn` or `result`; decided 2026-11-13)
-- Containers are covariant in element type (`list[int]` is a `list[any]`), never the other way (`list[any]` is not a `list[int]`): a list's static element type is a guarantee about every value in it (§12.9)
-- A union destination accepts a value of any of its options; a union source must fit for every option
-- A function value fits a signature with the same arity whose return type it returns; a value typed only `fn` fits no specific signature
-- All other combinations require exact match
+- `any` accepts everything; a value of type `any` is a subtype of nothing else (it is checked where it is stored, or rejected for a typed slot it can't be checked into).
+- `int` is assignable to `float` (widened where it is stored), but `list[int]` is not a subtype of `list[float]`.
+- `null` is a value of struct and `resource` types only, not `list`, `dict`, `vec`, `fn` or `result`.
+- Containers are covariant in element type (`list[int]` is a `list[any]`) and never the other way: a list's static element type is a guarantee about every value in it (§12).
+- A union destination accepts a value of any of its options; a union source must fit every option.
+- A function value fits a signature with the same arity whose return type it returns; a value typed only `fn` fits no specific signature.
+- Everything else requires an exact match.
 
-**Pending containers.** An empty `list []` / `dict {}` literal has a pending `ListType`/`DictType` (`NewPendingList`) that reads as `list[any]` until its element type is decided: by the container type it is stored into or merged with (`SettleContainers`, `MergeTypes`), or by its first write (`checkElemWrite` → `FixElementType`). Pending types of literals stored into each other become peers and are fixed together. One passed where writes can't be seen (an untyped parameter, an `any` slot) is fixed to `any` (`escapePending`). Every alias shares the one type object, so the fix applies to all of them and to the literal's runtime descriptor.
+**Pending containers.** An empty `list []` / `dict {}` has a pending `ListType`/`DictType` (`NewPendingList`) that reads as `list[any]` until its element type is decided: by the container type it is stored into or merged with (`SettleContainers`, `MergeTypes`), or by its first write (`checkElemWrite` → `FixElementType`). Pending literals stored into each other become peers and are fixed together. One passed where writes can't be seen (an untyped parameter, an `any` slot) is fixed to `any` (`escapePending`). Every alias shares the one type object, so the fix applies to all of them and to the literal's runtime descriptor.
 
-### 1.5 Invariants → Validated
+#### 1.4.3 Call shapes
 
-Pre-codegen checks that verify CallPlans are well-formed and return type annotations are consistent. Acts as a safety net between analysis and code generation.
+`types/analyzer_callshapes.go` records how a body calls each parameter (`FunctionType.ParamCalls`: arity and argument types, propagated through parameters passed on to other functions) and checks function arguments with known signatures against them (`checkCallbackArgs`): wrong arity, wrong argument types, or a non-function where the body calls the parameter. Every call path in the analyzer calls `recordParamCall` and `checkCallbackArgs`. A parameter the body reassigns isn't tracked (`markParamReassigned`).
 
-Invariant breaches are compiler-bug class failures (`INV-*`) and are treated as fail-loud conditions.
+### 1.5 Invariants
+
+`invariants/` validates the call plans (per dispatch mode, against the builtin catalog) and return annotations before codegen. A breach is a compiler bug (`INV-*`, `error_codes.md`) and fails loudly.
 
 ### 1.6 Codegen → C++17 Source
 
-Walks the annotated AST and emits C++17 code using the runtime headers.
+`codegen/` walks the analyzed AST and emits one C++17 translation unit using the runtime headers. `codegen.go` holds most of it, `storage.go` variable storage, `elemtype.go` element-type descriptors and checked returns.
 
-**Naming**:
-- User identifiers prefixed with `quark_` (e.g., `quark_x`, `quark_main`)
-- Runtime builtins use `q_` prefix
-- Value constructors use `qv_` prefix
-- Generated names start with `quark___` (`ir/storage.go`): lambdas are `quark___lambda1`, nested `fn` declarations `quark___fn1_name`, and a variable whose plain `quark_<name>` is taken by another variable of that name `quark___v<id>_<name>`. User names never contain `__` and no loader internal name starts with `__`, so none of these can collide with a user's name.
-- Exceptions: `extern fn` symbols are called by their own C++ name (e.g. `qei_sqrt`), and their first-class thunks are named `_thunk_<symbol>`. Native (fully annotated) functions get a `quark_<name>__thunk`.
+**Naming** (see also §4):
+- User names are prefixed `quark_` (`quark_x`). A module member is `quark_<internal name>`.
+- Names the compiler invents start with `quark___` (`ir/storage.go`): lambdas `quark___lambda1`, nested `fn` declarations `quark___fn1_name`, a second variable with an existing variable's name `quark___v<id>_name`. User names never contain `__`, so these can't collide.
+- A native (fully annotated) function `f` also gets a `quark_f__thunk` with the QValue convention, for use as a value. An `extern fn` is called by its own C++ symbol (`qei_sqrt`), and its first-class thunk is `_thunk_<symbol>`.
+- Every function value carries a static `QFnInfo` (`_qfi_<name>`); functions with defaults also get `quark_<name>__default_arg`.
 
-**Variables**: The analyzer decides each symbol's storage once (`finalizeSymbols`, `types/analyzer_fixed.go`); codegen only reads it (`codegen/storage.go`). Five storage kinds (`ir.Storage`):
+**Variables.** The analyzer decides each symbol's storage once (`finalizeSymbols`); codegen only reads it (`codegen/storage.go`). Five kinds (`ir.Storage`):
 
 | Storage | C++ type | Condition |
-|------|----------|-----------|
-| `StorageCell` | `QCell*` | captured by any closure; `->value` for reads/writes |
+|---|---|---|
+| `StorageCell` | `QCell*` | captured by any closure; read and written as `->value` |
 | `StorageInt` | `long long` | not captured, `StoreType` is `int` |
 | `StorageFloat` | `double` | not captured, `StoreType` is `float` |
 | `StorageBool` | `bool` | not captured, `StoreType` is `bool` |
-| `StorageValue` | `QValue` | everything else (untyped, `any`, composite, `when` bindings, `fn` bindings) |
+| `StorageValue` | `QValue` | everything else (untyped, `any`, containers, `when` bindings, function values) |
 
-`StoreType` is a parameter's annotation (or the type of its literal default), a typed declaration's type, a loop variable's element type, or a variable's first value's type. Every value stored into a symbol is made to have that type (`storeValue`): an int is widened to a float, and a value whose type the analyzer didn't prove (from `any`, a union) is checked: `q_param_*` on function entry, `q_var_*` for a typed declaration (`variable 'x' is declared int but got str`). Struct fields use the same check table (`checkFor`) with `q_field_*`.
+Every value stored into a symbol is made to have its `StoreType` (`storeValue`): an int is widened to a float, and a value whose type the analyzer didn't prove (from `any`, a union) is checked: `q_param_*` on function entry, `q_var_*` for a typed declaration (`variable 'x' is declared int but got str`). Struct fields use the same check table (`checkFor`) with `q_field_*`, and returns with `q_ret_*` (`checkedReturn`).
 
-Codegen declares a symbol's C++ variable at its `Decl` node (a hoisted cell, created unassigned at its scope's start, is only assigned there) and otherwise assigns it, so it needs no scope state of its own; two variables with one name never share a C++ variable. Closure captures received from an enclosing scope (`_cl->captures[i]`) are `QCell*` under the same `CName`. Reads go through `readVar`, which boxes scalars back to `QValue` (e.g. `qv_int(quark_x)`) so the rest of codegen always operates on `QValue` expressions. The exception is operator lowering (below): an expression made only of scalars is emitted unboxed and assigned directly to a scalar variable (`long long quark_c = q_checked_add(quark_a, quark_b);`).
+Codegen declares a symbol's C++ variable at its `Decl` node (a hoisted cell, created unassigned at its scope's start, is only assigned there) and otherwise assigns it, so it keeps no scope state of its own; two variables with one name never share a C++ variable. Captures received from an enclosing scope (`_cl->captures[i]`) are `QCell*` under the same `CName`. Reads go through `readVar`, which boxes scalars back to `QValue` (`qv_int(quark_x)`), so the rest of codegen works on `QValue` expressions. The exception is operator lowering (§9): an expression made only of scalars is emitted unboxed and assigned directly to a scalar variable.
 
-A native (fully annotated) function receives scalar parameters as `int64_t`/`double`/`bool` and keeps them raw unless captured. Loop variables over a list or vec read the element type the analyzer inferred (§12.6); `range()` loop variables are `long long` unless captured.
+A native function receives scalar parameters as `int64_t`/`double`/`bool` and keeps them raw unless captured. Loop variables over a list or vec use the element type the analyzer inferred; `range()` loop variables are `long long` unless captured.
 
-**Function calls**: Lowered according to the CallPlan's dispatch mode:
-- `DispatchBuiltin` → `q_print(arg)` (direct C++ call)
-- `DispatchDirect` → `quark_foo(nullptr, arg)` (immutable function symbol, no closure). Named functions are desugared to mutable bindings, so in practice ordinary calls to them use `DispatchClosure`.
-- `DispatchClosure` → `q_call1(quark_foo, arg)` (dynamic dispatch through QClosure) — the usual path for named functions and lambdas
-- `DispatchExtern` → `qei_sqrt(q_as_float(arg))` (unbox args, call native, box return)
-- `DispatchNative` → `quark_foo(nullptr, raw_arg)` (fully annotated function with native C++ types, with a QValue thunk for first-class use)
-- `DispatchDynamicMethod` → `([&]() -> QValue { switch (recv.type) { case QValue::VAL_STRING: return q_split(recv, arg); ... default: q_no_method(recv, "split"); } }())` (builtin method on a receiver whose type is unknown at compile time, e.g. the result of `unwrap`; an immediately-invoked lambda so the call stays a lazily evaluated expression)
+**Function calls**, by the call plan's dispatch mode:
+- `DispatchBuiltin` → `q_print(arg)`.
+- `DispatchDirect` → `quark_foo(nullptr, arg)`: a `fn` declaration that captures nothing. This is the usual path for named functions.
+- `DispatchClosure` → `q_call1(quark_foo, arg)`: a function value (lambda variable, parameter, list element) or a declaration that captures variables (held in a fixed binding).
+- `DispatchExtern` → `qei_sqrt(q_as_float(arg))`: unbox the arguments, call native, box the result.
+- `DispatchNative` → `quark_foo(nullptr, raw_arg)`: a fully annotated, non-capturing declaration with a native C++ signature.
+- `DispatchDynamicMethod` → `([&]() -> QValue { switch (recv.type) { case QValue::VAL_STRING: return q_split(recv, arg); ... default: q_no_method(recv, "split"); } }())`: a builtin method on a receiver whose type is unknown at compile time (for example the result of `unwrap`).
 
-If codegen encounters an unexpected dispatch/runtime-symbol invariant break, it terminates with an internal compiler error (`INV-*`) rather than emitting fallback runtime behavior.
+An unexpected dispatch mode or runtime symbol stops codegen with an internal compiler error (`INV-*`) rather than emitting fallback code.
 
-**Method calls**: When `IsMethod=true`, the receiver is injected as the first runtime argument (e.g., `"hello".upper()` → `q_upper(receiver_val)`).
+**Method calls**: when `IsMethod` is set, the receiver is the first runtime argument (`"hello".upper()` → `q_upper(receiver)`).
 
-**Operator lowering**: `scalarExpr()` tries to emit arithmetic (`+`, `-`, `*`, `/`, `%`), unary `-`, and comparisons (`<`, `<=`, `>`, `>=`, `==`, `!=`) as native C++ when every operand is a scalar: a literal, a scalar-tiered local, or (recursively) another lowered expression. Int arithmetic uses overflow-checked helpers (`q_checked_add/sub/mul/mod`, `q_checked_neg`), and `/` uses `q_checked_fdiv`, which always yields `double`; float `+ - *` and comparisons use raw C++ operators. `**` is never lowered (it calls `q_pow`). Falls back to the boxed `q_add` etc. path whenever an operand is `QValue`/unknown. See §9.
+**Other lowerings:**
+- **Defaults**: missing trailing arguments are filled from the call plan's `DefaultNodes`; calls through function values fill them at runtime (`q_call_adapt`, §2.2).
+- **Lambdas**: emitted as top-level C++ functions, with the closure allocated where the lambda is evaluated.
+- **`for` loops**: index-based iteration (`q_iter_get` with a counter); the loop variable uses a scalar storage when the iterable's element type is known. `range()` loops and vector loops have fast paths (§9).
+- **`if`/`while`**: conditions go through `q_truthy()` (`result` and `vec` conditions are rejected), or are a raw C++ `bool` when `scalarExpr` lowers them.
+- **`when`**: a chain of `if`/`else` with result payload extraction; a binding is a `QCell*` or a `QValue` per its symbol's storage.
+- **Blocks**: every block, including `for` and `while` bodies, goes through `generateBlock`, which hoists the block's `fn` declarations (`hoistScopes`) and sets each statement's source location.
 
-**Other lowerings**:
-- **Default injection**: Missing trailing args filled from DefaultNodes in the CallPlan
-- **Lambdas**: Emitted as top-level C++ functions with closure allocation at the capture site
-- **for loops**: Lowered to index-based iteration (`q_iter_get` with incrementing counter); loop variable uses scalar tier when the iterable's element type is statically known. `range()` calls are lowered to raw C++ loops unless the loop variable is captured. Vector iteration has a fast path (see §9).
-- **if/while**: Conditions are wrapped in `q_truthy()` (truthiness rules; `result` and `vec` conditions are rejected), or emitted as a raw C++ `bool` when `scalarExpr` lowers the condition
-- **when**: Lowered to a chain of if/else with result payload extraction; a binding is a `QCell*` or a `QValue` per its symbol's storage
-- **Bodies**: every block, including `for` and `while` bodies, goes through `generateBlock`, which hoists the block's `fn` declarations and sets each statement's source location.
-
-**Generation order**:
-1. Collect all function declarations (forward declarations)
-2. Emit function definitions
-3. Emit `main()` with GC initialization
-4. Predeclare function bindings in main for mutual recursion
-5. Initialize module bindings
-6. Execute top-level statements
+**Output order** (`Generator.Generate`):
+1. `#include "quark/quark.hpp"`, then the `extern` glue headers.
+2. Forward declarations of every function (and native thunks and extern thunks).
+3. `QFnInfo` statics, `QStructDef` statics, element-type descriptors (`_qet_N`, collected while generating and inserted here), default-argument functions.
+4. Function definitions, then extern thunk bodies.
+5. `main()`: `q_gc_init()`, `q_set_args`, `hoistScopes` for the top level and every module body (cells, fixed bindings and closures exist before the first statement), module-body bindings, then the top-level statements.
 
 ### 1.7 C++ Compiler → Binary
 
-`toolchain.Find()` locates clang++, the runtime headers and the GC once. The build then runs in two steps, so additional native objects and libraries can join the link:
+`toolchain.Find()` locates clang++, the runtime headers and the GC once. The build has two steps, so native objects and libraries can join the link:
 
-1. **Compile** (`Toolchain.Compile`): C++ → object file with clang++ (g++ is not supported due to `gc_allocator` / `std::hash` incompatibilities):
-    - `-std=c++17 -O3 -march=x86-64-v3` (on amd64)
-    - `-DQUARK_USE_GC` + Boehm GC include flags
-    - `-Wno-deprecated-declarations` on Windows
-    - `-include-pch <cached quark.hpp PCH>` unless `--no-pch` (see below)
-2. **Link** (`Toolchain.Link`): objects + native libraries from `extern link` + static `libgc` (`-pthread`, `-ldl` on Linux) + `-lm` on non-Windows. With `--lto`, links with `lld` when `ld.lld` is on PATH, since the system linker needs LLVM's gold plugin for LTO.
+1. **Compile** (`Toolchain.Compile`): C++ → object file with clang++ (g++ is not supported because of `gc_allocator` / `std::hash` incompatibilities): `-std=c++17 -O3`, `-march=x86-64-v3` on amd64, `-DQUARK_USE_GC` and the GC include flags, `-Wno-deprecated-declarations` on Windows, and `-include-pch <cached quark.hpp PCH>` unless `--no-pch`.
+2. **Link** (`Toolchain.Link`): objects + native libraries from `extern link` + static `libgc` (`-pthread`, and `-ldl` on Linux) + `-lm` on non-Windows. With `--lto`, links with `lld` when `ld.lld` is on PATH, since the system linker needs LLVM's gold plugin for LTO.
 
-**Native dependencies** (`toolchain/native.go`). The loader collects `extern link` and `extern include_path` directives from every loaded file into `driver.Unit.Native` (`loader.NativeDeps`: include directories, libraries in link order, and the extern glue headers). `main.go` combines them with `--lib-path` / `--include-path` / `--link-arg` and `QUARK_LIB_PATH` / `QUARK_INCLUDE_PATH` into `toolchain.Options`. Before linking, `Link` looks for every library in the user directories, then `LIBRARY_PATH`, then clang's own search path (`clang++ -print-search-dirs`), and reports each missing one as `QK-FFI-002`. The link line gets `-L` for each user directory, `-Wl,-rpath,<dir>` for user directories that provide a shared library, then `-l<name>` in link order, then `--link-arg` values. Extra include directories are added to the compile but not to the precompiled header, which stays shared between programs. When a compile fails and clang's output has an error located in an extern glue header (or in a file one includes), `Compile` returns a `QK-FFI-003` diagnostic and `quark run` skips the generated-C++ dump.
+**Native dependencies** (`toolchain/native.go`). `main.go` combines `driver.Unit.Native` (include directories, libraries in import-graph link order, the extern glue headers) with `--lib-path` / `--include-path` / `--link-arg` and `QUARK_LIB_PATH` / `QUARK_INCLUDE_PATH` into `toolchain.Options`. Before linking, `Link` looks for every library in the user directories, then `LIBRARY_PATH`, then clang's own search path (`clang++ -print-search-dirs`), and reports each missing one as `QK-FFI-002`. The link line gets `-L` for each user directory, `-Wl,-rpath,<dir>` for user directories that provide a shared library, then `-l<name>` in link order, then `--link-arg` values. Extra include directories are added to the compile but not to the precompiled header, which stays shared between programs. When clang reports an error located in an extern glue header (or a file it includes), `Compile` returns a `QK-FFI-003` diagnostic.
 
 Intermediate files go in a fresh `os.MkdirTemp` directory per build, so concurrent builds never collide.
 
-**Precompiled runtime header.** The runtime is header-only, so every compile parses ~70k lines of runtime headers before reaching user code. `toolchain/pch.go` precompiles `quark/quark.hpp` into `$XDG_CACHE_HOME/quark/pch/<key>.pch` (`os.UserCacheDir()`), where the key hashes the compiler binary, the compile flags, and the path, size and mtime of every runtime and GC header. A PCH clang rejects (for example after a system header update) is deleted and the compile retried without it. This roughly halves compile time for small programs.
+**Precompiled runtime header.** `toolchain/pch.go` precompiles `quark/quark.hpp` into `$XDG_CACHE_HOME/quark/pch/<key>.pch` (`os.UserCacheDir()`), where the key hashes the compiler binary, the compile flags, and the path, size and mtime of every runtime and GC header. A PCH clang rejects (for example after a system header update) is deleted and the compile retried without it. This roughly halves compile time for small programs.
 
 ---
 
 ## 2) Runtime Value System
 
+The runtime is header-only C++17 under `src/core/quark/runtime/include/quark/`, included through `quark.hpp` (every `builtins/` header must be listed there). The table engine and CSV reader (`table/`) are not included by `quark.hpp`.
+
 ### 2.1 QValue
 
-Every runtime value is a `QValue` — a C++ tagged union:
+Every runtime value is a `QValue`, a tagged union (`core/value.hpp`):
 
 ```cpp
 struct QValue {
@@ -182,239 +205,224 @@ struct QValue {
         QList* list_val;
         QVector* vector_val;
         QDict* dict_val;
-        void* func_val;        // Actually QClosure*
+        void* func_val;        // a QClosure*
         QResult* result_val;   // {bool is_ok, QValue payload}
         QResourceHandle* resource_val;
         QStruct* struct_val;
-        QTable* table_val;     // runtime only; `tbl` syntax is not implemented yet
+        QTable* table_val;     // runtime only; no Quark syntax creates a table yet
     } data;
 };
 ```
 
-Value constructors use the `qv_` prefix: `qv_int(42)`, `qv_string("hello")`, `qv_null()`.
+Value constructors use the `qv_` prefix: `qv_int(42)`, `qv_string("hello")`, `qv_null()`. `q_type_name(ValueType)` (`core/value.hpp`) is the canonical type-name table.
 
-**Type guards are mandatory**: ALL runtime operations must check `QValue::type` before accessing union fields. Return `qv_null()` on type mismatch.
+**Reading a union field.** Code may read `.data.int_val` (or any other field) without a tag check only where the analyzer has proven the type (§12). Values from untyped paths (`any`, callbacks, struct fields, native code) go through the checked `q_as_*` / `q_param_*` / `q_var_*` / `q_field_*` / `q_ret_*` helpers.
 
-### 2.2 QClosure
+**Errors.** A runtime operation that gets a value it can't handle reports it and exits: `q_runtime_reportf(...)` (`core/diagnostics.hpp`), which prints `error[QK-RUNTIME-001] (runtime): message at file:line:col`, followed by `exit(1)`. It never returns `qv_null()` as a stand-in for a failure; `null` is returned only where it is the documented result (`list.get` past the end, `dict.get` on a missing key, `sys::env` of an unset variable).
 
-All function values — named functions, lambdas, closures — are represented as `QClosure*`:
+### 2.2 QClosure and QFnInfo
+
+Every function value is a `QClosure*` (`types/closure.hpp`):
 
 ```cpp
+struct QFnInfo {
+    const char* name;                  // display name for errors
+    int min_arity;                     // parameters without a default
+    int max_arity;                     // all parameters
+    QValue (*default_arg)(int index);  // builds a default fresh on each call; null if none
+};
+
 struct QClosure {
-    void* func;              // Function pointer (QClosure* as hidden first arg)
+    void* func;             // function pointer; takes QClosure* as hidden first arg
+    const QFnInfo* info;    // never null
     int capture_count;
-    QCell* captures[];       // Flexible array of captured variable cells
+    QCell* captures[];      // captured variable cells
 };
 ```
 
-Every generated function signature includes a hidden first parameter `QClosure* _cl`. Calls through a closure value (`q_callN`, the usual path for named functions and lambdas) pass the actual closure pointer. Direct calls that bypass the closure — `DispatchNative`, `DispatchDirect`, and the call inside a native function's thunk — pass `nullptr`.
+Every generated function takes a hidden first parameter `QClosure* _cl`. Calls through a closure (`q_callN`) pass the closure; direct calls (`DispatchDirect`, `DispatchNative`, the call inside a thunk) pass `nullptr`. New closure-creation sites must pass an info: `q_alloc_closure(fn, info, n)`, `qv_func(fn, info)`.
 
-Function pointer typedefs:
-```cpp
-using QClFunc0 = QValue (*)(QClosure*);
-using QClFunc1 = QValue (*)(QClosure*, QValue);
-// ... up to QClFunc12
-```
+`q_call0` … `q_call12` (`types/function.hpp`) go through `q_call_values`, which calls directly when the argument count equals the parameter count and otherwise uses `q_call_adapt`: it checks the count against `min_arity`/`max_arity` (`function 'h' expects 2 arguments but got 1`) and fills defaults. `qext::call` uses the same path. At most 12 arguments (`Q_MAX_CALL_ARGS`).
 
 ### 2.3 QCell
 
-`QCell` is a heap-allocated mutable reference cell used for variables that are captured by closures:
+`QCell { QValue value; }` is a heap cell for a variable captured by a closure. All closures over one variable share its cell, so they see each other's writes. A variable that is never captured lives on the stack (§1.6).
 
-```cpp
-struct QCell {
-    QValue value;
-};
-```
+A cell for a variable that a hoisted function captures is created unassigned (`q_new_unassigned_cell`) at its scope's start and read with `q_cell_get`, which reports `'total' is used before it is assigned` instead of reading `null`.
 
-**Storage selection** (decided at compile time per variable; full rules in §1.6):
-- A variable captured by at least one nested lambda is allocated as `QCell*`. Multiple closures over the same variable share the same cell pointer, enabling shared mutable state.
-- A variable that is never captured lives on the stack — as a native scalar (`long long`, `double`, `bool`) when its static type allows, otherwise as a `QValue`. No heap allocation, no GC pressure.
+### 2.4 Containers
 
-The symbol's `Storage` (`ir.StorageCell`) records the decision; codegen reads and writes a cell as `->value`.
-
-### 2.4 Container Types
-
-- **QList**: a `std::vector<QValue, q_allocator<QValue>>` (GC-managed dynamic array) plus `elem`, the `const QElemType*` element type it was created with (`nullptr` for any value)
-- **QDict**: a `std::unordered_map<std::string, QValue, ..., q_allocator<...>>` (string-keyed hash map) plus `elem`, its value type
-- **QElemType** (`core/value.hpp`, checks in `types/elemtype.hpp`): a runtime type descriptor — tag, element type for lists and dicts, ok/err types for results, the `QStructDef` for structs, the dtype for vecs. Scalars use the runtime's `q_elem_int`/`_float`/`_bool`/`_str`; codegen emits one static `_qet_N` per other type (`codegen/elemtype.go`). Every list and dict write in the runtime goes through `q_elem_store` (push, set, insert, concat, `d.k = v`, `.set`, `qext::list_push`, `qext::dict_set`), which widens an int for a float container and rejects anything else; a container value must have an element type that `q_elem_sub` accepts (no conversion).
-- **QVector**: Typed columnar storage with four dtype variants (f64, i64, bool, str). Buffers follow the Arrow layout: string vectors use offsets plus UTF-8 bytes (not pointers per element), and nulls are tracked in an Arrow validity bitmap that is `nullptr` when the vector has no nulls (`types/vector.hpp`).
-- **QResult**: `{ bool is_ok; QValue payload; }` — tagged ok/err wrapper
+- **QList**: a `std::vector<QValue, q_allocator<QValue>>` plus `elem`, the `const QElemType*` element type it was created with (`nullptr` for any value).
+- **QDict**: a string-keyed `std::unordered_map` with `q_allocator`, plus `elem`, its value type.
+- **QElemType** (`core/value.hpp`; checks in `types/elemtype.hpp`): a runtime type descriptor: tag, element type for lists and dicts, ok/err types for results, the `QStructDef` for structs, the dtype for vecs. Scalars use `q_elem_int`/`_float`/`_bool`/`_str`; codegen emits a static `_qet_N` for every other type. Every list and dict write in the runtime goes through `q_elem_store` (push, set, insert, concat, `d.k = v`, `.set`, `qext::list_push`, `qext::dict_set`), which widens an int for a float container and rejects anything else; a container value must have an element type `q_elem_sub` accepts (no conversion). List-creating builtins pass the element type their catalog return type claims (`qv_list(n, &q_elem_int)`).
+- **QVector**: typed columnar storage, dtype f64, i64, bool or str, in the Arrow layout (`types/vector.hpp`): contiguous values, bit-packed bools, int32 offsets plus UTF-8 bytes for strings, a validity bitmap that is `nullptr` when there are no nulls, 64-byte aligned buffers. Vectors are immutable.
+- **QResult**: `{ bool is_ok; QValue payload; }`.
+- **QStruct** / **QStructDef** (`types/struct.hpp`): a struct value points to its definition; identity is the definition's address (`q_param_struct` / `q_field_struct` compare pointers), and `QStructDef.name` is the display name (`geo::Point`).
+- **QTable** (`types/table.hpp`): a `QStructDef` naming the columns, a row count, and one `QVector*` per column. Used by the table engine (`tables_v0_1_spec.md` §7); no Quark syntax creates one yet.
 
 ### 2.5 Capture Analysis
 
-The analyzer walks each lambda's AST to find **free variables** — identifiers that are:
-- Not the lambda's own parameters
-- Not defined locally within the lambda body
-- Not builtins
-- Resolvable in an enclosing scope
-
-These free variables become the lambda's capture list. Nested lambdas transitively capture from the outermost scope that defines the variable.
+The analyzer finds each lambda's free variables: identifiers that aren't its parameters or locals, aren't builtins, and resolve in an enclosing scope. These become the lambda's capture list (`Analysis.Captures`); nested lambdas capture transitively from the scope that defines the variable. A `for` variable or an `ok v`/`err e` binding that shadows an outer variable is not a capture of it.
 
 ---
 
 ## 3) Memory Management
 
-All heap allocation goes through Boehm GC when `QUARK_USE_GC` is defined (the default). The three allocation paths:
+All heap allocation goes through Boehm GC (`QUARK_USE_GC`, always defined):
 
-| Path | Usage | GC behaviour |
-|------|-------|-------------|
-| `q_malloc(n)` / `q_new<T>(args...)` | Objects containing pointers (closures, cells, results, containers) | Scanned for pointers |
+| Path | Use | GC behaviour |
+|---|---|---|
+| `q_malloc(n)` / `q_new<T>(args...)` | Objects containing pointers (closures, cells, results, containers) | Scanned |
 | `q_malloc_atomic(n)` / `q_strdup(s)` | Pointer-free data (strings, numeric buffers) | Not scanned |
-| `q_allocator<T>` (STL allocator) | Internal buffers of `std::vector`, `std::unordered_map` | Scanned/atomic depending on element type |
+| `q_allocator<T>` (STL allocator) | Buffers of `std::vector`, `std::unordered_map`, `std::string` stored in runtime data | Scanned or atomic by element type |
 
-There is **no manual free**. The GC reclaims unreachable objects automatically. Destructors are not called by the GC (Boehm GC behaviour), but since all sub-allocations also use the GC, no manual cleanup is needed.
+There is no manual free. The collector never runs destructors and doesn't scan `malloc`'d memory, so a `std::string`/`std::vector`/map stored in (or reachable only from) runtime data must use `q_allocator`, as dict keys and the resource registry do; otherwise it leaks, or its contents get collected while live. `integration_gc_test.go` (programs in `src/testfiles/gc/`) checks both by comparing the GC heap and peak RSS across repeated rounds.
 
-`q_gc_init()` is emitted as the first statement in the generated `main()`.
+`q_gc_init()` is the first statement of the generated `main()`.
 
 ---
 
 ## 4) Naming Conventions
 
 | Prefix | Domain | Examples |
-|--------|--------|---------|
-| `q_` | Runtime builtins/helpers (C++ runtime code) | `q_add()`, `q_print()`, `q_malloc()` |
-| `quark_` | User-defined names in generated C++ (except `extern fn` symbols and their `_thunk_` wrappers, see §1.6); compiler-generated ones start with `quark___` | `quark_main()`, `quark_x`, `quark___lambda1` |
+|---|---|---|
+| `q_` | Runtime builtins and helpers (C++ runtime code) | `q_add()`, `q_print()`, `q_malloc()` |
+| `quark_` | User names in generated C++; compiler-invented names start with `quark___` | `quark_x`, `quark_geo__area`, `quark___lambda1` |
 | `qv_` | Value constructors | `qv_int()`, `qv_string()`, `qv_null()` |
-| `QValue`, `QList`, `QClosure` | Type names (PascalCase) | — |
+| `QValue`, `QList`, `QClosure` | Type names (PascalCase) | |
 
-**Never mix `q_` and `quark_` prefixes** — `q_` is runtime-only, `quark_` is codegen-only.
+**Never mix `q_` and `quark_`**: `q_` is runtime-only, `quark_` is codegen-only. The exceptions are `extern fn` symbols, called by their own C++ name, and their `_thunk_<symbol>` wrappers.
 
 ---
 
 ## 5) CallPlan IR
 
-The `CallPlan` (`ir/call.go`) freezes call semantics after analysis so codegen doesn't re-derive them:
+`ir.CallPlan` (`ir/call.go`) freezes call semantics after analysis so codegen doesn't re-derive them:
 
 ```go
 type CallPlan struct {
-    CalleeName        string
-    MinArity          int
-    MaxArity          int
-    Dispatch          DispatchMode   // see below
-    RuntimeSymbol     string         // C++ symbol (e.g., "q_upper", "quark_myfunc", "qei_sqrt")
-    DefaultNodes      []*TreeNode    // Trailing default args to inject
-    IsMethod          bool           // True for x.method(args)
-    ReceiverNode      *ast.TreeNode  // The receiver expression
-    ReceiverTypeKey   string         // builtins.TypeKey of receiver
-    MethodCandidates  []MethodCandidate // receiver types for DispatchDynamicMethod (value tag, type key, runtime symbol)
-    NativeParamTypes  []string       // C++ types per param (extern/native dispatch)
-    NativeReturnType  string         // C++ return type (extern/native dispatch)
-    NativeReceiverType string        // C++ receiver type for extern methods
+    CalleeName         string
+    MinArity, MaxArity int
+    Dispatch           DispatchMode
+    RuntimeSymbol      string            // C++ symbol: "q_upper", "quark_myfunc", "qei_sqrt"
+    DefaultNodes       []*ast.TreeNode   // trailing default args to inject
+    IsMethod           bool              // x.method(args): receiver is the first runtime arg
+    ReceiverNode       *ast.TreeNode
+    ReceiverTypeKey    string            // builtins.TypeKey of the receiver
+    MethodCandidates   []MethodCandidate // for DispatchDynamicMethod: value tag, type key, runtime symbol
+    NativeParamTypes   []string          // extern/native: "int64_t", "double", "bool", "const char*", "QVector*", "QList*", "QDict*", "QClosure*", "QValue"
+    NativeReturnType   string
+    NativeReceiverType string            // extern methods
 }
 ```
 
 **Dispatch modes:**
-- `DispatchBuiltin` — Direct call to `q_*` runtime function
-- `DispatchDirect` — Direct call to `quark_*` user function (nullptr closure); only chosen for immutable function symbols, so ordinary named functions use `DispatchClosure`
-- `DispatchClosure` — Dynamic call through `q_call*` (dereferences QClosure)
-- `DispatchExtern` — Call to a native C++ function declared via `extern fn`. Args are unboxed from `QValue` to native C++ types (`int64_t`, `double`, `bool`, `const char*`, `QList*`, `QDict*`, `QVector*`, `QClosure*`) at the call site; the return value is boxed back. A QValue-convention thunk is also generated so extern functions can be stored as first-class values.
-- `DispatchNative` — Fully-typed user function (all params + return annotated with scalar types). Codegen emits both a native C++ signature (taking `int64_t`/`double`/`bool`/`const char*`) and a QValue-convention thunk for first-class use.
-- `DispatchDynamicMethod` — Builtin method call on a receiver of unknown type (`any`). The analyzer (`resolveDynamicMethodCall`) collects every builtin receiver type (str, list, dict, vec) that has the method and accepts the argument count; codegen switches on the receiver's type tag, and any other type is a runtime error (`q_no_method`). Argument types are checked at compile time only when a single receiver type matches. If no type has the method, or none accepts the argument count, it is a compile-time error. The `INV-DYNAMIC-METHOD` invariant checks each candidate against the catalog.
+- `DispatchBuiltin`: a `q_*` runtime function.
+- `DispatchDirect`: a `quark_*` function called with a `nullptr` closure; a `fn` declaration that captures nothing.
+- `DispatchClosure`: `q_call*` through a `QClosure`.
+- `DispatchExtern`: an `extern fn`. Arguments are unboxed to the native types above at the call site and the result boxed back; a QValue-convention thunk lets the function be used as a value.
+- `DispatchNative`: a fully annotated, non-capturing `fn` declaration. Codegen emits a native C++ signature and a QValue thunk. Whether a function qualifies is decided after the whole program is analyzed (`finalizeFixedFns`), so a native function may call other non-capturing functions.
+- `DispatchDynamicMethod`: a builtin method on a receiver of unknown type. `resolveDynamicMethodCall` collects every builtin receiver type (str, list, dict, vec) that has the method and accepts the argument count; codegen switches on the type tag, and any other type is a runtime error (`q_no_method`). Argument types are checked at compile time only when a single receiver type matches. If no type has the method, or none accepts the argument count, it is a compile-time error. `INV-DYNAMIC-METHOD` checks each candidate against the catalog.
+
+Plans for calls to `fn` declarations are recorded with `deferFixedDispatch` and resolved in `finalizeFixedFns`.
 
 ---
 
 ## 6) Builtin Catalog
 
-The shared catalog (`builtins/catalog.go`) is the single source of truth for builtin definitions. Its consumers are the analyzer (`types/`) and the invariant checks (`invariants/callplan.go`); codegen doesn't read it and emits `CallPlan.RuntimeSymbol` instead. The editor extension's completion data is also generated from it (`internal/editordata`).
+`builtins/catalog.go` is the single source of truth for prelude builtins. Its consumers are the analyzer and the invariant checks; codegen never reads it and emits `CallPlan.RuntimeSymbol`. The editor extension's completion data is generated from it (`internal/editordata`).
 
 ```go
 type Spec struct {
-    Name         string      // e.g., "upper"
-    Runtime      string      // e.g., "q_upper"
+    Name         string   // "upper"
+    Runtime      string   // "q_upper"
     MinArgs      int
     MaxArgs      int
     ParamTypes   []TypeKey
     ReturnType   TypeKey
-    ReceiverType TypeKey     // "" = free function; non-empty = method
+    ReceiverType TypeKey  // "" = free function; non-empty = method
 }
 ```
 
-Methods are indexed by `(ReceiverType, methodName)` pair. Free functions are indexed by name alone.
+Methods are indexed by `(ReceiverType, methodName)`, free functions by name. Builtin names can't be redefined or assigned by user code (parameters and other locals may shadow them).
 
-**Adding a new builtin:**
-1. Add a `Spec` entry in `builtins/catalog.go` (set `ReceiverType` for methods, leave empty for free functions)
-2. Implement the C++ function in `runtime/include/quark/builtins/*.hpp` with `q_` prefix. A new header must also be added to the include list in `runtime/include/quark/quark.hpp`
-3. Analyzer and codegen pick it up automatically via the catalog
-4. Add a smoke test in `src/testfiles/smoke_*.qrk`
-5. Regenerate the editor extension's data: `go test ./internal/editordata -update`, and add the name to the grammar's `builtin-functions` pattern (the test says so if it's missing)
+**Adding a builtin:**
+1. Add a `Spec` in `builtins/catalog.go` (`ReceiverType` for methods).
+2. Implement it in `runtime/include/quark/builtins/*.hpp` with the `q_` prefix (a new header goes in `quark.hpp`'s include list). A list-returning builtin passes its element type (§2.4).
+3. The analyzer and codegen pick it up through the catalog.
+4. Add a smoke test in `src/testfiles/smoke_*.qrk`.
+5. Regenerate the editor data: `go test ./internal/editordata -update`, and add the name to the grammar's `builtin-functions` pattern (the test says so if it's missing).
+
+Functionality that isn't needed in the prelude belongs in a stdlib module (`src/core/stdlib/`), not the catalog.
 
 ---
 
 ## 7) Extern Function System
 
-The extern fn system allows Quark programs to call native C++ functions. See semantics.md §10.8 for the language-level syntax.
+`extern fn` binds a C++ function (`semantics.md` §10.8, `ffi_v0_1_spec.md`). Stdlib modules use it: each is a `.qrk` file with a primary `module X:` block that binds a sibling `.hpp` with `extern 'x.hpp'`.
 
-### Pipeline flow
+### Pipeline
 
-1. **Parser**: Produces `ExternHeaderNode` (header path), `ExternLinkNode`, `ExternIncludePathNode`, and `ExternFnNode` (function declaration with `ExternSymbol` and `ExternReceiver` fields).
-2. **Loader**: Rewrites `ExternHeaderNode` paths to absolute paths so codegen can emit `#include "absolute/path.hpp"` directly, and collects link and include-path directives into `NativeDeps` (see §1.7).
-3. **Analyzer** (`analyzeExternFn`): Maps Quark type annotations to C++ types via `quarkTypeToNativeCType`. Registers free functions in `builtins` + `externFns[name]`. Registers methods in `methods[receiverKey][methodName]` + `externFns["type.method"]`. Produces a prototype `CallPlan` with `DispatchExtern`.
-4. **Codegen**: At call sites, unboxes each argument via `q_as_int`, `q_as_float`, etc. Boxes the return value back to `QValue`. Also emits a QValue-convention thunk so the function can be passed as a first-class value.
+1. **Parser**: `ExternHeaderNode` (header path), `ExternLinkNode`, `ExternIncludePathNode`, and `ExternFnNode` (with `ExternSymbol` and `ExternReceiver`).
+2. **Loader**: rewrites header paths to absolute paths (codegen emits `#include "/abs/path.hpp"`) and collects link and include-path directives (§1.7). The directives are allowed only at the top level of a file.
+3. **Analyzer** (`analyzeExternFn`): maps annotations to C++ types (`quarkTypeToNativeCType`), registers free functions and methods (`externFns[name]`, `externFns["type.method"]`), and builds a `DispatchExtern` prototype plan. Parameters follow the same rules as Quark parameters (checked, int widens to float, `null` only for struct and `resource`).
+4. **Codegen**: unboxes each argument with `q_as_int`, `q_as_float`, ... (which check the tag: `expected int, got str`), boxes the result, and emits a thunk for first-class use. A native function returning a null pointer for `str`, `list`, `dict`, `vec` or `fn` is a runtime error.
 
-### Extension author API (`ext/api.hpp`)
-
-The `qext` namespace provides safe helpers for C++ extension authors:
+### Extension author API (`ext/api.hpp`, namespace `qext`)
 
 | Category | Functions |
-|----------|----------|
-| Memory | `qext::malloc`, `qext::malloc_atomic`, `qext::strdup` |
-| Boxing | `qext::box(int64_t)`, `qext::box(double)`, `qext::box(bool)`, `qext::box(const char*)`, `qext::box(QVector*)`, `qext::box(QList*)`, `qext::box(QDict*)`, `qext::null_val()` |
-| Unboxing | `qext::as_int`, `qext::as_float`, `qext::as_bool`, `qext::as_str`, `qext::as_vector`, `qext::as_list`, `qext::as_dict`, `qext::as_closure` |
-| Vectors | `qext::as_f64`, `qext::as_i64` (and `_mut` variants for freshly created vectors), `qext::bool_at`, `qext::set_bool`, `qext::str_at`, `qext::is_null_at`, `qext::set_null`, `qext::validity_bitmap`, `qext::vec_size`, `qext::vec_null_count`, `qext::vec_dtype`, `qext::new_f64`, `qext::new_i64`, `qext::new_bool_vec` |
-| Dict | `qext::dict_get`, `qext::dict_set`, `qext::dict_size`, `qext::dict_has` |
-| Calls | `qext::call(fn, ...)` overloaded for 0-3 QValue args |
-| Error | `qext::panic`, `qext::panicf` |
+|---|---|
+| Memory | `malloc`, `malloc_atomic`, `strdup` |
+| Boxing | `box(int64_t)`, `box(double)`, `box(bool)`, `box(const char*)`, `box(QVector*)`, `box(QList*)`, `box(QDict*)`, `box(QClosure*)`, `box_own`, `null_val()`. Boxing a null container or closure pointer is an error (use `null_val()`) |
+| Unboxing | `as_int`, `as_float`, `as_bool`, `as_str`, `as_vector`, `as_list`, `as_dict`, `as_closure` (checked) |
+| Vectors | `as_f64`, `as_i64` (and `_mut` for freshly created vectors), `bool_at`, `set_bool`, `str_at`, `is_null_at`, `set_null`, `validity_bitmap`, `vec_size`, `vec_null_count`, `vec_has_nulls`, `vec_dtype`, `vec_dtype_name`, `new_f64`, `new_i64`, `new_bool_vec` |
+| Lists | `new_list()` (holds any value), `list_push` (checks the element type) |
+| Dicts | `dict_get`, `dict_set` (checks the value type), `dict_size`, `dict_has` |
+| Calls | `call(fn, ...)` with 0-3 `QValue` arguments; arity-checked and default-filling like `q_callN` |
+
+Native code that appends to a list with `push_back`, or writes `d->entries` directly, skips the element-type check; use `list_push` / `dict_set`.
 
 ---
 
 ## 8) Resource System
 
-Opaque handles for external state (currently file I/O only). See `types/resource.hpp`.
+Opaque handles for external state (file handles today; `types/resource.hpp`). Every handle has the single Quark type `resource`; its kind (`file`) is runtime-only.
 
-### Design
+**Design**: a generational slot registry.
+- `QResourceHandle`: an opaque token `{slot, generation, kind}` in the value's union, allocated with `q_malloc_atomic`.
+- `QResourceSlot`: `{generation, kind, flags, payload, occupied}`; `payload` is an opaque `void*` (`FILE*` for files).
+- `QResourceRegistry`: a global singleton with a `slots` vector and a `free_list`, both on `q_allocator` so the GC sees the payloads.
 
-Generational slot-based registry:
-
-- **`QResourceHandle`**: Opaque token `{slot, generation, kind}` stored in QValue's union. GC-allocated via `q_malloc_atomic`.
-- **`QResourceSlot`**: Registry entry `{generation, kind, flags, payload, occupied}`. The `payload` is an opaque `void*` (e.g., `FILE*` for file handles).
-- **`QResourceRegistry`**: Global singleton with a `slots` vector and a `free_list` for recycling closed slots.
-
-### Lifecycle
-
-1. **Create**: `q_resource_create(kind, payload, flags)` allocates a slot (reusing from free list if available), bumps the generation counter, and returns a `QResourceHandle*`.
-2. **Use**: `q_resource_resolve(value, expectedKind, &slot, &handle, &err)` validates the handle against the registry. Checks: slot in range, slot occupied, generation matches, kind matches. Returns `true` on success and passes the slot and handle out through the reference parameters (the payload is `slot->payload`); on failure it returns `false` and sets `err`.
-3. **Close**: `q_resource_invalidate(handle)` marks the slot as unoccupied, nulls the payload, and pushes the slot index to the free list. The generation counter prevents stale handles from aliasing a recycled slot.
-
-### Error detection
+**Lifecycle:**
+1. `q_resource_create(kind, payload, flags)` allocates a slot (reusing the free list), bumps its generation, and returns a handle.
+2. `q_resource_resolve(value, expectedKind, &slot, &handle, &err)` validates the handle: slot in range, occupied, generation and kind match.
+3. `q_resource_invalidate(handle)` frees the slot and pushes it to the free list; the generation stops stale handles from aliasing a reused slot.
 
 | Condition | Error |
-|-----------|-------|
-| Null or non-resource value | "invalid resource handle" |
-| Slot index out of range | "invalid resource handle" |
-| Slot not occupied | "resource is closed" |
-| Generation mismatch | "stale resource handle" |
-| Kind mismatch | "resource kind mismatch" |
+|---|---|
+| Null or non-resource value | `invalid resource handle` |
+| Slot index out of range | `invalid resource handle` |
+| Slot not occupied | `resource is closed` |
+| Generation mismatch | `stale resource handle` |
+| Kind mismatch | `resource kind mismatch` |
 
 ---
 
 ## 9) Codegen Lowering Details
 
-### Range lowering
+### Range loops
 
-`for i in range(...)` is detected at codegen time and emitted as a raw C++ `for` loop over start/end/step temporaries:
+`for i in range(...)` becomes a raw C++ `for` loop over start/end/step temporaries:
+
 ```cpp
-long long _t1 = 0;      // start
-long long _t2 = 10;     // end
-long long _t3 = 1;      // step
 for (long long quark_i = _t1; _t3 > 0 ? (quark_i < _t2) : (quark_i > _t2); quark_i += _t3) { ... }
 ```
-Supports 1, 2, and 3-argument `range()` forms; the 2-argument form picks step `1` or `-1` from the direction of start and end. Avoids allocating a list of integers. Skipped when the loop variable is captured by a lambda (the generic path is used instead).
 
-Arguments follow the same rules as the `range()` builtin: scalar ints are used directly, scalar floats are truncated, and any other value goes through `q_range_arg(v, "range(end)", "end")`, which truncates floats and reports a non-numeric value. A 3-argument step goes through `q_range_step`, so a step of `0` is a runtime error, as with `range()`.
+All three `range()` forms are supported; the 2-argument form picks step `1` or `-1` from the direction of start and end. No list is allocated. Not used when the loop variable is captured. Arguments follow the rules of the `range()` builtin: scalar ints are used directly, scalar floats are truncated, other values go through `q_range_arg`, and a step goes through `q_range_step` (a step of `0` is a runtime error).
 
-### Vector loop fast path
+### Vector loops
 
-When iterating a vector (`for x in v`), codegen emits a runtime type check. If the vector's dtype matches the loop variable's scalar tier and it has no nulls, iteration goes directly over the typed backing buffer:
+`for x in v` over a vector checks at runtime whether the dtype matches the loop variable's storage and the vector has no nulls; if so it iterates the typed buffer directly:
 
 ```cpp
 if (q_vec_is_dense_of(_t8, QVector::Type::I64)) {
@@ -428,292 +436,58 @@ if (q_vec_is_dense_of(_t8, QVector::Type::I64)) {
 }
 ```
 
-Both branches are emitted; only one executes at runtime. Falls back to the generic path for: captured loop variables, nullable vectors, dtype mismatches, or unknown tiers.
+Not used for captured loop variables or unknown element types.
 
-### Vector literal lowering
+### Vector literals
 
-When the analyzer knows the precise element type of a vector literal, codegen emits typed constructors directly (e.g., `qv_vector_i64` + `q_vec_push_i64`). Otherwise, it falls back to building a list then calling `q_to_vec` at runtime.
+When the analyzer knows a vector literal's element type, codegen emits typed constructors (`qv_vector_i64` + `q_vec_push_i64`); otherwise it builds a list and calls `q_to_vec`.
 
-### Scalar lowering
+### Scalar expressions
 
-`scalarExpr()` lowers arithmetic, unary `-` and comparisons when every operand is a scalar: a literal, a scalar-tiered local, or a sub-expression that itself lowers. Int arithmetic keeps the boxed operators' failure semantics (overflow, division and modulo by zero are fatal) through checked helpers:
+`scalarExpr()` lowers arithmetic (`+ - * / %`), unary `-` and comparisons when every operand is a scalar: a literal, a scalar-stored variable, or a sub-expression that itself lowers. Int arithmetic keeps the boxed operators' failure semantics through checked helpers (overflow, division and modulo by zero are fatal):
 
 ```cpp
-// c = a + b, d = a / b, f = (a + b) * 2 > 5   (a, b are long long tier)
+// c = a + b, d = a / b, f = (a + b) * 2 > 5   (a, b are long long)
 long long quark_c = q_checked_add(quark_a, quark_b);
 double quark_d = q_checked_fdiv((double)quark_a, (double)quark_b);
 bool quark_f = (q_checked_mul(q_checked_add(quark_a, quark_b), 2) > 5);
 ```
 
-Float `+ - *` and comparisons use plain C++ operators (`((double)x + (double)y)`). `/` always produces `double`. `**` is not lowered and goes through `q_pow`. The result stays unboxed when it's assigned to a scalar-tier variable or used as a condition, and is boxed (`qv_int(...)`) otherwise. Falls back to boxed `q_add` etc. when any operand is `QValue` or unknown.
+Float `+ - *` and comparisons use plain C++ operators. `/` always produces `double`. `**` is never lowered (`q_pow`). The result stays unboxed when assigned to a scalar variable or used as a condition, and is boxed otherwise. Any `QValue` operand falls back to the boxed `q_add` etc.
 
 ---
 
 ## 10) GC Bootstrap
 
-`toolchain.EnsureGC()` locates or builds Boehm GC. The repository commits only the GC's public headers and prebuilt static libraries, not its source (see `deps/bdwgc/VENDORED.md`):
+`toolchain.EnsureGC()` finds or builds Boehm GC. The repository commits only the GC's public headers and prebuilt static libraries (`deps/bdwgc/VENDORED.md`):
 
-1. **Find the GC directory**: Searches for `deps/bdwgc/` by walking candidate paths relative to the compiler executable and the current working directory. Validates by checking for `include/gc/gc.h`.
-2. **Prebuilt library**: Uses `deps/bdwgc/lib/<GOOS>-<GOARCH>/libgc.a` (`gc.lib` on Windows) when the repository has one for the host. Prebuilt libraries exist for `linux-amd64`, `linux-arm64`, `darwin-arm64` and `windows-amd64`; `deps/bdwgc/build-prebuilt.sh` rebuilds them.
-3. **Local build**: Otherwise looks for a static library in `deps/bdwgc/build-static/` (`libgc.a`, or `gc.lib` / `Release/gc.lib` on Windows). Shared libraries are never used, so generated executables run standalone without `libgc` on the loader path.
-4. **Auto-build**: If neither exists, the GC source is present (`CMakeLists.txt`) and `cmake` is available, builds it into `build-static/` with `GC_BUILD_SHARED_LIBS=OFF`. On Windows, it also forces `clang` as the C compiler (not MinGW gcc) to match the MSVC ABI. Without the source, it fails with an error pointing to `VENDORED.md`.
-5. **Return paths**: `(gcIncludePath, gcLibPath)` for `-I` and linker arguments. Static `libgc` needs the threads library, so the link line adds `-pthread` on Unix and `-ldl` on Linux.
-
-Prerequisites: Go 1.21+, clang++ in PATH. CMake only on platforms without a prebuilt GC library.
+1. **GC directory**: `deps/bdwgc/` relative to the compiler executable or the current directory, validated by `include/gc/gc.h`.
+2. **Prebuilt library**: `deps/bdwgc/lib/<GOOS>-<GOARCH>/libgc.a` (`gc.lib` on Windows), present for `linux-amd64`, `linux-arm64`, `darwin-arm64` and `windows-amd64`; `deps/bdwgc/build-prebuilt.sh` rebuilds them.
+3. **Local build**: otherwise a static library in `deps/bdwgc/build-static/`. Shared libraries are never used, so executables run without `libgc` installed.
+4. **Auto-build**: if neither exists, the GC source is present and `cmake` is available, it builds into `build-static/` with `GC_BUILD_SHARED_LIBS=OFF` (on Windows with `clang` as the C compiler, to match the MSVC ABI). Without the source, it fails with an error pointing to `VENDORED.md`.
 
 ---
 
-## 11) Testing Infrastructure
+## 11) Testing
 
-### Integration tests (`integration_smoke_test.go`)
+All tests run from `src/core/quark` with `go test ./...`.
 
-`TestMain` compiles the full `quark` package into a test binary once. All tests call `runQuark(t, args...)` which executes the binary and captures stdout/stderr.
+- **Integration tests** (`integration_*_test.go`): `TestMain` builds the `quark` binary once (`src/core/quark/quark_test`) and tests run it on programs. `TestSmokePrograms_Run` compiles and runs every `src/testfiles/smoke_*.qrk` and compares stdout exactly; `TestSmokePrograms_CompileError` checks expected error substrings. `TestSemanticsSafety_Rejected` holds the negative cases the robustness bar asks for (wrong type, arity, `null`, `any`, defaults, other modules, native code). Other files cover the GC (`integration_gc_test.go`), FFI (`integration_ffi_test.go`, which builds the C libraries in `src/testfiles/ffi/`; `TestStdBlas` skips without OpenBLAS), element types (`integration_types_test.go`) and the table engine (`integration_table_test.go`).
+- **C++ runtime tests**: `TestVectorArrowLayout` checks the vector layout byte by byte; `TestTableEngine` builds and runs `src/testfiles/table/*_test.cpp` (sharing `check.hpp`). Go's test cache doesn't see C++ changes, so run them with `-count=1`.
+- **Package tests**: lexer, parser, loader (`loader/modules_v02_test.go`), analyzer, codegen and `internal/editordata` (generated editor data, grammar coverage, snippets parse, and the extension's JS tests when `node` is available).
+- **GC self-check**: a standalone C++ program that allocates every kind of runtime value and checks with `GC_base()` that every object and buffer is on the GC heap.
 
-### Smoke tests
-
-`TestSmokePrograms_Run` is table-driven. Each entry maps a `.qrk` file in `src/testfiles/smoke_*.qrk` to expected stdout. The test runs `quark run <file>`, normalizes line endings, and compares output exactly.
-
-`TestSmokePrograms_CompileError` verifies that certain programs produce expected error substrings and exit non-zero.
-
-### Inline source tests
-
-Several tests construct temporary `.qrk` files from Go strings for targeted verification: runtime contracts, default parameter edge cases, file I/O builtins, GC heap coverage, `any` type annotations, and extern fn type guards.
-
-### GC selfcheck
-
-Compiles a standalone C++ program (not a Quark program) that allocates runtime values and verifies via `GC_base()` that all object and buffer allocations land on the Boehm GC heap. Covers: strings, lists, dicts, all four vector dtypes, closures, cells, and ok/err results.
+The integration binary is shared: a second `go test` in the same checkout deletes it mid-run, and every integration test then fails with `fork/exec .../quark_test: no such file or directory` (`changelog.md`, Known issues).
 
 ---
 
-## 12) Code Health and Simplification Plan
+## 12) Soundness Contract
 
-A health review on 2026-11-12 (at `b52660f` plus the uncommitted modules v0.2 work) measured the Go compiler and the C++ runtime and read each stage for duplicated or conflicting logic. Line numbers are as of that review and will drift. The bugs it found are in `changelog.md` under Known issues. This section is about structure: where the code is too complex, where one decision is made in several places, and what is dead. Most of the known issues trace back to a decision that lives in more than one place.
-
-Tools: `gocyclo` (cyclomatic complexity, non-test Go), a function-length count with `go/ast`, and `golang.org/x/tools/cmd/deadcode`. Build, `go vet` and the full test suite were green; the integration package takes about 4 minutes uncached.
-
-### 12.1 Measurements
-
-A cyclomatic complexity above about 15-20 means a function has more paths than its tests can cover. `analyzeOperator` is more than twice the next one.
-
-| Function | Location | Lines | Complexity |
-|---|---|---|---|
-| `Analyzer.analyzeOperator` | `types/analyzer_expressions.go:45-399` | 355 | 159 |
-| `ModuleLoader.walk` | `loader/resolve.go:75-238` | 164 | 64 |
-| `Generator.generateOperator` | `codegen/codegen.go:1683-1883` | 201 | 60 |
-| `Lexer.nextRawToken` | `lexer/lexer.go:255-416` | 162 | 48 |
-| `ValidateCallPlans` | `invariants/callplan.go:43-154` | 112 | 48 |
-| `Analyzer.inferBuiltinReturnType` | `types/analyzer_typecheck.go:8-94` | 87 | 40 |
-| `CanAssign` | `types/types.go:335` | | 37 |
-| `Analyzer.analyzeFunctionCall` | `types/analyzer_calls.go:252-381` | 130 | 37 |
-| `Analyzer.checkDefiniteAssignment` | `types/analyzer_fixed.go:298-402` | 105 | 34 |
-| `ModuleLoader.collect` | `loader/files.go:536-626` | 91 | 34 |
-| `Generator.scalarExpr` | `codegen/codegen.go:1496-1575` | 80 | 34 |
-| `Generator.checkedFieldValue` | `codegen/codegen.go:2883` | | 32 |
-| `Generator.generateFunctionCall` | `codegen/codegen.go:1944-2056` | 113 | 31 |
-| `Analyzer.analyzePipe` | `types/analyzer_calls.go:433-554` | 122 | 30 |
-| `Generator.generatePipe` | `codegen/codegen.go:2071-2180` | 110 | 29 |
-| `Generator.Generate` | `codegen/codegen.go:537-660` | 124 | 29 |
-| `Generator.generateFor` | `codegen/codegen.go:2433-2556` | 124 | |
-| `Generator.generateNativeFunction` | `codegen/codegen.go:1096-1203` | 108 | 22 |
-| `Analyzer.analyzeExternFn` | `types/analyzer_modules.go:143-250` | 108 | |
-| `Lexer.indentationFilter` | `lexer/lexer.go:150-253` | 104 | |
-| `Generator.generateWhen` | `codegen/codegen.go:2249-2349` | 101 | 22 |
-| `Analyzer.resolveMethodCall` | `types/analyzer_calls.go:54-154` | 101 | |
-
-File sizes: `codegen/codegen.go` is 2996 lines in one file; the next largest non-test files are `parser/parser.go` (1100), `loader/files.go` (756), `types/analyzer_calls.go` (749). In the runtime, `types/vector.hpp` is 1252 lines, `ext/api.hpp` 458.
-
-`analyzeOperator` handles member access, every kind of assignment (to a name, a struct field, a dict key, a list index, a fixed `fn`, a builtin) and all unary, binary, vector and comparison operators in one function. It should be split by node shape: `analyzeMemberAccess`, `analyzeAssignment` (dispatching to one function per target kind), `analyzeUnary`, `analyzeVectorArith`, `analyzeBinary`.
-
-### 12.2 One decision, several places (Go)
-
-Each of these is a decision made in more than one place, with copies that already disagree. Fixing each one in one place also fixes the known issues listed next to it.
-
-- **Variable storage tier** (`QCell*` / `long long` / `double` / `bool` / `QValue`) is chosen in at least six places in codegen: the assignment branch of `generateOperator` (~1857-1876), `generateVarDecl` (~2716-2736), parameter bindings (~1048-1057), native parameters (~1143-1155), the `for` loop variable (three times inside `generateFor`), and `hoistScopes`. `generateVarDecl` picks the tier from the value instead of the annotation, and reassignment unboxes with the variable's tier whatever the value's type. Known issues: `x: float = len(l)` stays an int, an int assigned to a float variable reads garbage. Fix: one `declareVar(name, declaredType, rhs)` that is the only tier decision.
-- **Raw union reads.** `unboxForTier` (`codegen.go:264`) and the loop element read (`codegen.go:2486`) emit `.data.int_val` / `.data.float_val` with no tag check whenever the analyzer reports a scalar type, including element types of lists and dicts and the type of a narrowed `any` variable, which the analyzer does not keep sound (see 12.6). `unboxForTier` also ignores its type argument.
-- *Done in step 1:* calls are built once (pipes are parsed into calls), the arity messages come from one `checkArity`, `generateLiteral` uses `escapeCppString`, `nativeArgToQValue`/`wrapExternReturn` are one `boxNative` and `unboxToNative` is gone, `topDef`/`memberDef` share `defOf`, and the target of `x.f = v` and a receiver whose method isn't found are analyzed once.
-- **Calls are built twice in the analyzer and twice in codegen.** `analyzeFunctionCall` and `analyzePipe` build the builtin, extern and user-function plans and arity messages separately; so do `generateFunctionCall` and `generatePipe`. They have drifted: `3 | d.f()` falls through to calling the dict member while `d.f(3)` is "type has no method", and codegen differs in native-argument indexing and zero-argument direct calls. Fix: one `buildCallPlan(callee, prefixArgs, args)` in the analyzer and one `emitCall(plan, callee, prefixArgs, args)` in codegen, both used by call and pipe. The arity error text is also copied in about ten places in the analyzer.
-- **Loop bodies skip `generateBlock`.** The range loop (~2416-2424), `emitLoopBody` (~2444-2454) and `while` (~2576-2584) emit their statements directly, so loop bodies get no `fn` hoisting, no per-statement source location, and `while` gets no block scope. Known issues: `fn` inside a loop fails in clang, a variable first assigned in a `while` body fails in clang, runtime errors in a `for` body report the `for` line. Fix: every body goes through one block helper.
-- **Expression preludes.** Method-receiver temporaries (~1971-1981, ~2100-2110) and `if`/list temporaries are written to the output at the current position, i.e. before the statement, not inside the expression that needs them. Known issues: `and`/`or` and `x if c else y` run both sides, a `while` condition is evaluated once, `elseif` with a method call fails in clang, `f().m(g())` runs `g` first. Fix: expression generation returns `(prelude, expr)` and each conditional or repeated context (short-circuit, ternary, `while` condition, `elseif`) places the prelude itself, or wraps it in a lambda.
-- **Function values** are built in three places: `directFnValue`, `generateIdentifier` (~1458-1463) and `generateLambdaExpr` (~2773-2776).
-- **Native ↔ `QValue` conversion tables**: `nativeArgToQValue` (`codegen.go:217`) and `wrapExternReturn` (`codegen.go:511`) are the same table; `unboxToNative` is an alias of `adaptArgForExtern`.
-- **String escaping**: `generateLiteral` (~1416-1425) re-implements `escapeCppString` and escapes more characters than it, so the two can produce different C++ for the same string.
-- **Internal errors**: `panicICEf` calls `os.Exit(2)` from a library package, `panicMissingCallPlan` calls `panic`. Pick one (return an error, or panic and recover in the driver).
-- **Constant rules**: three functions decide what a constant is: `isConstantDefault` (`parser.go:325`, allows `null` and `-'s'`), `isLiteralDefault` (`parser.go:509`) and `isConstantValue` (`loader/files.go:450`).
-- **Loader definitions**: `topDef` and `memberDef` (`loader/files.go:641-722`) are near copies; `collect` now reports a nested `ModuleNode` in the main script (it used to be dropped silently, because `memberDef` ignores it). `collect` contains a hand-written insertion sort.
-- **Parser statement loop**: `parseBlock` (`parser.go:164-217`) repeats the statement loop of `Parse`.
-- **Duplicate analysis**: the target of `x.f = v` is analyzed twice (`analyzer_expressions.go:125` and `:168`), and the method-not-found path (`analyzer_calls.go:273`) and the pipe fallthrough (`:469`) re-analyze the receiver, so diagnostics, fixed-fn calls and call shapes can be recorded twice.
-- **Name mangling**: module members are joined as `module + "__" + name`, which is not unique when a name starts or ends with `_` (`m` + `_x` and `m_` + `x`), and main-script module names are not prefixed, so `module q1_a` can take the internal names of the first imported file. Since 2026-11-12 the loader rejects any two definitions with one internal name (`reportInternalClash`) instead of merging them, and renames a library's locals that share a name with the main script (`renameLocal`). Codegen's `newLambda` (`codegen.go:388`) still makes `quark__lambda1`, which a user variable `_lambda1` also becomes. Every generated name should come from one place that guarantees it can't be written by a user (rule 6 of the robustness bar).
-
-### 12.3 Dead code (Go)
-
-*Removed in step 1 (12.8), 2026-11-12, except `token.Keywords`, which the editor-data generator uses. The unreferenced runtime functions of 12.4 are removed too (`qv_list_from` stays: the Go tests use it).*
-
-**Legacy `FunctionNode` path.** The parser never creates `ast.FunctionNode`; `fn f(...)` parses as `f = fn(...)` with `FnDecl` set. Everything that handles `FunctionNode` is dead:
-- types: `analyzeFunction` (`analyzer_functions.go:54-124`), `predeclareFunctions` / `declareFunctionSignature` (`analyzer_declarations.go`), the `FunctionNode` case in `analyze` (`analyzer.go:282`), the branch in `GetCapturedByFunction` (`analyzer_modules.go:363`), and the two "Legacy FunctionNode" `DispatchDirect` blocks (`analyzer_calls.go` ~351-360 and ~515-524), whose `nativeParamTypes` / `nativeReturnType` locals are never set.
-- `a.functions` (keyed by name, so it can't tell shadowed symbols apart) is read only by those legacy blocks. Because every `g = fn` lambda is added to it, a loop variable named like any function variable is called as `DispatchDirect quark_f` and fails in clang. Remove it with them.
-- invariants: the `FunctionNode` branch of `ValidateReturnAnnotations` (`callplan.go:173`).
-- codegen: the `FunctionNode` parts of `collectFunctions` and `generateNode`, `generateFunction`, `generateQValueFunction`, `generateModule` (a no-op), and `funcNames` with its branch in `generateIdentifier`.
-
-**Unreachable functions** (`deadcode`): `ast.Precedence.String`, `codegen.boxToQValue`, `loader.def.qualified`, `parser.Parser.peekPrecedence`, `parser.Parser.parseCallArguments`, `token.Keywords` (used only by tests), `types.isFunctionBindingAssignment`, `types.functionTypeFromLambdaNode`, `Analyzer.declareFunctionAssignmentSignature`, and the getters `Analyzer.GetModules`, `GetReturnValidation`, `GetExternFns`, `GetNativeFns`, `GetStructTypes` (plus `Errors`, `ErrorDiagnostics`, `WarningDiagnostics`, `GetCaptures`, `GetCallPlans`, used only by tests). The getters predate `types.Analysis`, which replaced them.
-
-**Unused or write-only state:**
-- `Analyzer.currentModule` (written, never read); `a.modules` / `Module` only back `GetModules` and a duplicate-module check the loader already does.
-- `ModuleLoader.loaded` (`loader.go:251`, written, never read).
-- `ast.StatementNode`, `ExpressionNode`, `ConditionNode`: never created.
-- `Generator.inFunction`, `Generator.currentFunc`: written, never read.
-- `CallPlan.Kind`: never read by codegen or invariants.
-- `CallPlan.ArgTypesChecked`: set to `true` at every site, so `INV-ARGCHECK` can't fail.
-- `_ = tok` (`parser.go:283`), `_ = externTok` (`parser.go:1039`); the unused first parameter of `generateExternThunk`; `boxResultToQValue` (no-op).
-
-**Nodes the loader removes but later stages still accept.** `InclNode` is handled in the analyzer (`analyzer.go:318`, returns `void`) and codegen (`codegen.go:642`, `1302`, `1381-1383`). After the loader drops every `incl`, these should be internal errors, not silent no-ops. The `incl ID` parse branch (`parser.go:1076`) exists only to produce the loader's "no incl needed" error, and the comment above it (`:1058-1063`) still documents the old form.
-
-### 12.4 Runtime (C++)
-
-The runtime has grown several helpers that do the same job and disagree with each other.
-
-**Error convention.** The real convention is `q_runtime_reportf(...)` then `exit(1)` (about 190 sites), not "return `qv_null()` on mismatch". A few places still return `null` on a type mismatch (`list.concat` with a non-list at `list.hpp:160`, string index with a non-int at `string.hpp:399`), which is a silent wrong result. There is no `[[noreturn]] q_fatalf`, so `types/dict.hpp` has dead `if (!q_require_dict(...)) return qv_null();` branches. Add `q_fatalf`, use it everywhere, and remove the `null` returns.
-
-**Seven type-name tables**, which disagree:
-
-| Where | Difference |
-|---|---|
-| `ops/arithmetic.hpp:31` `q_type_name_arith` | full list |
-| `builtins/math.hpp:13` `q_type_name_math` | stops at `result`, so `abs(struct)` says `unknown` |
-| `ops/member.hpp:33` (inline) | says `string`, not `str` |
-| `builtins/conversion.hpp:106` and `:137` (inline) | full list, twice |
-| `types/vector.hpp:983` (`to_vec` lambda) | switch |
-| `ext/api.hpp:377` `q_as_type_name` | stops at `resource` |
-
-Replace all of them with one `q_type_name(ValueType)` next to `q_type`.
-
-**Text formatting.** `print_qvalue` (`builtins/io.hpp:16`, also missing the `q_` prefix), `q_str`, `q_repr_into`, `q_fmt_cell` (formats lists differently from `print`), and `q_fmt_vec` / `q_fmt_vector_cells` (duplicates inside `stdlib/fmt.hpp`). `repr.hpp` should be the only renderer; the others call it with options.
-
-**Boxing helpers.** `qv_vector_from`, `qv_vector_ptr` and `qext::box(QVector*)` are the same; so are `qv_list_ptr` and `qext::box(QList*)`. `qext::box(int)` doesn't compile because the `int64_t`, `double` and `bool` overloads make it ambiguous. A native function returning `nullptr` for a `list`/`vec` is boxed as an empty container and a `null` `const char*` becomes `qv_null()`; the boxing helper is the place to reject both.
-
-**Index and size types.** Lists and strings index with 32-bit `int` (`list.hpp:59, 80, 126, 145, 186-188`, `string.hpp:402-403`, `strings.hpp:184-186`), vectors with `long long` (`q_vec_get_scalar`). `q_vec_size` and `q_list_size` return `int`. Use `int64_t` everywhere with one bounds-check helper.
-
-**Numeric conversions.** float→int casts are unchecked in `floor`, `round`, `ceil` (`math.hpp:133, 143, 153`), `to_int` (`conversion.hpp:89`), `fillna` (`vector.hpp:313`, `q_to_i64_scalar`) and `range` (`list.hpp:263, 285`); `astype('i64')` has the right range check (`vector.hpp:917`). `to_int(str)` ignores `strtoll`'s `ERANGE` (`conversion.hpp:98`), `abs` uses `llabs` (`math.hpp:29`), and `range` steps with an unchecked `i += st` (`list.hpp:371`). One `q_checked_f2i` and the existing `core/checked.hpp` helpers should cover all of these.
-
-**`vector.hpp`.** No macros; the complexity is nested reader lambdas (`with_*_reader` × `cmp_*`), which multiply template instantiations, and about eight hand-written per-dtype switches (`box_at`, `clone`, `mask_filter`, `vectors_identical`, `to_vec`, the fmt cells, `fillna`, `astype`). `q_vec_validate` is called by some entry points and not others (`get_scalar`, `mask_filter`, `to_list`, the reducers and repr skip it). Proposed split:
-1. `vector/layout.hpp`: the struct, validity bitmap, buffers, accessors and builders (the Arrow contract `ext/api.hpp` depends on).
-2. `vector/kernels.hpp`: arithmetic and comparison.
-3. `vector/reduce.hpp`: reductions, including `all`/`any` from `math.hpp`.
-4. `vector/convert.hpp`: `to_vec`, `to_list`, `astype`, `fillna`.
-5. `vector/index.hpp`: indexing and masks.
-
-A single `q_vec_visit_dtype(v, f)` would replace the per-dtype switches.
-
-**Not referenced by the compiler or stdlib:** `q_list_size`, `q_list_empty`, `q_list_clear`, `q_list_free`, `q_dict_has`, `q_dict_size`, `q_vec_dtype`, `q_vec_numeric_as_i64`, `q_vec_str_append_null`, `qv_list_init`, and the `q_malloc_tensor` / `q_realloc` macros (`core/gc.hpp`). `qv_list_from` is used only by the Go tests that compile C++ against the headers.
-
-**Tables.** `types/table.hpp` and the `VAL_TABLE` branches in `repr.hpp`, `conversion.hpp`, `truthy.hpp` and `value.hpp` are unreachable: no Quark program can create a table yet (`tables_v0_1_spec.md` is paused). Either keep them as the start of that work or remove them until it resumes.
-
-**Smaller items.** `builtins/repr.hpp` is only included indirectly through `conversion.hpp`, though every builtins header is supposed to be listed in `quark.hpp`. `QFilePayload` holds no pointers and could use `q_malloc_atomic`. No live GC hazards were found: container buffers use `q_allocator` or are short-lived copies, vector buffers are atomic, the resource registry uses `gc_allocator`.
-
-### 12.5 Tests
-
-- **`internal/testutil` repeats the pipeline instead of calling the driver.** `Analyze` (`testutil.go:58-68`) runs the analyzer even after loader errors, on a tree the loader didn't finish; the driver stops there (`driver.go:100-103`). Loader errors lose their code and location and are mixed into `ParserErrors`; it uses `analyzer.Errors()` where the driver uses `Diagnostics()`/`HasErrors()`; it always compiles as `test_input.qrk`. Only 5 tests use the driver path, so a test can pass while the CLI behaves differently. Fix: `testutil` calls `driver.CompileSource` and exposes its result.
-- **None of the known issues found in the review were caught by the suite.** The misuse paths that rule 2 of the robustness bar asks for are thin for: aliasing and mutation of containers, `any` values flowing into typed code, conditional and repeated expression contexts (short-circuit, ternary, `while` condition, `elseif`), definitions inside loop bodies, generated-name collisions, and numeric limits (int64 boundaries, float→int, NaN, indexes past 2^31).
-
-### 12.6 Design question: element types (decided 2026-11-13, see 12.9)
-
-The largest class of known issues is codegen reading a raw value based on an element type or narrowed type the analyzer got wrong (aliases, mutation through a function, index and key assignment, `any` values pushed into a list, narrowing inside a branch). There are three ways out, which trade execution speed against effort:
-
-1. **Checked reads.** Read every list/dict element and every narrowed `any` variable with a checked helper (`q_as_int`, ...). Simple and sound; one tag check per read.
-2. **Sound tracking.** Make the analyzer invalidate or widen element types on aliasing, calls and index/key assignment, and undo narrowing where branches merge. Reads stay unchecked, but it is the larger job and every new mutation path must keep it sound.
-3. **Both.** Checked reads now, and remove the check where tracking can prove the type.
-
-This needs a decision before the bugs in that group are fixed.
-
-*Decided 2026-11-13, implemented 2026-11-13:* none of the three as stated. The language rules change so that inferred types can't go stale (rules A, B, D, E in 12.9), and the one case the compiler can't see (an untyped function changing a typed list) is caught by checking writes, not reads. Reads stay raw. See 12.9 for the reasoning and the measurements.
-
-### 12.7 Target design: a lowering pass and a typed IR
-
-Decided 2026-11-12. The front half of the pipeline (lexer, parser, loader, the analyzer's type checking, the builtin catalog) stays. The back half changes: today the analyzer hands codegen 13 side tables keyed by AST node (`types.Analysis`), and codegen walks the AST again and builds C++ strings, consulting those tables and keeping its own scope stack by name (`declaredVars`, `varTiers`, `cellVars`, `scopeStack`). Decisions that belong to analysis (how a variable is stored, in what order an expression is evaluated, how sugar expands) are made while printing, in several places. That is the source of most of 12.2 and of three groups of known issues (expression timing, storage, loop bodies).
-
-Target pipeline:
-
-```
-.qrk → Lexer → Parser → Desugar → Loader → Analyzer → Lower → IR → Verify → Emit → C++ → clang++
-```
-
-- **Desugar** (after parsing): rewrites pipes `x | f(a)` into `f(x, a)` (the call node keeps a `Piped` flag for the pipe-specific messages), so no later stage has a pipe path. *Done in step 1, in the parser itself (`parsePipe`), so files the loader parses get it too.*
-- **Analyzer**: types, as today, plus **symbols**. Every declaration (variable, parameter, loop variable, `when` binding, `fn`, extern, struct) becomes one `*ir.Symbol`; every identifier node maps to its symbol; the analyzer decides each symbol's storage once, from its declared or inferred type and whether it is captured.
-- **Lower** (new package `lower/`): turns the analyzed AST into the IR. All lowering decisions live here and nowhere else: `for`/range/vector fast paths, `when` into tests and branches, method calls into calls with the receiver first, default arguments from the `CallPlan`, parameter and struct-field checks, fixed-`fn` hoisting, boxing and unboxing, and evaluation order.
-- **Verify**: the invariants pass, run on the IR instead of the AST (every reference has a symbol in scope, every unbox reads a value of the proven type or goes through a check, call arity matches its plan).
-- **Emit** (replaces `codegen/`): prints the IR as C++. It reads no AST, makes no type or storage decisions, and names every C++ symbol from the symbol's ID, so generated names can't collide with user names by construction.
-
-IR shape (sketch; the final types are settled in step 3 below):
-
-```go
-type Symbol struct {
-	ID      int
-	Name    string     // as written, for messages
-	Type    types.Type
-	Storage Storage    // Int64, Float64, Bool, Value, Cell
-	Kind    SymKind    // Local, Param, Global, Fn, Extern, Struct
-	Checked bool       // a captured cell that may be read before it is assigned
-}
-
-type Func struct {
-	Sym      *Symbol
-	Params   []*Symbol
-	Captures []*Symbol
-	Native   bool       // fully annotated, no captures: plain C++ signature
-	Body     *Block     // hoisted fns first
-}
-
-// Statements: Let{Sym, Value}, Assign{Sym, Value}, SetField, SetIndex, SetKey,
-// If{Cond, Then, Else}, Loop{Body} (while and for: the condition is tested
-// inside the body, then Break), Break, Continue, ExprStmt, Return.
-// Expressions: Const, Ref{Sym}, Call{Plan, Callee, Args}, Unary, Binary{Op,
-// Type}, Box, Unbox{Storage}, Check{Want, Value, What} (q_param_*/q_as_*),
-// Closure{Func}, list/dict/vec/struct literals, MemberGet, Index.
-```
-
-**Evaluation order** is explicit: lowering an expression yields statements plus a result, and any expression that needs a temporary is flattened into `Let`s placed before it in the same block. Conditional and repeated contexts (`and`, `or`, `x if c else y`, a `while` condition, `elseif`) lower to blocks, so their temporaries land inside the branch or loop that evaluates them. This removes the whole "part of an expression runs at the wrong time" group of known issues rather than patching each one.
-
-**Checks are IR nodes.** A raw read of a scalar is an `Unbox` only where the analyzer proved the type, otherwise a `Check`. Whichever answer 12.6 gets, it is implemented in one place (where lowering chooses `Unbox` or `Check`), and the verifier rejects an `Unbox` the analyzer didn't prove.
-
-**AST cleanup that goes with it.** `OperatorNode` currently covers assignment, member access and every operator, which is why `analyzeOperator` and `generateOperator` are single giant switches. The parser produces distinct node kinds instead: `AssignNode` (by target: name, field, key, index), `MemberNode`, `UnaryNode`, `BinaryNode`, and a `FnDeclNode` for `fn f(...)` (as `modules_v0_2_spec.md` §5.4 intended).
-
-What doesn't change: the runtime ABI (`QValue`, `QClosure`, `QCell`, `QFnInfo`, `q_call*`), the builtin catalog and `CallPlan`, the loader, the CLI and the test programs.
-
-### 12.8 Migration plan
-
-Each step ends with the full suite green and is committed on its own.
-
-1. **Simplify without new machinery.**
-   - Remove the dead code in 12.3 and the unreferenced runtime functions in 12.4.
-   - Add the desugar pass for pipes; delete `analyzePipe` and `generatePipe`.
-   - Split `OperatorNode` into the node kinds above and add `FnDeclNode`; split `analyzeOperator` by node kind; split the loader's `walk` by node kind.
-   - Make `internal/testutil` call the driver (12.5).
-
-   Exit: the call/pipe duplication is gone and no Go function scores above about 40 in `gocyclo`.
-
-   *Done 2026-11-12.* Highest scores after it: `inferBuiltinReturnType` 40, `CanAssign` 37, `loader.collect` 37, `checkDefiniteAssignment` 34, `codegen.scalarExpr` 34 (`analyzeOperator` 159 → split into `analyzeMember`, `analyzeUnary`, `analyzeAssign` with `assignName`/`assignMember`/`assignIndex`, `analyzeBinary` with `analyzeVectorArith`/`analyzeArith`/`analyzeOrdering`/`analyzeEquality`; loader `walk` 66 → 15; `nextRawToken` 48 → 21 with token tables; `ValidateCallPlans` 48 → split per dispatch mode). Behavior changes: `x | d.f()` is the same error as `d.f(x)`; a pipe target that isn't a call is a parse error; arity messages read `function 'f' expects 1 argument but got 2`.
-2. **Symbols.** The analyzer creates an `ir.Symbol` per declaration, maps identifier nodes to symbols, and decides storage once. Codegen reads storage and C++ names from symbols and drops `declaredVars`, `varTiers`, `cellVars` and its scope stack. Exit: the storage known issues are fixed (`x: float = len(l)`, an int assigned to a float variable, `_lambda1`, a variable first assigned in a `while` body).
-
-   *Done 2026-11-13.* The symbol is `types.Symbol` (it holds a `types.Type`, and `ir` can't import `types`); the storage kind is `ir.Storage`. Codegen's storage code is in `codegen/storage.go`. Also fixed on the way, since they were on the same path: typed declarations and default-typed parameters now check values of unknown type, loop bodies go through `generateBlock` (so `fn` works in loop bodies and errors have the right line), and every generated C++ name starts with `quark___`.
-3. **Lower, IR, verify, emit.** Build `lower/` and the emitter next to `codegen/`, selected by a driver switch while in progress. Run the smoke and integration suites through both back ends and compare outputs; switch the default once they match, then delete `codegen/`. Exit: the expression-timing and loop-body known issues are fixed, and the verifier runs on every compile.
-4. **Element types** (12.6, 12.9): rules A, B, D and E in the analyzer, checked writes into typed lists and dicts in the runtime, and in lowering an `Unbox` only for proven types (the verifier rejects any other). Rules A, B and E don't depend on the IR and can be done before step 3.
-
-   *Rules A-E done 2026-11-13, before step 3 (12.9, Status).* What is left of this step is the lowering side: `Unbox` only for proven types, enforced by the verifier.
-
-In parallel with any step:
-- runtime consolidation (12.4): one type-name table, one renderer, `q_fatalf`, 64-bit indexes, checked float→int conversions, the `vector.hpp` split;
-- the runtime numeric known issues;
-- return-annotation checks for ordinary functions (an analyzer and runtime change, unaffected by the IR);
-- the missing misuse tests (12.5).
-
-Interim patches to the current codegen are limited to severe bugs that can't wait for step 3; today that is only the `while` condition evaluated once (an infinite loop). Other expression-timing and storage bugs are fixed by steps 2-3 rather than patched in code those steps replace.
-
-### 12.9 Soundness contract and the cost of checks (decided 2026-11-13)
-
-**Why silent wrong results keep appearing.** The analyzer's types do two jobs. For diagnostics a type is a best guess, and optimism is fine there: a parameter typed from its default, `x` narrowed to `int` after `x = 5`, a list's element type widened after `push`. For codegen the same type is a guarantee: it reads the raw union field (`.data.int_val`) whenever the analyzer says `int`. Nothing connected the two, so each time the checker inferred more, it created a new false guarantee. Every silent wrong result found so far has this shape: a slot (variable, parameter, element, return value) whose type the analyzer states, with a way in that nothing guards.
+The analyzer's types serve two purposes. For diagnostics they are a best guess. For codegen they are a guarantee: codegen reads raw union fields and stores values in native C++ scalars whenever the analyzer says `int`. Every silent wrong result Quark has had came from a slot (variable, parameter, element, field, return value) whose type the analyzer stated, with a way in that nothing guarded.
 
 **The contract.** A static type is a guarantee only when every way a value can reach the slot is guarded: proven at compile time, or checked at runtime. Codegen may read raw bytes only for such types.
 
-Parameters already work this way, which is why they are sound:
+Parameters show the pattern:
 
 ```
 fn add(x: int, y: int = 10) int -> x + y
@@ -723,56 +497,97 @@ add(p, 93)            // proven int: no check
 add(20, id('oops'))   // id is untyped: checked on entry, runtime error
 ```
 
-One way in (the call), and it is guarded; after `long long quark_y = q_param_int(...)` the body reads raw bytes forever.
+One way in (the call), and it is guarded; after `long long quark_y = q_param_int(...)` the body reads raw values.
 
-**The rules that extend this to every slot** (Breaking; all compile-time unless noted):
+**Rules** that extend this to every slot (decided and implemented 2026-11-13):
 
-- **A. Variables don't narrow.** A variable whose first value is `any` stays `any`; assigning an `int` later doesn't make it an `int`. Today `x = id('hello')`, `if false:` / `x = 5`, `y = x`, `print(y + 1)` prints garbage. To get raw speed, convert once: `n: int = x` (one check, raw afterwards).
-- **B. A list's or dict's element type is fixed when it is created.** `xs = list [1, 2]` is `list[int]` for good, and `xs.push('s')` is a compile error. A list that mixes types is written `xs: list = list [1, 2]` (the plain `list` annotation means any element type). Today `b = a`, `b.push('s')` widens `b`'s type but not `a`'s, and `for v in a` reads the string as an int.
-- **C. An untyped function changing a typed list is checked when it writes** (runtime). `fn add_x(xs) -> xs.push('x')` can't be rejected at compile time, because `xs` is untyped there. A list (and dict) records the element type it was created with, and `push`, `set`, `insert` and key assignment check the value against it; an int written into a float list is widened. This is how Java arrays work (`ArrayStoreException`). Reads stay raw.
-- **D. Return annotations are checked on every function**, like parameters: at compile time when the body's type is known, otherwise once on return. Today `fn f(c) int -> if c: 1`, then `y = f(false)`, `print(y + 10)` prints `10` (null read as 0).
-- **E. A value of the wrong type stored under a dict key is an error**, not a warning.
+- **A. Variables don't narrow.** A variable whose first value has an unknown type stays untyped whatever it is assigned later. To get raw speed, convert once: `n: int = x` (one check, raw afterwards). A variable holding a function keeps its signature; `g: fn = ...` holds any function. (`assignName`/`checkReassign`.)
+- **B. A list's element type (a dict's value type) is fixed when it is created**, through every alias: `xs = list [1, 2]` is `list[int]`, and `xs.push('s')` is a compile error. A mixed literal or a literal under a `list`/`dict` annotation holds any value (`contextLiteral`). An empty literal is typed by its context or its first write (§1.4.2). (`checkElemWrite`, `checkMutation`.)
+- **C. A write the compiler can't check is checked by the runtime.** An untyped function changing a typed list can't be rejected at compile time, so every list and dict records its element type and every write checks it (`q_elem_store`, §2.4), as Java arrays do. Reads stay raw.
+- **D. Return annotations are checked on every function**: at compile time when the body's type is known (a body that can end without a value is an error; an `if` without `else` adds `void` to its type), otherwise on return (`checkedReturn`, `q_ret_*`).
+- **E. A wrong-typed dict value is an error**, not a warning.
+- **Null.** `null` is a value of struct and `resource` types only, in the checker (`IsSubtype`), in every runtime check (`paramTagChecks`), and in native boxing. Whether struct and resource annotations should reject it too is open.
 
-**Measured cost** (2026-11-13; tight loops that do nothing but the operation, so the worst case; `-O3 -march=x86-64-v3`, best of 5, hand-edited generated C++):
+**Cost.** Measured 2026-11-13 in tight loops that do nothing but the operation (`-O3 -march=x86-64-v3`, best of 5):
 
 | Benchmark | Base | Variant | Change |
 |---|---|---|---|
 | 20M `out.push(i)` | 0.330s | element tag check on each write (rule C) | +1.6% |
-| 100M list element reads (`for v in xs: total = total + v`) | 0.775s | tag check on each read (the alternative to C) | +1.5% |
+| 100M list element reads | 0.775s | tag check on each read (the alternative to C) | +1.5% |
 | 30M calls of `fn step(x: int, k: int = 3) int` | 0.160s | checked return (rule D) | -0.1% |
-| same | 0.160s | parameter checks removed | -0.4% |
 
-Rules A, B and E cost nothing at runtime, and let the compiler prove more types, so more reads stay raw. A check is one well-predicted compare; checking writes was chosen over checking reads because it keeps reads raw, which the next item depends on.
+Rules A, B and E cost nothing at runtime and let the compiler prove more types. Checking writes was chosen over checking reads because it keeps reads raw, which the list-loop speedup in §13 depends on.
 
-**Where the time actually goes** (the 100M-read loop, 7.75 ns per element):
+**Holes left** (listed with reproductions in `changelog.md`, Known issues): `xs.get(i)`, `d.get(k)` and a list read past its end return `null` typed as the element type; a vec with nulls read by a loop or `to_list()` gives typed values or a typed list with nulls in it (the tables work fixes this with checked element reads, `tables_v0_1_spec.md` D12); native code writing lists directly skips the check.
 
-| Change | Time | Per element |
-|---|---|---|
-| current: `q_iter_get(xs, qv_int(i)).data.int_val` | 0.775s | 7.75 ns |
-| read the list's array directly (type known to be a list) | 0.186s | 1.86 ns (-76%) |
-| direct read plus a tag check | 0.189s | 1.89 ns |
-| direct read, source location as one integer store instead of three fields | 0.171s | 1.71 ns (-9%) |
+**Finding holes mechanically** (planned):
+- In the IR (§13), lowering emits a raw `Unbox` only for a proven type and a `Check` otherwise, and the verifier rejects an unproven `Unbox`.
+- A *checked mode* build flag turns every raw read into a checked one; running the test corpus in both modes, any check failure or output difference is a soundness bug.
+- A differential test for single expressions: `print(E)` (boxed, trusts nothing) must print what `x = E`, `print(x)` (stored as the claimed type) prints.
 
-So the levers are, in order:
+---
 
-1. **Direct element access** when the receiver is known to be a list (about 4x on list loops), in step 3's lowering. The loop must re-check the list's size each iteration, since the body may shrink it (a known issue today).
-2. **Source locations as one integer.** Step 2 sets `q_set_source_loc(file, line, col)` before every statement of a loop body (so runtime errors there report the right line); three stores per statement cost about 9% on the list loop. A static table of locations and one `int` store per statement measured the same as no location. Step 2 shipped with the three-store version (`0cf468d`), so this is next.
-3. Tag checks: about 1.5% where they're needed at all; not worth avoiding at the cost of soundness.
+## 13) Roadmap: Lowering Pass and Typed IR
 
-**Finding the remaining holes mechanically.**
+Decided 2026-11-12. Most of the remaining known issues come from codegen making analysis decisions while printing C++: it walks the AST, consults the analyzer's side tables, and decides evaluation order and sugar expansion as it goes. The front half (lexer, parser, loader, analyzer, catalog) stays; the back half changes.
 
-- In step 3 the contract becomes a verifier rule: lowering emits a raw `Unbox` only for a proven type and a `Check` otherwise, and the verifier rejects an `Unbox` the analyzer didn't prove.
-- A *checked mode* (a build flag that turns every raw read into a checked one) is an oracle: running the test corpus in both modes, any check failure or difference in output is a soundness bug.
-- A differential test does the same for single expressions: `print(E)` (boxed, trusts nothing) must print what `x = E`, `print(x)` (stored as the claimed type) prints. Run by hand on 42 builtin, method and operator expressions on 2026-11-13, it found no mismatch.
+```
+.qrk → Lexer → Parser → Loader → Analyzer → Lower → IR → Verify → Emit → C++ → clang++
+```
 
-**Decided 2026-11-13: these annotations don't accept `null`.** `null` for a `list`, `dict`, `vec` or `fn` parameter used to be accepted by the checker and by ordinary functions but rejected by fully annotated functions and `extern fn` (`q_as_list`). Now `null` is a value of struct and `resource` types only, in the checker (`IsSubtype`), in `q_param_*`/`q_var_*`/`q_field_*`/`q_ret_*` (`paramTagChecks`), and in native boxing (`qv_list_ptr(nullptr)`, `q_box_native_str(nullptr)` and `qext::box(nullptr)` are errors). Struct and resource annotations still accept `null`; whether they should too is open.
+- **Lower** (new package `lower/`): turns the analyzed AST into the IR. All lowering decisions live here: `for`/range/vector fast paths, `when` into tests and branches, method calls with the receiver first, default arguments, parameter and field checks, `fn` hoisting, boxing and unboxing, and evaluation order.
+- **Verify**: the invariants, run on the IR (every reference has a symbol in scope, every `Unbox` reads a proven type, call arity matches its plan).
+- **Emit** (replaces `codegen/`): prints the IR as C++. It reads no AST, makes no type or storage decisions, and names every C++ symbol from the symbol's ID.
 
-**Status (2026-11-13).** Rules A-E are implemented, outside the planned IR (step 3), since none of them needed it:
+IR sketch (final types are settled when the work starts):
 
-- A: `assignName`/`checkReassign` (`types/analyzer_expressions.go`) never change a symbol's type after its first value. A variable holding a function keeps its signature (`IsSubtype` on `FunctionType`), and assigning a lambda to an existing name in an enclosing scope assigns it (it used to declare a new local).
-- B: `checkElemWrite` checks push/insert/set/concat (`checkMutation`), `l[i] = v` and `d.k = v` against the container's element type; `widenReceiverOnMutation` is gone. An empty literal's type is decided by its first write (user decision, 2026-11-13; see Pending containers in §1.4). A literal under a `list`/`dict` annotation is typed by it (`contextLiteral`), so `xs: list = list [1, 2]` holds anything. Element types of functions drop the return type (`ElementOf`), since the runtime check can only see that a value is a function.
-- C: `QElemType` descriptors on every list and dict, checked by `q_elem_store` (§2.4). Reads stay raw.
-- D: `validateReturnType` rejects a body that can end without a value (an `if` without `else` now adds `void` to its type, as a non-exhaustive `when` already did); `checkedReturn` (`codegen/elemtype.go`) widens or checks (`q_ret_*`) a QValue-convention function's result when its type isn't proven.
-- E: a wrong-typed dict value is an error (was a warning).
+```go
+type Func struct {
+	Sym      *types.Symbol
+	Params   []*types.Symbol
+	Captures []*types.Symbol
+	Native   bool       // fully annotated, no captures: plain C++ signature
+	Body     *Block     // hoisted fns first
+}
 
-Remaining holes in this area: `xs.get(i)` / `d.get(k)` / a list read past its end return `null` typed as the element type; a vec with nulls read by a loop or `to_list()` gives a typed list with nulls in it; native code that appends with `push_back` directly skips the check (use `qext::list_push`).
+// Statements: Let{Sym, Value}, Assign{Sym, Value}, SetField, SetIndex, SetKey,
+// If{Cond, Then, Else}, Loop{Body} (the condition is tested inside the body,
+// then Break), Break, Continue, ExprStmt, Return.
+// Expressions: Const, Ref{Sym}, Call{Plan, Callee, Args}, Unary, Binary{Op,
+// Type}, Box, Unbox{Storage}, Check{Want, Value, What}, Closure{Func},
+// list/dict/vec/struct literals, MemberGet, Index.
+```
+
+**Evaluation order is explicit.** Lowering an expression yields statements plus a result; anything that needs a temporary becomes a `Let` before it in the same block. Conditional and repeated contexts (`and`, `or`, `x if c else y`, a `while` condition, `elseif`) lower to blocks, so their temporaries land inside the branch or loop that evaluates them. This fixes the "part of an expression runs at the wrong time" group of known issues as a whole.
+
+**Steps** (each ends with the full suite green):
+
+1. **Lower, IR, verify, emit**, built next to `codegen/` behind a driver switch. Run the smoke and integration suites through both back ends and compare outputs; switch the default when they match, then delete `codegen/`. Exit: the expression-timing known issues are fixed and the verifier runs on every compile.
+2. **Proven unboxing**: lowering emits `Unbox` only for proven types; the verifier rejects any other (§12).
+3. **Direct list element access** when the receiver is known to be a list: about 4x on list loops (a read is 1.86 ns against 7.75 ns through `q_iter_get`). The loop must re-check the size each iteration, since the body may shrink the list.
+4. **Source locations as one integer.** Every statement in a loop body sets `q_set_source_loc(file, line, col)` (three stores), which costs about 9% on a loop that only reads list elements; a static table of locations and one `int` store measured the same as no location.
+
+The table compiler work (`tables_v0_1_spec.md` §9) targets this pipeline. Until step 1 lands, patches to `codegen/` are limited to bugs that can't wait; expression-timing and storage bugs are fixed by the new back end, not patched in code it replaces.
+
+---
+
+## 14) Structural Debt
+
+Independent of §13 and can be done in any order. Each is a decision made in more than one place, where the copies can disagree.
+
+**Go**
+- Function values are built in several places (`fixedFnValue`, `generateIdentifier`, `generateLambdaExpr`).
+- Three functions decide what a constant is: `isConstantDefault` and `isLiteralDefault` (`parser/parser.go`) and `isConstantValue` (`loader/files.go`).
+- `parseBlock` repeats `Parse`'s statement loop.
+- Internal errors: `panicICEf` calls `os.Exit(2)` from a library package while other paths `panic`. Pick one (panic and recover in the driver, or return an error).
+- The integration tests share one binary (§11); each run should build into its own temporary directory.
+
+**Runtime (C++)**
+- No `[[noreturn]] q_fatalf`: about 200 sites call `q_runtime_reportf` then `exit(1)`, and `types/dict.hpp` has dead `return qv_null()` branches after `q_require_dict`. String indexing with a non-int returns `null` (a known issue).
+- Type names: `q_type_name` (`core/value.hpp`) is canonical, but `q_type_name_arith`, `q_type_name_math`, an inline table in `ops/member.hpp` (which says `string`, not `str`) and `q_as_type_name` (`ext/api.hpp`) remain. Replace them with `q_type_name`.
+- Text formatting: `print_qvalue` (`builtins/io.hpp`, missing the `q_` prefix), `q_str`, `q_repr_into`, `q_fmt_cell` and the `std/fmt` cell formatters. `builtins/repr.hpp` should be the only renderer, with options.
+- Boxing: `qv_vector_from`, `qv_vector_ptr` and `qext::box(QVector*)` do the same thing; so do `qv_list_ptr` and `qext::box(QList*)`. `qext::box(int)` doesn't compile (ambiguous overloads).
+- Index and size types: lists and strings index with 32-bit `int`, vectors with `long long`, and `q_vec_size`/`q_list_size` return `int`. Use `int64_t` with one bounds-check helper (fixes the 32-bit index known issues).
+- Numeric conversions: float→int casts are unchecked in `floor`, `round`, `ceil`, `to_int`, `fillna` and `range`; `to_int(str)` ignores `ERANGE`; `abs` uses `llabs`; `range` steps with an unchecked add. One `q_checked_f2i` plus the `core/checked.hpp` helpers cover all of these (and the numeric known issues).
+- `types/vector.hpp` (about 1250 lines): nested reader lambdas multiply template instantiations, about eight per-dtype switches repeat each other, and `q_vec_validate` is called by some entry points and not others. Proposed split: `vector/layout.hpp` (struct, bitmap, buffers, builders: the Arrow contract `ext/api.hpp` depends on), `kernels.hpp` (arithmetic, comparison), `reduce.hpp` (reductions, with `all`/`any`), `convert.hpp` (`to_vec`, `to_list`, `astype`, `fillna`), `index.hpp` (indexing, masks). A single `q_vec_visit_dtype(v, f)` would replace the switches. Worth doing before the D12/D13 vector work in the tables spec.
+- `QFilePayload` holds no pointers and could use `q_malloc_atomic`.

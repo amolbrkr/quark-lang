@@ -1,73 +1,112 @@
 # Quark Error Codes
 
-This file is the canonical registry of error codes currently emitted by the compiler/runtime.
+The registry of every error code the compiler and runtime emit. `QK-*` codes are for problems in the user's program; `INV-*` codes are compiler bugs.
 
-## Format
+## Contents
 
-- User-facing diagnostics use:
-	- `error[CODE] (stage): message ...`
-	- `warning[CODE] (stage): message ...`
-- Frontend diagnostics use stable `QK-*` codes.
-- Runtime diagnostics use stable `QK-*` codes. They go through `q_runtime_reportf` in `diagnostics.hpp`, which prints `error[QK-RUNTIME-001] (runtime): message at file:line:col`.
-- The runtime location is the statement that failed. After a call returns, the caller's statement is current again (every generated function restores it on return), so an error later in the same statement points there, not into the callee. Code from an imported user module reports that module's file (`lib/helpers.qrk:3:11`); code from `std/` modules sets no location, so an error raised inside the stdlib (usually a bad argument) points at the user's call. An annotated parameter that receives a value of the wrong type is reported at the call: `argument 'x' of 'f' expects int, got str`.
-- `QK-PARSE-001` also covers lexer errors, reported with the lexer's message: `unexpected indent`, `expected indented block`, `inconsistent indentation`, `unexpected character '#'`, and `'\0' is not supported in string literals`.
-- Internal invariant/ICE failures use `INV-*` codes (compiler-bug class, not user-program errors).
+- [Message format](#message-format)
+- [QK codes](#qk-codes)
+- [Runtime errors](#runtime-errors)
+- [Internal invariant codes (INV-*)](#internal-invariant-codes-inv-)
+  - [Invariant validation](#invariant-validation)
+  - [Codegen](#codegen)
+- [Planned codes](#planned-codes)
+- [Rules for new codes](#rules-for-new-codes)
 
-## Stable QK Codes
+## Message format
+
+Diagnostics print as
+
+```
+error[CODE] (stage): message at file:line:col
+warning[CODE] (stage): message at file:line:col
+  note: ...
+```
+
+The location is `file:line` when there is no column, and is left out when unknown. Notes follow on their own lines. Every name in a message is shown as written in the source (`geo::Point`), never as a compiler-internal name.
+
+Stages: `parse`, `load`, `check`, `build` (clang++ compile and link), `runtime`. Errors stop `check`, `emit`, `build` and `run`; warnings are printed and don't.
+
+## QK codes
 
 | Code | Stage | Meaning | Emitted from |
 | --- | --- | --- | --- |
-| `QK-PARSE-001` | `parse` | Parse error in source program. | `src/core/quark/parser/parser.go` |
-| `QK-LOAD-001` | `load` | Import and name resolution failure (modules v0.2): file not found, unsupported import path, import cycle; an imported file or directory name that isn't `[a-z][a-z0-9_]*`; a statement (anything but a definition or constant) in an imported file; a name defined twice in a file, a module member named like a top-level name, an import binding named like a definition or another binding; an unknown or malformed qualified name (`'fmt' (std/fmt) has no 'show_vector'`, a re-export like `geo::io::open`); `.` on an import binding or module (`'io' is an imported file; use io::exists`); assigning an imported name or an imported file's constant; a bare name in an imported file that isn't defined in it; `incl` of a same-file module or `incl` outside the top level. Also `extern link` / `extern include_path` placed inside a block or module instead of at the top level of a file. | `src/core/quark/loader/files.go`, `resolve.go` |
-| `QK-CHECK-001` | `check` | Semantic/type analysis error. | `src/core/quark/types/analyzer.go` |
-| `QK-CHECK-002` | `check` | Semantic analysis warning (non-fatal). | `src/core/quark/types/analyzer.go` |
-| `QK-RUNTIME-001` | `runtime` | Runtime failure emitted by runtime diagnostics reporter. | `src/core/quark/runtime/include/quark/core/diagnostics.hpp` |
-| `QK-FFI-001` | `load` | `extern include_path` directory not found. | `src/core/quark/loader/loader.go` |
-| `QK-FFI-002` | `build` | `extern link` library not found; notes list the file names and directories searched. | `src/core/quark/toolchain/native.go` |
-| `QK-FFI-003` | `build` | C++ compile error inside an extern glue header (or a file it includes); names the glue file. | `src/core/quark/toolchain/native.go` |
+| `QK-PARSE-001` | `parse` | Syntax error. Also covers lexer errors, reported with the lexer's message: `unexpected indent`, `expected indented block`, `inconsistent indentation`, `unexpected character '#'`, `'\0' is not supported in string literals`. A bad character inside an expression is reported by the parser instead (`expected RPAR but got ILLEGAL`). Also a pipe target that isn't a call, and anything after an `extern` directive's string. | `src/core/quark/parser/parser.go` |
+| `QK-LOAD-001` | `load` | Import and name resolution (modules v0.2): a file that can't be found, an unsupported import path, an import cycle; an imported file or directory name that isn't `[a-z][a-z0-9_]*`; a statement (anything but a definition or constant) in an imported file; a name defined twice at the top level of a file, a module member named like a top-level name, an import binding named like a definition or another binding, two names that would get the same internal name; a name containing `__`; an unknown or malformed qualified name (`'fmt' (std/fmt) has no 'show_vector'; did you mean 'show_vec'?`, a re-export like `geo::io::open`); `.` on an import binding or module (`'io' is an imported file; use io::exists`); assigning an imported name or constant; a bare name in an imported file that the file doesn't define; `incl` of a same-file module or `incl` outside the top level; an `extern link` / `extern include_path` inside a block or module. | `src/core/quark/loader/files.go`, `loader.go`, `resolve.go` |
+| `QK-CHECK-001` | `check` | Semantic or type error found by the analyzer: wrong argument types or counts, unknown methods, wrong-typed writes into lists and dicts, `null` where an annotation rejects it, call-shape mismatches of callbacks, return annotations, redefined builtins, duplicate or reassigned `fn` declarations in a nested scope, and so on. | `src/core/quark/types/analyzer.go` |
+| `QK-CHECK-002` | `check` | Warning (does not stop compilation). Currently emitted for one case: the two branches of `x if c else y` have incompatible types (`ternary branches have incompatible types: 'int' and 'str'`). | `src/core/quark/types/analyzer.go` (`warnAt`), called from `analyzer_controlflow.go` |
+| `QK-RUNTIME-001` | `runtime` | Any runtime failure; see [Runtime errors](#runtime-errors). | `src/core/quark/runtime/include/quark/core/diagnostics.hpp` |
+| `QK-FFI-001` | `load` | An `extern include_path` directory that doesn't exist, or a `std/` include path when no stdlib directory can be found. | `src/core/quark/loader/loader.go` |
+| `QK-FFI-002` | `build` | An `extern link` library that can't be found. Notes list the file names tried and the directories searched. | `src/core/quark/toolchain/native.go` |
+| `QK-FFI-003` | `build` | A C++ compile error inside an extern glue header or a file it includes (for example a missing `#include`). Names the glue file and line; clang's full output is printed above it. | `src/core/quark/toolchain/native.go` |
 
-Notes:
-- `QK-RUNTIME-001` currently covers multiple runtime failure causes and is intentionally coarse for now.
-- Analyzer warnings (`QK-CHECK-002`) are displayed but do not fail compilation/execution commands.
+A C++ compile or link error outside glue code has no code: `quark` prints clang's output and `Compilation failed: ...`. It means a wrong `extern fn` symbol or header, or a compiler bug.
 
-## Internal Invariant Codes (INV-*)
+## Runtime errors
 
-These indicate compiler invariant violations. They are intentionally separate from user-facing `QK-*` program diagnostics.
+All runtime errors use `QK-RUNTIME-001` and exit with status 1. They go through `q_runtime_reportf` (`core/diagnostics.hpp`):
 
-### Codegen invariant codes
+```
+error[QK-RUNTIME-001] (runtime): modulo by zero at file.qrk:3:10
+```
 
-- `INV-NODE-TYPE`
-- `INV-CALLPLAN-MISSING`
-- `INV-DOT-CALL`
-- `INV-CALLPLAN-RUNTIME`
-- `INV-CALLPLAN-DISPATCH`
-- `INV-STRUCT-LITERAL`
-- `INV-STRUCT-DEFAULT`
+- The location is the statement that failed. After a call returns, the caller's statement is current again (every generated function restores it), so an error later in the same statement points there, not into the callee.
+- Code from an imported user file reports that file (`lib/helpers.qrk:3:11`). Code in `std/` modules sets no location, so an error raised inside the stdlib (usually a bad argument) points at the user's call.
+- An annotated parameter that receives a value of the wrong type is reported at the call: `argument 'x' of 'f' expects int, got str`. A fully annotated function compiled to native C++ (most stdlib module functions) reports it as `expected int, got float`, without the parameter name.
+- Errors raised by native extension code through `qext` start with `extension error:` (`extension error: blas.dot: x must be an f64 vec, got i64; ...`).
 
-Primary source: `src/core/quark/codegen/codegen.go`
+The code is deliberately coarse for now; the message carries the detail.
 
-### Invariant validation codes
+## Internal invariant codes (INV-*)
 
-- `INV-CALLPLAN-MAP`
-- `INV-CALLPLAN-MISSING`
-- `INV-ARITY-ENVELOPE`
-- `INV-ARGCHECK`
-- `INV-DISPATCH-MODE`
-- `INV-RUNTIME-SYMBOL`
-- `INV-BUILTIN-NAME`
-- `INV-METHOD-RECEIVER`
-- `INV-DYNAMIC-METHOD`
-- `INV-BUILTIN-CATALOG`
-- `INV-BUILTIN-RUNTIME`
-- `INV-DEFAULT-COUNT`
-- `INV-RETURN-MAP`
-- `INV-RETURN-VALIDATE`
+These mean the compiler violated one of its own invariants. They are compiler bugs, never errors in the user's program.
 
-Primary source: `src/core/quark/invariants/callplan.go`
+### Invariant validation
 
-## Consistency Rules
+Run between the analyzer and codegen (`src/core/quark/invariants/callplan.go`). Printed as `error[INV-...] (invariants): message at line N, col M`.
 
-- Add new user-visible compiler errors under `QK-<STAGE>-NNN`.
-- Add new stage-internal ICE errors under `QK-<STAGE>-ICE-NNN`.
-- Keep `INV-*` for invariant checks and compiler-bug assertions.
-- Do not reuse a code for a different semantic meaning.
+| Code | Checks |
+| --- | --- |
+| `INV-CALLPLAN-MAP` | The analyzer produced a call-plan map |
+| `INV-CALLPLAN-MISSING` | Every call node has a call plan |
+| `INV-ARITY-ENVELOPE` | A plan's min/max arity is valid |
+| `INV-DISPATCH-MODE` | A plan's dispatch mode is resolved |
+| `INV-RUNTIME-SYMBOL` | Plans that need a runtime symbol have one |
+| `INV-DEFAULT-COUNT` | Planned default arguments fit the missing argument slots |
+| `INV-BUILTIN-NAME` | A builtin plan names its callee |
+| `INV-METHOD-RECEIVER` | A method plan has a receiver type |
+| `INV-BUILTIN-CATALOG` | The builtin or method is in the catalog |
+| `INV-BUILTIN-RUNTIME` | The plan's runtime symbol matches the catalog's |
+| `INV-DYNAMIC-METHOD` | A dynamic method plan has a receiver and valid candidates |
+| `INV-RETURN-MAP` | The analyzer produced a return-validation map |
+| `INV-RETURN-VALIDATE` | Every annotated return type was validated |
+
+### Codegen
+
+Raised while generating C++. Printed as `internal compiler error [INV-...]: message at line N`; the compiler exits with status 2.
+
+| Code | Raised when | Emitted from |
+| --- | --- | --- |
+| `INV-NODE-TYPE` | An AST node type has no codegen case | `codegen/codegen.go` |
+| `INV-OPERATOR` | A binary operator has no codegen case | `codegen/codegen.go` |
+| `INV-ASSIGN-TARGET` | An assignment target kind has no codegen case | `codegen/codegen.go` |
+| `INV-FIXED-FN` | A `fn` declaration was not analyzed | `codegen/codegen.go` |
+| `INV-CALLPLAN-MISSING` | A call has no call plan | `codegen/codegen.go` |
+| `INV-CALLPLAN-RUNTIME` | A builtin, direct, native or extern call plan has no runtime symbol | `codegen/codegen.go` |
+| `INV-CALLPLAN-DISPATCH` | A call plan's dispatch kind is unknown | `codegen/codegen.go` |
+| `INV-DOT-CALL` | A dot-call node reached codegen | `codegen/codegen.go` |
+| `INV-STRUCT-LITERAL` | A struct literal names an unknown struct | `codegen/codegen.go` |
+| `INV-STRUCT-DEFAULT` | A struct field default is malformed | `codegen/codegen.go` |
+| `INV-SYMBOL` | An identifier has no analyzer symbol | `codegen/storage.go` |
+| `INV-STORAGE` | A scalar conversion was requested for non-scalar storage | `codegen/storage.go` |
+
+## Planned codes
+
+- `QK-FFI-004` (runtime): wrong handle kind or use of a closed handle (`ffi_v0_1_spec.md` P8). Today these are `QK-RUNTIME-001`.
+
+## Rules for new codes
+
+- User-visible errors get `QK-<STAGE>-NNN`. A new code needs a row in the table above, with its stage and source file.
+- Compiler-bug assertions get `INV-<NAME>` and a row in the matching INV table.
+- Never reuse a code for a different meaning.
+- When a code stops being emitted, remove its row.

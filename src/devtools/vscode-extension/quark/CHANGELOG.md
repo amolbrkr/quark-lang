@@ -1,5 +1,13 @@
 # Change Log
 
+## Contents
+
+- [Unreleased (2026-11-12)](#unreleased---2026-11-12)
+- [0.1.1 (2026-11-12)](#011---2026-11-12)
+- [0.1.0 (2026-11-06)](#010---2026-11-06)
+- [0.0.3](#003)
+- [0.0.2](#002)
+
 ## [Unreleased] - 2026-11-12
 
 - Follows modules v0.2: members of modules and imported files are written with `::`. Completion after `name::` and `file::module::` (`:` is a trigger character), hover on `io::exists`, and `::` paths are highlighted as namespaces. Imported files without a `module` block (top-level functions) are completed too. `alias.` no longer offers module members, and the removed same-file `incl m as alias` form is no longer read.

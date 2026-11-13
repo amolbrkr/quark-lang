@@ -1,253 +1,266 @@
 # Quark FFI v0.1 Spec
 
-Status: Draft (revision 3)
-Last Updated: 2026-11-04
-Replaces: the 2026-03-15 draft of this file
-Revision 3: records the directive syntax decision, renames `extern include` to `extern include_path`, and sets the provider order (§5, §9.1).
-Implementation status (2026-11-04): Phase 1 is implemented (P1, P7, the P8 build codes `QK-FFI-001`–`003`, `libqffi_test`, `std/blas`) except P2, which moved to Phase 2. `extern source` currently reports `QK-PARSE-001` saying it isn't supported yet. §2 describes the state before Phase 1.
-Canonical for native interop (`extern` declarations, linking, handles); it replaces `native_modules_design.md`, which was removed on 2026-11-10.
-Related: `architecture.md` §1.7 and §7, `semantics.md` §10.8, `tables_v0_1_spec.md`
+Status: Phase 1 implemented 2026-11-04 (native library directives, CLI search paths, int→float widening at the boundary, build diagnostics `QK-FFI-001`–`003`, `libqffi_test`, `std/blas`). Since then: function values cross the boundary as `QClosure*` (2026-11-12), and native code is held to the element-type and `null` rules (2026-11-13). Not implemented: separately compiled glue (P2; `extern source` is a parse error), extension handles (P3, `QK-FFI-004`), `qext` result helpers (P4), the Arrow bridge (P5), tables from native code (P6), and the SQLite and DuckDB providers. The table decisions of 2026-11-13 (`tables_v0_1_spec.md`) put the native eager table engine first and make DuckDB a later, optional provider (D1); P5 and P6 follow that spec (§4).
+Last Updated: 2026-11-13
+Canonical for native interop: `extern` declarations, linking, the `qext` API, handles. Related: `semantics.md` §10.8 (language summary), `architecture.md` §7–8 (pipeline and resource registry), `tables_v0_1_spec.md`.
+
+## Contents
+
+- [1. Summary](#1-summary)
+- [2. The Current Interface](#2-the-current-interface)
+  - [2.1 Declarations](#21-declarations)
+  - [2.2 Type mapping and checks](#22-type-mapping-and-checks)
+  - [2.3 Callbacks](#23-callbacks)
+  - [2.4 The qext API](#24-the-qext-api)
+  - [2.5 Rules for glue code](#25-rules-for-glue-code)
+  - [2.6 Native libraries](#26-native-libraries)
+  - [2.7 Build diagnostics](#27-build-diagnostics)
+  - [2.8 Resource handles](#28-resource-handles)
+- [3. Key Decision: One Mechanism](#3-key-decision-one-mechanism)
+- [4. Planned Proposals](#4-planned-proposals)
+  - [P2. Separately compiled glue sources](#p2-separately-compiled-glue-sources)
+  - [P3. Extension handles](#p3-extension-handles)
+  - [P4. Results from native code](#p4-results-from-native-code)
+  - [P5. Arrow C Data Interface bridge](#p5-arrow-c-data-interface-bridge)
+  - [P6. Tables from native code](#p6-tables-from-native-code)
+- [5. Providers](#5-providers)
+  - [5.1 Order](#51-order)
+  - [5.2 Test library: libqffi_test](#52-test-library-libqffi_test)
+  - [5.3 CBLAS: std/blas](#53-cblas-stdblas)
+  - [5.4 SQLite: std/sqlite (planned)](#54-sqlite-stdsqlite-planned)
+- [6. DuckDB (planned)](#6-duckdb-planned)
+- [7. Rollout](#7-rollout)
+- [8. Decisions](#8-decisions)
+  - [8.1 Decided](#81-decided)
+  - [8.2 Open](#82-open)
+- [9. Security](#9-security)
 
 ## 1. Summary
 
-Quark can already call native C++ through `extern` (the Quark Extensions Interface, QEI). What it cannot do is use a native *library*: there is no way to link one, no way for native code to hand Quark a long-lived object safely, and no fast way to move bulk data across the boundary.
+Quark calls native C and C++ code through one mechanism, `extern` (the Quark Extensions Interface, QEI): a C++ glue header is `#include`d into the generated program, and `extern fn` binds a Quark name to a C++ function in it. One-line directives link native libraries and add include paths. The stdlib is built on the same path (`std/io`, `std/fmt`, `std/sys`, `std/time`, `std/random`, `std/csv`, `std/blas`).
 
-This revision drops the separate `ffi lib` mechanism proposed in the March draft and instead extends `extern` with the missing pieces:
+Still to come: separately compiled glue, typed handles with finalizers for library objects, result helpers, an Arrow C Data Interface bridge, and tables built by native code. They are added in the order the providers need them: SQLite, then DuckDB (§5).
 
-1. **Native dependencies**: `extern link`, `extern include_path` and `extern source` directives, plus library search flags, so a Quark program can link a library such as `libopenblas` or `libduckdb`.
-2. **Extension handles**: extensions define their own resource kinds (`duckdb.connection`, ...) on top of the existing resource registry, with GC finalizers as a safety net.
-3. **Results from native code**: `ok`/`err` helpers so native calls report failures as Quark results instead of aborting.
-4. **Bulk data**: an Arrow C Data Interface bridge for Quark vectors (which already use the Arrow layout), and tables whose schema is built at runtime.
+## 2. The Current Interface
 
-DuckDB is the target provider: it exercises every one of these pieces, and its columnar results map directly onto Quark vectors. Because it needs nearly everything at once, it is not the first library linked. Providers are added in order of difficulty: a test library built by the test suite, then CBLAS, then SQLite, then DuckDB (§5).
-
-## 2. Current State
-
-### 2.1 What exists
-
-| Piece | Where | Notes |
-|---|---|---|
-| `extern 'x.hpp'` | parser → `ExternSourceNode`; loader resolves the path; codegen emits `#include` | Header only. Path resolves relative to the `.qrk` file or `std/`. |
-| `extern fn name(params) T as 'sym'` | `types/analyzer_modules.go` `analyzeExternFn` | Free functions and `type.method` methods. Registers a `CallPlan` with `DispatchExtern`. |
-| Type mapping | `quarkTypeToNativeCType` | `int`→`int64_t`, `float`→`double`, `bool`→`bool`, `str`→`const char*`, `list`/`dict`/`vec`→`QList*`/`QDict*`/`QVector*`, `fn`→`QClosure*`, anything else→`QValue`. |
-| Marshalling | `codegen.adaptArgForExtern` / `wrapExternReturn` | Guarded unboxing (`q_as_int`, ...) at call sites; returns boxed back. Thunks make free externs first-class. |
-| Callbacks | `fn` annotation (`types.TypeFn`) | An `fn` parameter is a `QClosure*`; glue calls it with `qext::call` (argument count checked, defaults filled, via the closure's `QFnInfo`) and boxes it with `qext::box`. Tested in `smoke_extern.qrk` and `TestNativeCallback_Arity`. C function-pointer callbacks (a `void*` userdata trampoline for C APIs such as `qsort`) are not supported. |
-| Extension author API | `runtime/include/quark/ext/api.hpp` (`qext::`) | Boxing, unboxing, vector buffer views, dict helpers, `qext::call`, `qext::panic`. |
-| Resource handles | `runtime/include/quark/types/resource.hpp` | Generational slot registry. `resource` is the type annotation for every handle. Used only by file I/O (`std/io`). |
-| Vector layout | `runtime/include/quark/types/vector.hpp` | Arrow-compatible since 2026-10-06: contiguous f64/i64, bit-packed bool, int32-offset str, Arrow validity bitmap, 64-byte aligned, immutable. |
-| Build | `driver/` + `toolchain/` (2026-10-07) | Front end in one place; separate `Compile` and `Link` steps; cached precompiled runtime header. |
-
-The stdlib already uses this path: `std/fmt.qrk` declares externs against `fmt.hpp` and wraps them in a `module fmt`.
-
-### 2.2 Gaps
-
-| # | Gap | Consequence |
-|---|---|---|
-| G1 | No way to declare a native library dependency. The link line is fixed: GC, `-pthread`, `-ldl`, `-lm`. | Only header-only C++ can be used. |
-| G2 | No way to add include or library search paths. | Even a header-only wrapper around a system library can't find its headers outside the default paths. |
-| G3 | Glue code must be header-only and is recompiled into every program. | Large glue layers slow down every build. |
-| G4 | Resource kinds are a hardcoded enum (`QRES_KIND_FILE`). | Extensions cannot create typed handles; they would have to smuggle pointers through `int` or `any`. |
-| G5 | `QRES_FLAG_FINALIZABLE` exists but nothing registers a finalizer. | A leaked handle leaks its native object. |
-| G6 | Registry payloads live in a `std::vector` the GC does not scan, and `QResourceHandle` is allocated atomic. | A handle cannot keep a parent object alive (a connection cannot keep its database alive). |
-| G7 | No `qext` helpers to build `ok`/`err` results. | Native failures are reported with `qext::panic`, which exits the program. |
-| G8 | No Arrow C Data Interface export or import. | The Arrow-compatible layout can't be shared with Arrow-speaking libraries yet. |
-| G9 | `QTable` requires a compile-time `QStructDef`. | Native code can't return a table whose columns are known only at runtime (any SQL query). |
-| G10 | `q_as_float` rejects `int`. | The March draft's marshalling matrix (int widens to float) is not implemented; `halve(7)` fails at runtime. |
-
-## 3. Key Decision: One Mechanism
-
-The March draft proposed `ffi lib 'name' as m:` blocks that bind C symbols directly, next to QEI's header-based `extern`. This revision keeps only `extern`.
-
-Reasons:
-
-1. **Quark already compiles to C++.** A glue header compiled into the same program is a stable boundary: it is checked by the C++ compiler, it can use any C or C++ API, and it costs nothing at runtime.
-2. **Real C APIs need glue anyway.** DuckDB's API uses out-parameters (`duckdb_open(path, &db)`), status enums, opaque structs, and caller-freed results. None of these can be expressed with Quark parameter types, so a direct-binding layer would still need hand-written wrappers.
-3. **Two mechanisms would duplicate everything**: two parsers, two registries, two marshalling paths, two sets of diagnostics.
-4. **Calling plain C functions still works.** When a C function's signature only uses `int64_t`, `double`, `bool` and `const char*`, a one-line glue header that includes the library header lets `extern fn` call it directly.
-
-Kept from the March draft: the type surface and marshalling matrix (§6), the ownership contract (§7), the error contract (§8), the performance model, and the requirement to fail fast with actionable diagnostics when a library can't be found.
-
-## 4. Proposals
-
-Each proposal lists its syntax or API, then the compiler and runtime changes.
-
-### P1. Native dependency directives (fixes G1, G2)
-
-Decided 2026-11-04: one directive per line, no grouped block (§9.1, D1).
+### 2.1 Declarations
 
 ```quark
-extern 'blas_glue.hpp'          // existing: glue header, #included
-extern link 'openblas'          // new: link libopenblas
-extern include_path 'include'   // new: add an include search path, relative to this file
+extern 'math_glue.hpp'                               // #include the glue header
+extern fn fast_sqrt(x: float) float as 'my_sqrt'     // Quark name -> C++ symbol
+extern fn list.shuffle2(seed: int) list as 'q_shuf'  // a method on list
 ```
 
-- `link`, `include_path` and `source` (P2) are contextual words after `extern`, so there are no new reserved keywords. The existing `extern '<path>'` and `extern fn` forms keep their meaning.
-- The directive is `include_path`, not `include`, because `extern '<path>'` already `#include`s a header. `extern include 'duckdb.h'` would read as if it did the same (§9.1, D2).
-- `extern link 'name'` means `-lname`. The library is searched for in the `--lib-path` directories, then the `QUARK_LIB_PATH` entries, then the linker's defaults (`LIBRARY_PATH`, then clang's search path from `clang++ -print-search-dirs`; on macOS also the SDK's `usr/lib`).
-- Paths in directives are relative to the declaring file and point at files shipped with the module. Where a library is installed on a given machine belongs in `--lib-path`/`--include-path` or the environment variables, never in `.qrk` source. For that reason there is no directive for library search paths.
-- Directives may appear in any file, including stdlib modules, but only at the top level of the file: inside a `module` block or any other block they are reported as `QK-LOAD-001`. The loader collects them across all imported files and removes duplicates.
-- Link order: a module's libraries come before those of the modules it imports. When a library is requested more than once, its last position is kept, so it stays after everything that needs it. This matters for static libraries.
-- Reserved: words after the string (for example `extern link 'duckdb' static`) are reserved for per-library options. v0.1 defines none and reports `QK-PARSE-001` for anything after the string.
-- Each `extern link` becomes one library record internally (`loader.NativeLib{Name, File, Line, Column}`), not a bare flag string. A grouped block form or per-library options (an `Options` field) can then be added later without changing the driver or toolchain.
+- `extern '<path>'` includes a header, resolved relative to the declaring `.qrk` file, or in the stdlib for `std/...`. Text after the string is a parse error.
+- `extern fn name(params) [ReturnType] as 'symbol'` binds `name` to the C++ function `symbol`. `as 'symbol'` is required. An unannotated parameter or return is `any` (`QValue`).
+- `extern fn type.name(...)` adds a method to `str`, `list`, `dict` or `vec`; the receiver is passed as the first C++ argument. A prelude method can't be redefined.
+- An `extern fn` can be declared at the top level of a file, in a module body or in a function body. It is a definition of its file like any other (`modules_v0_2_spec.md`): reached as `file::name` from an importer, file-scoped, and an error to define twice in one file. Free extern fns are first-class values (`g = io::exists`, `x | kid()`): codegen emits a `QValue` thunk for each.
 
-CLI additions for `run` and `build`, all repeatable:
+### 2.2 Type mapping and checks
+
+| Annotation | C++ type | Argument from a value of unknown type |
+|---|---|---|
+| `int` | `int64_t` | checked (`q_as_int`) |
+| `float` | `double` | checked; an `int` is widened |
+| `bool` | `bool` | checked |
+| `str` | `const char*` | checked |
+| `list`, `dict`, `vec` | `QList*`, `QDict*`, `QVector*` | checked; `null` is an error |
+| `fn` | `QClosure*` | checked; `null` is an error |
+| `any`, `result`, `resource`, struct names, unannotated | `QValue` | passed boxed |
+
+- Arguments of known type are checked at compile time like any call (`argument 1 of 'glen' expects list[any], got null`), including int→float widening. Arguments of unknown type go through the `q_as_*` helpers, which fail with `expected int, got str`. A `float` for an `int` parameter is an error, never truncated.
+- Returns use the same mapping and are boxed back. A native function declared to return `str`, `list`, `dict`, `vec` or `fn` must not return a null pointer: that is a runtime error, `a native function declared to return list returned a null pointer`. Return `qext::null_val()` from a `QValue` function for `null`.
+- A native function's value is trusted to have its declared type, so glue must return values of that type (and lists whose elements match their element type, §2.5).
+
+### 2.3 Callbacks
+
+An `fn` parameter arrives as `QClosure*`. Glue calls it with `qext::call(f, args...)` (zero to three `QValue` arguments, result `QValue`) and returns or stores it with `qext::box(f)`. Any Quark function value can be passed: a lambda, a capturing closure, a declared function, an `extern fn` or a module member. Each closure carries a `QFnInfo` (`types/closure.hpp`), so `qext::call` checks the argument count and fills defaults like a call in Quark: a callback called with the wrong number of arguments is a runtime error (`function 'h' expects 2 arguments but got 1`), never a missing argument. Calling a null closure panics.
+
+C function-pointer callbacks (a `void*` userdata trampoline for APIs such as `qsort`) are not supported.
+
+### 2.4 The qext API
+
+`runtime/include/quark/ext/api.hpp`, namespace `qext`:
+
+| Category | Functions |
+|---|---|
+| Memory | `malloc`, `malloc_atomic`, `strdup` (GC-allocated) |
+| Boxing | `box(int64_t)`, `box(double)`, `box(bool)`, `box(const char*)`, `box_own(char*)`, `box(QVector*)`, `box(QList*)`, `box(QDict*)`, `box(QClosure*)`, `null_val()`. Boxing a null pointer is an error |
+| Unboxing | `as_int`, `as_float`, `as_bool`, `as_str`, `as_vector`, `as_list`, `as_dict`, `as_closure` (checked; panic on a wrong type) |
+| Vectors | `as_f64`, `as_i64` (zero-copy views), `as_f64_mut`, `as_i64_mut` (only on vectors the glue just created), `bool_at`, `set_bool`, `str_at`, `is_null_at`, `set_null`, `validity_bitmap`, `vec_size`, `vec_has_nulls`, `vec_null_count`, `vec_dtype`, `vec_dtype_name`, `new_f64`, `new_i64`, `new_bool_vec` |
+| Lists | `new_list()` (holds any value), `list_push` (checks the list's element type) |
+| Dicts | `dict_get`, `dict_set` (checks the dict's value type), `dict_size`, `dict_has` |
+| Calls | `call(fn, ...)`, 0–3 arguments |
+| Errors | `panic(msg)`, `panicf(fmt, ...)`: a runtime error at the Quark call site |
+
+Results are built with the runtime constructors `qv_ok(v)` / `qv_err(v)` for now (P4 adds `qext` wrappers).
+
+### 2.5 Rules for glue code
+
+- **Element types.** Every list and dict carries its element type (`architecture.md` §12). Add to lists with `qext::list_push` and to dicts with `qext::dict_set`, which check it. `push_back` or writing `d->entries` directly skips the check, and a wrong element would be read with the wrong type (changelog, Known issues).
+- **Vectors are immutable** once returned to Quark. Write only into vectors the glue has just created.
+- **GC.** Memory reachable from Quark values must be GC memory (`qext::malloc`, or `q_allocator` for C++ containers stored in runtime data). The collector doesn't scan `malloc` memory and never runs destructors.
+- **Boxing ints:** `qext::box(1)` is ambiguous in C++ (between the `int64_t`, `double` and `bool` overloads); pass an `int64_t`.
+- **C++ symbols are global.** Two glue headers defining the same C++ function clash in C++, whichever Quark files include them.
+- **Failures.** A programming error (wrong vector type, mismatched lengths) uses `qext::panic`. Failures caused by input or the environment should return `result` (P4).
+
+### 2.6 Native libraries
+
+Decided 2026-11-04: one directive per line, no grouped block (§8.1, D1).
+
+```quark
+extern 'blas_glue.hpp'          // glue header, #included
+extern link 'openblas'          // link libopenblas
+extern include_path 'include'   // add an include search path, relative to this file
+```
+
+- `link` and `include_path` are contextual words after `extern`, not reserved keywords. The directive is `include_path`, not `include`, because `extern '<path>'` already includes a header (D2).
+- Directives must be at the top level of a file (inside a block or module: `QK-LOAD-001`). They may appear in any file, including stdlib modules; the loader collects them across all imported files into `loader.NativeDeps{IncludeDirs, Libs, Headers}` (one `NativeLib{Name, File, Line, Column}` record per `extern link`), removes duplicates, and the driver stores them in `Unit.Native`.
+- Paths in directives are relative to the declaring file and point at files shipped with the module. Where a library is installed on a given machine belongs on the command line or in the environment, never in `.qrk` source, so there is no directive for library search paths.
+- Link order: a module's libraries come before those of the modules it imports. A library requested more than once keeps its last position, so it stays after everything that needs it (this matters for static libraries).
+- Words after the string (`extern link 'duckdb' static`) are reserved for per-library options. None exist; anything there is `QK-PARSE-001`.
+
+CLI flags for `run` and `build`, all repeatable:
 
 | Flag | Effect |
 |---|---|
-| `--lib-path <dir>` | `-L<dir>`, and `-Wl,-rpath,<dir>` for shared libraries so the binary runs without `LD_LIBRARY_PATH` |
+| `--lib-path <dir>` | `-L<dir>`, plus `-Wl,-rpath,<dir>` for shared libraries, so the binary runs without `LD_LIBRARY_PATH` |
 | `--include-path <dir>` | `-I<dir>` |
-| `--link-arg <arg>` | Passed to the linker as-is (escape hatch) |
+| `--link-arg <arg>` | Passed to the linker as is |
 
-Environment: `QUARK_LIB_PATH` and `QUARK_INCLUDE_PATH`, using the OS path-list separator.
+Environment: `QUARK_LIB_PATH` and `QUARK_INCLUDE_PATH`, OS path-list separated.
 
-**Fail fast.** Before linking, the toolchain looks for each `extern link` library in the search directories (`lib<name>.so`, `.dylib`, `.a`; `<name>.lib` on Windows). A missing library produces a diagnostic that names the library, the `.qrk` file and line that requested it, and the directories searched. With `--debug`, the resolved file for each library is printed.
+**Fail fast.** Before linking, the toolchain (`toolchain/native.go`) looks for each library in the `--lib-path` and `QUARK_LIB_PATH` directories, then in the linker's defaults (`LIBRARY_PATH`, then `clang++ -print-search-dirs`), as `lib<name>.so` / `.a` (`.dylib`, `.tbd` on macOS; `<name>.lib` on Windows). A missing library is `QK-FFI-002` at the `.qrk` line that requested it, with notes listing the file names tried and the directories searched. `--debug` prints the file found for each library.
 
-Compiler changes:
+### 2.7 Build diagnostics
 
-| Package | Change |
-|---|---|
-| `ast` / `parser` | Rename the existing `ExternSourceNode` (the `extern '<path>'` header form) to `ExternHeaderNode`, so "source" means only P2's `.cpp` files. Parse `extern link` and `extern include_path` into `ExternLinkNode` and `ExternIncludePathNode`. `extern source` (`ExternCppSourceNode`) comes with P2; until then it is reported as `QK-PARSE-001`. |
-| `loader` | Resolve `extern include_path` paths (and P2 `extern source` paths) to absolute paths, like `extern '<path>'` today. |
-| `loader` / `driver` | The loader collects the directives into `loader.NativeDeps{IncludeDirs, Libs []NativeLib, Headers}`, keeping the source location of each; the driver stores it in `Unit.Native`. P2 will add a `Sources` field. |
-| `toolchain` | Add `Options.IncludeDirs`, `LibDirs`, `Libs`, `LinkArgs`, and `GlueFiles` (the glue headers, for `QK-FFI-003`). Add library resolution with diagnostics. `Link` emits `-L`, `-l` and rpath arguments. `Options.Sources` comes with P2. |
-| `main.go` | Register the new flags on the shared `buildFlags`. |
+| Code | Stage | Meaning |
+|---|---|---|
+| `QK-FFI-001` | load | `extern include_path` directory not found |
+| `QK-FFI-002` | build | `extern link` library not found |
+| `QK-FFI-003` | build | C++ error inside a glue header, reported at the header's line |
 
-Codegen does not change: `#include` emission already works, and linking is the toolchain's job.
+For `QK-FFI-002` and `QK-FFI-003`, `quark run` prints only the diagnostic, not the generated C++. Other C++ compile or link errors print clang's output and a short note (check `extern fn` symbols and headers, otherwise it's a compiler bug; rerun with `--debug` to keep the C++).
 
-### P2. Separately compiled glue sources (fixes G3)
+### 2.8 Resource handles
+
+`runtime/include/quark/types/resource.hpp`: a generational slot registry. Every handle has the single Quark type `resource`; its kind is runtime-only. The only kind is `file` (`std/io`). The registry's slot vectors use `q_allocator`, so payloads may be GC memory and are kept alive by the registry. Handles themselves are allocated atomic (they can't reference other objects), and nothing registers finalizers yet. P3 extends this for library objects.
+
+## 3. Key Decision: One Mechanism
+
+An earlier draft (2026-03-15) proposed `ffi lib 'name' as m:` blocks that bind C symbols directly, next to `extern`. Only `extern` was kept:
+
+1. **Quark compiles to C++.** A glue header compiled into the same program is a stable boundary: the C++ compiler checks it, it can use any C or C++ API, and it costs nothing at runtime.
+2. **Real C APIs need glue anyway.** Out-parameters (`duckdb_open(path, &db)`), status enums, opaque structs and caller-freed results can't be expressed with Quark parameter types.
+3. **Two mechanisms would duplicate** the parser, registries, marshalling and diagnostics.
+4. **Plain C functions still work** through a one-line glue header when their signature uses only `int64_t`, `double`, `bool` and `const char*`.
+
+## 4. Planned Proposals
+
+### P2. Separately compiled glue sources
 
 ```quark
 extern source 'duckdb_glue.cpp'
 ```
 
-- The file is compiled as its own translation unit with the same flags as the program, including the PCH. It is linked into the binary.
-- Objects are cached under `~/.cache/quark/obj/`, keyed by the source file's content, the compile flags, and the runtime header state (the same key inputs as the PCH).
-- The glue header (`extern 'duckdb_glue.hpp'`) then holds only declarations, so programs don't reparse the glue implementation on every build.
+- Compiled as its own translation unit with the program's flags (including the PCH) and linked into the binary. The glue header then holds only declarations, so programs don't reparse the implementation on every build.
+- Objects cached under `~/.cache/quark/obj/`, keyed by the source, every header it includes, the compile flags and the runtime header state. The header dependency tracking is why P2 was left out of Phase 1.
+- Today `extern source` is `QK-PARSE-001` (`extern source is not supported yet`). P2 adds `ExternCppSourceNode`, a `Sources` field in `NativeDeps` and `toolchain.Options`, and `QK-FFI-001` for a missing source.
+- Optional for small extensions; header-only glue keeps working.
 
-This step is optional for small extensions; header-only glue keeps working.
+### P3. Extension handles
 
-### P3. Extension handles (fixes G4, G5, G6)
-
-Extensions register their own resource kinds at startup:
+Extensions register their own resource kinds:
 
 ```cpp
-// in glue code
 static const uint16_t KIND_DB  = qext::define_handle_kind("duckdb.database",   close_db);
 static const uint16_t KIND_CON = qext::define_handle_kind("duckdb.connection", close_con);
 
 QValue h = qext::new_handle(KIND_CON, con_ptr, /*parent=*/db_handle);
-duckdb_connection* con = qext::handle_get<duckdb_connection>(value, KIND_CON);  // panics on wrong kind or closed handle
+duckdb_connection* con = qext::handle_get<duckdb_connection>(value, KIND_CON);  // QK-FFI-004 on wrong kind or closed handle
 qext::handle_close(value);   // runs close_con once; later use is a runtime error
 ```
 
-On the Quark side, handles are typed with the existing `resource` annotation:
-
-```quark
-extern fn duck_query(con: resource, sql: str) result as 'qduck_query'
-```
+On the Quark side, handles keep the `resource` annotation: `extern fn duck_query(con: resource, sql: str) result as 'qduck_query'`.
 
 Runtime changes in `resource.hpp`:
 
-1. **Dynamic kinds.** A kind table maps id → `{name, close_fn}`. Built-in kinds (file) keep ids below 16; extension kinds get the following ids. Error messages use the kind name: `expected duckdb.connection, got file`.
-2. **Parent references.** `QResourceHandle` gains a `QValue parent` field and is allocated with `q_malloc` (scanned) instead of `q_malloc_atomic`. A connection handle that references its database keeps the database reachable.
-3. **Finalizers.** When a handle has `QRES_FLAG_FINALIZABLE`, `new_handle` registers a Boehm finalizer that calls `close_fn` if the handle is still open when it becomes unreachable. Boehm finalizes in reachability order (an object that points to another is finalized first), so a connection is closed before its database. Explicit `close` is still the documented API; finalizers are a safety net.
-4. **Payload visibility.** Payloads are native pointers (`malloc`, or memory owned by the library) and must not point to GC memory. This is a documented rule, because the registry is not scanned by the GC.
+1. **Dynamic kinds.** A kind table maps id → `{name, close_fn}`, replacing the fixed `QResourceKind` enum. Built-in kinds keep ids below 16. Messages use the kind name: `expected duckdb.connection, got file`.
+2. **Parent references.** `QResourceHandle` gains a `QValue parent` and is allocated with `q_malloc` (scanned), so a connection keeps its database reachable.
+3. **Finalizers.** For handles with `QRES_FLAG_FINALIZABLE` (defined, unused today), `new_handle` registers a Boehm finalizer that calls `close_fn` if the handle becomes unreachable while open. Boehm finalizes in reachability order, so a connection is closed before its database. Explicit `close` stays the documented API.
+4. **Payloads of library objects** are native pointers owned by the library (`malloc` or the library's allocator). A payload that points to GC memory must be kept alive through the registry, as file payloads are.
+5. New code `QK-FFI-004` (runtime): wrong handle kind, or use of a closed handle.
 
-Analyzer: no new types. `resource` already exists; a later version can add named kinds (`resource[duckdb.connection]`) if typos in kinds turn out to matter.
-
-### P4. Results from native code (fixes G7)
+### P4. Results from native code
 
 ```cpp
 return qext::ok(qext::box(rows));
 return qext::err("duckdb: " + std::string(duckdb_result_error(&res)));   // also qext::errf(fmt, ...)
 ```
 
-- An extern fn whose return annotation is `result` returns `QValue`. This already works through `quarkTypeToNativeCType`'s fallback; P4 adds the helpers, a test, and documentation.
-- Convention for providers: anything that can fail because of input or environment (bad SQL, missing file, failed connection) returns `result`. `qext::panic` is reserved for bugs, such as a wrong handle kind or a broken invariant.
+An `extern fn` declared to return `result` already works: it returns a `QValue` built with `qv_ok`/`qv_err`. P4 adds the `qext` helpers and the convention for providers: anything that can fail because of input or the environment (bad SQL, a missing file, a failed connection) returns `result`; `qext::panic` is for bugs, such as a wrong handle kind or a broken invariant.
 
-### P5. Arrow C Data Interface bridge (fixes G8)
+### P5. Arrow C Data Interface bridge
 
-New header `runtime/include/quark/ext/arrow.hpp`:
+New header `runtime/include/quark/ext/arrow.hpp`. Vectors already use the Arrow layout for the types Quark has (float64 `g`, int64 `l`, boolean `b`, utf8 `u` with int32 offsets; validity bitmaps LSB first, 64-byte aligned, offset 0, immutable; `tables_v0_1_spec.md` §11).
 
-- **ABI structs.** Vendor `struct ArrowSchema` and `struct ArrowArray` as defined by the Arrow spec. The spec intends these definitions to be copied into projects, with `ARROW_C_DATA_INTERFACE` guards so they coexist with Arrow's or DuckDB's copy.
-- **Export, zero-copy.** `qext::export_vector(const QVector*, ArrowArray*, ArrowSchema*)`. Quark vectors are immutable and their buffers are already in Arrow layout (offset 0, 64-byte aligned), so export just points at them. The array's `private_data` holds an uncollectable GC root to the vector, and `release` frees that root. Boehm never moves objects, so other threads can safely read the buffers until `release` is called.
-- **Import, copying.** `qext::import_vector(const ArrowArray*, const ArrowSchema*) -> QVector*` for formats `g`, `l`, `b`, `u`, plus `i`/`s`/`c` widened to i64 and `f` widened to f64. It honors the Arrow `offset` field and validity bitmaps. Copying is the v0.1 choice because Quark vectors are single contiguous buffers, while producers like DuckDB return many small arrays.
-- **Tables.** `export_table` / `import_table` map a Quark table to and from an Arrow struct array whose children are the columns (needs P6 for import).
+- **ABI structs.** Vendor `struct ArrowSchema` and `struct ArrowArray` from the Arrow spec, with `ARROW_C_DATA_INTERFACE` guards so they coexist with Arrow's or DuckDB's copy.
+- **Export, zero-copy.** `qext::export_vector(const QVector*, ArrowArray*, ArrowSchema*)` points at the vector's buffers. `private_data` holds an uncollectable GC root to the vector, and `release` frees it, so the buffers stay alive until the consumer releases them. Boehm never moves objects.
+- **Import, copying.** `qext::import_vector(const ArrowArray*, const ArrowSchema*) -> QVector*` for `g`, `l`, `b`, `u`, plus `i`/`s`/`c` widened to i64 and `f` widened to f64, honoring `offset` and validity bitmaps. Copying is the v0.1 choice because Quark vectors are single contiguous buffers while producers like DuckDB return many small arrays. Zero-copy import (vectors wrapping foreign buffers with a release callback) waits until profiling shows the copy matters.
+- **Tables** map to an Arrow struct array (`+s`) whose children are the columns, with no struct-level nulls (`export_table`, `import_table`; import needs P6).
 
-Zero-copy *import* needs vectors that can wrap foreign buffers, with an owner and a release callback. That's deferred until profiling shows the import copy matters.
+Conformance (tables §11):
+- **Padding.** Buffers are aligned but sized exactly. The C Data Interface doesn't require padding; writing Arrow IPC or Parquet must pad while serializing.
+- **UTF-8.** Arrow `utf8` requires valid UTF-8. The CSV reader is to validate str columns (tables §9, prerequisite 4), every other path that builds str vectors from native bytes must validate too, and import must check.
+- **Large strings.** int32 offsets cap a str vector at 2 GiB. Importing `U` (`large_utf8`) is a clear error, or a checked conversion when the data fits.
+- **Proof.** P5 lands with a round-trip test through a real Arrow implementation (pyarrow or the Arrow C library, skipped when absent, like `TestStdBlas`). Today conformance is checked byte by byte (`TestVectorArrowLayout`).
 
-Conformance caveats to handle in P5 (recorded 2026-11-13 in `tables_v0_1_spec.md` R2.7):
-- **Padding.** Vector buffers are 64-byte aligned but sized exactly, not padded to 64 bytes. The C Data Interface doesn't require padding, so export can point at them as is; writing Arrow IPC or Parquet must pad while serializing.
-- **UTF-8.** Arrow `utf8` (`u`) requires valid UTF-8. Export must only ever see str vectors that are valid UTF-8: the CSV reader will validate on read (tables R2.5, prerequisite 4), and any other path that builds str vectors from native bytes must validate too. Import should check, since a producer's bad bytes would otherwise reach Quark strings.
-- **Large strings.** int32 offsets cap a str vector at 2 GiB. Import of `U` (`large_utf8`, int64 offsets) is either a clear error or a checked conversion when the data fits.
-- **Proof.** P5 lands with a round-trip test through a real Arrow implementation (pyarrow or the Arrow C library, skipped when absent, like `TestStdBlas`). Today conformance is only checked byte by byte (`TestVectorArrowLayout`).
+### P6. Tables from native code
 
-### P6. Tables with a runtime schema (fixes G9)
+A provider such as DuckDB returns tables whose columns are known only when the query runs.
 
-- Runtime: `q_struct_def_create(name, field_names, n)` builds a GC-allocated `QStructDef` at runtime. `qext::new_table(names, columns, n)` builds a `QTable` from it.
-- Analyzer: a native function returning a table is annotated with the plain `tbl` type that `tables_v0_1_spec.md` §4.3 already describes for untyped tables. Column access is checked at runtime. If the plain `tbl` annotation is not implemented yet when this phase starts, providers return a `dict` of column name → vector in the meantime (§6.3).
-
-### P7. Numeric widening at the boundary (fixes G10)
-
-`q_as_float` accepts `int` and converts it, as the marshalling matrix requires. Narrowing (`float` → `int`) stays a runtime error. This only relaxes existing behavior; no current program changes meaning.
-
-### P8. Diagnostics and error codes
-
-New codes in `error_codes.md`:
-
-| Code | Stage | Meaning |
-|---|---|---|
-| `QK-FFI-001` | load | `extern include_path` or `extern source` path not found |
-| `QK-FFI-002` | build | `extern link` library not found (lists searched directories) |
-| `QK-FFI-003` | build | glue source failed to compile (names the glue file, not the generated C++) |
-| `QK-FFI-004` | runtime | wrong handle kind, or use of a closed handle |
-
-When a compile error is inside glue code (an `extern` header or `extern source` file), report `QK-FFI-003` naming that file and skip the generated-C++ dump. Before Phase 1, clang's message pointed at the right line in the glue header, but `quark run` then printed the entire generated C++ underneath it, which buried the real error. Phase 1 implements this for glue headers: for `QK-FFI-002` and `QK-FFI-003`, `quark run` prints only the diagnostic (`reportBuildError` in `main.go`). Other C++ compile or link errors print clang's output and a short note (check `extern fn` symbols and headers, otherwise it's a compiler bug; rerun with `--debug` to keep the C++), not the generated program.
+- **Runtime.** A table is a `QTable` whose `QStructDef` names its columns (`table/engine.hpp`). The CSV reader already builds a GC-allocated `QStructDef` at runtime for a file read without a schema (`table/csv.hpp`). P6 exposes the same to glue: `qext::new_table(names, columns, n)`.
+- **Typing** follows the tables spec. A native function returning a table is annotated `tbl`. Such a table has no row struct the compiler knows, so it can be printed, rendered with `fmt::table` and written, but a query on it is a compile error until runtime-checked queries arrive with the inference extension (D11, tables §10). Whether a native table can be given a row struct with `t: tbl[Employee] = ...`, checked against the struct at runtime the way `csv::read_file` checks a file, is open (§8.2).
+- P6 starts after the `tbl` type exists in the compiler (tables §9).
 
 ## 5. Providers
 
 ### 5.1 Order
 
-DuckDB is the target, but it is not the first library linked. It needs nearly every proposal at once, so a failure there wouldn't say which piece is wrong. Providers are added in order of difficulty, each proving one more set of proposals (§9.1, D3):
+Providers are added in order of difficulty, each proving one more set of proposals (D3):
 
-| Order | Provider | Proves | Phase |
-|---|---|---|---|
-| 1 | `libqffi_test`, built by the test suite (§5.2) | P1: linking, search paths, rpath, link order, `QK-FFI-001`/`002`; P7 | 1 |
-| 2 | CBLAS via OpenBLAS, `std/blas` (§5.3) | P1 against a real system library; native code reading Quark vector buffers without copying | 1 |
-| 3 | SQLite, `std/sqlite` (§5.4) | P3 handles with parents and finalizers; P4 results; building columns from native results | 2 |
-| 4 | DuckDB, `std/duckdb` (§6) | Chunked columnar results and the type matrix; later P5 and P6 | 3+ |
+| Order | Provider | Proves | Phase | State |
+|---|---|---|---|---|
+| 1 | `libqffi_test`, built by the test suite (§5.2) | Linking, search paths, rpath, link order, `QK-FFI-001`/`002`, int→float widening | 1 | Done 2026-11-04 |
+| 2 | CBLAS via OpenBLAS, `std/blas` (§5.3) | A real system library; native code reading vector buffers without copying | 1 | Done 2026-11-04 |
+| 3 | SQLite, `std/sqlite` (§5.4) | P3 handles with parents and finalizers; P4 results; building columns from native results | 2 | Planned |
+| 4 | DuckDB, `std/duckdb` (§6) | Chunked columnar results and the type matrix; then P5 and P6 | 3+ | Planned, after the native tables |
 
-### 5.2 Test library: `libqffi_test`
+### 5.2 Test library: libqffi_test
 
-- Lives in `src/testfiles/ffi/`: a small C source plus a glue header. The integration test builds it with clang into a temporary directory and compiles Quark programs against it with `--lib-path`.
-- It has no external dependency, so it runs wherever clang++ is available, including CI.
-- Cases:
-  - Plain functions over `int64_t`, `double` and `const char*`, called through a one-line glue header.
-  - Shared linking with rpath: the binary runs without `LD_LIBRARY_PATH`.
-  - Static linking and link order: `libqffi_a` calls into `libqffi_b`, which is built static-only, and the two are declared in different modules.
-  - The same `extern link` in two modules is linked once.
-  - `extern include_path` resolves relative to the declaring file.
-  - Errors: a missing library gives `QK-FFI-002` listing the searched directories; a missing include path gives `QK-FFI-001`; words after a directive's string give `QK-PARSE-001`.
-  - P7: an extern `float` parameter called with an `int` argument.
+`src/testfiles/ffi/`: small C sources (`qffi_test.c`, `qffi_a.c`, `qffi_b.c`), glue headers, and the programs `ffi_basic.qrk` and `ffi_modules.qrk` with modules `mod_a`–`mod_c`. `TestFFI_Phase1` (`integration_ffi_test.go`) builds the libraries with clang into a temporary directory and compiles the programs against them with `--lib-path`. It needs only clang++, so it runs in CI. Cases:
 
-### 5.3 CBLAS: `std/blas`
+- plain functions over `int64_t`, `double` and `const char*` through a one-line glue header;
+- shared linking with rpath (the binary runs without `LD_LIBRARY_PATH`);
+- static linking and link order: `libqffi_a` calls into the static-only `libqffi_b`, declared in different modules;
+- the same `extern link` in two modules is linked once;
+- `extern include_path` resolves relative to the declaring file;
+- errors: a missing library (`QK-FFI-002`, listing searched directories), a missing include path (`QK-FFI-001`), words after a directive's string (`QK-PARSE-001`);
+- an `int` argument to an extern `float` parameter.
 
-**Why.** BLAS is the standard native numeric library. Level-1 routines take a pointer and a length, and Quark f64 vectors are contiguous Arrow-layout buffers that `qext::as_f64` exposes without copying. This is the first demonstration that native code can run over Quark data at native speed. It has no handles, no error results and no callbacks, so it tests linking and the vector boundary and nothing else.
+Callbacks are covered by `smoke_extern.qrk` and `TestNativeCallback_Arity`; element-type checks in `qext::list_push`/`dict_set` and native null returns by `TestElementTypes_ModulesAndNative`.
 
-**Packaging.**
+### 5.3 CBLAS: std/blas
+
+BLAS level-1 routines take a pointer and a length, and f64 vectors are contiguous buffers that `qext::as_f64` exposes without copying, so native code runs over Quark data at native speed. There are no handles, results or callbacks.
 
 ```
-src/core/stdlib/blas.qrk         public module
+src/core/stdlib/blas.qrk         extern link 'openblas', extern fn bindings, module blas
 src/core/stdlib/blas_glue.hpp    header-only glue; includes cblas.h and quark/ext/api.hpp
 ```
 
-- Not vendored. The module links the system OpenBLAS with `extern link 'openblas'`.
-  - Debian/Ubuntu: `sudo apt install libopenblas-dev`. `cblas.h` lands in a default search path (for example `/usr/include/x86_64-linux-gnu/`).
-  - macOS: `brew install openblas`. Homebrew's OpenBLAS is keg-only, so pass `--lib-path "$(brew --prefix openblas)/lib"` and `--include-path "$(brew --prefix openblas)/include"`, or set the environment variables.
-- v0.1 supports OpenBLAS only. Other BLAS builds (reference `libblas`, MKL, Apple Accelerate) use different library names or need `-framework`, which needs per-library options (reserved in P1).
-- The glue is small, so it stays header-only and does not need P2.
-
-**API (v0.1).**
+- Links the system OpenBLAS (not vendored). Debian/Ubuntu: `sudo apt install libopenblas-dev`. macOS: `brew install openblas`; Homebrew's OpenBLAS is keg-only, so pass `--lib-path "$(brew --prefix openblas)/lib"` and `--include-path "$(brew --prefix openblas)/include"`, or set the environment variables.
+- OpenBLAS only. Other BLAS builds (reference `libblas`, MKL, Apple Accelerate) use other library names or need `-framework`, which needs per-library options.
 
 | Function | CBLAS routine | Returns |
 |---|---|---|
@@ -258,97 +271,82 @@ src/core/stdlib/blas_glue.hpp    header-only glue; includes cblas.h and quark/ex
 | `asum(x: vec)` | `cblas_dasum` | `float` |
 | `gemv(a: vec, rows: int, cols: int, x: vec)` | `cblas_dgemv`, row-major | new vector of length `rows` |
 
-`gemv` takes the matrix as a flat row-major f64 vector with explicit dimensions, because Quark has no matrix type. It may change when the planned tensor type exists.
+`gemv` takes the matrix as a flat row-major f64 vector with explicit dimensions, because Quark has no matrix type.
 
 ```quark
-incl 'std/blas' as blas
+incl 'std/blas'
 
 x = vec [1.0, 2.0, 3.0]
 y = vec [4.0, 5.0, 6.0]
-print(blas::dot(x, y))          // 32
-z = blas::axpy(2, x, y)           // P7 lets 2 stand for 2.0
-print(z[0])                    // 6
-print(y[0])                    // 4: inputs are never modified
+print(blas::dot(x, y))          // 32.0
+z = blas::axpy(2, x, y)         // the int 2 widens to 2.0
+print(z[0])                     // 6.0
+print(y[0])                     // 4.0: inputs are never modified
 ```
 
-**Rules.**
+Rules:
+- Inputs must be f64 vectors without nulls. An i64 vector, a vector with nulls, mismatched lengths, or `rows * cols != len(a)` is a runtime error through `qext::panic` naming the function and suggesting `astype('f64')` or `fillna(...)`.
+- Routines that write in place (`daxpy`, `dscal`) run on a fresh copy, which is returned.
+- Lengths are passed as CBLAS `int` (32-bit in common builds); a longer vector is a runtime error.
+- OpenBLAS worker threads touch only the buffers passed in and finish before the call returns, so they don't need GC registration.
 
-- Inputs must be f64 vectors without nulls. An i64 vector, a vector with nulls, mismatched lengths, or `rows * cols != len(a)` is a runtime error through `qext::panic`. The message names the function and suggests `astype('f64')` or `fillna(...)`. This matches how built-in vector arithmetic treats size mismatches. These are programming errors, not environment failures, so under P4 they do not return `result`.
-- Vectors are immutable. Routines that write their output in place (`daxpy`, `dscal`) run on a fresh copy, which is returned.
-- Lengths are passed as CBLAS `int`, which is 32-bit in common OpenBLAS builds. A vector longer than `INT_MAX` elements is a runtime error.
-- Threads: OpenBLAS may use worker threads during a call. They touch only the buffers passed in, never allocate GC memory, and finish before the call returns, so they don't need to be registered with the GC. Quark programs are single-threaded, so no collection runs during the call.
+Tests: `smoke_blas.qrk`, and `TestStdBlas`, which also runs one program per error case. Both skip when OpenBLAS isn't found.
 
-**Tests.**
+### 5.4 SQLite: std/sqlite (planned)
 
-- `smoke_blas.qrk`: each function on small vectors with known results; `axpy` and `scal` leave their inputs unchanged.
-- `TestStdBlas` (`integration_ffi_test.go`) runs `smoke_blas.qrk` and one generated program per error case (length mismatch, nulls, i64 input, bad `gemv` dimensions), each of which must fail at runtime with the expected message. Skipped when OpenBLAS isn't found, like the tests that need clang++.
-- Benchmark (not in CI): `dot` over 10M elements, against the same loop written in Quark.
+A rehearsal for DuckDB with the same API shape (`open`, `exec`, `query`, `close`), handles with parents and finalizers, and `err` results. It uses the system library (`libsqlite3-dev`); vendoring the amalgamation through `extern source` becomes possible with P2. The detailed design is written before Phase 2 starts. The main question: SQLite types each value, not each column, so `query` needs a rule for building a typed column (declared column type, first non-null value, or `err` on mixed types).
 
-### 5.4 SQLite: `std/sqlite`
+## 6. DuckDB (planned)
 
-A rehearsal for DuckDB: the same API shape as §6.3 (`open`, `exec`, `query` returning a dict of column name → vector, `close`), with handles, parent references, finalizers and `err` results. Once it works, DuckDB is mostly the chunked type conversion in §6.4.
+DuckDB is an optional provider, not the core table engine: tables are native and eager (`tables_v0_1_spec.md` D1), and DuckDB comes after them, for SQL over data larger than the native engine handles comfortably.
 
-- Uses the system library (`libsqlite3-dev` on Debian/Ubuntu). Vendoring the single-file amalgamation through `extern source` becomes possible once P2 lands.
-- The detailed design will be written before Phase 2 starts. The main question to settle there: SQLite types each value, not each column, so `query` needs a rule for building a typed column (declared column type, first non-null value, or `err` on mixed types).
+**Why DuckDB.** A stable C API (`duckdb.h`) with prebuilt `libduckdb` for Linux, macOS and Windows; columnar, chunked results that map onto Quark vectors with little more than `memcpy` for numeric columns; and it exercises P1, P3, P4, P5 and P6.
 
-## 6. DuckDB
-
-### 6.1 Why DuckDB
-
-- It has a stable C API (`duckdb.h`) and prebuilt `libduckdb` binaries for Linux, macOS and Windows.
-- Results are columnar and come in chunks, which maps onto Quark vectors with little more than `memcpy` for numeric columns.
-- It covers every proposal: linking (P1), handles with a parent relationship (P3), failure as results (P4), bulk data (P5, P6).
-- It pairs naturally with Quark's vectors and tables for analytics work.
-
-### 6.2 Packaging and build
+**Packaging.**
 
 ```
-src/core/stdlib/duckdb.qrk        public module (Quark wrapper API)
+src/core/stdlib/duckdb.qrk        module duckdb (Quark API)
 src/core/stdlib/duckdb_glue.hpp   declarations for the externs
 src/core/stdlib/duckdb_glue.cpp   implementation (P2), includes duckdb.h and quark/ext/api.hpp
 ```
 
-- **The library is not vendored.** libduckdb is tens of megabytes. Users point Quark at an install with `--lib-path`/`--include-path` or `QUARK_LIB_PATH`/`QUARK_INCLUDE_PATH`. A `scripts/fetch_duckdb.sh` downloads a pinned release (`libduckdb-<os>-<arch>.zip`) into `deps/duckdb/`. As with the GC, the toolchain also checks `deps/duckdb/` automatically.
-- **Linking.** Shared by default, with rpath set (P1). Static linking via `libduckdb_static.a` is possible but adds about 50 MB per binary; the opt-in mechanism is an open decision (§9.2).
-- **Version.** Pin one DuckDB release (1.x) and check `duckdb_library_version()` at `open` time. Fail with a clear error on a major-version mismatch.
-- `incl 'std/duckdb'` without the library installed fails with `QK-FFI-002` before linking, with a hint to run the fetch script.
+- The library is not vendored (tens of megabytes). Users point Quark at an install with `--lib-path`/`--include-path` or the environment variables. A `scripts/fetch_duckdb.sh` downloads a pinned release into `deps/duckdb/`, which the toolchain also checks. Without the library, `incl 'std/duckdb'` fails with `QK-FFI-002` and a hint to run the script.
+- Shared linking by default, with rpath. Static linking (`libduckdb_static.a`, about 50 MB per binary) is an open question (§8.2).
+- Pin one 1.x release and check `duckdb_library_version()` at `open`; a major-version mismatch is a clear error.
 
-### 6.3 Quark API (v0.1)
+**API (first version).**
 
 ```quark
 incl 'std/duckdb' as duck
 
-db = unwrap(duck.open(':memory:'))          // or a file path
-con = unwrap(duck.connect(db))
+db = unwrap(duck::open(':memory:'))          // or a file path
+con = unwrap(duck::connect(db))
 
-unwrap(duck.exec(con, "create table t as select range as i, range * 0.5 as f from range(1000000)"))
+unwrap(duck::exec(con, "create table t as select range as i, range * 0.5 as f from range(1000000)"))
 
-cols = unwrap(duck.query(con, "select i, f from t where i % 2 = 0"))
+cols = unwrap(duck::query(con, "select i, f from t where i % 2 = 0"))
 print(len(cols.i))        // 500000
-print(sum(cols.f))
 
-when duck.query(con, "select * from missing"):
+when duck::query(con, "select * from missing"):
     ok(c) -> print(c)
     err(msg) -> print(msg)   // "duckdb: Catalog Error: Table with name missing does not exist!..."
 
-duck.close(con)
-duck.close(db)
+duck::close(con)
+duck::close(db)
 ```
 
 | Function | Returns | Notes |
 |---|---|---|
 | `open(path: str)` | `result` (database handle) | `':memory:'` for in-memory |
 | `connect(db: resource)` | `result` (connection handle) | The connection keeps the database alive (P3 parent) |
-| `exec(con: resource, sql: str)` | `result` (int rows changed) | For DDL and DML |
-| `query(con: resource, sql: str)` | `result` (dict of column name → vector) | Becomes `tbl` once P6 lands |
-| `close(h: resource)` | `null` | Idempotent; works on either handle kind |
+| `exec(con: resource, sql: str)` | `result` (int rows changed) | DDL and DML |
+| `query(con: resource, sql: str)` | `result` (dict of column name → vector, or `tbl`, §8.2) | |
+| `close(h: resource)` | `null` | Idempotent; either handle kind |
 | `version()` | `str` | `duckdb_library_version()` |
 
-Later phases (§7): `query_params(con, sql, params: list)` using prepared statements and `duckdb_bind_*`; `insert(con, table_name, cols)` using the appender; `register(con, name, cols)` to query Quark vectors in place via Arrow (P5).
+Later: `query_params(con, sql, params: list)` with prepared statements, `insert(con, table_name, cols)` with the appender, and `register(con, name, t)` to query a Quark table in place through Arrow (P5).
 
-### 6.4 Result conversion
-
-`query` runs `duckdb_query`, then converts the result one chunk at a time with `duckdb_fetch_chunk`, `duckdb_data_chunk_get_vector`, `duckdb_vector_get_data` and `duckdb_vector_get_validity`. Each column builds one Quark vector.
+**Result conversion.** `query` runs `duckdb_query`, then converts one chunk at a time (`duckdb_fetch_chunk`, `duckdb_data_chunk_get_vector`, `duckdb_vector_get_data`, `duckdb_vector_get_validity`); each column becomes one vector.
 
 | DuckDB type | Quark dtype | Conversion |
 |---|---|---|
@@ -357,94 +355,56 @@ Later phases (§7): `query_params(con, sql, params: list)` using prepared statem
 | `UBIGINT` | i64 | checked; values above `INT64_MAX` return `err` |
 | `DOUBLE` | f64 | `memcpy` |
 | `FLOAT` | f64 | widening loop |
-| `BOOLEAN` | bool | DuckDB uses one byte per value; packed into bits |
-| `VARCHAR` | str | `duckdb_string_t` (inlined up to 12 bytes, otherwise a pointer); appended to the offsets and bytes buffers |
-| `DECIMAL`, `HUGEINT`, `DATE`, `TIMESTAMP`, nested types | not supported | `err` naming the column and suggesting a cast, e.g. `CAST(x AS DOUBLE)` or `CAST(ts AS VARCHAR)` |
+| `BOOLEAN` | bool | one byte per value, packed into bits |
+| `VARCHAR` | str | `duckdb_string_t` (inlined up to 12 bytes, otherwise a pointer), appended to the offsets and bytes buffers |
+| `DECIMAL`, `HUGEINT`, `DATE`, `TIMESTAMP`, nested types | not supported | `err` naming the column and suggesting a cast (`CAST(x AS DOUBLE)`) |
 
-Nulls: DuckDB's validity mask is an array of `uint64_t` words, one bit per row, where a set bit means valid. A null mask pointer means every row is valid. On little-endian targets that is byte-for-byte the Arrow bitmap layout Quark uses, so a chunk whose starting row is a multiple of 8 copies its mask with `memcpy`. Other chunks use a bit-shifting copy. Chunk sizes vary (up to `duckdb_vector_size()`, usually 2048), so both paths are needed.
+Nulls: DuckDB's validity mask is `uint64_t` words, one bit per row, set = valid, and a null mask pointer means all valid. On little-endian targets that is the Arrow bitmap layout, so a chunk starting at a multiple of 8 rows copies its mask with `memcpy`; other chunks use a bit-shifting copy. Column buffers grow geometrically, since the row count isn't known up front. All copying happens on the calling thread, so DuckDB's worker threads never see GC memory.
 
-Allocation: the total row count isn't known up front, so column buffers grow geometrically, using the existing vector builders' growth policy. All copying happens on the calling thread. DuckDB's worker threads never see GC memory during a query, so they don't need to be registered with the GC.
+**Handles.**
 
-### 6.5 Handles and lifetime
-
-| Handle kind | Payload | Close | Parent |
+| Kind | Payload | Close | Parent |
 |---|---|---|---|
 | `duckdb.database` | `duckdb_database*` (malloc) | `duckdb_close` | none |
 | `duckdb.connection` | `duckdb_connection*` (malloc) | `duckdb_disconnect` | database handle |
 
-Results and data chunks never become handles. They are converted and destroyed inside the native call (`duckdb_destroy_result`, `duckdb_destroy_data_chunk`), so nothing native leaks into Quark values.
+Results and data chunks never become handles: they are converted and destroyed inside the native call.
 
-### 6.6 Tests
-
-- Integration tests are skipped when libduckdb is not found, the same way they're skipped when clang++ is missing.
-- `smoke_duckdb.qrk`: open, exec, query, close; a type-matrix query with one column per supported type; nulls in every dtype; results over 2048 rows so they span chunks; a filtered query, whose chunk boundaries aren't multiples of 8; error results for bad SQL and unsupported types; use after close (expects `QK-FFI-004`).
-- A handle finalizer test: open a connection without closing it, force a GC, and check through a debug counter in the glue that `duckdb_disconnect` ran.
-- Missing-library diagnostics are covered by the test library (§5.2), plus one case checking the fetch-script hint.
-- Benchmark (not in CI): importing a 10M-row `BIGINT` column should run close to `memcpy` speed.
+**Tests.** Skipped when libduckdb isn't found. `smoke_duckdb.qrk`: open, exec, query, close; one column per supported type; nulls in every dtype; results over 2048 rows (several chunks); a filtered query whose chunk boundaries aren't multiples of 8; error results for bad SQL and unsupported types; use after close (`QK-FFI-004`). A finalizer test (open a connection, drop it, force a GC, check a debug counter in the glue). Benchmark, not in CI: importing a 10M-row `BIGINT` column should run near `memcpy` speed.
 
 ## 7. Rollout
 
 | Phase | Contents | Done when |
 |---|---|---|
-| 1. Linking | P1, P7, P8 (build codes) | The `libqffi_test` cases pass (§5.2) and `smoke_blas.qrk` passes on Linux (§5.3). **Done 2026-11-04.** |
-| 2. Handles and results | P2, P3, P4, P8 (`QK-FFI-004`) | `std/sqlite` `open`/`exec`/`query` (dict result)/`close` pass a smoke test, including a finalizer test (§5.4) |
-| 3. DuckDB | `std/duckdb` | `open`/`connect`/`exec`/`query` (dict result)/`close` pass `smoke_duckdb.qrk` (§6.6) |
-| 4. Tables and parameters | P6, `query_params`, `insert` | `query` returns `tbl`; parameterized queries; bulk insert via the appender |
-| 5. Arrow | P5 | `register` queries a Quark table from DuckDB without copying; `import_vector` is used for Arrow-producing providers |
+| 1. Linking | Directives, CLI, widening, `QK-FFI-001`–`003` | **Done 2026-11-04** (§5.2, §5.3) |
+| 2. Handles and results | P2, P3, P4, `QK-FFI-004` | `std/sqlite` `open`/`exec`/`query`/`close` pass a smoke test, including a finalizer test |
+| 3. DuckDB | `std/duckdb` | `open`/`connect`/`exec`/`query`/`close` pass `smoke_duckdb.qrk` |
+| 4. Tables and parameters | P6, `query_params`, `insert` | `query` returns a `tbl`; parameterized queries; bulk insert |
+| 5. Arrow | P5 | `register` queries a Quark table from DuckDB without copying; `import_vector` serves Arrow-producing providers |
 
-Phase 1 is independent of DuckDB and useful on its own: any library with a C API becomes usable through a small glue header. P2 moved to Phase 2: no Phase 1 provider needs it, and caching glue objects correctly needs header dependency tracking (an object depends on every header its `.cpp` includes, not only its own content), which is more than Phase 1 should carry.
+Phase 4 depends on the `tbl` type in the compiler (`tables_v0_1_spec.md` §9).
 
-## 8. Impact on the Project
+## 8. Decisions
 
-| Area | Change | Compatibility |
-|---|---|---|
-| Lexer | None (contextual words) | — |
-| Parser / AST | `ExternLinkNode`, `ExternIncludePathNode`, `ExternCppSourceNode`; existing `ExternSourceNode` renamed `ExternHeaderNode` | Additive; the rename is internal |
-| Loader | Resolve the new path directives | Additive |
-| Analyzer | None for P1/P2. P6 adds the plain `tbl` return annotation if it doesn't exist yet. | Additive |
-| IR / codegen | None | — |
-| Driver | `Unit.Native` (collected dependencies with source locations) | Additive |
-| Toolchain | Search paths, library resolution, rpath, glue object cache | Additive; programs without directives build exactly as today |
-| CLI | `--lib-path`, `--include-path`, `--link-arg` | Additive |
-| Runtime: resources | Dynamic kinds; parent field; handle allocated scanned; finalizers | Internal. File handles keep their kind and behavior. |
-| Runtime: `ext/api.hpp` | Handle, result and table helpers | Additive |
-| Runtime: new `ext/arrow.hpp` | Arrow C Data Interface bridge | Additive |
-| Runtime: `q_as_float` | Accepts `int` | Relaxation only |
-| Stdlib | `std/blas` (needs OpenBLAS), then `std/sqlite` and `std/duckdb` (each needs its library) | Additive; programs that don't `incl` them are unaffected |
-| Docs | `semantics.md` §10.8, `architecture.md` §7–8, `error_codes.md`, `stdlib.md`. | — |
+### 8.1 Decided
 
-Existing extensions (`std/fmt`, `smoke_extern.qrk`) keep working unchanged.
+**D1. Directive syntax: one directive per line** (2026-11-04). `extern link 'x'`, `extern include_path 'dir'` and (with P2) `extern source 'x.cpp'` each stand alone, next to `extern '<path>'`. A block per library (`extern lib 'duckdb':` with entries) was rejected: it doesn't match the one-line header form, it is harder to parse, it adds a second way to include a header, and it invites `extern fn` declarations inside it, which would bring back the `ffi lib` design (§3). Flat directives work at scale in Nim (`{.passL.}`, `{.compile.}`) and cgo (`#cgo LDFLAGS:`). Per-library records internally and the reserved words after the string keep a block form or per-library options possible later. Revisit when static linking, platform-specific libraries (`-framework`, Windows `.lib` names) or `pkg-config` lookup are needed.
 
-## 9. Decisions
+**D2. `extern include_path`, not `extern include`** (2026-11-04): `extern '<path>'` already includes a header, so `extern include 'duckdb.h'` would be misread.
 
-### 9.1 Decided
+**D3. Provider order** (2026-11-04): `libqffi_test` → CBLAS → SQLite → DuckDB (§5.1). DuckDB needs nearly every proposal at once, so it is a poor first proof.
 
-**D1. Directive syntax: one directive per line** (2026-11-04). `extern link 'x'`, `extern include_path 'dir'` and `extern source 'x.cpp'` each stand alone, next to the existing `extern '<path>'` (P1).
+**D4. DuckDB is optional, after native tables** (2026-11-13, tables D1): the table engine is native and eager; DuckDB is a provider for later, not the backend of `tbl`.
 
-- Rejected: a block per library, such as `extern lib 'duckdb':` with `include`, `source` and `header` entries.
-- Reasons:
-  - It matches the existing one-line `extern '<path>'` form.
-  - It is the cheapest to parse: one more branch in `parseExtern`, no indented block.
-  - One fact per line keeps duplicate removal and error locations simple.
-  - v0.1 needs no per-library options.
-  - Flat directives work at scale in Nim (`{.passL.}`, `{.compile.}`) and Go's cgo (`#cgo LDFLAGS:`).
-  - A block would add a second way to include a header, and it invites `extern fn` declarations inside it, which would bring back the `ffi lib` design §3 dropped.
-- Costs accepted: nothing groups a library's pieces, and future per-library options will be words after the string.
-- Mitigations: per-library records internally, and the words after the string are reserved (P1), so a block form can still be added later.
-- Revisit when static linking, platform-specific libraries (`-framework`, Windows `.lib` names) or `pkg-config` lookup are needed.
+### 8.2 Open
 
-**D2. `extern include_path`, not `extern include`** (2026-11-04). `extern '<path>'` already `#include`s a header, so `extern include` would read the same way and be misused as `extern include 'duckdb.h'`.
+1. **Static DuckDB.** A flag (`--static-lib duckdb`), a directive option (the reserved words after the string), or later?
+2. **Fetching libduckdb.** A fetch script into `deps/duckdb/`, or a user-installed library only?
+3. **Unsupported column types.** For `DECIMAL` and temporal types: an error with a cast hint (proposed), or automatic conversion (`DECIMAL` → f64, `TIMESTAMP` → i64 microseconds) with documented precision loss? The same applies to SQLite. Once tables have a `date` type (tables §9), `DATE` maps to it.
+4. **Named handle kinds.** Plain `resource` (proposed), or `resource[duckdb.connection]` annotations?
+5. **What `query` returns.** A dict of column name → vector in phases 2 and 3, or a `tbl` from the start, since the native `tbl` type is planned before DuckDB?
+6. **Typing native tables.** Can a table from native code be given a row struct (`t: tbl[Employee] = unwrap(duck::query(...))`), checked against the struct at runtime like `csv::read_file`, so it can be queried before tables §10?
 
-**D3. Provider order** (2026-11-04): `libqffi_test` → CBLAS (`std/blas`) → SQLite (`std/sqlite`) → DuckDB (`std/duckdb`), as in §5.1. DuckDB needs nearly every proposal at once and is not a good first proof of concept. CBLAS is the first real library because it is small, widely installed, and shows Quark's main case: native code over Quark vectors without copying.
+## 9. Security
 
-### 9.2 Open
-
-1. **Static DuckDB.** Should static linking be offered through a flag (`--static-lib duckdb`) or a directive option, or left for later? A directive option would use the reserved words after the string (P1).
-2. **Fetching libduckdb.** Is a fetch script into `deps/duckdb/` acceptable, or should Quark require a user-installed library only?
-3. **Unsupported column types.** For `DECIMAL` and temporal types: return an error with a cast hint (proposed), or convert automatically (`DECIMAL` → f64, `TIMESTAMP` → i64 microseconds) and document the precision loss? The same choice applies to SQLite.
-4. **Named handle kinds.** Is plain `resource` enough for v0.1 (proposed), or should `resource[duckdb.connection]` annotations come first?
-5. **`query` before tables land.** Ship `query` returning a dict of vectors in phases 2 and 3 (proposed), or wait for P6 so the API never changes?
-
-## 10. Security
-
-Native code runs with full process privileges; Quark's runtime checks don't sandbox it. Glue code must follow the `qext` rules: no GC pointers in handle payloads (P3), no mutating vectors after they have been returned (vector immutability), and every native allocation must have exactly one owner. Third-party providers are trusted code. Documentation for `extern link` must say so.
+Native code runs with full process privileges; Quark's runtime checks don't sandbox it. Glue code must follow the `qext` rules (§2.5), never mutate a vector after returning it, and give every native allocation exactly one owner. Third-party providers are trusted code; the documentation of `extern link` must say so.

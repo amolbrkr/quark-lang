@@ -1,317 +1,240 @@
 # Quark Modules v0.2 Spec
 
-Status: Implemented 2026-11-12 (Phase A of §5.1). Step 1, fixed and hoisted `fn` declarations (rules 17-23), and step 2, the module rules (`::`, file scopes, struct identity, migration). Deviations from the text below, decided during implementation:
-- `QStructDef.name` holds the display name (`geo::Point`) instead of a separate `display_name`; identity is the `QStructDef` address, as in §5.3.
-- References to an imported file's constants are replaced by the constant's value in the loader, and the definitions are dropped, so a library's functions don't capture them.
-- Module bodies are analyzed in the file scope (their members already have unique internal names), and their declarations are hoisted together with the top level.
-- Most rule violations of §3.2-3.6 are load errors (`QK-LOAD-001`), not check errors, because the loader resolves names.
-- Mangling hygiene (§5.2, §9) is enforced after all: a user name containing `__` is a load error, since every generated name contains it.
-- The analyzer's diagnostics show internal names through `names.Table.DisplayText` applied to each message (one function, as §5.1 asks; Phase B replaces it).
-- A file's identity (rule 6) is its absolute path with symbolic links resolved.
-- Imported files are spliced into the main script's tree, where the main script's names are bare, so a local of an imported file named like a main-script name is renamed (`q<N>__name__l`) to keep rule 12.
-- Two definitions whose internal names coincide (member `_x` of `m` and member `x` of `m_`, or a main-script `module q1_a` and the file `a.qrk`) are a load error instead of a more elaborate mangling scheme.
-- A `module` nested in a main-script module is a load error, as it is in an imported file.
-Last Updated: 2026-11-12
-Scope: import unit, name scoping and qualification (`::`), function declarations, struct naming across files, and the symbol metadata the compiler carries from front end to back end. Supersedes the module and import rules in README.md ("Modules and imports"), grammar.md and semantics.md §10 once implemented.
+Status: Implemented 2026-11-12: fixed and hoisted `fn` declarations (rules 17-23) and the module rules (`::`, one scope per file, struct identity). This spec is the reference for imports, name scoping and `fn` declarations; README.md, grammar.md and semantics.md §10 summarize it. Not implemented: the items in §7.
+Last Updated: 2026-11-13
+Scope: the import unit, name scoping and qualification (`::`), `fn` declarations, struct naming across files, and how the compiler carries names from the loader to generated code.
+
+## Contents
+
+- [1. Summary](#1-summary)
+- [2. Rationale](#2-rationale)
+- [3. Rules](#3-rules)
+  - [3.1 Files and import paths](#31-files-and-import-paths)
+  - [3.2 Qualified names](#32-qualified-names)
+  - [3.3 Scopes](#33-scopes)
+  - [3.4 What an imported file may contain](#34-what-an-imported-file-may-contain)
+  - [3.5 Definitions are fixed](#35-definitions-are-fixed)
+  - [3.6 Imported names are read-only](#36-imported-names-are-read-only)
+  - [3.7 Structs](#37-structs)
+  - [3.8 Reserved names](#38-reserved-names)
+- [4. Diagnostics](#4-diagnostics)
+- [5. Implementation](#5-implementation)
+  - [5.1 Loader and the name table](#51-loader-and-the-name-table)
+  - [5.2 Internal names](#52-internal-names)
+  - [5.3 Analyzer](#53-analyzer)
+  - [5.4 Codegen and runtime](#54-codegen-and-runtime)
+  - [5.5 Interactions](#55-interactions)
+- [6. Tests](#6-tests)
+- [7. Deferred](#7-deferred)
+- [8. Decisions](#8-decisions)
 
 ## 1. Summary
 
-A **file** is the import unit and the scope boundary. Every top-level name in an imported file is reachable from the importer, always qualified with `::`: `fmt::show_vec`, `fmt::fmt_vec`, `geo::Point`. `module X:` blocks stay as named namespaces inside a file (`formats::csv::read`, `formats::json::parse`). Names are resolved per file, so two files can define the same name without affecting each other, and a library's internal calls can't be redirected by the code that imports it.
+A **file** is the import unit and the scope boundary. Every top-level name of an imported file is reachable from the importer, always qualified with `::`: `fmt::show_vec`, `fmt::fmt_vec`, `geo::Point`. `module X:` blocks are named namespaces inside a file (`formats::csv::read`). Names are resolved per file, so two files can define the same name without affecting each other, and an importer can't redirect a library's internal calls.
 
-`fn` declarations become fixed, hoisted definitions: a name can be declared once per scope and never reassigned. Variables holding functions (`g = fn(x) -> ...`) stay reassignable.
+`fn` declarations are fixed and hoisted: a name is declared once per scope and never reassigned, and every declaration of a scope exists before the scope's first statement runs. Variables holding functions (`g = fn(x) -> ...`) stay reassignable.
 
-Everything is public. There are no access modifiers. Discouraging direct use of internal names such as `fmt::fmt_vec` is left to a future documentation feature (§9).
+Everything is public; there are no access modifiers.
 
-## 2. Problems This Fixes
+## 2. Rationale
 
-Today an import splices the imported file's top-level statements into the importing program's tree, and only members of `module` blocks are renamed (`module__member`, `loader/namespace.go`). Everything else shares one global scope. Observed behavior (2026-11-11):
-
-| Situation | Result today |
-|---|---|
-| Library has top-level `fn helper`, used by its module; importer also defines `fn helper` | ~~The library's own calls run the importer's `helper`~~ Since 2026-11-12 a load error: `'helper' is already defined as a fn (lib/l.qrk:1)`. Two libraries both defining `helper` is also an error. v0.2 makes both programs valid |
-| Library and importer both assign a top-level variable | ~~One shared variable~~ Since 2026-11-12 a load error, as for functions |
-| Importer defines `fn io_open` while `std/io` declares `extern fn io_open` | ~~The importer's function is ignored~~ Since 2026-11-12 a load error: `'io_open' is already defined as an extern fn (std/io.qrk:3)`. Redefining a prelude builtin (`fn len`) is a check error; parameters and locals may shadow builtins |
-| Two libraries each contain `module utils` | `module 'utils' already defined`, even with different aliases |
-| Two files define `struct Point` | `struct 'Point' already defined`; struct names are global |
-| A struct is used from another file | No qualified type syntax (`q: geo.Point` is a parse error); literals and annotations use the bare global name (`Point { ... }`) |
-| `incl 'std/fmt' as fmt` | `fmt_vec`, `blas_dot` etc. are callable unqualified; since 2026-11-12 a user definition with the same name is a load error instead of being ignored |
-| An imported file has top-level statements (`print(...)`) | They run inside the importer's program, at the `incl` |
-| `fn f` declared twice | The second silently wins |
-| `fn f`, then `f = fn(x) -> 0` | Silently replaced; for a fully annotated `f`, the program fails to compile with a C++ error (`redefinition of 'quark_f'`) |
-| `fn a() -> b()`, `a()`, then `fn b` | Runtime failure: `b` is bound only when its line runs |
-| Runtime struct parameter check (`q_param_struct`) | Compares struct *names* (`strcmp`), so two different structs named `Point` would pass each other's check once struct names are no longer global |
-| `struct` defined inside a `module` block (observed 2026-11-12) | Not supported: struct types are registered only from a file's top level (`predeclareStructTypes`), and the error reads like a compiler bug: `internal: struct 'L' not pre-declared` (`types/analyzer_structs.go`), followed by `unknown struct type 'L'` at every use. Rule 25 makes this valid |
-| Qualified struct literal, `shapes.Sq { side: 1 }` (observed 2026-11-12) | Raw parse error: `no prefix parse function for LBRACE`. Rule 27 makes `shapes::Sq { ... }` valid; the `.` form should get a clear error pointing to `::` (§4) |
+- **No silent collisions.** When imports shared one global scope, an importer's `fn helper` replaced a library's `helper`, and the last-spliced definition won. Per-file scopes make that impossible, and every remaining clash inside a file is an error (rule 14).
+- **No hidden code at import.** Imported files contain only definitions (rule 15), so importing never runs code and there is no initialization order.
+- **Fixed functions are cheaper and checkable.** A declared function's signature never changes, so every call is checked against the real signature (call shapes), and a function that captures nothing compiles to a plain C++ function called directly.
 
 ## 3. Rules
 
 ### 3.1 Files and import paths
 
-1. A `.qrk` file name, and every directory name in an import path, must match `[a-z][a-z0-9_]*`: lowercase letters, digits and underscores, starting with a letter. `incl './lib/geo_utils'` is valid; `incl './My Lib/geo-utils'` is a load error. The rule applies to files that are imported; the main script passed to `quark run` is exempt.
-2. Import path forms are unchanged: `./` and `../` relative paths, absolute paths, and `std/` for the stdlib. The `.qrk` extension is omitted.
+1. An imported `.qrk` file name, and every directory written in a relative or `std/` import path, must match `[a-z][a-z0-9_]*`. `incl './lib/geo_utils'` is valid; `incl './My Lib/geo-utils'` is a load error. The main script passed to `quark run` or `quark build`, and the directories of an absolute import path, are exempt.
+2. Import paths are `./` and `../` relative paths, absolute paths, and `std/` for the stdlib. The `.qrk` extension is omitted.
 3. `incl 'path'` binds the file under its **stem** (last path segment): `incl 'std/fmt'` binds `fmt`, `incl './lib/geo_utils'` binds `geo_utils`.
 4. `incl 'path' as name` binds it under `name` instead.
-5. An imported file no longer has to contain a `module` block. A file of top-level definitions is a valid library.
-6. A file imported along several paths (directly and transitively) is loaded once and has one identity, keyed by its absolute path.
+5. Any file of definitions is a valid library; it doesn't need a `module` block.
+6. A file imported along several paths (directly, transitively, through a symbolic link) is loaded once and has one identity: its real path, with symbolic links resolved.
 
 ### 3.2 Qualified names
 
-7. `::` separates the parts of a qualified name. The forms are:
-   - `file::name`: a top-level name of an imported file (`fmt::fmt_vec`, `geo::Point`).
-   - `file::module::name`: a member of a `module` block in an imported file (`formats::csv::read`).
-   - `module::name`: inside the file that defines the module (`csv::read`), including same-file modules in a main script (`mathx::square`).
-8. **Primary module.** A module whose name equals its file's stem is the file's primary module. Its members can also be written `file::name`: in `std/fmt.qrk`, `fmt::show_vec` means `fmt::fmt::show_vec`. Every stdlib file is a single primary module, so stdlib calls stay two-part (`io::open`, `fmt::show_vec`, `blas::dot`). The primary module is reached through the file's binding, so `incl 'std/fmt' as f` gives `f::show_vec`.
-9. A qualified name is valid wherever a name is:
-   - a value: `f = io::exists`;
-   - a call: `io::exists(p)`;
-   - a pipe target: `p | io::exists()`;
-   - a type annotation: `p: geo::Point`;
-   - a struct literal: `geo::Point { x: 1, y: 2 }`.
-10. `.` is only for fields and methods of values. `io.exists` where `io` is an import binding is a compile error with the hint `use io::exists`; so is `X.myfn()` where `X` is a module name (`'X' is a module; use X::myfn`).
+7. `::` separates the parts of a qualified name:
+   - `file::name`: a top-level name of an imported file (`fmt::fmt_vec`, `geo::Point`);
+   - `file::module::name`: a member of a `module` block in an imported file (`formats::csv::read`);
+   - `module::name`: a module of the same file (`mathx::square`), in an imported file or the main script.
+8. **Primary module.** A module named like its file's stem is the file's primary module, and its members can also be written `file::name`: in `std/fmt.qrk`, `fmt::show_vec` means `fmt::fmt::show_vec`. Every stdlib file is one primary module, so stdlib calls are two-part (`io::open`, `fmt::show_vec`, `blas::dot`). The primary module is reached through the file's binding: `incl 'std/fmt' as f` gives `f::show_vec`.
+9. A qualified name is valid wherever a name is: a value (`f = io::exists`), a call (`io::exists(p)`), a pipe target (`p | io::exists()`), a type annotation (`p: geo::Point`), a return type, and a struct literal (`geo::Point { x: 1, y: 2 }`).
+10. `.` is only for fields and methods of values. `io.exists`, where `io` is an import binding, is an error with the hint `use io::exists`; `X.myfn()` where `X` is a module is `'X' is a module; use X::myfn`.
 11. Imports are not re-exported. If `geo.qrk` imports `std/io`, an importer of `geo` can't write `geo::io::open`.
 
 ### 3.3 Scopes
 
 12. Each file has its own scope. Inside a file, a name resolves, in order, to:
     1. a local (parameter, loop variable, `when` binding, local variable);
-    2. a member of the enclosing module, when inside a module body;
+    2. a member of the enclosing module, inside a module body;
     3. a top-level name of the file: a definition, a module name, or an import binding;
     4. the prelude.
 
     Nothing from another file is visible unqualified.
-13. Within a module body, the module's own members are written bare (`X::myfn` is also accepted there). Other modules of the same file are written `module::name`. File-level code reaches a module's members as `module::name`.
-14. Names never collide silently. Each of these is a compile error naming both definitions:
-    - a module member with the same name as a top-level name of the same file;
-    - an import binding (stem or `as` name) equal to a top-level name of the importing file, or to another import binding in it;
-    - two modules with the same name in one file.
+13. Within a module body, the module's own members are written bare (`X::myfn` is also accepted). Other modules of the same file, and file-level code, write `module::name`.
+14. Names never collide silently. Each of these is an error naming both definitions:
+    - a name defined twice at one level (two functions, a struct and a function, an `extern fn` and a function, two modules);
+    - a module member named like a top-level name of the same file;
+    - an import binding (stem or `as` name) equal to a top-level name of the importing file, or to another import binding;
+    - two definitions that would get the same internal name (§5.2), such as member `_x` of `module m` and member `x` of `module m_`.
+
+    Prelude builtins can't be redefined or assigned (`fn len`, `sum = 0`); parameters, loop variables and `when` bindings may shadow them.
 
 ### 3.4 What an imported file may contain
 
-15. A file that is imported may contain only definitions, at the top level and inside module bodies:
-    - `fn` declarations;
-    - `struct` definitions;
-    - `module` blocks;
+15. An imported file may contain only definitions, at the top level and in module bodies:
+    - `fn` declarations, `struct` definitions and `module` blocks (not nested);
     - `incl` (top level only);
-    - `extern`, `extern fn`, `extern link` and `extern include_path` (with their existing placement rules);
-    - `name = <constant expression>`: an `int`, `float`, `str` or `bool` literal, unary minus on a numeric literal, or `+ - * / %` over those (`-1`, `60 * 60`). Unlike struct field defaults, `list []` and `dict {}` are not allowed, so a library has no mutable state (§9).
+    - `extern '<header>'`, `extern fn`, `extern link` and `extern include_path` (directives at the top level only, `ffi_v0_1_spec.md` P1);
+    - `name = <constant>`: an `int`, `float`, `str` or `bool` literal, unary minus on one, or `+ - * / %` over constants (`-1`, `60 * 60`). `list []` and `dict {}` are rejected, so a library has no mutable state.
 
-    Any other statement, such as a call or `print`, is a load error naming the statement. Importing a file therefore never runs code, and there is no initialization order to define.
-16. The main script (the file passed to `quark run` or `quark build`) has no such restriction.
+    Any other statement, such as a call or `print`, is a load error naming the statement. References to an imported file's constants are replaced by the constant's value, so library functions don't capture them.
+16. The main script has no such restriction. A `module` nested in another module is an error in every file.
 
 ### 3.5 Definitions are fixed
 
-17. `fn f(...)` **declares** `f` in the current scope; it is no longer sugar for the assignment `f = fn(...)`.
-18. Declaring a name that is already declared in the same scope is a compile error (`'f' is already defined on line 3`). This applies to `fn`, `struct`, `extern fn`, module members and top-level constants alike.
-19. Assigning to a declared function name is a compile error (`'f' is a function declaration and can't be reassigned; use a variable: g = fn ...`). The same applies to `struct` and `extern fn` names, and to top-level constants of imported files.
-20. A `fn` declaration may not reuse a name visible from an enclosing scope. Parameters, loop variables and `when` bindings may shadow outer names, as today. (Restrictive on purpose; relaxing it later is backward compatible.)
-21. Variables are unchanged: `g = fn(x) -> x + 1` then `g = fn(x) -> 0` is fine. A function is still a value: it can be passed, stored, returned, and assigned to a variable. Only the name introduced by `fn` is fixed.
-22. **Hoisting.** All `fn` declarations of a scope exist before any statement of that scope runs, so calls in any order and mutual recursion work. `checkCallsBeforeDefinition` is replaced by rule 23. Variables are not hoisted: a function body can only use variables assigned above its declaration (anything else stays `undefined identifier`).
-23. **Definite assignment of captured variables.** A function that captures a variable must not be called before that variable is assigned. The analyzer rejects a call when it can see the order: a direct call, or a chain of direct calls through hoisted functions, at a point before the variable's first assignment in that scope (`'report' uses 'total', which is assigned on line 9, after this call`). A call it can't order statically (through a function value) reads the variable through a cell that starts *unassigned*, and reading it is a runtime error (`'total' is used before it is assigned`), not `null`.
+17. `fn f(...)` **declares** `f` in the current scope (a `FnDeclNode`); it is not an assignment.
+18. Declaring a name already declared in the same scope is an error (`'f' is already defined on line 3`). This applies to `fn`, `struct`, `extern fn`, module members and constants alike.
+19. Assigning to a declared function name, as a function or any other value, is an error: `'f' is a function declaration (line 1) and can't be reassigned; use a variable: g = fn ...`. The same applies to `struct` and `extern fn` names and to an imported file's constants.
+20. A nested `fn` declaration may not reuse a name visible from an enclosing scope (an outer function, variable, parameter or builtin): `'f' is already a function in an enclosing scope (line 1); choose another name`. Parameters, loop variables and `when` bindings may shadow outer names.
+21. Variables are unaffected: `g = fn(x) -> x + 1`, then `g = fn(x) -> 0`, is fine (as long as the signature stays the same, `architecture.md` §12). A function is a value: it can be passed, stored, returned and assigned to a variable. Only the name introduced by `fn` is fixed.
+22. **Hoisting.** All `fn` declarations of a scope (the file together with its module bodies, a function body, a block) exist before any statement of that scope runs, so calls work in any order and mutual recursion needs no particular order. Variables are not hoisted: a function body only sees variables assigned above its declaration; anything else is `undefined identifier`.
+23. **Definite assignment of captured variables.** A function that captures a variable must not be called before that variable is assigned. A direct call, or a chain of direct calls through declared functions or pipes, before the variable's first assignment in that scope is a compile error: `'report' uses 'total', which is assigned on line 2, after this call`. A call the analyzer can't order (through a function value) reads the variable through a cell that starts *unassigned*; reading it is a runtime error, `'total' is used before it is assigned`, never `null`.
 
 ### 3.6 Imported names are read-only
 
-24. An importer can read and call every name of an imported file, but can't assign to it: `fmt::x = 1` is a compile error. A library's top-level values are constants (rule 15), so all importers see the same value.
+24. An importer can read and call every name of an imported file, but can't assign to it: `geo::x = 1` is `'geo::x' belongs to geo.qrk and can't be assigned here`. A library can't assign its own constants either, so every importer sees the same value.
 
 ### 3.7 Structs
 
-25. A `struct` can be defined at a file's top level or inside a `module` block. A struct in an imported file is named `file::Point` or `file::module::Point`.
-26. Struct identity is the definition, not the name: `a::Point` and `b::Point` are different types at compile time and at runtime (§5.3).
-27. Inside its defining file, a struct is written bare (`Point { ... }`), or `module::Point` from outside its module.
-28. Diagnostics, `type()` and `print` show an imported struct's name qualified by its defining file's stem (`geo::Point`) and a main-script struct bare (`Point`). The runtime uses the stem, not the importer's alias, because one struct may be imported under different aliases.
+25. A `struct` can be defined at a file's top level or inside a `module` block. A struct of an imported file is `file::Point` or `file::module::Point`.
+26. Struct identity is the definition, not the name: `a::Point` and `b::Point` are different types at compile time and at runtime (§5.4).
+27. Inside its file a struct is written bare (`Point { ... }`), or `module::Point` from outside its module. `geo.Point { ... }` is a parse error that points to `::`.
+28. Diagnostics, `type()` and `print` show an imported struct qualified by its defining file's stem (`geo::Point`), a struct of a main-script module as `m::S`, and a main-script top-level struct bare (`Point`). The stem is used, not the importer's alias, because one struct may be imported under several aliases.
 
-### 3.8 Removed
+`structs_v0_1_spec.md` covers the rest of struct semantics.
 
-- **Flat imports.** `incl 'std/fmt'` no longer puts `show_vec` (or anything else) into the importer's scope; it binds `fmt`. Selective imports may come later (§9).
-- **`incl` of a same-file module** (`incl mathx as m`). Same-file modules are written `mathx::name` directly.
-- **Global module names.** Module identity is (file, module name).
-- **`.` for module access** (rule 10).
-- **The requirement that an imported file define a module** (rule 5).
+### 3.8 Reserved names
+
+A user name containing `__` is a load error (`'mathx__square': names can't contain '__', which is reserved for names the compiler generates`). Every internal name the compiler generates contains `__` (§5.2), so user code can never reach or clash with one.
 
 ## 4. Diagnostics
 
-| Error | Stage / code | Message (shape) |
+Name resolution happens in the loader, so most violations are load errors (`QK-LOAD-001`); the rules that need types or scopes of locals are check errors (`QK-CHECK-001`).
+
+| Error | Code | Message |
 |---|---|---|
-| Bad file or directory name | load, `QK-LOAD-001` | `module file name 'My Lib' must be lowercase letters, digits and underscores (e.g. my_lib)` |
-| Statement in an imported file | load, `QK-LOAD-001` | `'lib.qrk' is imported, so it can only contain definitions; line 3 is a statement (print(...))` |
-| Import binding clashes | check, `QK-CHECK-001` | `import 'geo' (line 2) conflicts with the function 'geo' defined on line 5; incl 'path' as other_name` |
-| Unknown qualified name | check, `QK-CHECK-001` | `'fmt' (std/fmt) has no 'show_vector'`, with a closest-match hint when one exists |
-| `.` on an import binding | check, `QK-CHECK-001` | `'io' is an imported file; use io::exists` |
-| `.` on a module name | check, `QK-CHECK-001` | `'X' is a module; use X::myfn` |
-| Assignment to imported name | check, `QK-CHECK-001` | `'fmt::x' belongs to std/fmt and can't be assigned here` |
-| Duplicate declaration | check, `QK-CHECK-001` | `'f' is already defined on line 3` |
-| Reassigned declaration | check, `QK-CHECK-001` | `'f' is a function declaration and can't be reassigned; use a variable: g = fn ...` |
-| Shadowing `fn` declaration | check, `QK-CHECK-001` | `'f' is already a function in an enclosing scope (line 1); choose another name` |
-| Member/top-level clash in a file | check, `QK-CHECK-001` | `module member 'csv::read' has the same name as the top-level 'read' on line 4` |
-| Call before captured variable is assigned | check, `QK-CHECK-001` | `'report' uses 'total', which is assigned on line 9, after this call` |
-| Unassigned read at runtime | runtime, `QK-RUNTIME-001` | `'total' is used before it is assigned` |
-| Struct type mismatch, same bare name | check / runtime | `expects geo::Point, got shapes::Point` |
+| Bad file or directory name | `QK-LOAD-001` | `directory name 'My Lib' in import path './My Lib/geo' must be lowercase letters, digits and underscores (e.g. my_lib)` |
+| Statement in an imported file | `QK-LOAD-001` | `'lib.qrk' is imported, so it can only contain definitions; line 3 is a statement (print(...))` |
+| Non-constant value in an imported file | `QK-LOAD-001` | `'lib3.qrk' is imported, so it can only contain definitions; line 1 assigns 'X' a value that isn't a constant (an int, float, str or bool literal, or arithmetic on them)` |
+| Import binding clash | `QK-LOAD-001` | `the function 'geo' (line 2) conflicts with import 'geo' on line 1; incl './geo' as other_name` |
+| Unknown qualified name | `QK-LOAD-001` | `'fmt' (std/fmt) has no 'show_vector'; did you mean 'show_vec'?`; `module 'm' has no 'nope'` |
+| Not re-exported | `QK-LOAD-001` | `imports are not re-exported: 'rex' imports 'io'; incl 'std/io' in this file` |
+| `.` on an import binding | `QK-LOAD-001` | `'io' is an imported file; use io::exists` |
+| `.` on a module name | `QK-LOAD-001` | `'X' is a module; use X::myfn` |
+| `incl` of a same-file module | `QK-LOAD-001` | `incl m: a module in the same file needs no incl; write m::name directly` |
+| Assignment to an imported name | `QK-LOAD-001` | `'geo::x' belongs to geo.qrk and can't be assigned here` |
+| Duplicate declaration | `QK-LOAD-001` | `'f' is already defined on line 1`; `module 'a' is already defined on line 1` |
+| Member/top-level clash | `QK-LOAD-001` | `module member 'csv::read' has the same name as the top-level function 'read' on line 1` |
+| Internal-name clash | `QK-LOAD-001` | `'m_::x' and 'm::_x' (line 2) can't both be defined: the compiler would give them the same internal name; rename one of them` |
+| Nested module | `QK-LOAD-001` | `module 'inner' is inside module 'outer'; modules can't be nested, so define it at the top level of the file` |
+| Reserved name | `QK-LOAD-001` | `'mathx__square': names can't contain '__', which is reserved for names the compiler generates` |
+| Reassigned declaration | `QK-CHECK-001` | `'f' is a function declaration (line 1) and can't be reassigned; use a variable: g = fn ...` |
+| Shadowing `fn` declaration | `QK-CHECK-001` | `'f' is already a function in an enclosing scope (line 1); choose another name` |
+| Redefined builtin | `QK-CHECK-001` | `'len' is a builtin function and can't be redefined or assigned; choose another name` |
+| Call before a captured variable is assigned | `QK-CHECK-001` | `'report' uses 'total', which is assigned on line 2, after this call` |
+| Unassigned read | `QK-RUNTIME-001` | `'total' is used before it is assigned` |
+| Struct mismatch, same bare name | `QK-CHECK-001` / `QK-RUNTIME-001` | `argument 1 of 'f' expects g1::Point, got g2::Point` / `argument 'p' of 'f' expects g1::Point, got g2::Point` |
+| `.` in a qualified struct literal | `QK-PARSE-001` | `a struct from a module or imported file is written g1::Point { ... }, with '::'` |
 
-error_codes.md gets the new `QK-LOAD-001` cases.
+## 5. Implementation
 
-## 5. Implementation Notes
+The analyzer never sees `::` or `incl`: the loader resolves every name and hands the analyzer one tree of unique names.
 
-### 5.1 Symbol metadata, front end to back end
+### 5.1 Loader and the name table
 
-Today identity is the *name string* at every stage:
-- the loader renames strings (`module__member`);
-- the analyzer keys `functions`, `nativeFns`, `externFns`, `structTypes` and scopes by string;
-- codegen keys `funcNames`, `declaredVars` and `nativeFns` by string and derives C++ names with `sanitizeVarName(name)`;
-- the runtime compares struct names with `strcmp`.
+`loader/files.go` and `loader/resolve.go`:
 
-That is why per-module renaming had to happen before analysis, and why the runtime struct check is unsound across files. This spec makes identity explicit.
+1. Load each file once, keyed by its real path, and give it an id in load order: the main script is file 0, imports are 1, 2, ... (deterministic for a given program).
+2. Check file and directory names (rule 1) and the definitions-only rule (rule 15) for imported files.
+3. Collect each file's top-level definitions and module members, and report the clash rules (rule 14) and reserved names (§3.8).
+4. Rename every definition of an imported file, and every module member, to its internal name (§5.2). Resolve bare references by rule 12, with parameters and locals as shadows, and `binding::name` / `binding::module::name` against the imported file with the primary-module rule. Inline imported constants.
+5. Splice the files into one tree and drop `incl`.
+6. Return a `names.Table` (package `names`) in `driver.Unit.Names`: internal name → `Origin{File, Module, Name, Kind}`, with `Kind` one of `Func`, `Struct`, `Extern`, `Value`, `Module`, `Local`.
 
-**Phase A (with this spec): the loader keeps renaming, and also produces a name table.**
-- The loader assigns each loaded file an id and renames every definition of an imported file to its internal name (§5.2). It rewrites every reference, including `alias::name` and `alias::module::name` paths, to that internal name, so the analyzer and codegen still work on unique strings.
-- It returns a `NameTable` in `driver.Unit`:
+Everything user-facing goes through the table: `Table.Display(internal)` gives `geo::Point` or `fmt::show_vec`, and `Table.DisplayText(msg)` rewrites every internal name in a message. The analyzer gets the table with `SetNames`, applies `DisplayText` to every diagnostic, and passes it on in `Analysis.Names`; codegen uses it for `QFnInfo` and struct display names.
 
-  ```go
-  type NameOrigin struct {
-      File    *SourceFile // id, absolute path, stem
-      Module  string      // "" for a top-level name
-      Name    string      // as written: "show_vec"
-      Kind    NameKind    // Func, Struct, Extern, Value, Module
-      Def     *ast.TreeNode
-  }
-  type NameTable map[string]*NameOrigin // internal name -> origin
-  ```
+### 5.2 Internal names
 
-- The analyzer and codegen use the `NameTable` for every user-facing string: diagnostics (`fmt::show_vec`, `geo::Point`), `QFnInfo.name`, `QStructDef` display names and call-shape messages. Display helpers that today strip `module__` (`displayMember`, `displayFuncName`, `displayName` in `types/analyzer_callshapes.go`) are replaced by one `NameTable.Display(internal)` lookup.
-- The analyzer gets `Unit.Names` at construction, and `types.Analysis` carries it on to codegen (`Analysis.Names`), following the rule that analyzer outputs go in `Analysis`.
+| Definition | Internal name | Example |
+|---|---|---|
+| Top-level name of imported file N, stem `s` | `q<N>_s__name` | `q2_fmt__fmt_vec` |
+| Member of a module of imported file N | `q<N>_s__module__name` | `q2_fmt__fmt__show_vec` |
+| Main-script top-level name | unchanged | `helper` |
+| Main-script module member | `module__name` | `mathx__square` |
+| Local of an imported file named like any main-script name | `q<N>__name__l` | `q2__x__l` |
 
-**Phase B (later): symbols instead of strings.** The analyzer resolves each identifier and qualified-name node to a `SymbolID` (`Analysis.Resolutions map[*ast.TreeNode]SymbolID`, `Analysis.Symbols []SymbolInfo`). `SymbolInfo` holds the origin, type, kind, C++ name and fixedness. Codegen emits `SymbolInfo.CName` instead of deriving names from strings. This removes the loader's renaming pass and the string-keyed maps. It is not required for the behavior in this spec, but every new piece of code written for Phase A should look names up through one function, so that Phase B is a change in one place.
+The local rename exists because the spliced tree has one global scope in which main-script names are bare. Two definitions that would get the same internal name are a load error, never merged. Codegen prefixes internal names with `quark_` for functions and variables (`quark_q2_lib2__sq`), emits `_qfi_<internal>` for each `QFnInfo` and `_sdef_quark_<internal>` / `_sfields_quark_<internal>` for each struct. Names the compiler generates itself (lambdas, nested declarations, duplicate variables) start with `quark___`.
 
-### 5.2 Mangling
+### 5.3 Analyzer
 
-- **File ids** are assigned in load order (deterministic for a given program): the main script is file 0, imports are 1, 2, …
-- **Internal names:**
-  - top-level name of an imported file: `q<N>_<stem>__<name>` (`q2_fmt__fmt_vector`);
-  - module member: `q<N>_<stem>__<module>__<name>` (`q2_fmt__fmt__show_vec`);
-  - main script: names stay as today (`<name>`, `<module>__<name>`), so generated code for single-file programs is unchanged.
-- **C++ names** follow the existing conventions: `quark_` plus the internal name for functions and variables (`quark_q2_fmt__show_vec`), `_qfi_` plus it for `QFnInfo`, and `_sfields_`/struct-def statics plus it for structs.
-- **Hygiene** (a user identifier spelled like an internal name) is not addressed in v0.2.
+- **Symbols.** Every variable, parameter, loop variable, `when` binding and `fn` declaration is one `types.Symbol`; `Analysis.Refs` maps every resolved identifier node to it, and `finalizeSymbols` decides its storage and C++ name once (`architecture.md` §1.6).
+- **Fixed declarations** (`types/analyzer_fixed.go`): `declareFixedFns` declares a scope's `fn` declarations as non-mutable symbols before its statements and checks rules 18 and 20; rule 19 is checked at assignments and typed declarations. Signatures (parameter types, annotations, defaults) are known before any body is analyzed, so forward and recursive calls see the real `FunctionType`, including `ParamCalls`.
+- **Definite assignment** (rule 23): `checkDefiniteAssignment` orders statements per statement list, follows direct calls through declared functions transitively, and records each `HoistScope`: the cells codegen creates unassigned and the closures it creates at the scope's start. The top level and module bodies are one hoisting unit, since they all run in `main`.
+- **Module bodies** are analyzed in the file scope (their members already have unique internal names), and their declarations are hoisted with the top level. Structs are predeclared per file, including those in module bodies.
+- **Externs** are registered under their internal names, which are unique per file, so an `extern fn` is scoped to its file like any other definition. Extern *methods* (`extern fn str.shout()`) are not names: they are attached to the receiver type for the whole program (see §7).
+- **Dispatch** (`finalizeFixedFns`, once the program is analyzed): a declaration that captures nothing, directly or through another declaration, is a plain C++ function, called with `DispatchDirect` or, when fully annotated, `DispatchNative`, and never captured. A declaration that captures stays a closure in a binding that never changes, called with `DispatchClosure`.
 
-### 5.3 Runtime struct identity
+### 5.4 Codegen and runtime
 
-- `QStructDef` gets a `display_name` (`"geo::Point"`, from the `NameTable`); `name` becomes the internal name. `repr.hpp` (struct and table printing) and `conversion.hpp` (`type()`) use `display_name`.
-- `q_param_struct(v, structName, fn, param)` becomes `q_param_struct(v, const QStructDef* def, fn, param)` and compares `v.data.struct_val->def == def`. Codegen passes `&_sdef_<internal>`. One `QStructDef` is emitted per struct definition, so pointer identity is type identity.
-- Any other runtime code comparing struct names must compare definitions instead. Today `params.hpp` is the only one.
-- The analyzer's `StructType` keys `structTypes` by internal name and carries the display name, so compile-time messages read `expects geo::Point, got shapes::Point`.
+- `hoistScopes` creates every scope's closures at the scope's start; variables they capture start as unassigned cells (`q_new_unassigned_cell`, read with `q_cell_get`, `core/cell.hpp`).
+- One `QStructDef` is emitted per struct definition, and `QStructDef.name` holds the display name. `q_param_struct(v, &_sdef_X, fn, param)` and `q_field_struct` compare `QStructDef` pointers, so pointer identity is type identity.
+- `QFnInfo.name` is the display name, so runtime messages read `function 'io::exists' expects 1 argument but got 0`.
 
-### 5.4 Lexer and parser
+### 5.5 Interactions
 
-- **Lexer:** a `COLONCOLON` token for `::`. Check that `:` keeps working in annotations, dict literals and blocks; `x: int` and `dict { a: b }` must not lex as `::`.
-- **Parser:** a `QualifiedNameNode` (`ID ('::' ID)+`) in expression position, in `parseTypeExpr` (and `isTypeToken`) for annotations, and before `{` as a struct literal. `Q::...::Name {` is always a struct literal, as `Name {` already is (the parser has no struct-name pre-pass).
-- **Parser:** `struct` definitions inside `module` bodies.
-- **Parser:** `fn f` stops desugaring to `f = fn(...)`. It produces a declaration node (`FunctionNode` already exists, and codegen and the analyzer handle it) that the analyzer treats as fixed. Anonymous lambdas are unchanged.
+- **Call shapes** (`types/analyzer_callshapes.go`): fixed declarations mean a function name's `FunctionType` never changes, and hoisting gives every call its real signature.
+- **FFI:** `extern link` and `extern include_path` are collected across all files (`ffi_v0_1_spec.md` P1). C++ symbols in glue headers are global: two glue headers that define the same C++ function clash in C++. That is a rule for glue authors, not a Quark scoping matter.
+- **Editor extension:** highlights `::` paths, completes `name::` and `file::module::`, and hovers qualified functions; `internal/editordata` lists stdlib members as `fmt::show_vec`.
 
-### 5.5 Loader
+## 6. Tests
 
-- Validate file and directory names (rule 1) when resolving each import.
-- Load each file once by absolute path, and assign file ids.
-- Enforce the definitions-only rule (rule 15) on imported files, at the top level and in module bodies.
-- Replace `namespaceModules` with a renamer that, per file:
-  1. collects the file's top-level names and module members;
-  2. renames definitions to internal names;
-  3. resolves bare references by rule 12, using parameters and locals as shadows, as today;
-  4. resolves `binding::name` and `binding::module::name` against the imported file, with the primary-module rule;
-  5. reports the clash rules (rule 14) and unknown qualified names.
-- Remove: flat-import handling (`bare` map), the same-file `incl module` form, the global-module-name check, and the "does not define a module" error.
-- Emit the `NameTable`.
+- `loader/modules_v02_test.go`: resolution, display names, primary modules, file ids and identity, symlinks, locals of imported files, and the rejected programs (`TestModulesV02_*`).
+- Integration: `TestModuleNamespacing`, `TestNamesArePerFile`, `TestStructsAcrossFiles`; smoke programs `smoke_modules_success.qrk`, `smoke_modules_error_graph.qrk`, `smoke_modules_error_resolve.qrk`, `smoke_module_calls_in_fns.qrk` and `smoke_fn_declarations.qrk`.
+- `TestSemanticsSafety_Rejected` holds the fixed-declaration, hoisting and definite-assignment cases (including the runtime unassigned read and the reassigned native function).
 
-### 5.6 Analyzer
-
-- **Declarations:** `FunctionNode` declarations are fixed symbols (`Mutable: false`). Duplicate declarations, assignment to declared names, and shadowing `fn` declarations are errors (rules 18–20). Assignment to imported names is an error (rule 24). These checks live where `analyzeOperator` handles `=` on an existing symbol.
-- **Hoisting:** analyze all `fn` signatures of a scope (parameter types, annotations, defaults) before any body, then the bodies. Recursive and forward calls then see the real `FunctionType`, including `ParamCalls`, instead of a placeholder. Call-shape checks apply to them, and the `nat` C++ redefinition failure becomes impossible.
-- **Definite assignment** (rule 23): per scope, record the statement index of each variable's first assignment, and each hoisted function's captured variables (`collectFreeVars`), transitively through direct calls. Reject a direct call at an earlier index.
-- **Externs** stop being registered in the global builtins table. They become ordinary file-scoped fixed symbols: still `DispatchExtern` call plans, but resolved by scope, so an extern can't shadow or be shadowed across files.
-- **Structs** are predeclared per file, including inside module bodies, and keyed by internal name.
-- **The `.`-on-import error** (rule 10) lives where `alias.member` is resolved today (`lookupModuleCall`, `moduleMemberRefs`). Those paths are replaced by `QualifiedNameNode` handling.
-
-### 5.7 Codegen and runtime
-
-- **Fixed functions** are constants. A call to a declared function that captures nothing is always `DispatchDirect` or `DispatchNative` (`quark_<internal>(nullptr, ...)`), and closures don't capture such functions: the `collectFreeVars` exclusion for native functions extends to them, which removes the cell, the indirect call and the closure allocation. A declared function that captures variables (directly, or by calling another capturing declared function) stays a closure, held in a binding that is never reassigned and called through it (decision 2026-11-12).
-- **Unassigned cells** (rule 23): `predeclareMainFunctionBindings` initializes captured variables to an unassigned sentinel, not `qv_null()`. Reading one goes through a checked read that reports the variable's name.
-- **`QFnInfo.name` and `QStructDef.display_name`** come from the `NameTable`.
-
-### 5.8 Interactions
-
-- **Call shapes** (`types/analyzer_callshapes.go`) become stronger. Fixed declarations mean a function name's `FunctionType` never changes, and hoisting gives every call its real signature.
-- **`QFnInfo`** (runtime arity checks) is unchanged, apart from qualified display names.
-- **Native functions:** reassigning a fully annotated function can no longer break the C++ compile, because reassignment is rejected (rule 19).
-- **FFI:** `extern link` and `extern include_path` placement is unchanged. C++ symbols in glue headers remain global: two libraries whose headers define the same C++ function still clash in C++. That is a constraint on glue authors (ffi_v0_1_spec.md), not a Quark scoping matter.
-- **Editor extension:** the grammar recognizes `::` paths and qualified type names. `internal/editordata` stdlib data lists members as `fmt::show_vec`, and snippets use `::`.
-
-## 6. Migration
-
-| Area | Change |
-|---|---|
-| Stdlib (`src/core/stdlib/*.qrk`) | None expected (each file is one primary module, with definitions only). Verify none reassigns a declared function |
-| Programs using stdlib modules | `io.exists(p)` becomes `io::exists(p)`; `p \| io.exists()` becomes `p \| io::exists()` |
-| Flat imports | `incl 'std/fmt'` + `show_vec(x)` becomes `fmt::show_vec(x)`. `src/testfiles/test.qrk`: `fmt_vec(x, len(x), true)` becomes `fmt::show_vec(x)`, `blas_dot(...)` becomes `blas::dot(...)` |
-| Same-file modules | `incl mathx as m` + `m.square(9)` becomes `mathx::square(9)` (README "Same-file module" example, smoke tests) |
-| `src/testfiles/lib/core.qrk` (three modules) | Stays; importers write `core::helpers::double`. `smoke_modules_error_graph.qrk` (unaliased collision of `collision_a`/`collision_b`) is rewritten: that collision can no longer happen, so the test checks the new clash rules instead |
-| `smoke_modules_success.qrk` and other module smoke tests | Rewritten for `::`, file bindings and no flat imports |
-| Code that reassigns a declared function or declares one twice | Becomes a compile error; use a variable |
-| Docs | README (Modules and imports, Known limitations: drop the clash and struct-namespacing entries), grammar.md, semantics.md §10, stdlib.md (module sections, "what an import exposes"), CLAUDE.md (Loader row, Naming Conventions, Stdlib modules), error_codes.md |
-
-## 7. Tests
-
-Every rule gets a negative test (CLAUDE.md, Robustness Bar). At minimum:
-
-**Positive:**
-- Two imported files both define `helper`, `Point` and `module utils`, and the importer uses both pairs.
-- A library's internal call to its `helper` is unaffected by the importer's own `helper`.
-- Primary-module access (`fmt::show_vec`), `file::module::name`, and `as`.
-- `geo::Point` in an annotation, a struct literal and a runtime parameter check.
-- Hoisted mutual recursion in any order.
-- Variables holding functions are reassignable.
-- A file imported twice (directly and transitively) has one identity: its struct is the same type on both paths.
-
-**Negative**, one per row of §4, plus:
-- **Runtime struct identity:** a value of `a::Point` passed through an untyped path to a parameter annotated `b::Point` is rejected at runtime. This is the `strcmp` bug, and the test must fail on today's runtime.
-- **Unassigned read:** reading a captured variable through a function value before it is assigned is a runtime error, not `null`.
-- **Reassigned native function:** reassigning a fully annotated function is a Quark compile error, not a C++ error.
-
-**Revisit once v0.2 is implemented** (two rows of §2, observed 2026-11-12). Confirm each is fixed and keep a test for it:
-- A `struct` inside a `module` block works within the file (bare name), from elsewhere in that file (`module::Point`) and from an importer (`file::module::Point`). No diagnostic starts with `internal:`.
-- `shapes::Sq { ... }` parses and builds the struct; `shapes.Sq { ... }` is a clear check error that suggests `::`, not `no prefix parse function for LBRACE`.
-
-## 8. Rollout
-
-1. **Lexer/parser:** `::`, `QualifiedNameNode`, structs in modules, `fn` as a declaration. Parse-level tests.
-2. **Loader:** file ids, name validation, definitions-only rule, the renamer and `NameTable`, clash rules. Loader unit tests (`loader/loader_test.go`).
-3. **Analyzer:** fixed declarations, hoisting, definite assignment, read-only imports, externs as scoped symbols, structs keyed by internal name, qualified display names.
-4. **Codegen/runtime:** C++ names from internal names, `QStructDef` identity and display names, unassigned cells, direct dispatch for fixed functions.
-5. **Migration of tests and docs** (§6); editor extension.
-
-Steps 1–4 land together for module syntax: there is no useful intermediate state where `::` parses but doesn't resolve. Fixed `fn` declarations (rules 17–23) are independent of modules and could land first.
-
-## 9. Deferred
+## 7. Deferred
 
 - **Selective imports:** `incl 'std/fmt' (show_vec, table)`.
-- **Discouraging internal names:** documentation comments that mark a name as internal, shown by the editor and possibly warned about at use (`fmt::fmt_vec`).
+- **Marking internal names:** documentation comments that mark a name as internal, shown by the editor and possibly warned about at use (`fmt::fmt_vec`).
 - **Renaming one module of a multi-module file on import.**
 - **Re-exports and facade modules.**
 - **Mutable module-level state.**
-- **Mangling hygiene** (rejecting user identifiers that look like internal names).
-- **Phase B symbol IDs** (§5.1).
+- **Resolution without renaming:** the analyzer already resolves identifiers to symbols (§5.3), but the loader still renames strings and diagnostics go through `DisplayText`. Resolving `::` names to symbols directly would remove the renaming pass and the string-keyed tables.
 
-## 10. Decisions
+Known gaps (changelog, Known issues): a call written above a `fn` declaration is checked less than one below it; a syntax error in an imported file is reported at the importer's `incl` line. **Known bug (found 2026-11-13):** two `extern fn` methods with the same receiver and name (`extern fn str.shout() str` in two imported files, or twice in one file) are not rejected; the later one silently replaces the earlier for callers analyzed after it, and the main script can call another file's method unqualified (`'a'.shout()`).
+
+## 8. Decisions
+
+Decided 2026-11-12, before implementation.
 
 | Decision | Choice |
 |---|---|
 | Import unit | The file |
 | Visibility | Every top-level name and module member of an imported file is reachable, qualified; no access modifiers |
-| Qualifier | `file::name`, `file::module::name`; the primary module (named after its file) is also `file::name` |
-| `module` blocks | Kept, as namespaces inside a file; several per file allowed |
-| File names | `[a-z][a-z0-9_]*`, for files and directories in import paths |
+| Qualifier | `::` everywhere: `file::name`, `file::module::name`, same-file `module::name`; the primary module is also `file::name` |
+| `module` blocks | Kept, as namespaces inside a file; several per file, not nested |
+| Self-qualification in a module | Allowed (`X::f` inside `X`) |
+| File names | `[a-z][a-z0-9_]*`, for imported files and the directories of relative and `std/` paths |
 | Flat imports | Removed |
-| `fn` declarations | Fixed and hoisted: no second declaration in a scope, no reassignment, no shadowing by another `fn` declaration |
+| `fn` declarations | Fixed and hoisted: no second declaration in a scope, no reassignment, no shadowing by a nested `fn` declaration |
 | Function variables | Reassignable, as any variable |
-| Imported files | Definitions and constant values only (`int`, `float`, `str`, `bool` constant expressions; no `list []`/`dict {}`) |
+| Imported files | Definitions and scalar constants only (no `list []`/`dict {}`) |
 | Capturing declared functions | Stay closures in a fixed binding; only non-capturing ones are direct calls |
 | Variables used by a function body | Must be assigned above the declaration (variables are not hoisted) |
-| `.` on a module or import name | Compile error suggesting `::` |
-| Imported names | Read-only to the importer |
-| Struct identity | The definition (pointer at runtime, internal name at compile time), shown qualified |
-| Mangling | `q<N>_<stem>__[<module>__]<name>`, emitted as `quark_...`; main-script names unchanged |
+| `.` on a module or import name | Error suggesting `::` |
+| Imported names | Read-only to the importer and to the library itself |
+| Struct identity | The definition (`QStructDef` pointer at runtime, internal name at compile time), shown qualified by the file's stem |
+| Internal names | `q<N>_<stem>__[<module>__]<name>`, emitted as `quark_...`; main-script names unchanged; `__` reserved in user names |

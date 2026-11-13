@@ -1,73 +1,82 @@
-# Quark Language Grammar (Implementation-Synced)
+# Quark Language Grammar
 
-This document is the grammar and semantic reference for the Quark compiler in `src/core/quark`.
+The syntax of Quark as the compiler in `src/core/quark` accepts it: tokens (`lexer/`, `token/`), statements and expressions (`parser/`), and operator precedence. What programs mean at runtime is in **semantics.md**; builtins are in **stdlib.md**.
+
+## Contents
+
+1. [Notation](#1-notation)
+2. [Symbols](#2-symbols)
+3. [Lexical Elements](#3-lexical-elements)
+4. [Program Structure](#4-program-structure)
+5. [Modules, Imports and Extern](#5-modules-imports-and-extern)
+6. [Functions and Lambdas](#6-functions-and-lambdas)
+7. [Results and when](#7-results-and-when)
+8. [Control Flow](#8-control-flow)
+9. [Types and Typed Declarations](#9-types-and-typed-declarations) ([structs](#91-structs))
+10. [Expressions](#10-expressions) ([precedence](#103-precedence-low-to-high), [pipes](#104-pipes))
+11. [Not in the Language](#11-not-in-the-language)
+12. [Source of Truth](#12-source-of-truth)
 
 ## 1) Notation
 
-- `::=` means “is defined as”
+- `::=` means "is defined as"
 - `|` separates alternatives
 - `{ ... }` means zero or more repetitions
 - `[ ... ]` means optional
-- `TOKEN` names refer to lexer token categories
+- Quoted text is a literal token; `ID`, `INT`, `FLOAT`, `STRING`, `NEWLINE`, `INDENT`, `DEDENT` are lexer token categories
 
-## 2) Language Philosophy
+## 2) Symbols
 
-### Symbol meanings
-
-| Symbol | Meaning | Primary use |
+| Symbol | Meaning | Use |
 |---|---|---|
-| `->` | produces/maps to | function bodies, `when` pattern results |
-| `:` | contains/has type | block headers, type annotations, dict entries |
-| `\|` | pipe to | dataflow chaining |
-| `.` | member of | dict keys, struct fields and method calls on values |
+| `->` | produces | function bodies, `when` arms |
+| `:` | contains / has type | block headers, type annotations, dict and struct entries |
+| `\|` | pipe to | `x \| f()` is `f(x)` |
+| `.` | member of a value | dict keys, struct fields, method calls |
 | `::` | qualified name | a member of a module or an imported file (`io::exists`, `geo::Point`, `core::helpers::double`) |
 
 ## 3) Lexical Elements
 
-### 3.1 Keywords (reserved)
+### 3.1 Keywords
 
-`incl, as, module, extern, fn, struct, if, elseif, else, for, while, break, continue, when, in, and, or, true, false, null, ok, err, list, dict, vec, result`
+Reserved (`token/token.go`):
 
-`link` and `include_path` are contextual words after `extern`, not reserved keywords.
+`incl as module extern fn struct if elseif else for while break continue when in and or true false null ok err list dict vec result`
+
+`_` is its own token (the wildcard pattern). The type names `int`, `float`, `str`, `bool`, `any` and `resource` are ordinary identifiers that the checker resolves in type positions. `link` and `include_path` are contextual words after `extern`.
+
+Identifiers are letters, digits and `_`, starting with a letter or `_`. A name containing `__` is a load error: that form is reserved for compiler-generated names.
 
 ### 3.2 Operators and delimiters
 
 - Arithmetic: `+ - * / % **`
-- Comparison/equality: `< <= > >= == !=`
+- Comparison: `< <= > >= == !=`
+- Logical: `and or !` (there are no `&&`, `||` or `not`)
 - Assignment: `=`
-- Unary: `! -`
 - Flow: `-> |`
-- Access/call: `. [] ()`
-- Punctuation: `, : { } [ ]`
+- Access and call: `. [ ] ( )`, qualified names `::`
+- Punctuation: `, : { }`
+
+`;` and `#` are not tokens.
 
 ### 3.3 Literals
 
-- `INT`: decimal digits (`42`). There are no hex, octal or binary forms and no digit separators.
-- `FLOAT`: digits, a dot, and digits (`3.14`), or digits followed by a dot (`2.` is `2.0`), optionally followed by an exponent: `e` or `E`, an optional sign, and digits (`1e3`, `2.5E-4`, `6e+2`). An exponent makes the literal a float even without a dot. A leading dot (`.5`) is not accepted.
-- `STRING` (single-quoted or double-quoted)
-- `BOOL` (`true`, `false`)
-- `NULL` (`null`)
+- `INT`: decimal digits (`42`). There are no hex, octal or binary forms and no digit separators (digit separators are planned: `tables_v0_1_spec.md` §9).
+- `FLOAT`: digits, a dot and digits (`3.14`), or digits and a dot (`2.` is `2.0`), optionally followed by an exponent: `e` or `E`, an optional sign, and digits (`1e3`, `2.5E-4`, `6e+2`). An exponent makes the literal a float even without a dot. A leading dot (`.5`) is a parse error.
+- `STRING`: single-quoted or double-quoted, on one line.
+- `true`, `false`, `null`.
 
-Because `2.` is a float, a method call directly on an int literal does not work: `42.upper()` lexes as the float `42.` followed by `upper()`. Call methods on a variable instead.
+Because `2.` is a float, a method call directly on an int literal does not work: `42.upper()` lexes as the float `42.` followed by `upper()`.
 
-Supported string escape sequences:
-- `\\`
-- `\'` in single-quoted strings
-- `\"` in double-quoted strings
-- `\n`, `\t`, `\r`
-
-`\0` is rejected (`QK-PARSE-001`): strings are NUL-terminated, so they can't contain a NUL character.
-
-Planned lexical additions (future):
-- Interpolation opener: `!{`
-- Interpolation closer: `}`
-- Interpolation recognized only inside string literals
+String escapes: `\\`, `\n`, `\t`, `\r`, and the string's own quote (`\'` in single-quoted strings, `\"` in double-quoted ones). Any other backslash is kept as written (`'a\qb'` is the four characters `a\qb`). `\0` is a `QK-PARSE-001` error: strings are NUL-terminated, so they can't contain a NUL character.
 
 ### 3.4 Comments and layout
 
-- Line comments: `// ...`
-- Python-style indentation blocks with `INDENT`/`DEDENT` token injection
-- Indentation blocks are triggered after `:` and `->`
+- Line comments start with `//`.
+- Blocks are indentation-based. A line ending in `:` or `->` must be followed by a more indented line (`expected indented block` otherwise), which opens a block (`INDENT`); returning to an enclosing level closes it (`DEDENT`). An indented line anywhere else is `unexpected indent`; dedenting to a level that was never opened is `inconsistent indentation`.
+- Newlines inside `( )`, `[ ]` and `{ }` are ignored, so calls and literals may span lines.
+- A line that starts with `|` continues the previous expression (§10.4). It must be at the same indentation as the line it continues.
+- Blank lines and comment-only lines are ignored.
 
 ## 4) Program Structure
 
@@ -83,14 +92,23 @@ Statement       ::= FunctionDef
                 |   WhenExpr
                 |   ForLoop
                 |   WhileLoop
-                |   BreakStatement
-                |   ContinueStatement
+                |   "break"
+                |   "continue"
                 |   TypedDecl
                 |   Expression
-                |   NEWLINE
+
+Block           ::= NEWLINE INDENT { Statement NEWLINE } DEDENT
+                |   Statement                         (inline, on the header's line)
 ```
 
-## 5) Modules and Imports
+Each statement ends at a newline. An inline block is one statement on the header's line: `if x > 5: print('big')`, `fn sq(x) -> x * x`.
+
+Where statements may appear:
+- `incl`, `extern link`, `extern include_path` and `module`: the top level of a file only.
+- `struct`: the top level or a module body.
+- An imported file may only contain definitions (semantics.md §10.4).
+
+## 5) Modules, Imports and Extern
 
 ### 5.1 Module definition
 
@@ -98,115 +116,91 @@ Statement       ::= FunctionDef
 ModuleDef       ::= "module" ID ":" Block
 ```
 
-A module body may contain any statement except another `module` in the main script; in an imported file it may only contain definitions (see semantics.md §10.4). A `struct` may be defined in a module body. Modules can't be nested.
+Members of a module are written `module::name`. Modules can't be nested.
 
 ### 5.2 Incl and qualified names
 
 ```ebnf
-InclStatement    ::= "incl" STRING [ "as" ID ]          (top level only)
+InclStatement   ::= "incl" STRING [ "as" ID ]
 
-QualifiedName    ::= ID "::" ID { "::" ID }             (a value, call or pipe target)
-TypeName         ::= ID { "::" ID }                     (an annotation: x: geo::Point)
-StructLiteral    ::= TypeName "{" [ FieldInit { "," FieldInit } ] "}"
-
-ExternStatement ::= ExternHeader
-                |   ExternLink
-                |   ExternIncludePath
-                |   ExternFnDecl
-
-ExternHeader      ::= "extern" STRING
-ExternLink        ::= "extern" "link" STRING
-ExternIncludePath ::= "extern" "include_path" STRING
-
-ExternFnDecl    ::= "extern" "fn" ExternName Parameters [ ReturnType ] "as" STRING
-ExternName      ::= ID | BuiltinTypeName "." ID
-BuiltinTypeName ::= "int" | "float" | "str" | "bool" | "list" | "dict" | "vec"
+QualifiedName   ::= ID "::" ID { "::" ID }
+TypeName        ::= ID { "::" ID }
 ```
 
-Semantics:
-- `incl './path'` or `incl '../path'`: file import resolved by loader, bound under the file's stem
-- `incl 'C:/path/to/file'` or `incl '/path/to/file'`: absolute file import resolved by loader
-- `incl 'std/name'`: stdlib import resolved from stdlib root (`QUARK_STDLIB_ROOT` or discovered `stdlib/` directory), bound as `name`
-- `incl ... as alias`: binds the file as `alias` instead
-- `module::name`, `file::name`, `file::module::name`: see semantics.md §10.3. `incl ID` (a same-file module) was removed; write `module::name`
+- `incl './path'`, `incl '../path'`, `incl '/abs/path'`, `incl 'C:/path'`: a file, bound under its stem.
+- `incl 'std/name'`: a stdlib module, bound as `name`.
+- `as alias` binds the import under `alias` instead.
+- `incl name` (an identifier) is a load error: a module of the same file needs no `incl`.
 
-Extern/QEI semantics:
-- `extern 'path.hpp'` `#include`s a C++ header. The path is resolved by the loader relative to the declaring file (`std/...` paths resolve in the stdlib).
-- `extern link 'name'` links a native library (`-lname`). `extern include_path 'dir'` adds a C++ include search directory, relative to the declaring file. See semantics.md §10.8 and `ffi_v0_1_spec.md` P1.
-- Directives must be at the top level of a file (inside a `module` block or any other block they are a `QK-LOAD-001` error), and nothing may follow the string.
-- `extern source` is reserved for separately compiled glue files and is not supported yet (`QK-PARSE-001`).
-- `extern fn name(...) T as 'symbol'` declares a free extern function.
-- `extern fn type.name(...) T as 'symbol'` declares a receiver method extension.
-- Free extern functions can be used as first-class values via generated thunks.
+A `QualifiedName` is a value, a call target or a pipe target; a `TypeName` is an annotation or a struct literal's name (`geo::Point { x: 1 }`). Resolution rules are in semantics.md §10.
+
+### 5.3 Extern declarations
+
+```ebnf
+ExternStatement   ::= "extern" STRING                          (header)
+                  |   "extern" "link" STRING
+                  |   "extern" "include_path" STRING
+                  |   ExternFnDecl
+
+ExternFnDecl      ::= "extern" "fn" ExternName Parameters [ Type ] "as" STRING
+ExternName        ::= ID | ReceiverType "." ID
+ReceiverType      ::= "int" | "float" | "str" | "bool" | "list" | "dict" | "vec"
+```
+
+- `extern 'path.hpp'` `#include`s a C++ header, resolved relative to the declaring file (`std/...` in the stdlib).
+- `extern fn name(...) T as 'symbol'` binds a free function; `extern fn list.name(...) T as 'symbol'` adds a method to a builtin type. The return type comes before `as`, with no `->`.
+- Nothing may follow a directive's string on its line. `extern link` takes a bare library name (`'openblas'`, not `'-lopenblas'` or `'libopenblas.so'`).
+- `extern source` and `extern include` are parse errors (`extern source` is planned: `ffi_v0_1_spec.md` P2).
+
+Semantics: semantics.md §10.8 and `ffi_v0_1_spec.md`.
 
 ## 6) Functions and Lambdas
 
-### 6.1 Named function
+### 6.1 Function declaration
 
 ```ebnf
-FunctionDef     ::= "fn" ID Parameters [ ReturnType ] "->" BlockOrExpr
-Parameters      ::= "(" [ ParamList ] ")"
-ParamList       ::= Param { "," Param } [ "," ]
+FunctionDef     ::= "fn" ID Parameters [ Type ] "->" Block
+Parameters      ::= "(" [ Param { "," Param } [ "," ] ] ")"
 Param           ::= ID [ ":" Type ] [ "=" DefaultLiteral ]
-DefaultLiteral  ::= INT | FLOAT | STRING | BOOL | NULL | "-" INT | "-" FLOAT | "list" "[" "]"
+DefaultLiteral  ::= INT | FLOAT | STRING | "true" | "false" | "null"
+                |   "-" { "-" } ( INT | FLOAT )
+                |   "list" "[" "]"
 ```
+
+- Parentheses are required, also for no parameters: `fn main() -> ...`.
+- A parameter with a default can't be followed by one without (`required parameter 'b' cannot follow a parameter with a default value`).
+- A non-literal default (`x = 1 + 1`) is a parse error.
 
 ### 6.2 Lambda expression
 
 ```ebnf
-LambdaExpr      ::= "fn" Parameters [ ReturnType ] "->" Expression
+LambdaExpr      ::= "fn" Parameters [ Type ] "->" Expression
 ```
+
+A lambda's body is one expression on the same line; an indented lambda body is a parse error. Use a `fn` declaration for a body of several statements.
 
 ### 6.3 Return type annotations
 
-Return type annotations appear between the closing `)` and the `->` arrow:
+The return type goes between `)` and `->`:
 
 ```quark
 fn add(x: int, y: int) int -> x + y
 fn greet(name: str) str -> 'Hello, ' + name
 double = fn(x: int) int -> x * 2
+fn origin() geo::Point -> geo::Point { x: 0, y: 0 }
 ```
 
-Semantics:
-- Each annotated parameter is enforced, independently of the others: at compile time when the argument's type is known, on entry to the function when it isn't, with an `int` argument to a `float` parameter converted to `float` (semantics.md §13.2). Unannotated parameters accept any value
-- The analyzer infers the actual return type from the body and checks it against the annotation
-- A mismatch is a compile-time error (e.g., annotated `int` but body returns `str`)
-- Union types with `void` from incomplete branches (e.g., `when` without wildcard) are accepted if the non-void component matches the annotation
+Parameter and return annotation rules are in semantics.md §13; default parameters in semantics.md §6.4.
 
-### 6.4 Default parameters
-
-Parameters may have default values specified with `= literal`:
-
-```quark
-fn greet(name, greeting = 'Hello') -> greeting + ', ' + name
-fn add_n(x, n = 1) -> x + n
-fn point(x = 0, y = 0) -> list [x, y]
-```
-
-Semantics:
-- Only literal values are allowed as defaults (int, float, string, bool, null, negated numerics, empty list)
-- Required parameters must come before parameters with defaults — mixing is a compile-time error
-- When a type annotation is present, the default value type must be compatible with the annotation
-- When no type annotation is present, the type is inferred from the default value (null infers `any`)
-- At the call site, omitted trailing arguments are filled with their defaults
-- Arity checking uses a range: `MinArity` (required params) to `MaxArity` (total params)
-- Pipes interact with defaults: `5 | add_n()` fills the default for `n`
-
-Notes:
-- Parentheses are required for both named and lambda parameters
-- Named functions may have inline or indented bodies
-- Lambda body is expression form
-
-## 7) Result Values and Matching
+## 7) Results and when
 
 ### 7.1 Result constructors
 
 ```ebnf
-ResultExpr      ::= "ok" PipeExpr
-                |   "err" PipeExpr
+ResultExpr      ::= ( "ok" | "err" ) Expression
 ```
 
-The operand takes everything that binds tighter than `=`, so `ok 5 == 1` is `ok (5 == 1)` and `ok(5) == ok 5` is `ok ((5) == ok 5)`. Parenthesize a result to compare it: `(ok 5) == (ok 5)`.
+The operand extends as far as possible: `ok 5 == 1` is `ok (5 == 1)`, and `ok(5) == ok 5` is `ok ((5) == ok 5)`. Parenthesize a result to compare it: `(ok 5) == (ok 5)`.
 
 ### 7.2 When
 
@@ -216,80 +210,48 @@ WhenExpr        ::= "when" Expression ":" NEWLINE INDENT
                     DEDENT
 
 Pattern         ::= ResultPattern
-                |   WildcardPattern
+                |   "_"
                 |   LiteralPattern { "or" LiteralPattern }
 
-LiteralPattern  ::= Literal | "-" INT | "-" FLOAT
-
-ResultPattern   ::= "ok" (ID | "_")
-                |   "err" (ID | "_")
-
-WildcardPattern ::= "_"
+ResultPattern   ::= ( "ok" | "err" ) ( ID | "_" )
+LiteralPattern  ::= INT | FLOAT | STRING | "true" | "false" | "null"
+                |   "-" ( INT | FLOAT )
 ```
 
-Semantics:
-- `when` is both a statement and an expression: it evaluates to the matched arm's value, so it can end a line such as `size = when n: ...` (see semantics.md §8)
-- Pattern arms are checked in source order
-- Value patterns are literals; they match when the scrutinee equals one of them. A variable, call or other expression as a pattern is a compile-time error ("when patterns must be literal values")
-- An `ok`/`err` pattern stands alone in its arm: combining it with `or` (`ok x or err x`, `1 or ok x`) is a parse error
-- Result propagation is explicit (no implicit bubbling)
-- Nested `when` is supported
+- `when` is a statement and an expression (§10.1). As an expression it must end its line: `size = when n:` followed by the arms.
+- The arms are an indented block; each arm's body is one expression.
+- An `ok`/`err` pattern stands alone in its arm: `ok x or err x` is a parse error.
+- A pattern that isn't a literal (a variable, a call) is a compile-time error (`when patterns must be literal values ...`).
+
+Matching rules: semantics.md §8.
 
 ## 8) Control Flow
-
-### 8.1 If / elseif / else
 
 ```ebnf
 IfStatement     ::= "if" Expression ":" Block
                     { "elseif" Expression ":" Block }
                     [ "else" ":" Block ]
-```
 
-### 8.2 For loop
-
-```ebnf
 ForLoop         ::= "for" ID "in" Expression ":" Block
-```
-
-Supported iterables: `list`, `vec`, `str`
-
-### 8.3 While loop
-
-```ebnf
 WhileLoop       ::= "while" Expression ":" Block
 ```
 
-### 8.4 Loop control
-
-```ebnf
-BreakStatement      ::= "break"
-ContinueStatement   ::= "continue"
-```
-
-Current semantics:
-- `break` exits the nearest enclosing `for`/`while`
-- `continue` skips to the next iteration of the nearest enclosing `for`/`while`
-- Using either outside a loop is a compile-time error
+`if` is also an expression in the ternary form `a if cond else b` (§10.1). `break` and `continue` apply to the innermost `for` or `while`; outside a loop they are compile-time errors. `in` appears only in `for`; there is no `in` operator.
 
 ## 9) Types and Typed Declarations
 
 ```ebnf
 TypedDecl       ::= ID ":" Type "=" Expression
-Type            ::= "int" | "float" | "str" | "bool" | "any" | "result"
-                |   "list" | "dict" | "vec"
-                |   "resource"
-                |   StructName
-ReturnType      ::= Type
+Type            ::= "int" | "float" | "str" | "bool" | "any"
+                |   "list" | "dict" | "vec" | "result" | "resource" | "fn"
+                |   TypeName                                  (a struct: Point, geo::Point)
 ```
 
-Notes:
-- `Type` is accepted in variable, parameter, struct field and return type annotations (`resource` and `fn` included). `resource` is any native handle, such as an open file from `std/io`; `fn` is any function value (there is no signature syntax such as `fn(int) int`)
-- Other names are a compile-time error (`unknown type 'void'`)
-- Generic type syntax like `list[int]` is not implemented
-- `any` is the current top-level escape-hatch annotation for gradual typing
-- `null` is a runtime literal/value and is not accepted as an annotation; `void` appears only in inferred types (for example a non-exhaustive `when`)
-- `result` is a first-class Quark type annotation keyword
-- `result` annotations are non-generic in v0.1 and represent a general result value
+- `Type` is used in variable, parameter, struct field and return annotations.
+- `fn` is any function value; there is no signature syntax such as `fn(int) int`.
+- Element types can't be written: `x: list[int] = ...` is a parse error (planned: `tables_v0_1_spec.md` D16). `tbl` is not a type yet (`unknown type 'tbl'`; planned as `tbl[Row]`, D10).
+- `null` is a parse error in a type position; `void` and other names are a compile-time error (`unknown type 'void'`).
+- A typed declaration needs a value: `x: int` alone is a parse error.
 
 ### 9.1 Structs
 
@@ -298,11 +260,12 @@ StructDef       ::= "struct" ID ":" NEWLINE INDENT
                     { StructField NEWLINE }
                     DEDENT
 StructField     ::= ID ":" Type [ "=" ConstExpr ]
-ConstExpr       ::= Literal | "-" ConstExpr
-                |   ConstExpr ("+" | "-" | "*" | "/" | "%") ConstExpr
+ConstExpr       ::= Literal
+                |   "-" ConstExpr
+                |   ConstExpr ( "+" | "-" | "*" | "/" | "%" ) ConstExpr
                 |   "list" "[" "]" | "dict" "{" "}"
 
-StructLiteral   ::= StructName "{" [ FieldInit { ( "," | NEWLINE ) FieldInit } [ "," ] ] "}"
+StructLiteral   ::= TypeName "{" [ FieldInit { ( "," | NEWLINE ) FieldInit } [ "," ] ] "}"
 FieldInit       ::= ID ":" PipeExpr
 ```
 
@@ -317,14 +280,15 @@ print(c.name)     // Alice
 print(type(c))    // Customer
 ```
 
-Semantics:
-- `StructName` is a struct declared in the same file. Names of structs from imported files are not recognized as types or literals
-- Field defaults must be constant expressions (`timeout: int = 60 * 60`); anything else is a `QK-PARSE-001` error
-- A literal must set every field that has no default. Missing, unknown or mistyped fields are compile-time errors
-- Fields are read with `c.name`. Struct values are immutable: `c.age = 31` is a compile-time error; build a new value instead
-- `==` and `!=` on structs are compile-time errors; compare fields explicitly
+- A name followed by `{` is always a struct literal; the checker rejects a name that isn't a struct. A struct of a module or another file is written with `::` (`geo::Point { x: 1 }`; `geo.Point { ... }` is a parse error).
+- Field defaults must be constant expressions (`timeout: int = 60 * 60`); anything else is a `QK-PARSE-001` error.
+- A literal must set every field without a default. Missing, unknown and mistyped fields are compile-time errors.
+- Fields are read with `c.name`. Struct values are immutable: `c.age = 31` is a compile-time error.
+- `==` and `!=` on structs are compile-time errors; compare fields.
 
-## 10) Expressions and Precedence
+Full rules: `structs_v0_1_spec.md`.
+
+## 10) Expressions
 
 ### 10.1 Expression grammar
 
@@ -335,28 +299,29 @@ Assignment      ::= PipeExpr
                 |   AssignTarget "=" PipeExpr
 
 AssignTarget    ::= ID
-                |   MemberAccess
-                |   IndexExpr
+                |   Postfix "." ID                (dict key)
+                |   Postfix "[" Expression "]"    (list element)
 
-PipeExpr        ::= Ternary { "|" CallExpr }
+PipeExpr        ::= Ternary { "|" PipeTarget }
+PipeTarget      ::= Ternary                       (must be a call, §10.4)
 
 Ternary         ::= LogicalOr [ "if" LogicalOr "else" Ternary ]
 
 LogicalOr       ::= LogicalAnd { "or" LogicalAnd }
 LogicalAnd      ::= Equality { "and" Equality }
-Equality        ::= Comparison { ("==" | "!=") Comparison }
-Comparison      ::= Additive { ("<" | "<=" | ">" | ">=") Additive }
-Additive        ::= Multiplicative { ("+" | "-") Multiplicative }
-Multiplicative  ::= Unary { ("*" | "/" | "%") Unary }
-Unary           ::= ("!" | "-") Unary | Power
+Equality        ::= Comparison { ( "==" | "!=" ) Comparison }
+Comparison      ::= Additive { ( "<" | "<=" | ">" | ">=" ) Additive }
+Additive        ::= Multiplicative { ( "+" | "-" ) Multiplicative }
+Multiplicative  ::= Unary { ( "*" | "/" | "%" ) Unary }
+Unary           ::= ( "!" | "-" ) Unary | Power
 Power           ::= Postfix [ "**" Unary ]
 
-Postfix         ::= Primary { Accessor | CallArgs }
-Accessor        ::= "." ID | "[" Expression "]"
-CallArgs        ::= "(" [ Arguments ] ")"
-Arguments       ::= PipeExpr { "," PipeExpr } [ "," ]
+Postfix         ::= Primary { "." ID | "[" Expression "]" | CallArgs }
+CallArgs        ::= "(" [ PipeExpr { "," PipeExpr } [ "," ] ] ")"
 
 Primary         ::= ID
+                |   "_"
+                |   QualifiedName
                 |   Literal
                 |   ResultExpr
                 |   WhenExpr
@@ -368,183 +333,88 @@ Primary         ::= ID
                 |   "(" Expression ")"
 ```
 
+Call arguments, collection elements and field values are `PipeExpr`s, so an assignment can't appear there. Assignment isn't chainable: `a = b = 1` is a compile-time error. Other assignment targets are compile-time errors too: a struct field (structs are immutable), a string index (strings are immutable), an imported name. `x: T = ...` (§9) is a separate statement form, recognized when a line starts with `ID ":"`.
+
+`d['key']` parses but is a compile-time error: dict keys are read with `d.key` or `d.get(k)` (semantics.md §9.2).
+
 ### 10.2 Literal forms
 
 ```ebnf
-Literal         ::= INT
-                |   FLOAT
-                |   StringLiteral
-                |   BOOL
-                |   NULL
-
-StringLiteral   ::= SQString | DQString
-SQString        ::= "'" { SQChar } "'"
-DQString        ::= '"' { DQChar } '"'
+Literal         ::= INT | FLOAT | STRING | "true" | "false" | "null"
 
 ListLiteral     ::= "list" "[" [ PipeExpr { "," PipeExpr } [ "," ] ] "]"
 VectorLiteral   ::= "vec" "[" [ PipeExpr { "," PipeExpr } [ "," ] ] "]"
-DictLiteral     ::= "dict" "{" [ DictEntries ] "}"
-DictEntries     ::= DictEntry { "," DictEntry } [ "," ]
+DictLiteral     ::= "dict" "{" [ DictEntry { "," DictEntry } [ "," ] ] "}"
 DictEntry       ::= ID ":" PipeExpr
 ```
 
-Interpolation parsing rules (future):
-- String interpolation is not implemented in v0.1
-
-Call arguments and collection elements are `PipeExpr`s, so an assignment cannot appear there. Assignment is not chainable: `a = b = 1` is a compile-time error.
+- The `list`, `vec` and `dict` keywords are required; `[1, 2]` alone is a parse error.
+- Dict literal keys are identifiers (`dict { name: 'a' }`); a string key (`dict { 'a': 1 }`) is a parse error.
+- Vector literals are one-dimensional; a `;` row separator is a parse error.
 
 ### 10.3 Precedence (low to high)
 
-| Level | Operators |
-|---|---|
-| 1 | `=` (not chainable) |
-| 2 | `|` |
-| 3 | ternary `a if cond else b` (right-associative) |
-| 4 | `or` |
-| 5 | `and` |
-| 6 | `== !=` |
-| 7 | `< <= > >=` |
-| 8 | `+ -` |
-| 9 | `* / %` |
-| 10 | unary `! -` |
-| 11 | `**` (right-associative) |
-| 12 | postfix `. [] ()` |
+This is the canonical precedence table (`parser/expr.go`, `ast.Precedence`).
 
-`**` binds tighter than unary minus, as in math and Python: `-2 ** 2` is `-(2 ** 2)`, which is `-4`; write `(-2) ** 2` for `4`. The right operand of `**` may be negated (`2 ** -1`), and `-x ** 2 ** 3` is `-(x ** (2 ** 3))`. `*`, `+` and the other binary operators bind looser than unary minus, so `-a * b` is `(-a) * b`. Because `-2 ** 63` is `-(2 ** 63)`, it overflows; the smallest int can be written `-(2 ** 62) * 2`.
-
-## 11) Runtime-Oriented Semantic Rules
-
-### 11.1 Dot syntax rules
-
-Dot syntax (`.`) serves four purposes (members of modules and imported files use `::`, §5.2):
-
-- `d.key` — dict key read
-- `d.key = value` — dict key write
-- `s.field` — struct field read (struct fields can't be assigned; see §9.1)
-- `value.method(args)` — method dispatch (receiver type determines which method is resolved; see stdlib.md for available methods per type)
-
-Dot-key access on a value that isn't a dict or struct is a compile-time error when the type is known (`dot access is only supported on dict ...`) and a runtime error otherwise. Method calls on types that don't define the method are a compile-time error.
-
-### 11.2 Indexing
-
-- `list[idx]` supported (negative indices supported at runtime)
-- `str[idx]` supported (returns single-character string)
-- `vec[idx]` supported
-- `vec[mask]` where `mask` is bool vector supported
-- Dict bracket indexing is not supported; use dot access or `.get()` / `.set()` methods
-
-### 11.3 Assignment targets
-
-Allowed:
-- `x = expr`
-- `d.key = expr`
-- `list[i] = expr`
-
-Disallowed/diagnosed:
-- assigning through non-assignable expressions
-- chained assignment (`a = b = 1`)
-- struct field assignment (structs are immutable)
-- string index assignment (strings are immutable)
-
-### 11.4 Result helpers
-
-Builtins currently available:
-- `is_ok(result) -> bool`
-- `is_err(result) -> bool`
-- `unwrap(result) -> any` (panics on `err` or non-result)
-
-Result construction and use:
-- `ok expr` constructs a result value
-- `err expr` constructs a result value
-- `x: result = ok 1` is valid
-- `fn handle(r: result) -> ...` is valid
-
-### 11.5 Condition and logical operator type rules
-
-- `if`, `elseif`, `while`, and ternary conditions accept **any type** — non-bool values are converted via truthiness (see semantics.md §3)
-- `and`/`or` are **short-circuit** with Python semantics: they accept any type and return one of the two operand values (not necessarily bool)
-- The unary `!` operator accepts any type and always returns `bool`
-- `to_bool(expr)` is available for explicit conversion but is no longer required in conditions
-
-### 11.6 Lowering notes (implementation-synced)
-
-- Scalar arithmetic/comparison on scalar-tiered operands lowers to native C++ expressions. Int `+ - * %` and `/` go through overflow- and zero-checked helpers (`q_checked_add`, `q_checked_fdiv`, ...); comparisons and float `+ - *` use raw operators.
-- Equality/inequality (`==`, `!=`) are included in scalar lowering when both operands are scalar-tiered.
-- `if`/`elseif`/`while` conditions lower directly to native bool expressions when statically scalar-bool.
-- `for i in range(...)` lowers to raw C++ range loops in codegen fast-paths.
-
-## 12) Builtin Surface (Current)
-
-### 12.1 Free functions
-
-| Category | Functions |
-|----------|-----------|
-| I/O | `print`, `input` |
-| Conversion | `len`, `to_str`, `to_int`, `to_float`, `to_bool`, `type` |
-| Result | `is_ok`, `is_err`, `unwrap` |
-| Math/range | `range`, `abs`, `min`, `max`, `sum`, `sqrt`, `floor`, `ceil`, `round` |
-| Aggregates | `all`, `any` |
-
-### 12.2 Methods (by receiver type)
-
-| Receiver | Methods |
-|----------|---------|
-| `str` | `.upper()`, `.lower()`, `.trim()`, `.contains(sub)`, `.startswith(s)`, `.endswith(s)`, `.replace(old, new)`, `.split(sep)`, `.slice(start, end)` |
-| `list` | `.push(item)`, `.pop()`, `.get(idx)`, `.set(idx, val)`, `.insert(idx, val)`, `.remove(idx)`, `.slice(start, end)`, `.reverse()`, `.sort()`, `.sort_by(key)`, `.concat(other)`, `.join(sep)`, `.enumerate()`, `.to_vec()` |
-| `dict` | `.get(key)`, `.set(key, val)`, `.keys()`, `.values()`, `.items()` |
-| `vec` | `.get(idx)`, `.fillna(val)`, `.astype(dtype)`, `.to_list()`, `.enumerate()` |
-
-## 13) Feature Status Matrix
-
-| Feature | Status | Notes |
+| Level | Operators | Associativity |
 |---|---|---|
-| Indentation blocks | Implemented | Triggered after `:` and `->` |
-| `module` blocks | Implemented | Members are `module::name`; structs allowed in module bodies |
-| `incl STRING` file imports | Implemented | Relative and absolute file paths; any file of definitions is a library |
-| Stdlib string imports (`incl 'std/name'`) | Implemented | Resolved via stdlib root |
-| Named functions and lambdas | Implemented | Parenthesized params required |
-| Return type annotations | Implemented | `fn f(x) int -> x + 1`; checked at compile time, and at runtime in fully annotated (native) functions |
-| Default parameters | Implemented | `fn f(x, y = 0) -> x + y`; literals only, required-before-defaults |
-| Typed params / typed var declarations | Implemented | `int`, `float`, `str`, `bool`, `any`, `list`, `dict`, `vec`, `result`, `resource`, `fn`, struct names (see §9) |
-| Generic type expressions | Not implemented | e.g. `list[int]` unsupported |
-| List literals (`list [...]`) | Implemented | Keyword required |
-| Vector literals (`vec [...]`) | Implemented | 1D only |
-| Dict literals (`dict {k: v}`) | Implemented | Keys are identifiers in source |
-| Loop control (`break`, `continue`) | Implemented | Exits/skips nearest enclosing loop; compile error outside loops |
-| Method dispatch (`value.method()`) | Implemented | String, list, dict, vec methods |
-| Qualified names (`file::name`, `file::module::name`, `module::name`) | Implemented | Values, calls, pipes, annotations and struct literals (modules v0.2) |
-| Dot data access on dict | Implemented | read/write |
-| Result values `ok` / `err` | Implemented | Analyzer has `ResultType` |
-| `when` result patterns | Implemented | `ok x`, `err e` |
-| `when` as an expression | Implemented | `size = when n: ...` |
-| `extern` header and fn declarations | Implemented | QEI parser/analyzer/codegen path |
-| `extern link` / `extern include_path` | Implemented | Native library linking (`ffi_v0_1_spec.md` P1) |
-| `extern source` | Not implemented | Reserved (`ffi_v0_1_spec.md` P2); `QK-PARSE-001` |
-| Structs (`struct`) | Implemented | Definitions, literals, constant defaults, immutable field reads (§9.1) |
-| Extern fn first-class value thunks | Implemented | Free extern fns emit QValue thunks |
-| Double-quoted strings | Implemented | Single and double-quoted strings are both valid |
-| String interpolation (`!{expr}`) | Not implemented | Deferred from v0.1 |
-| `unwrap_or`, `map_ok`, etc. | Future | Not implemented yet |
-| Struct methods / impl blocks | Future | Not implemented |
-| `tbl` type | Not implemented | Runtime representation only; see `tables_v0_1_spec.md` |
-| Tensor type | Future | Not implemented |
+| 1 | `=` | not chainable |
+| 2 | `\|` | left |
+| 3 | `a if cond else b` | right |
+| 4 | `or` | left |
+| 5 | `and` | left |
+| 6 | `==` `!=` | left |
+| 7 | `<` `<=` `>` `>=` | left |
+| 8 | `+` `-` | left |
+| 9 | `*` `/` `%` | left |
+| 10 | prefix `!` `-` | prefix |
+| 11 | `**` | right |
+| 12 | `.` `[]` `()` | left |
 
-## 14) Known Limits / Current Diagnostics
+- `**` binds tighter than a prefix operator, as in math and Python: `-2 ** 2` is `-(2 ** 2)`, which is `-4`; write `(-2) ** 2` for `4`. The right operand of `**` may be negated (`2 ** -1`), and `-x ** 2 ** 3` is `-(x ** (2 ** 3))`. Every other binary operator binds looser than a prefix operator: `-a * b` is `(-a) * b` and `!a == b` is `(!a) == b`.
+- `-2 ** 63` is `-(2 ** 63)`, which overflows; the smallest int can be written `-(2 ** 62) * 2`.
+- The ternary's condition is an `or` expression; its `else` branch may be another ternary: `a if c else b if d else e`.
+- `ok` and `err` take the rest of the expression as their operand (§7.1).
 
-- Quoted non-path imports must use `std/...`; bare quoted names are rejected
-- Dict bracket indexing is rejected by analyzer; use dot access or `.get()`/`.set()`
-- String interpolation (`!{...}`) is deferred from v0.1
-- Assignment is not chainable (`a = b = 1`)
-- No leading-dot float literals (`.5`)
-- Struct names are only recognized in the file that declares them
+### 10.4 Pipes
 
-## 15) Source of Truth Policy
+`x | f(a)` is parsed directly as the call `f(x, a)`, and `x | obj.m(a)` as `obj.m(x, a)`; no later stage sees a pipe. The target is parsed at ternary level and must be a call: `x | f`, `x | f() + 1` and `x | f() if c else g()` are parse errors (`pipe target must be a function call`). Parenthesize to use a pipe's result: `(x | f()) + 1`.
 
-To reduce drift:
-- `grammar.md` is canonical for syntax and semantic surface definitions.
-- `semantics.md` is canonical for runtime behaviour, error model, and design decisions.
-- `stdlib.md` is canonical for builtin surface and documented behavior contracts.
-- `architecture.md` documents implementation internals (compiler pipeline, runtime structs, codegen).
-- `src/core/quark/builtins/catalog.go` is the code-level source of truth for builtin names, arity, and runtime symbol mapping.
+Since `|` binds looser than the ternary and `or`, the whole left side is piped: `a if c else b | f()` is `f(a if c else b)`, and `0 or 3 | f()` is `f(0 or 3)`.
 
-Changes to language behavior must update the relevant canonical docs in the same change. If any canonical doc conflicts with implementation, treat it as a release blocker and resolve before adding features.
+A line starting with `|` continues the expression on the previous line, at the same indentation:
+
+```quark
+y = 5
+| double()
+| inc()
+```
+
+What a pipe means for arity and checking: semantics.md §7.
+
+## 11) Not in the Language
+
+These are not part of Quark, by decision or because they are planned in a spec:
+
+| Feature | Status |
+|---|---|
+| `tbl[Row]` type and queries (`t \| e -> verb(...)`) | Planned: `tables_v0_1_spec.md` (D3, D10); the runtime engine exists |
+| Written element types (`list[int]`) | Planned: `tables_v0_1_spec.md` D16 |
+| `extern source` | Planned: `ffi_v0_1_spec.md` P2 |
+| Digit separators in numbers | Planned: `tables_v0_1_spec.md` §9 |
+| `struct` inside a function body | Not supported; currently an internal error (changelog.md Known issues) |
+| `return` | None: a function's value is its last statement (semantics.md §6.1) |
+| `in` as an operator | None: use `any(v == x)`, `d.get(k) != null`, `s.contains(sub)` |
+| String interpolation, varargs, keyword arguments | None (`stdlib_expansion_v0_1_spec.md` §1) |
+| Struct methods | None (`structs_v0_1_spec.md`) |
+| Exceptions | None: runtime errors are fatal, expected failures are results (semantics.md §11) |
+
+## 12) Source of Truth
+
+- `grammar.md` (this file): syntax, tokens and precedence.
+- `semantics.md`: runtime behaviour, types, scoping, the error model and design decisions.
+- `stdlib.md`: builtin functions, methods and stdlib modules. The code-level source of truth for builtin names, arity and types is `src/core/quark/builtins/catalog.go`.
+- `architecture.md`: compiler pipeline, runtime structures and codegen.
+- `modules_v0_2_spec.md`, `structs_v0_1_spec.md`, `ffi_v0_1_spec.md`, `tables_v0_1_spec.md`: the full rules of each area.
+
+A change to the language updates these docs in the same change. A conflict between a doc and the implementation is a bug to fix before adding features.

@@ -1,5 +1,13 @@
 # Vendored Boehm GC
 
+## Contents
+
+- [What is committed](#what-is-committed)
+- [Platforms without a prebuilt library](#platforms-without-a-prebuilt-library)
+- [Rebuilding the prebuilt libraries](#rebuilding-the-prebuilt-libraries)
+
+## What is committed
+
 Only the files Quark needs at build time are committed here, not the GC source:
 
 - `include/gc.h`, `include/gc_cpp.h`, `include/gc/*.h` — public headers

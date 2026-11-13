@@ -1,0 +1,21 @@
+// zscore_blas.qrk - the std/blas (OpenBLAS) implementation of zscore
+// (README.md#zscore); the others are in zscore.qrk.
+incl './lib/harness'
+incl 'std/blas'
+
+fn zscore_blas(a: vec) vec ->
+    m = sum(a) / len(a)
+    d = a - m
+    sd = sqrt(blas::dot(d, d) / (len(a) - 1))
+    blas::scal(1.0 / sd, d)
+
+p = harness::params()
+impl: str = p.impl
+n = harness::int_param(p, 'n')
+a = harness::read_f64(p, 'a.f64', n)
+b = harness::read_f64(p, 'b.f64', n)
+if impl == 'quark_blas':
+    out: vec = harness::measure(p, 'zscore', fn() -> zscore_blas(a))
+    harness::check(p, 'zscore', sum(out * b))
+else:
+    harness::unknown_impl(p, 'zscore')

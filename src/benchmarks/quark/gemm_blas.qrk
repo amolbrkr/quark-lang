@@ -1,0 +1,19 @@
+// gemm_blas.qrk - the std/blas (OpenBLAS) implementation of gemm
+// (README.md#gemm); the others are in gemm.qrk.
+incl './lib/harness'
+incl './lib/matrix'
+incl 'std/blas'
+
+p = harness::params()
+impl: str = p.impl
+n = harness::int_param(p, 'n')
+a = harness::read_f64(p, 'gemm_a.f64', n * n)
+b = harness::read_f64(p, 'gemm_b.f64', n * n)
+if impl == 'quark_blas':
+    out: vec = harness::measure(p, 'gemm', fn() -> blas::gemm(a, n, n, b, n))
+    sums = list []
+    for r in matrix::row_lists(out.to_list(), n, n):
+        sums.push(harness::sum_list(r))
+    harness::check(p, 'gemm', matrix::gemm_check(sums, n))
+else:
+    harness::unknown_impl(p, 'gemm')

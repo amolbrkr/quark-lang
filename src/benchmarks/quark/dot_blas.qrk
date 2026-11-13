@@ -1,0 +1,15 @@
+// dot_blas.qrk - the std/blas (OpenBLAS) implementation of dot
+// (README.md#dot); the others are in dot.qrk.
+incl './lib/harness'
+incl 'std/blas'
+
+p = harness::params()
+impl: str = p.impl
+n = harness::int_param(p, 'n')
+a = harness::read_f64(p, 'a.f64', n)
+b = harness::read_f64(p, 'b.f64', n)
+if impl == 'quark_blas':
+    r = harness::measure(p, 'dot', fn() -> blas::dot(a, b))
+    harness::check(p, 'dot', r)
+else:
+    harness::unknown_impl(p, 'dot')

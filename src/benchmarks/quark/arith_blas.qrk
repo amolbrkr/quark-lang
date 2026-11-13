@@ -1,0 +1,15 @@
+// arith_blas.qrk - the std/blas (OpenBLAS) implementation of arith
+// (README.md#arith); the others are in arith.qrk.
+incl './lib/harness'
+incl 'std/blas'
+
+p = harness::params()
+impl: str = p.impl
+n = harness::int_param(p, 'n')
+a = harness::read_f64(p, 'a.f64', n)
+b = harness::read_f64(p, 'b.f64', n)
+if impl == 'quark_blas':
+    out = harness::measure(p, 'arith', fn() -> blas::axpy(2.5, a, b))
+    harness::check(p, 'arith', sum(out))
+else:
+    harness::unknown_impl(p, 'arith')

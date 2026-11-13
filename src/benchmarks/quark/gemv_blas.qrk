@@ -1,0 +1,15 @@
+// gemv_blas.qrk - the std/blas (OpenBLAS) implementation of gemv
+// (README.md#gemv); the others are in gemv.qrk.
+incl './lib/harness'
+incl 'std/blas'
+
+p = harness::params()
+impl: str = p.impl
+n = harness::int_param(p, 'n')
+a = harness::read_f64(p, 'gemv_a.f64', n * n)
+x = harness::read_f64(p, 'gemv_x.f64', n)
+if impl == 'quark_blas':
+    out = harness::measure(p, 'gemv', fn() -> blas::gemv(a, n, n, x))
+    harness::check(p, 'gemv', sum(out))
+else:
+    harness::unknown_impl(p, 'gemv')

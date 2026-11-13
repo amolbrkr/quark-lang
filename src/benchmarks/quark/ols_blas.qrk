@@ -1,0 +1,23 @@
+// ols_blas.qrk - the std/blas (OpenBLAS) implementation of ols
+// (README.md#ols); the others are in ols.qrk.
+incl './lib/harness'
+incl './lib/matrix'
+incl 'std/blas'
+
+// X as one flat row-major vec: X'X with syrk, X'y with a transposed gemv.
+fn ols_blas(x: vec, y: vec, n: int, p: int) list ->
+    g = blas::syrk(x, n, p)
+    xty = blas::gemv(x, n, p, y, true)
+    matrix::solve(matrix::row_lists(g.to_list(), p, p), xty.to_list())
+
+p = harness::params()
+impl: str = p.impl
+n = harness::int_param(p, 'n')
+k = harness::int_param(p, 'p')
+x = harness::read_f64(p, 'ols_x.f64', n * k)
+y = harness::read_f64(p, 'ols_y.f64', n)
+if impl == 'quark_blas':
+    out = harness::measure(p, 'ols', fn() -> ols_blas(x, y, n, k))
+    harness::check(p, 'ols', matrix::ols_check(out))
+else:
+    harness::unknown_impl(p, 'ols')

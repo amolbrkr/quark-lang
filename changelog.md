@@ -10,6 +10,7 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 
 ## Contents
 
+- [2026-11-13: Tables v0.1 in the compiler](#2026-11-13-tables-v01-in-the-compiler)
 - [2026-11-13: A statement ends at the end of its line; indented pipe lines](#2026-11-13-a-statement-ends-at-the-end-of-its-line-indented-pipe-lines)
 - [2026-11-13: Known issues move to `known_issues.md`](#2026-11-13-known-issues-move-to-known_issuesmd)
 - [2026-11-13: Benchmark suite; `std/blas` gemm, syrk and transposed gemv](#2026-11-13-benchmark-suite-stdblas-gemm-syrk-and-transposed-gemv)
@@ -34,6 +35,16 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 - [2026-03-28: Vector soundness, `std/fmt` on `extern`, build output](#2026-03-28-vector-soundness-stdfmt-on-extern-build-output)
 
 ---
+
+## 2026-11-13: Tables v0.1 in the compiler
+
+Implements `tables_v0_1_spec.md` §9 (the first implementation), on branch `worktree-tbl-v01`.
+
+### Added
+- **Digit separators** (`grammar.md` §2): `_` may stand between two digits of a number, in any part of it, and is ignored: `100_000`, `1_000.5`, `0.000_1`, `1e1_0`. Anywhere else in a number it is an error: `x = 1__0` is `'_' in a number must be between two digits: '1__0' (write 100_000)`, as are `1_`, `1_.5`, `1._5` and `1_e5`. `_1` is still a name.
+
+### Internal
+- `lexer.readNumber` reads digit runs with separators and drops them from the literal, so later stages see `100000`. The editor grammar highlights separators and exponents (`1e3` was highlighted as `1`).
 
 ## 2026-11-13: A statement ends at the end of its line; indented pipe lines
 

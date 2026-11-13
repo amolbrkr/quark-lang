@@ -61,7 +61,8 @@ Identifiers are letters, digits and `_`, starting with a letter or `_`. A name c
 
 ### 3.3 Literals
 
-- `INT`: decimal digits (`42`). There are no hex, octal or binary forms and no digit separators (digit separators are planned: `tables_v0_1_spec.md` §9).
+- `INT`: decimal digits (`42`). There are no hex, octal or binary forms.
+- Digit separators: `_` may stand between two digits of an `INT` or `FLOAT`, in any part of it (`100_000`, `1_000.5`, `0.000_1`, `1e1_0`), and is ignored. Anywhere else in a number it is a lex error (`1_`, `1__0`, `1_.5`, `1._5`, `1_e5`: `'_' in a number must be between two digits`); `_1` is a name.
 - `FLOAT`: digits, a dot and digits (`3.14`), or digits and a dot (`2.` is `2.0`), optionally followed by an exponent: `e` or `E`, an optional sign, and digits (`1e3`, `2.5E-4`, `6e+2`). An exponent makes the literal a float even without a dot. A leading dot (`.5`) is a parse error.
 - `STRING`: single-quoted or double-quoted, on one line.
 - `true`, `false`, `null`.
@@ -407,7 +408,6 @@ These are not part of Quark, by decision or because they are planned in a spec:
 | `tbl[Row]` type and queries (`t \| e -> verb(...)`) | Planned: `tables_v0_1_spec.md` (D3, D10); the runtime engine exists |
 | Written element types (`list[int]`) | Planned: `tables_v0_1_spec.md` D16 |
 | `extern source` | Planned: `ffi_v0_1_spec.md` P2 |
-| Digit separators in numbers | Planned: `tables_v0_1_spec.md` §9 |
 | `struct` inside a function body | Not supported; currently an internal error (known_issues.md) |
 | `return` | None: a function's value is its last statement (semantics.md §6.1) |
 | `in` as an operator | None: use `any(v == x)`, `d.get(k) != null`, `s.contains(sub)` |

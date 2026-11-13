@@ -509,6 +509,10 @@ target must be a call.
 inc = fn(x) -> x + 1
 5 | inc() | print()              // 6
 'hello'.upper() | print()        // HELLO
+
+total = 5                        // a long chain continues on lines
+    | inc()                      // that start with |
+    | inc()                      // 7
 ```
 
 ### Results: `ok` and `err`
@@ -895,8 +899,6 @@ and don't. An `INV-*` diagnostic is a compiler bug.
 - An unannotated parameter's type isn't inferred from how the body uses it
   (only from how it calls it), so `fn f(x) -> x.upper()` called with an int is
   a runtime error, not a compile error.
-- A pipe continued on the next line (`| f()`) must have the same indentation
-  as the line before it.
 - A `vec` literal can't contain `null`.
 
 **Known issues.** Bugs, including the cases where the compiler still gives a

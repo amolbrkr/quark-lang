@@ -329,7 +329,18 @@ func TestSnippets_Parse(t *testing.T) {
 		body := strings.Join(s.Body, "\n")
 		body = withDefault.ReplaceAllString(body, "$1")
 		body = choice.ReplaceAllString(body, "$1")
-		body = bare.ReplaceAllString(body, "null")
+		// A placeholder with no default (the final cursor position `$0`)
+		// inserts nothing; alone on its line it would leave an empty block,
+		// so there it stands for a statement, `null`.
+		lines := strings.Split(body, "\n")
+		for i, line := range lines {
+			if strings.TrimSpace(bare.ReplaceAllString(line, "")) == "" {
+				lines[i] = bare.ReplaceAllString(line, "null")
+			} else {
+				lines[i] = bare.ReplaceAllString(line, "")
+			}
+		}
+		body = strings.Join(lines, "\n")
 		body = strings.ReplaceAll(body, "\t", "    ")
 		errs := parseErrors(body)
 		if len(errs) > 0 {

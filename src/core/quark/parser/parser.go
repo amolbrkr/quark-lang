@@ -115,6 +115,55 @@ func (p *Parser) synchronize() {
 	}
 }
 
+// endStatement checks what follows a statement: the end of its line, the end
+// of its block or of the file, or, after a statement that ended with a block
+// of its own (an indented block, whose DEDENT was the last token read, or an
+// inline one, which read its line's NEWLINE), the next statement. Anything
+// else is a second expression with no operator or line break before it,
+// which must not run as a statement of its own (`total = price qty`).
+func (p *Parser) endStatement() bool { return p.endLine("statement") }
+
+// endLine is endStatement for the other things that end a line: a `when`
+// arm, a struct field.
+func (p *Parser) endLine(what string) bool {
+	switch p.curToken.Type {
+	case token.NEWLINE, token.DEDENT, token.EOF:
+		return true
+	}
+	if p.pos == 0 {
+		p.addError("unexpected %s", sourceText(p.curToken))
+		return false
+	}
+	prev := p.tokens[p.pos-1]
+	if prev.Type == token.NEWLINE || prev.Type == token.DEDENT {
+		return true
+	}
+	hint := "put each " + what + " on its own line"
+	if what != "field" {
+		hint += ", or join the two with an operator"
+	}
+	p.addError("unexpected %s after %s; %s", sourceText(p.curToken), sourceText(prev), hint)
+	return false
+}
+
+// sourceText is a token as it appears in the source, for messages.
+func sourceText(tok token.Token) string {
+	switch tok.Type {
+	case token.STRING:
+		return fmt.Sprintf("string '%s'", tok.Literal)
+	case token.NEWLINE:
+		return "the end of the line"
+	case token.EOF:
+		return "the end of the file"
+	case token.INDENT, token.DEDENT:
+		return "a change of indentation"
+	}
+	if tok.Literal == "" {
+		return tok.Type.String()
+	}
+	return fmt.Sprintf("'%s'", tok.Literal)
+}
+
 // Parse is the main entry point
 func (p *Parser) Parse() *ast.TreeNode {
 	root := ast.NewNode(ast.CompilationUnitNode, nil)
@@ -127,6 +176,9 @@ func (p *Parser) Parse() *ast.TreeNode {
 		stmt := p.parseStatement()
 		if stmt != nil {
 			root.AddChild(stmt)
+			if !p.endStatement() {
+				p.synchronize()
+			}
 		} else {
 			p.synchronize()
 			if len(p.errors) >= maxParserErrors {
@@ -162,6 +214,11 @@ func (p *Parser) parseStatement() *ast.TreeNode {
 		return p.parseBreak()
 	case token.CONTINUE:
 		return p.parseContinue()
+	case token.PIPE:
+		// A '|' line that the expression above can't take: indented less
+		// than that expression's line, or after a block.
+		p.addError("'|' can't start a statement; a line starting with '|' continues an expression that ends on the line above (not with an indented block), and is indented at least as far as that expression's first line")
+		return nil
 	case token.FN:
 		return p.parseFunction()
 	default:
@@ -190,6 +247,9 @@ func (p *Parser) parseBlock() *ast.TreeNode {
 				stmt := p.parseStatement()
 				if stmt != nil {
 					node.AddChild(stmt)
+					if !p.endStatement() {
+						p.synchronize()
+					}
 				} else {
 					p.synchronize()
 					if len(p.errors) >= maxParserErrors {
@@ -207,16 +267,20 @@ func (p *Parser) parseBlock() *ast.TreeNode {
 			p.expect(token.NEWLINE)
 		}
 	} else {
-		// Inline block (no newline)
-		for p.curToken.Type != token.NEWLINE && !p.isAtEnd() {
+		// Inline block (no newline): one statement, which ends the line. A
+		// statement ending with an indented block of its own (`fn f(x) -> when
+		// x:` and its arms) ends the inline block too, so the next line is
+		// not part of it.
+		if p.curToken.Type != token.NEWLINE && !p.isAtEnd() {
 			stmt := p.parseStatement()
-			if stmt != nil {
-				node.AddChild(stmt)
-			} else {
+			if stmt == nil {
 				p.synchronize()
-				if len(p.errors) >= maxParserErrors {
-					break
-				}
+				return node
+			}
+			node.AddChild(stmt)
+			if !p.endStatement() {
+				p.synchronize()
+				return node
 			}
 		}
 		if p.curToken.Type == token.NEWLINE {
@@ -276,6 +340,10 @@ func (p *Parser) parseStruct() *ast.TreeNode {
 		field := p.parseStructField()
 		if field != nil {
 			node.AddChild(field)
+			if !p.endLine("field") {
+				p.synchronize()
+				continue
+			}
 		} else {
 			p.synchronize()
 			if len(p.errors) >= maxParserErrors {
@@ -684,6 +752,11 @@ func (p *Parser) parseWhenStatement() *ast.TreeNode {
 		pattern := p.parsePattern()
 		if pattern != nil {
 			node.AddChild(pattern)
+			// An arm ends its line, like a statement.
+			if !p.endLine("when arm") {
+				p.synchronize()
+				continue
+			}
 		} else {
 			// Parsing failed - advance token to avoid infinite loop
 			p.nextToken()

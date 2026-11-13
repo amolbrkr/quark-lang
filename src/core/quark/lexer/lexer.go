@@ -197,6 +197,13 @@ func (l *Lexer) indentationFilter(tracked []trackedToken) []token.Token {
 			if depth == levels[len(levels)-1] {
 				// Same level, nothing to do
 			} else if depth > levels[len(levels)-1] {
+				// A deeper line starting with '|' continues the expression
+				// above it (grammar.md §3.4): it opens no block, and the
+				// parser joins it across the NEWLINE.
+				if tok.Type == token.PIPE {
+					result = append(result, tok)
+					continue
+				}
 				// Unexpected indent increase
 				result = append(result, token.Token{
 					Type:    token.ILLEGAL,

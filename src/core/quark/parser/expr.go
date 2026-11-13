@@ -538,6 +538,10 @@ func (p *Parser) parseExponent(left *ast.TreeNode) *ast.TreeNode {
 func (p *Parser) parsePipe(left *ast.TreeNode) *ast.TreeNode {
 	tok := p.curToken
 	p.nextToken()
+	if p.curToken.Type == token.NEWLINE || p.curToken.Type == token.EOF {
+		p.addErrorAt(&tok, "a line can't end with '|'; start the next line with it instead (x on one line, then '    | f()')")
+		return nil
+	}
 	right := p.parseExpression(ast.PrecPipe + 1)
 	if right == nil || left == nil {
 		return nil

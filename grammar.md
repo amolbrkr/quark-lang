@@ -75,7 +75,7 @@ String escapes: `\\`, `\n`, `\t`, `\r`, and the string's own quote (`\'` in sing
 - Line comments start with `//`.
 - Blocks are indentation-based. A line ending in `:` or `->` must be followed by a more indented line (`expected indented block` otherwise), which opens a block (`INDENT`); returning to an enclosing level closes it (`DEDENT`). An indented line anywhere else is `unexpected indent`; dedenting to a level that was never opened is `inconsistent indentation`.
 - Newlines inside `( )`, `[ ]` and `{ }` are ignored, so calls and literals may span lines.
-- A line that starts with `|` continues the previous expression (§10.4). It must be at the same indentation as the line it continues.
+- A line that starts with `|` continues the expression on the line above (§10.4), at the same indentation or deeper; it opens no block, so a deeper `|` line is not `unexpected indent`. A `|` line indented less than the expression's first line, or after an expression that ends with an indented block, is `'|' can't start a statement`. A line can't end with `|`.
 - Blank lines and comment-only lines are ignored.
 
 ## 4) Program Structure
@@ -101,7 +101,7 @@ Block           ::= NEWLINE INDENT { Statement NEWLINE } DEDENT
                 |   Statement                         (inline, on the header's line)
 ```
 
-Each statement ends at a newline. An inline block is one statement on the header's line: `if x > 5: print('big')`, `fn sq(x) -> x * x`.
+Each statement ends at a newline. An inline block is one statement on the header's line: `if x > 5: print('big')`, `fn sq(x) -> x * x`. Anything after a complete statement on its line is a parse error, never a second statement: `total = price qty` is `unexpected 'qty' after 'price'; put each statement on its own line, or join the two with an operator`. The same holds for a `when` arm and a struct field, one per line. A statement that ends with an indented block of its own ends with that block, so the next line starts a new statement: after `fn pick(x) -> when x:` and its arms, the next line is not part of `pick`.
 
 Where statements may appear:
 - `incl`, `extern link`, `extern include_path` and `module`: the top level of a file only.
@@ -382,13 +382,19 @@ This is the canonical precedence table (`parser/expr.go`, `ast.Precedence`).
 
 Since `|` binds looser than the ternary and `or`, the whole left side is piped: `a if c else b | f()` is `f(a if c else b)`, and `0 or 3 | f()` is `f(0 or 3)`.
 
-A line starting with `|` continues the expression on the previous line, at the same indentation:
+A line starting with `|` continues the expression on the line above, indented deeper or at the same indentation; comment and blank lines may come between:
 
 ```quark
 y = 5
+    | double()
+    // then one more
+    | inc()
+
+z = 5
 | double()
-| inc()
 ```
+
+The `|` goes at the start of the continuing line: a line ending with `|` is a parse error (`a line can't end with '|'; start the next line with it instead`). A `|` line can't be indented less than the first line of the expression it continues, and can't follow an expression that ends with an indented block (a `when` used as a value); assign that to a variable and pipe the variable.
 
 What a pipe means for arity and checking: semantics.md §7.
 

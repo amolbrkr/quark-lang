@@ -9,6 +9,7 @@ Sections follow [Keep a Changelog](https://keepachangelog.com/): **Breaking**, *
 ## Contents
 
 - [Known issues (as of `fd6822c`)](#known-issues-as-of-fd6822c)
+- [2026-11-13: A statement ends at the end of its line; indented pipe lines](#2026-11-13-a-statement-ends-at-the-end-of-its-line-indented-pipe-lines)
 - [2026-11-13: Benchmark suite; `std/blas` gemm, syrk and transposed gemv](#2026-11-13-benchmark-suite-stdblas-gemm-syrk-and-transposed-gemv)
 - [2026-11-13: Vec reductions follow the table aggregates; `std/stats` (tables D13)](#2026-11-13-vec-reductions-follow-the-table-aggregates-stdstats-tables-d13)
 - [2026-11-13: A missing vec entry taken out as one value is an error (tables D12)](#2026-11-13-a-missing-vec-entry-taken-out-as-one-value-is-an-error-tables-d12)
@@ -88,6 +89,36 @@ Checked against the compiler on 2026-11-12 and 2026-11-13. The structural causes
 - A program that imports `std/blas` starts OpenBLAS's thread pool (one thread per CPU), and then allocating large vecs makes the GC print `GC Warning: Repeated allocation of very large block (appr. size 78128 KiB): May lead to memory leak and poor performance` to stderr, and vec allocation gets erratic (`2.5 * a + b` on 10M-element vecs with `blas::axpy` measured 30 ms with `OPENBLAS_NUM_THREADS=1`, 135 ms without). The same program without `incl 'std/blas'`, or with `OPENBLAS_NUM_THREADS=1`, prints nothing (`src/benchmarks/RESULTS.md`).
 
 ---
+
+## 2026-11-13: A statement ends at the end of its line; indented pipe lines
+
+Commits: not yet committed
+
+### Breaking
+- **Anything after a complete statement on its line is a parse error** (`grammar.md` §4). The parser ran it as another statement, so a missing operator went unnoticed:
+  ```
+  total = price qty     // was: total = price, then qty; now: unexpected 'qty' after 'price'; put each statement on its own line, or join the two with an operator
+  y = 'a' 'b'           // was: 'a'
+  fn f(x) -> x + 1 print(9)   // was: a two-statement body, f(1) printed 9 and returned null
+  ```
+  The same holds for a `when` arm (`1 -> 'one' 'two'`, which gave `expected ARROW but got NEWLINE`) and a struct field: `struct P:` / `x: int y: int` declared two fields, and is now `unexpected 'y' after 'int'; put each field on its own line`.
+
+### Added
+- **A pipe chain can continue on indented lines** (`grammar.md` §3.4, §10.4). A line starting with `|` that is indented deeper than the line it continues was `unexpected indent`; the same-indentation form keeps working, and comment and blank lines may come between:
+  ```
+  y = 5
+      | double()
+      | inc()
+  ```
+
+### Changed
+- Clearer errors for the pipe lines that can't continue an expression: a line ending with `|` is `a line can't end with '|'; start the next line with it instead` (it was `no prefix parse function for NEWLINE`), and a `|` line indented less than the expression it would continue, or following an expression that ends with an indented block, is `'|' can't start a statement; ...` (it was `no prefix parse function for PIPE`).
+
+### Fixed
+- A `fn` declaration whose body is an inline `when` no longer swallows the next statement: after `fn pick(x) -> when x:` / `    1 -> 'one'` / `    _ -> 'other'`, a following `print(pick(1))` became part of `pick`'s body, so the program printed nothing. The same for `fn h(x) -> y = when x:` and an inline `when` in an `if` or `for` body (`if false: when 1:` and its arms, then `print('after')`, printed nothing). An inline block is one statement, as documented.
+
+### Internal
+- `parser.endStatement` / `endLine` run after every statement (top level, indented and inline blocks), `when` arm and struct field: the next token must end the line, the block or the file, unless the statement ended with a block of its own (the last token read was a `NEWLINE` or `DEDENT`). `parseBlock`'s inline form parses one statement. The lexer passes a deeper line that starts with `|` through without an `INDENT` (`indentationFilter`), and the parser's existing `NEWLINE` + `|` continuation joins it. The editor snippet test expands a placeholder with no default (`$0`) to nothing, as the editor does, instead of `null`, which only parsed because of the separator bug. Tests: `parser/statement_end_test.go`, `TestIndentation_DeeperPipeLineContinues`, `TestStatementEnd_Programs`, `TestSemanticsSafety_Rejected` (`no_separator*`, `pipe_*`).
 
 ## 2026-11-13: Benchmark suite; `std/blas` gemm, syrk and transposed gemv
 

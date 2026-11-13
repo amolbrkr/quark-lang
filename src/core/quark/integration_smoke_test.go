@@ -1203,6 +1203,15 @@ func TestSemanticsSafety_Rejected(t *testing.T) {
 		{"when_vec_known", "v = vec [1, 1]\nwhen v:\n    1 -> print('one')\n    _ -> print('other')\n", "when can't match a vec"},
 		{"when_vec_param", "fn g(a: vec) ->\n    when a:\n        1 -> 'one'\n        _ -> 'other'\nprint(g(vec [1]))\n", "when can't match a vec"},
 		{"when_vec_untyped", "fn g(a) ->\n    when a:\n        1 -> 'one'\n        _ -> 'other'\nprint(g(vec [1, 1]))\n", "when can't match a vec"},
+		// A statement ends at the end of its line: a second expression after
+		// it is a parse error, never a statement of its own.
+		{"no_separator", "price = 4\nqty = 3\ntotal = price qty\nprint(total)\n", "unexpected 'qty' after 'price'"},
+		{"no_separator_inline_fn_body", "fn f(x) -> x + 1 print(9)\nprint(f(1))\n", "unexpected 'print' after '1'"},
+		{"no_separator_struct_fields", "struct P:\n    x: int y: int\nprint(P { x: 1, y: 2 }.y)\n", "unexpected 'y' after 'int'; put each field on its own line"},
+		// A '|' line continues the expression above it, at the same or a
+		// deeper indentation; a line can't end with '|'.
+		{"pipe_line_dedented", "fn twice(x) -> x * 2\nif true:\n    y = 3\n| twice()\n", "'|' can't start a statement"},
+		{"pipe_trailing", "fn twice(x) -> x * 2\ny = 3 |\n    twice()\nprint(y)\n", "a line can't end with '|'"},
 	}
 
 	tmp := t.TempDir()

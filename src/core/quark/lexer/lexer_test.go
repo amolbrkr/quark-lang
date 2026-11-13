@@ -120,6 +120,37 @@ func TestIndentation_BlankLinesIgnored(t *testing.T) {
 	}
 }
 
+// A deeper line that starts with '|' continues the expression above it: it
+// opens no block and is no indentation error, inside a block too.
+func TestIndentation_DeeperPipeLineContinues(t *testing.T) {
+	for _, src := range []string{
+		"y = x\n    | f()\n    | g()\nz = 1\n",
+		"if true:\n    y = x\n        | f()\n    z = 1\n",
+	} {
+		var types []string
+		for _, tok := range testutil.Lex(src) {
+			if tok.Type == token.ILLEGAL {
+				t.Fatalf("%q: unexpected ILLEGAL %q", src, tok.Literal)
+			}
+			types = append(types, tok.Type.String())
+		}
+		joined := strings.Join(types, " ")
+		if strings.Count(joined, "INDENT") != strings.Count(src, ":\n") || strings.Count(joined, "NEWLINE PIPE") != strings.Count(src, "| ") {
+			t.Fatalf("%q: tokens %s", src, joined)
+		}
+	}
+}
+
+// A deeper line that doesn't start with '|' is still an indentation error.
+func TestIndentation_DeeperLineWithoutPipeYieldsIllegal(t *testing.T) {
+	for _, tok := range testutil.Lex("y = 3\n    + 1\n") {
+		if tok.Type == token.ILLEGAL && tok.Literal == "unexpected indent" {
+			return
+		}
+	}
+	t.Fatalf("expected ILLEGAL 'unexpected indent'")
+}
+
 // --- Keywords ---
 
 func TestVectorKeyword_TokenizedAsKeyword(t *testing.T) {

@@ -1,0 +1,37 @@
+// join.qrk - left join (k, v) to (k, w) on a string key (README.md#join).
+// Every key of the first table is in the second one.
+incl './lib/harness'
+
+fn join_list(keys: list, dim_k: list, dim_w: list) list ->
+    lookup = dict {}
+    for i in range(len(dim_k)):
+        k: str = dim_k[i]
+        w: float = dim_w[i]
+        lookup.set(k, w)
+    out = list []
+    for key in keys:
+        k: str = key
+        w: float = lookup.get(k)
+        out.push(w)
+    out
+
+// The checksum: sum(v * w).
+fn join_check(vals: list, w: list) float ->
+    s = 0.0
+    for i in range(len(vals)):
+        v: float = vals[i]
+        x: float = w[i]
+        s = s + v * x
+    s
+
+p = harness::params()
+impl: str = p.impl
+keys = harness::read_lines(p, 'join_k.txt')
+vals = harness::read_f64(p, 'join_v.f64', -1).to_list()
+dim_k = harness::read_lines(p, 'join_dim_k.txt')
+dim_w = harness::read_f64(p, 'join_dim_w.f64', -1).to_list()
+if impl == 'quark_list':
+    out = harness::measure(p, 'join', fn() -> join_list(keys, dim_k, dim_w))
+    harness::check(p, 'join', join_check(vals, out))
+else:
+    harness::unknown_impl(p, 'join')

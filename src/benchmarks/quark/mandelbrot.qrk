@@ -1,0 +1,63 @@
+// mandelbrot.qrk - escape-time iteration count over an n x n grid
+// (README.md#mandelbrot).
+incl './lib/harness'
+
+// Scalar: iterate each point until it escapes or reaches iters.
+fn mandel_scalar(n: int, iters: int) int ->
+    total = 0
+    for j in range(n):
+        ci = -1.5 + 3.0 * j / n
+        for i in range(n):
+            cr = -2.0 + 3.0 * i / n
+            zr = 0.0
+            zi = 0.0
+            k = 0
+            while k < iters:
+                zr2 = zr * zr
+                zi2 = zi * zi
+                if zr2 + zi2 > 4.0:
+                    break
+                zi = 2.0 * zr * zi + ci
+                zr = zr2 - zi2 + cr
+                k = k + 1
+            total = total + k
+    total
+
+// Vectorized: iterate every point iters times and count, per iteration,
+// the points still inside. Escaped points grow to inf and then nan, which
+// compare false, so the count equals the scalar one.
+fn mandel_vec(n: int, iters: int) int ->
+    crs = list []
+    cis = list []
+    zeros = list []
+    for j in range(n):
+        for i in range(n):
+            crs.push(-2.0 + 3.0 * i / n)
+            cis.push(-1.5 + 3.0 * j / n)
+            zeros.push(0.0)
+    cr = crs.to_vec()
+    ci = cis.to_vec()
+    zr = zeros.to_vec()
+    zi = zr
+    total = 0.0
+    for k in range(iters):
+        zr2 = zr * zr
+        zi2 = zi * zi
+        inside: float = sum(zr2 + zi2 <= 4.0)
+        total = total + inside
+        zi = 2.0 * zr * zi + ci
+        zr = zr2 - zi2 + cr
+    to_int(total)
+
+p = harness::params()
+impl: str = p.impl
+n = harness::int_param(p, 'n')
+iters = harness::int_param(p, 'iters')
+if impl == 'quark_list':
+    r = harness::measure(p, 'mandelbrot', fn() -> mandel_scalar(n, iters))
+    harness::check(p, 'mandelbrot', r)
+elseif impl == 'quark_vec':
+    r = harness::measure(p, 'mandelbrot', fn() -> mandel_vec(n, iters))
+    harness::check(p, 'mandelbrot', r)
+else:
+    harness::unknown_impl(p, 'mandelbrot')

@@ -1,0 +1,77 @@
+// gemm.qrk - C = A B for n x n matrices (README.md#gemm).
+incl './lib/harness'
+incl './lib/matrix'
+incl 'std/blas'
+
+// i-k-j order: row i of C accumulates A[i][k] * row k of B.
+fn gemm_list(a: list, b: list, n: int) list ->
+    c = list []
+    for i in range(n):
+        ai: list = a[i]
+        ci = list []
+        for j in range(n):
+            ci.push(0.0)
+        for k in range(n):
+            aik: float = ai[k]
+            bk: list = b[k]
+            for j in range(n):
+                cij: float = ci[j]
+                bkj: float = bk[j]
+                ci[j] = cij + aik * bkj
+        c.push(ci)
+    c
+
+// The same order with vector rows: row i of C is the sum of
+// A[i][k] * row k of B.
+fn gemm_vec(a: list, b: list, n: int) list ->
+    c = list []
+    for i in range(n):
+        ai: vec = a[i]
+        b0: vec = b[0]
+        a0: float = ai[0]
+        ci = b0 * a0
+        for k in range(1, n):
+            bk: vec = b[k]
+            aik: float = ai[k]
+            ci = ci + bk * aik
+        c.push(ci)
+    c
+
+// The checksum: sum(C[i][j] * (i + 1)) / n, from the row sums of C.
+fn gemm_check(row_sums: list, n: int) float ->
+    s = 0.0
+    for i in range(n):
+        r: float = row_sums[i]
+        s = s + r * (i + 1)
+    s / n
+
+p = harness::params()
+impl: str = p.impl
+n = harness::int_param(p, 'n')
+a = harness::read_f64(p, 'gemm_a.f64', n * n)
+b = harness::read_f64(p, 'gemm_b.f64', n * n)
+if impl == 'quark_list':
+    al = matrix::row_lists(a.to_list(), n, n)
+    bl = matrix::row_lists(b.to_list(), n, n)
+    out: list = harness::measure(p, 'gemm', fn() -> gemm_list(al, bl, n))
+    sums = list []
+    for r in out:
+        sums.push(harness::sum_list(r))
+    harness::check(p, 'gemm', gemm_check(sums, n))
+elseif impl == 'quark_vec':
+    av = matrix::row_vecs(a.to_list(), n, n)
+    bv = matrix::row_vecs(b.to_list(), n, n)
+    out: list = harness::measure(p, 'gemm', fn() -> gemm_vec(av, bv, n))
+    sums = list []
+    for r in out:
+        rv: vec = r
+        sums.push(sum(rv))
+    harness::check(p, 'gemm', gemm_check(sums, n))
+elseif impl == 'quark_blas':
+    out: vec = harness::measure(p, 'gemm', fn() -> blas::gemm(a, n, n, b, n))
+    sums = list []
+    for r in matrix::row_lists(out.to_list(), n, n):
+        sums.push(harness::sum_list(r))
+    harness::check(p, 'gemm', gemm_check(sums, n))
+else:
+    harness::unknown_impl(p, 'gemm')

@@ -1,0 +1,31 @@
+// strings.qrk - clean string labels: trim, lowercase, '_' -> '-'
+// (README.md#strings). vec[str] has no string operations, so there is no
+// quark_vec.
+incl './lib/harness'
+
+fn strings_list(xs: list) list ->
+    out = list []
+    for x in xs:
+        s: str = x
+        out.push(s.trim().lower().replace('_', '-'))
+    out
+
+// The checksum: count(starts with 'item-') + total length.
+fn strings_check(xs: list) float ->
+    items = 0
+    total = 0
+    for x in xs:
+        s: str = x
+        if s.startswith('item-'):
+            items = items + 1
+        total = total + len(s)
+    to_float(items + total)
+
+p = harness::params()
+impl: str = p.impl
+xs = harness::read_lines(p, 'strings.txt')
+if impl == 'quark_list':
+    out = harness::measure(p, 'strings', fn() -> strings_list(xs))
+    harness::check(p, 'strings', strings_check(out))
+else:
+    harness::unknown_impl(p, 'strings')

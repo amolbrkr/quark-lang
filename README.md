@@ -864,6 +864,7 @@ and don't. An `INV-*` diagnostic is a compiler bug.
 | `.../cmd/quark-vsix`, `internal/` | the extension packager; editor data generation and test helpers |
 | `src/core/stdlib` | standard library modules (`.qrk`, most with a `.hpp` of native code) |
 | `src/testfiles` | example and test programs (`smoke_*.qrk`) |
+| `src/benchmarks` | the benchmark suite against Python and R (`bench.py`; see its `README.md`) |
 | `src/devtools/vscode-extension/quark` | the editor extension |
 | `deps/bdwgc` | the vendored Boehm GC (see `VENDORED.md`) |
 
@@ -937,6 +938,9 @@ shows the problem. `'foo.h' file not found` usually needs `--include-path`.
 - [architecture.md](architecture.md): compiler and runtime internals.
 - [error_codes.md](error_codes.md): diagnostic codes.
 - [changelog.md](changelog.md): what changed, and the known issues.
+- [src/benchmarks/README.md](src/benchmarks/README.md): performance against
+  Python (NumPy, pandas, Polars) and R (base, data.table), and how it is
+  measured.
 - Design specs: [modules_v0_2_spec.md](modules_v0_2_spec.md),
   [structs_v0_1_spec.md](structs_v0_1_spec.md),
   [tables_v0_1_spec.md](tables_v0_1_spec.md),

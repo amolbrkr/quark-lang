@@ -1,0 +1,299 @@
+# Quark benchmarks
+
+A benchmark suite that compares Quark with Python (pure Python, NumPy, pandas, Polars) and R (loops, base vectors, data.frame, data.table) on common data processing and number crunching. The point is to see where Quark actually stands, so that design decisions are made on measurements. It is not meant to make Quark look good: each tool gets the code an experienced user of it would write, and the same work.
+
+The latest measurements and what they show are in [RESULTS.md](RESULTS.md).
+
+## Contents
+
+- [Quick start](#quick-start)
+- [What is compared](#what-is-compared)
+- [Rules every implementation follows](#rules-every-implementation-follows)
+- [Benchmarks](#benchmarks)
+  - [Plain code: fib, mandelbrot, sieve, ewma](#plain-code)
+  - [Columns: reduce, arith, expr, dot, zscore, filter, sort](#columns)
+  - [Hashing and strings: groupby, join, wordcount, strings](#hashing-and-strings)
+  - [Linear algebra: gemv, gemm, ols](#linear-algebra)
+- [How a run works](#how-a-run-works)
+- [Reading the report](#reading-the-report)
+- [Caveats](#caveats)
+- [Adding a benchmark or an implementation](#adding-a-benchmark-or-an-implementation)
+- [Files](#files)
+
+## Quick start
+
+Requirements: everything Quark needs (Go, clang++, and OpenBLAS for `std/blas`: `sudo apt install libopenblas-dev`), Python 3.11+ (with `uv` or `venv`), and R with `data.table` (`install.packages('data.table')`). A missing language or library only skips its implementations.
+
+```bash
+cd src/benchmarks
+python3 bench.py setup                    # .venv with numpy, pandas, polars, pyarrow (requirements.txt)
+python3 bench.py list                     # benchmarks and their implementations
+python3 bench.py run --preset small       # every implementation once, small inputs (~4 min); checks they agree
+python3 bench.py run                      # default sizes, one thread per library (~15 min)
+python3 bench.py run --threads 0          # each library at its default thread count
+python3 bench.py run --bench groupby,join --lang quark,python
+python3 bench.py run --quark /path/to/quark      # a different compiler build, e.g. another branch
+```
+
+`bench.py run` builds the compiler in `src/core/quark` (unless `--quark` is given), generates the input data once per preset into `data/`, builds one Quark program per benchmark into `build/`, runs every implementation, and writes `results/<date>_<preset>_t<threads>/` with `report.md`, `results.json` (environment, configuration, every run) and `times.csv` (one row per timed run). `bench.py report <dir>` rebuilds `report.md` from `results.json`. `data/`, `build/`, `results/` and `.venv/` are not committed.
+
+Options of `run`: `--preset small|default|large`, `--bench`, `--impl`, `--lang` (comma-separated filters), `--threads N` (default 1; 0 = library defaults), `--warmup` (default 1), `--reps` (default 5), `--budget` (seconds per implementation, default 30), `--timeout` (seconds before a process is killed, default 600), `--quark PATH`, `--out DIR`, `--regen` (rewrite the data), `--strict` (exit 1 when an implementation fails or disagrees).
+
+## What is compared
+
+Implementations are grouped in tiers, from plain code to data frames:
+
+| Tier | Quark | Python | R |
+|---|---|---|---|
+| list: element-at-a-time code with the core types | `quark_list`: `list`, `dict`, loops | `py_list`: `list`, `dict`, loops, builtins | `r_loop`: `for`/`while` over vectors |
+| vector: whole-column operations | `quark_vec`: `vec` | `numpy` | `r_vec`: base vectors and matrices |
+| vector + BLAS | `quark_blas`: `vec` + `std/blas` | (NumPy calls BLAS itself) | (R calls BLAS itself) |
+| table | `quark_tbl` (planned) | `pandas`, `polars` | `r_df`: `data.frame`, `r_dt`: `data.table` |
+
+The list tier is named after Quark's `list`, but it is the tier of plain code in general: `fib` and `mandelbrot` use no lists. R has no separate list-of-scalars type, so its plain-code tier is loops over vectors (`r_loop`), and it is included only where loops are the natural or the only way to write the benchmark.
+
+A tool is left out of a benchmark (`n/a` in the report) when it has no natural way to do it, for example `quark_vec` in `sieve` (vectors are immutable) or `numpy` in `fib`. The table tiers appear where the frame API is different code from plain vectors (filter, sort, group, join, adding a column); `sum(df$a)` would only repeat `r_vec`.
+
+`quark_tbl` is listed as `planned` in every benchmark where a table implementation is expected (the tables v0.1 verbs `filter`, `mutate`, `sort`, `group_by`, `summarize`), so its row is in the report from the start. See [Adding an implementation](#adding-a-benchmark-or-an-implementation).
+
+## Rules every implementation follows
+
+1. **Same data.** `datagen.py` writes every input once per preset (seeded: same files on every machine), and every implementation reads those files. Loading is not timed.
+2. **Same result.** Every implementation computes the same result and prints a checksum of it (computed outside the timed region). `bench.py` compares each checksum with a reference implementation (NumPy when it exists, else pure Python, R, Quark) within a relative tolerance: 1e-9 by default (sums of floats in a different order), 1e-6 for `mandelbrot` (Quark's compiler may fuse `a*b + c` into one FMA instruction, which can flip a point at the escape boundary), exact for `fib` and `sieve`. A mismatch is reported as `wrong` and the time is not used.
+3. **Same algorithm, idiomatic code.** Each implementation does the same work with the same algorithm (no implementation skips work another does), written the way an experienced user of that tool would: Python uses `sum()`, `Counter`, comprehensions; NumPy uses `np.sort`, boolean masks, `@`; R uses `tapply`, `match`, `%*%`. Where a tool has no way to do something, the implementation says so in a comment and does what a user of that tool would do instead (NumPy's `ewma` loops over the array; Quark's vec `sort` goes through a list).
+4. **No accelerators.** No numba, Cython, numexpr, Rcpp, JIT decorators or hand-written native code. `std/blas` is part of Quark's standard library, so `quark_blas` is in.
+5. **The result is materialized.** Polars runs eagerly (`DataFrame`, not `LazyFrame`), and every timed function returns its full result (a new column, the filtered rows, the grouped table).
+6. **Fresh process per implementation**, so one implementation's heap, caches and thread pools don't affect another's.
+7. **One thread by default.** `--threads 1` pins every thread pool: `OMP_NUM_THREADS`, `OPENBLAS_NUM_THREADS`, `MKL_NUM_THREADS`, `POLARS_MAX_THREADS`, `R_DATATABLE_NUM_THREADS` and data.table's `setDTthreads`, and `GC_MARKERS` (Quark's Boehm GC marks in parallel by default). This compares the code, not the core count. `--threads 0` shows what each tool does out of the box; Quark itself is single-threaded except inside OpenBLAS and the GC.
+8. **Quark is built the way users build it**: `quark build` with its default flags (`-O3 -march=x86-64-v3` on x86-64, no LTO).
+
+## Benchmarks
+
+Sizes are those of the `default` preset; `small` is about 100 times smaller, `large` 3-10 times larger (`PRESETS` in `bench.py`). Checksums are listed so an implementation can be checked by hand.
+
+### Plain code
+
+#### fib
+
+Recursive Fibonacci, `fib(30)`: the cost of a function call and an integer comparison. Quark's `fib` is fully annotated (`fn fib(n: int) int`), so it compiles to a plain C++ function. Checksum: the result.
+
+#### mandelbrot
+
+Escape-time iteration count over a 400 × 400 grid of `[-2, 1] × [-1.5, 1.5]`, at most 100 iterations per point; tight float loops with an early exit. Checksum: the total iteration count.
+
+- Scalar (`quark_list`, `py_list`, `r_loop`): per point, `while k < iters`, break when `zr² + zi² > 4`.
+- Vectorized (`quark_vec`, `numpy`, `r_vec`): all points iterate 100 times; each iteration counts the points with `zr² + zi² <= 4`. An escaped point grows to `inf` and then `nan`, which never counts again, so the total equals the scalar one. Real and imaginary parts are separate float vectors in every implementation (Quark has no complex type). NumPy and R pay for iterating points that have already escaped; that is the usual vectorized formulation.
+
+#### sieve
+
+The number of primes below 10,000,000 by the sieve of Eratosthenes: list index reads and writes in nested loops. Checksum: the count (664,579).
+
+- `quark_list` builds the list with 10M `push(true)` calls (Quark has no `[x] * n`), crosses off with `for j in range(i * i, n, i): s[j] = false`, and counts with a loop.
+- `py_list`: `[True] * n`, the same loops, `sum(s)`. `r_loop`: `rep(TRUE, n)` and `while` loops.
+- `numpy`: slice assignment `s[i*i::i] = False`. `r_vec`: `s[seq.int(i*i, n - 1, by = i) + 1] <- FALSE`.
+- No `quark_vec`: vectors can't be written.
+
+#### ewma
+
+Exponentially weighted moving average of 10M values, a sequential recurrence that can't be vectorized: `y[0] = x[0]`, `y[i] = α·x[i] + (1 − α)·y[i−1]`, α = 0.05. Checksum: `sum(y)`.
+
+- `quark_list`, `py_list`, `r_loop`: a loop (Quark and Python append to a list; R fills a preallocated vector, the R idiom).
+- `quark_vec`: the same loop reading `v[i]`, then `.to_vec()`: vectors have no recurrence operation.
+- `numpy`: a loop over the array. NumPy has no recurrence primitive; this is what NumPy alone offers.
+- `pandas`: `ewm(alpha=α, adjust=False).mean()`; `polars`: `ewm_mean(alpha=α, adjust=False)`; `r_vec`: `stats::filter(α·x, 1 − α, method = "recursive", init = x[1])`. All three are this recurrence in native code.
+
+### Columns
+
+Two columns `a` and `b` of 10M uniform `[0, 1)` doubles (`sort` uses 1M standard normals).
+
+#### reduce
+
+Sum, minimum, maximum and mean of `a`. Checksum: their sum.
+
+- `quark_list`: one loop computing all four (Quark lists have no reductions). `py_list`: `sum`, `min`, `max`, and `sum / len`.
+- `quark_vec`: `sum(a)`, `min(a)`, `max(a)`, `s / len(a)`. `numpy`: `.sum()`, `.min()`, `.max()`, `.mean()`.
+- `pandas`: the Series methods (which skip NaN, like Quark's planned table aggregates); `polars`: one `select` of the four expressions.
+- `r_vec`: `sum`, `min`, `max`, `mean`. R's `sum` accumulates in long double and `mean` makes a second pass for accuracy, which costs time. `r_dt`: the same in `dt[, .(...)]`.
+
+#### arith
+
+`z = 2.5·a + b`, a new column. Checksum: `sum(z)`.
+
+- `quark_list`: a loop pushing to a list. `py_list`: `[2.5 * x + y for x, y in zip(a, b)]`.
+- `quark_vec`, `numpy`, `r_vec`: `2.5 * a + b` (two passes, one temporary). `quark_blas`: `blas::axpy(2.5, a, b)` (one pass).
+- Tables add the column: `df.assign(z=...)`, `df.with_columns(z=...)`, `df$z <- ...`, `dt[, z := ...]` (in place).
+
+#### expr
+
+`z = (a·a − b)·0.5 + (a − b) / (b·b + 1)`: eight operations, so vectorized code makes seven temporaries. Checksum: `sum(z)`.
+
+This separates compiled loops (one fused pass) from vector libraries that materialize every intermediate (Quark `vec`, NumPy, pandas, R) and from Polars, which evaluates the expression without full temporaries. Quark's `vec` also checks every divisor for zero.
+
+#### dot
+
+`sum(a·b)`. Checksum: the result.
+
+- `quark_vec`, `r_vec`: `sum(a * b)` (a temporary, then a sum). `quark_blas`: `blas::dot`. `numpy`: `np.dot` (BLAS). `pandas`: `Series.dot`; `polars`: `pl.col('a').dot(pl.col('b'))`.
+- `py_list`: `sum(x * y for x, y in zip(a, b))`.
+
+#### zscore
+
+Standardize a column: `z = (a − mean(a)) / sd(a)` with the `n − 1` standard deviation, a new column. Checksum: `sum(z·b)`.
+
+- `quark_list`, `py_list`: three passes (mean, squared deviations, result).
+- `quark_vec`: `d = a - m`, `sqrt(sum(d * d) / (n - 1))`, `d / sd`. `quark_blas`: the same with `blas::dot(d, d)` and `blas::scal(1 / sd, d)`.
+- `numpy`: `(a - a.mean()) / a.std(ddof=1)`; `r_vec`: `(a - mean(a)) / sd(a)`; tables add `z` as a column.
+
+#### filter
+
+The rows of `(a, b)` where `a > 0.5` (about half, in random order, so branches don't predict). Both columns are filtered. Checksum: row count + `sum(a)` + `sum(b)` of the kept rows.
+
+- `quark_list`: one loop pushing to two lists. `py_list`: two comprehensions.
+- `quark_vec`: `m = a > 0.5`, then `a[m]`, `b[m]`. `numpy`, `r_vec`: the same with boolean indexing.
+- `pandas`: `df[df['a'] > 0.5]`; `polars`: `df.filter(...)`; `r_df`: `df[df$a > 0.5, ]`; `r_dt`: `dt[a > 0.5]`.
+
+#### sort
+
+Sort 1M standard normal doubles ascending, into a new column (each run sorts the unsorted input). Checksum: `sum(sorted[i] · i) / n` (0-based `i`, so a wrong order changes it).
+
+- `quark_list`: `xs.slice(0, n).sort()` (a copy, then Quark's stable sort). `quark_vec`: `v.to_list().sort().to_vec()`, because vectors have no sort.
+- `py_list`: `sorted(xs)` (Timsort). `numpy`: `np.sort` (introsort with SIMD kernels). `r_vec`: `sort(x)` (radix sort for doubles).
+- Tables sort a one-column table: `sort_values`, `df.sort('x')`, `df[order(df$x), , drop = FALSE]`, `dt[order(x)]` (data.table's radix order).
+
+### Hashing and strings
+
+#### groupby
+
+Sum and count of a value per string key: 1M rows, 1,000 distinct keys (`id000`-`id999`, uniform), values uniform `[0, 100)`. Checksum: `Σ sum_k · count_k / rows` + number of groups.
+
+- `quark_list`: two `dict`s and `get`/`set` per row. `py_list`: two `defaultdict`s.
+- `numpy`: `np.unique(keys, return_inverse=True)` (sorts the keys) and `np.bincount` with weights: NumPy's way to group.
+- `pandas`: `groupby('k')['v'].agg(['sum', 'count'])`; `polars`: `group_by('k').agg(sum, len)`.
+- `r_vec`: `tapply(v, k, sum)` and `tapply(v, k, length)`; `r_df`: `aggregate(v ~ k, ...)`; `r_dt`: `dt[, .(s = sum(v), n = .N), by = k]`.
+- No `quark_vec`: vectors have no grouping.
+
+#### join
+
+Left join of 1M `(k, v)` rows to a 100,000-row `(k, w)` table on a string key, giving the joined `w` column (every key is found). Checksum: `sum(v · w)`.
+
+- `quark_list`: a `dict` from the second table, then a lookup per row. `py_list`: `dict(zip(...))` and a comprehension.
+- `numpy`: no hash join: sort the dimension keys, `np.searchsorted`, and mark keys that don't match (NaN), so it is a real left join.
+- `pandas`: `merge(how='left')`; `polars`: `join(how='left')`; `r_vec`: `w[match(k, dim_k)]`; `r_df`: `merge(all.x = TRUE)` (sorts by key); `r_dt`: `dim[fact, on = 'k']`.
+
+#### wordcount
+
+Split a 1M-word text (words separated by single spaces, a Zipf-distributed vocabulary of 20,000 words) and count each word. Checksum: distinct words + `Σ count² / words`.
+
+- `quark_list`: `text.split(' ')` and a `dict`. `py_list`: `Counter(text.split(' '))`.
+- `numpy`: `np.unique(np.array(text.split(' ')), return_counts=True)`; `pandas`: `pd.Series(text.split(' ')).value_counts()`; `polars`: the split, `explode` and `value_counts` all in Polars.
+- `r_vec`: `table(strsplit(text, ' ', fixed = TRUE)[[1]])`; `r_dt`: the words in a data.table, `[, .N, by = w]`.
+
+#### strings
+
+Clean 1M labels such as `"  ITEM_4821_Lorem "`: trim, lowercase, replace `_` with `-`. Checksum: the number of results starting with `item-` + their total length.
+
+- `quark_list`: `s.trim().lower().replace('_', '-')` per string. `py_list`: `s.strip().lower().replace('_', '-')`.
+- `numpy`: `np.strings.strip`, `lower`, `replace` over a `StringDType` array (NumPy 2's string ufuncs). `pandas`: the `.str` methods (pyarrow strings, pandas 3's default). `polars`: `str.strip_chars`, `to_lowercase`, `replace_all(literal=True)`.
+- `r_vec`: `gsub('_', '-', tolower(trimws(s)), fixed = TRUE)`.
+- No `quark_vec`: `vec[str]` has no string operations.
+
+### Linear algebra
+
+Matrices are stored row-major in the data files. Quark has no matrix type: `quark_list` uses a list of row lists, `quark_vec` a list of row (or column) vectors, `quark_blas` one flat vector with explicit dimensions (`std/blas`). NumPy uses `ndarray`, R a `matrix` (converted from row-major on load).
+
+#### gemv
+
+`y = A·x` for a 2,000 × 2,000 matrix. Checksum: `sum(y)`.
+
+- `quark_list`: nested loops. `quark_vec`: `sum(row * x)` per row. `quark_blas`: `blas::gemv(a, n, n, x)`.
+- `py_list`: a generator per row. `numpy`: `a @ x`. `r_vec`: `a %*% x`.
+
+#### gemm
+
+`C = A·B` for 300 × 300 matrices. Checksum: `Σ C[i][j] · (i + 1) / n` (detects a transposed result).
+
+- `quark_list`, `py_list`: i-k-j loops (row `i` of `C` accumulates `A[i][k] · B[k]`). `quark_vec`: the same with vector rows (`ci = ci + bk * aik`). `quark_blas`: `blas::gemm(a, n, n, b, n)`.
+- `numpy`: `a @ b`; `r_vec`: `a %*% b`. Both call the BLAS `dgemm`, like `quark_blas`.
+
+The size keeps pure Python at a few seconds; BLAS's advantage grows with `n` (`--preset large` uses 1,000).
+
+#### ols
+
+Least squares by the normal equations, `β = solve(XᵀX, Xᵀy)`, for `X` with 500,000 rows and 8 columns. Checksum: `Σ β_j · (j + 1)`.
+
+- `quark_list`, `py_list`: accumulate the upper triangle of `XᵀX` and `Xᵀy` row by row. `quark_vec`: `X` as 8 column vectors; each entry is `sum(ci * cj)`. `quark_blas`: `blas::syrk(x, n, p)` for `XᵀX` and `blas::gemv(x, n, p, y, true)` for `Xᵀy`.
+- `numpy`: `np.linalg.solve(x.T @ x, x.T @ y)` (NumPy computes `x.T @ x` with `syrk`). `r_vec`: `solve(crossprod(x), crossprod(x, y))` (also `syrk`).
+- The 8 × 8 solve is negligible; Quark and pure Python use the same Gaussian elimination with partial pivoting (`quark/lib/matrix.qrk`, `python/impls.py`), NumPy and R use LAPACK. R's idiomatic `lm()` is left out because it uses QR, a different algorithm.
+
+## How a run works
+
+For each benchmark and implementation, `bench.py` starts one process:
+
+```
+build/quark/<bench>  bench=<b> impl=<id> data=<dir> warmup=1 reps=5 budget=30 [params]
+.venv/bin/python python/run.py  bench=... (same arguments)
+Rscript --no-init-file r/run.R  bench=... (same arguments)
+```
+
+The process loads its data, runs the work `warmup` times untimed and then up to `reps` times timed, and stops starting new runs once `budget` seconds have been spent (warmup included, always at least one timed run), so slow implementations finish in reasonable time. Each timed run is measured inside the process with a monotonic clock (`time::clock()` in Quark, `time.perf_counter()` in Python, `Sys.time()` in R, which has microsecond resolution), so process start, compilation and loading are excluded. The process prints, tab-separated:
+
+```
+TIME   <bench> <impl> <rep> <seconds>      one line per timed run
+CHECK  <bench> <impl> <checksum>           once, after the last run
+```
+
+`bench.py` also records the process's peak resident memory (`wait4`), kills it after `--timeout` seconds, and keeps its stderr for the report when it fails. The R front end's warning about a mismatched `R_HOME` (which R ignores) is avoided by unsetting `R_HOME` for R processes.
+
+### Checking the timing
+
+The Quark harness (`quark/lib/harness.qrk`) was checked on 2026-11-13:
+- **The clock** is `time::clock()`, `std::chrono::steady_clock` (monotonic, nanosecond resolution). Measuring an empty closure costs about 50 ns, against 1.5 ms for the fastest benchmark.
+- **Nothing is optimized away or moved.** The timed work is an indirect call through a closure, which the C++ compiler can't see into, so it can't be moved past the clock reads or computed once for all runs; its result is kept and checksummed, so skipped work would fail the check. Hand-written C++ shows the danger: `fib(30)` timed in a plain loop measured 0 ms until its argument was read through a `volatile`.
+- **The in-process times agree with the process's wall clock**: the extra wall time of a process doing 101 timed runs over one doing 1, divided by 100, matched the in-process median within about 1% for Quark (`arith` with `vec`, 46.3 vs 46.8 ms) and NumPy (30.2 vs 30.5 ms), and within 0.5% for Quark's `fib`, `dot` and `groupby` (20 runs).
+
+**Times are steady-state.** The median leaves out the first timed run's extra cost, but a script that runs a step once pays it. In Quark the first timed run (after one warmup) is typically 10-25% slower than the later ones, up to 2.6 times, because the GC heap is still growing; in Python and R it is 1-5%. A garbage collection is charged to the run that triggers it, which is why Quark's list tier varies by up to 3 times between runs.
+
+## Reading the report
+
+`report.md` has:
+- **Setup**: commit, CPU, memory, threads, tool and library versions, the BLAS each tool uses, and the load average at the start and end (another busy process on the machine shows up there).
+- **Summary**: the fastest Quark, Python and R implementation per benchmark, and Quark's best time divided by Python's and R's best (below 1: Quark is faster).
+- **All times**: the median of every implementation; the fastest in each row is bold.
+- **Details**: per benchmark, median, min and max of the timed runs, the number of runs, the ratio to the fastest, peak memory and the checksum check.
+- **Failures**: implementations that errored, timed out, disagreed with the reference or were skipped, with the end of their stderr.
+
+Compare tiers as well as languages: `quark_list` against `py_list` and `r_loop` shows what compiling plain code buys, `quark_vec` against NumPy and R vectors shows the vector runtime, `quark_blas` against `quark_vec` what `std/blas` adds, and the table tiers are the reference for `quark_tbl`.
+
+## Caveats
+
+- **Peak memory includes the runtime and the input.** Measured baselines: 15 MB for a Quark program or a Python process without NumPy, about 25 MB with NumPy, 70-80 MB with Polars, 110-130 MB with pandas, 70 MB for R. Compare memory within a benchmark, not across benchmarks.
+- **BLAS builds differ.** Quark's `std/blas` and R link the system OpenBLAS; NumPy wheels bundle their own, usually newer, OpenBLAS (both versions are in the report). With one thread this matters only for `gemm`, `gemv` and `ols`.
+- **Virtual machines and shared hosts are noisy.** Check the load average in the report; rerun a benchmark with `--bench` when a number looks off. The min column is the least noisy estimate; the median is what a typical run costs, including garbage collection.
+- **Default sizes fit in memory with room to spare.** Data larger than RAM, files and CSV parsing are not measured yet (they arrive with `tbl` and its CSV reader).
+- **Python's version matters for `py_list`**: CPython 3.11+ is much faster than 3.10 on plain loops. The report records the version.
+
+## Adding a benchmark or an implementation
+
+A benchmark:
+1. If it needs new input, generate it in `datagen.py` and bump `VERSION` (cached data is regenerated when it changes).
+2. Add a `Bench` entry to `BENCHMARKS` in `bench.py`: name, group, one-line title, parameters from the preset sizes, implementations, planned implementations, and a tolerance if the default 1e-9 doesn't fit.
+3. Implement it in `quark/<name>.qrk` (one program for all Quark implementations, dispatching on `impl`), `python/impls.py` (`@impl(bench, id)`) and `r/impls.R` (`impl(bench, id, fn)`). Each implementation loads its data, calls `measure` with the work, and returns or prints the checksum computed from the result.
+4. Document it in [Benchmarks](#benchmarks): what it computes, the checksum, and what each implementation does differently.
+5. `python3 bench.py run --preset small --bench <name>` must show every implementation agreeing.
+
+The `quark_tbl` implementations: once tables compile, for each benchmark that lists `quark_tbl` in `planned`, move it to `impls` in `bench.py` and add an `elseif impl == 'quark_tbl':` branch to `quark/<name>.qrk`. The table data can come from the same files (for example `harness::read_f64` columns into a table), or from CSV files written by `datagen.py` once the CSV reader is the thing being measured.
+
+## Files
+
+| Path | Contents |
+|---|---|
+| `RESULTS.md` | The latest measured results, with what limits Quark and where |
+| `bench.py` | The driver: presets, the list of benchmarks and implementations, data generation, builds, runs, checks, report (Python standard library only) |
+| `datagen.py` | Writes the input files (needs NumPy; run in `.venv`) |
+| `requirements.txt` | Pinned Python libraries |
+| `quark/<bench>.qrk` | The Quark implementations of one benchmark |
+| `quark/lib/harness.qrk` | Arguments, timing loop, TIME/CHECK output, data loading |
+| `quark/lib/bench_io.hpp` | Native loaders for the data files (`extern fn`) |
+| `quark/lib/matrix.qrk` | Matrix setup helpers and the small linear solver |
+| `python/run.py`, `python/impls.py` | Python harness and implementations |
+| `r/run.R`, `r/impls.R` | R harness and implementations |

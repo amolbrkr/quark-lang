@@ -33,3 +33,29 @@ print(r[1])                   // 15
 
 // empty vectors
 print(blas::dot(vec [], vec []))  // 0
+
+// gemv with trans: [[1, 2, 3], [4, 5, 6]]' * [1, 2] = [9, 12, 15]
+rt = blas::gemv(m, 2, 3, vec [1.0, 2.0], true)
+print(len(rt))                // 3
+print(rt[0])                  // 9
+print(rt[2])                  // 15
+
+// gemm: [[1, 2, 3], [4, 5, 6]] * [[1, 0], [0, 1], [1, 1]] = [[4, 5], [10, 11]]
+c = blas::gemm(m, 2, 3, vec [1.0, 0.0, 0.0, 1.0, 1.0, 1.0], 2)
+print(len(c))                 // 4
+print(c[0])                   // 4
+print(c[1])                   // 5
+print(c[2])                   // 10
+print(c[3])                   // 11
+
+// syrk: A'A for A = [[1, 2], [3, 4], [5, 6]] is [[35, 44], [44, 56]]
+g = blas::syrk(vec [1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 3, 2)
+print(g[0])                   // 35
+print(g[1])                   // 44
+print(g[2])                   // 44: the lower triangle is filled too
+print(g[3])                   // 56
+
+// empty dimensions give zeros of the result's shape
+print(blas::gemm(vec [], 2, 0, vec [], 2))       // 2 x 2 zeros
+print(len(blas::syrk(vec [], 0, 3)))            // 9
+print(blas::gemv(vec [], 0, 2, vec [], true))   // [0.0, 0.0]

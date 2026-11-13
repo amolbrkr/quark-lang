@@ -1,0 +1,30 @@
+// arith.qrk - z = 2.5 * a + b over two f64 columns (README.md#arith).
+incl './lib/harness'
+incl 'std/blas'
+
+fn arith_list(a: list, b: list) list ->
+    z = list []
+    for i in range(len(a)):
+        x: float = a[i]
+        y: float = b[i]
+        z.push(2.5 * x + y)
+    z
+
+p = harness::params()
+impl: str = p.impl
+n = harness::int_param(p, 'n')
+a = harness::read_f64(p, 'a.f64', n)
+b = harness::read_f64(p, 'b.f64', n)
+if impl == 'quark_list':
+    al = a.to_list()
+    bl = b.to_list()
+    out = harness::measure(p, 'arith', fn() -> arith_list(al, bl))
+    harness::check(p, 'arith', harness::sum_list(out))
+elseif impl == 'quark_vec':
+    out = harness::measure(p, 'arith', fn() -> 2.5 * a + b)
+    harness::check(p, 'arith', sum(out))
+elseif impl == 'quark_blas':
+    out = harness::measure(p, 'arith', fn() -> blas::axpy(2.5, a, b))
+    harness::check(p, 'arith', sum(out))
+else:
+    harness::unknown_impl(p, 'arith')

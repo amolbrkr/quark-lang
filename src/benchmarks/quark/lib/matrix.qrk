@@ -1,0 +1,90 @@
+// matrix.qrk - setup helpers for the matrix benchmarks: views of a flat
+// row-major matrix as a list of rows or columns. Used only to prepare data,
+// outside the timed runs.
+
+// The rows of a flat rows x cols matrix, each a list.
+fn row_lists(flat: list, rows: int, cols: int) list ->
+    out = list []
+    for i in range(rows):
+        out.push(flat.slice(i * cols, (i + 1) * cols))
+    out
+
+// The rows of a flat rows x cols matrix, each a vec.
+fn row_vecs(flat: list, rows: int, cols: int) list ->
+    out = list []
+    for i in range(rows):
+        out.push(flat.slice(i * cols, (i + 1) * cols).to_vec())
+    out
+
+// The columns of a flat rows x cols matrix, each a vec.
+fn col_vecs(flat: list, rows: int, cols: int) list ->
+    out = list []
+    for j in range(cols):
+        col = list []
+        for i in range(rows):
+            x: float = flat[i * cols + j]
+            col.push(x)
+        out.push(col.to_vec())
+    out
+
+// An n x n matrix of zeros as a list of row lists.
+fn zeros(n: int) list ->
+    out = list []
+    for i in range(n):
+        row = list []
+        for j in range(n):
+            row.push(0.0)
+        out.push(row)
+    out
+
+// Solves a x = b by Gaussian elimination with partial pivoting. a is a
+// list of n rows; neither argument is changed. Shared by every Quark
+// implementation of ols (the system is only p x p).
+fn solve(a: list, b: list) list ->
+    n = len(b)
+    m = list []
+    for i in range(n):
+        src: list = a[i]
+        row = src.slice(0, n)
+        bi: float = b[i]
+        row.push(bi)
+        m.push(row)
+    for col in range(n):
+        piv = col
+        pc: list = m[col]
+        pv: float = pc[col]
+        best = abs(pv)
+        for r in range(col + 1, n):
+            rr: list = m[r]
+            rv: float = rr[col]
+            if abs(rv) > best:
+                best = abs(rv)
+                piv = r
+        tmp = m[col]
+        m[col] = m[piv]
+        m[piv] = tmp
+        prow: list = m[col]
+        pivot: float = prow[col]
+        for r in range(col + 1, n):
+            row: list = m[r]
+            rc: float = row[col]
+            f = rc / pivot
+            for c in range(col, n + 1):
+                x: float = row[c]
+                y: float = prow[c]
+                row[c] = x - f * y
+    x = list []
+    for i in range(n):
+        x.push(0.0)
+    r = n - 1
+    while r >= 0:
+        row: list = m[r]
+        s: float = row[n]
+        for c in range(r + 1, n):
+            rc: float = row[c]
+            xc: float = x[c]
+            s = s - rc * xc
+        d: float = row[r]
+        x[r] = s / d
+        r = r - 1
+    x

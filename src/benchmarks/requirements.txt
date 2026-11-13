@@ -1,0 +1,6 @@
+# Python libraries the benchmarks compare against (installed into .venv by
+# `python3 bench.py setup`). Pinned so results stay comparable over time.
+numpy==2.4.6
+pandas==3.1.1
+polars==2.1.0
+pyarrow==26.0.1

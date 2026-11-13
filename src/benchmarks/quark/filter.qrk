@@ -1,0 +1,40 @@
+// filter.qrk - keep the rows of (a, b) where a > 0.5 (README.md#filter).
+incl './lib/harness'
+
+fn filter_list(a: list, b: list) list ->
+    fa = list []
+    fb = list []
+    for i in range(len(a)):
+        x: float = a[i]
+        if x > 0.5:
+            y: float = b[i]
+            fa.push(x)
+            fb.push(y)
+    list [fa, fb]
+
+fn filter_vec(a: vec, b: vec) list ->
+    m = a > 0.5
+    list [a[m], b[m]]
+
+p = harness::params()
+impl: str = p.impl
+n = harness::int_param(p, 'n')
+a = harness::read_f64(p, 'a.f64', n)
+b = harness::read_f64(p, 'b.f64', n)
+if impl == 'quark_list':
+    al = a.to_list()
+    bl = b.to_list()
+    out: list = harness::measure(p, 'filter', fn() -> filter_list(al, bl))
+    fa: list = out[0]
+    fb: list = out[1]
+    harness::check(p, 'filter', len(fa) + harness::sum_list(fa) + harness::sum_list(fb))
+elseif impl == 'quark_vec':
+    out: list = harness::measure(p, 'filter', fn() -> filter_vec(a, b))
+    fa: vec = out[0]
+    fb: vec = out[1]
+    // sum() of a vec has type any (it is null when every entry is missing).
+    sa: float = sum(fa)
+    sb: float = sum(fb)
+    harness::check(p, 'filter', len(fa) + sa + sb)
+else:
+    harness::unknown_impl(p, 'filter')

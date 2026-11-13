@@ -601,7 +601,11 @@ Without the library, `incl 'std/blas'` fails at build time with `QK-FFI-002`; wi
 | `scal` | `a: float, x: vec -> vec` | `a*x`, as a new vector |
 | `nrm2` | `x: vec -> float` | Euclidean norm |
 | `asum` | `x: vec -> float` | Sum of absolute values |
-| `gemv` | `a: vec, rows: int, cols: int, x: vec -> vec` | Matrix-vector product; `a` is `rows x cols`, row-major, flattened; `x` has `cols` elements |
+| `gemv` | `a: vec, rows: int, cols: int, x: vec, trans: bool = false -> vec` | Matrix-vector product `a·x`; `x` has `cols` elements and the result `rows`. With `trans`, `aᵀ·x`: `x` has `rows` elements and the result `cols` |
+| `gemm` | `a: vec, m: int, k: int, b: vec, n: int -> vec` | Matrix product of `a` (`m x k`) and `b` (`k x n`); the result is `m x n` |
+| `syrk` | `a: vec, rows: int, cols: int -> vec` | `aᵀ·a`, the `cols x cols` Gram matrix of `a` (`rows x cols`), with both triangles filled |
+
+Matrices are flat f64 vectors in row-major order (row `i` is elements `i*cols` to `i*cols + cols - 1`), with their dimensions passed explicitly; Quark has no matrix type.
 
 ```quark
 incl 'std/blas' as blas
@@ -610,11 +614,18 @@ x = vec [1.0, 2.0, 3.0]
 y = vec [4.0, 5.0, 6.0]
 print(blas::dot(x, y))           // 32.0
 z = blas::axpy(2, x, y)          // [6.0, 9.0, 12.0]; y is unchanged
+
+m = vec [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]                 // [[1, 2, 3], [4, 5, 6]]
+print(blas::gemv(m, 2, 3, x))                          // [14.0, 32.0]
+print(blas::gemv(m, 2, 3, vec [1.0, 1.0], true))       // [5.0, 7.0, 9.0]: column sums
+print(blas::gemm(m, 2, 3, vec [1.0, 0.0, 0.0, 1.0, 1.0, 1.0], 2))   // [4.0, 5.0, 10.0, 11.0]
+print(blas::syrk(m, 2, 3))       // [17.0, 22.0, 27.0, 22.0, 29.0, 36.0, 27.0, 36.0, 45.0]
 ```
 
 - BLAS reads the vectors' buffers in place; inputs are never modified.
-- Inputs must be f64 vectors without missing entries (convert with `.astype('f64')`, fill with `.fillna(...)`). Length mismatches, other dtypes, missing entries and wrong `gemv` dimensions are runtime errors.
-- Vectors are limited to `INT_MAX` elements, the CBLAS integer size.
+- Inputs must be f64 vectors without missing entries (convert with `.astype('f64')`, fill with `.fillna(...)`). Length mismatches, other dtypes, missing entries, negative dimensions and dimensions that don't multiply to a matrix's length are runtime errors (`blas.gemm: b has 3 elements, but k * n = 2 * 1`).
+- Vectors, dimensions and results are limited to `INT_MAX` elements, the CBLAS integer size. A dimension of 0 gives a result of zeros of the right shape (`blas::gemm(vec [], 2, 0, vec [], 3)` is six zeros).
+- The routines use OpenBLAS's threads unless `OPENBLAS_NUM_THREADS` says otherwise.
 
 ---
 

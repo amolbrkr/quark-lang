@@ -251,6 +251,10 @@ func TestStdBlas(t *testing.T) {
 		"4.0", "3.0",
 		"2", "6.0", "15.0",
 		"0.0",
+		"3", "9.0", "15.0",
+		"4", "4.0", "5.0", "10.0", "11.0",
+		"35.0", "44.0", "44.0", "56.0",
+		"[0.0, 0.0, 0.0, 0.0]", "9", "[0.0, 0.0]",
 	}, "\n")
 	if got := strings.TrimSpace(r.stdout); got != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
@@ -262,12 +266,29 @@ func TestStdBlas(t *testing.T) {
 		{"nulls", "blas::asum(list [1.0, null].to_vec())", "blas.asum: x has 1 null values"},
 		{"gemv matrix size", "blas::gemv(vec [1.0, 2.0, 3.0], 2, 2, vec [1.0, 1.0])", "blas.gemv: a has 3 elements, but rows * cols = 2 * 2"},
 		{"gemv x length", "blas::gemv(vec [1.0, 2.0], 1, 2, vec [1.0])", "blas.gemv: x has 1 elements, but the matrix has 2 columns"},
+		{"gemv trans x length", "blas::gemv(vec [1.0, 2.0], 1, 2, vec [1.0, 2.0], true)", "blas.gemv: x has 2 elements, but the matrix has 1 rows"},
+		{"gemv negative dims", "blas::gemv(vec [], -1, 0, vec [])", "blas.gemv: rows and cols must not be negative, got rows=-1 cols=0"},
+		{"gemm a size", "blas::gemm(vec [1.0, 2.0], 2, 2, vec [1.0, 2.0], 1)", "blas.gemm: a has 2 elements, but m * k = 2 * 2"},
+		{"gemm b size", "blas::gemm(vec [1.0, 2.0], 1, 2, vec [1.0, 2.0, 3.0], 1)", "blas.gemm: b has 3 elements, but k * n = 2 * 1"},
+		{"gemm i64 input", "blas::gemm(vec [1, 2], 1, 2, vec [1.0, 2.0], 1)", "blas.gemm: a must be an f64 vec, got i64"},
+		{"gemm nulls", "blas::gemm(vec [1.0, 2.0], 1, 2, list [1.0, null].to_vec(), 1)", "blas.gemm: b has 1 null values"},
+		{"gemm negative dims", "blas::gemm(vec [], 0, 2, vec [1.0, 2.0], -1)", "blas.gemm: k and n must not be negative, got k=2 n=-1"},
+		{"gemm dims over INT_MAX", "blas::gemm(vec [], 4611686018427387904, 0, vec [], 2)", "blas.gemm: m=4611686018427387904 k=0: BLAS supports dimensions up to 2147483647"},
+		{"gemm result over INT_MAX", "blas::gemm(vec [], 2147483647, 0, vec [], 1073741825)", "blas.gemm: the result would have 2147483647 x 1073741825 elements; BLAS vectors are limited to 2147483647"},
+		{"syrk result over INT_MAX", "blas::syrk(vec [], 0, 50000)", "blas.syrk: the result would have 50000 x 50000 elements"},
+		{"gemm null from any", "blas::gemm(none, 1, 1, vec [1.0], 1)", "expected vec, got null"},
+		{"syrk size", "blas::syrk(vec [1.0, 2.0, 3.0], 2, 2)", "blas.syrk: a has 3 elements, but rows * cols = 2 * 2"},
+		{"syrk i64 input", "blas::syrk(vec [1, 2], 1, 2)", "blas.syrk: a must be an f64 vec, got i64"},
+		{"syrk wrong arity via fn value", "syrk_any(vec [1.0], 1)", "function 'blas::syrk' expects 3 arguments but got 2"},
+		{"gemv trans from any", "blas::gemv(vec [1.0], 1, 1, vec [1.0], one)", "argument 'trans' of 'blas::gemv' expects bool, got int"},
 	}
 	tmp := t.TempDir()
 	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			prog := filepath.Join(tmp, "blas_err_"+string(rune('a'+i))+".qrk")
-			src := "incl 'std/blas' as blas\nprint(" + tc.call + ")\n"
+			// Values typed any, so the cases using them reach the runtime checks.
+			pre := "none: any = null\none: any = 1\nsyrk_any: any = blas::syrk\n"
+			src := "incl 'std/blas' as blas\n" + pre + "print(" + tc.call + ")\n"
 			if err := os.WriteFile(prog, []byte(src), 0o644); err != nil {
 				t.Fatal(err)
 			}

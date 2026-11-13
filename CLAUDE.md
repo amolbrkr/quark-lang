@@ -67,6 +67,7 @@ Each doc owns one topic; others link to it instead of repeating it:
 | `error_codes.md` | Every `QK-*` and `INV-*` code |
 | `*_spec.md` | One feature's design and decisions; a status line at the top says what is implemented |
 | `changelog.md` | History. Known issues (soundness bugs) live here |
+| `src/benchmarks/README.md` | The benchmark suite against Python and R: what each benchmark measures, the fairness rules, how to run and extend it. `src/benchmarks/RESULTS.md` holds the latest measurements |
 
 Rules: docs describe the current state only. No "used to", no superseded designs, no finished to-do lists; history is in `changelog.md` and git. Every doc starts with a table of contents. A change that alters behavior updates the doc that owns it in the same change. When a decision supersedes part of a spec, rewrite that part; don't add an override section on top of it.
 
@@ -95,6 +96,9 @@ cd src/core/quark && go test -v
 
 # Run a single test by name
 cd src/core/quark && go test -v -run TestSmokePrograms_Run
+
+# Benchmarks against Python and R (src/benchmarks/README.md)
+cd src/benchmarks && python3 bench.py setup && python3 bench.py run --preset small
 ```
 
 ## Prerequisites

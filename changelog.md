@@ -9,6 +9,7 @@ Sections follow [Keep a Changelog](https://keepachangelog.com/): **Breaking**, *
 ## Contents
 
 - [Known issues (as of `fd6822c`)](#known-issues-as-of-fd6822c)
+- [2026-11-13: Benchmark suite; `std/blas` gemm, syrk and transposed gemv](#2026-11-13-benchmark-suite-stdblas-gemm-syrk-and-transposed-gemv)
 - [2026-11-13: Docs overhaul](#2026-11-13-docs-overhaul)
 - [2026-11-13: Element types are fixed, variables don't narrow, return annotations are checked (architecture §12)](#2026-11-13-element-types-are-fixed-variables-dont-narrow-return-annotations-are-checked-architecture-12)
 - [2026-11-13: Table engine and CSV reader (runtime only)](#2026-11-13-table-engine-and-csv-reader-runtime-only)
@@ -38,6 +39,8 @@ Checked against the compiler on 2026-11-12 and 2026-11-13. The structural causes
 - A list read past its end, stored in a variable: `w = list [1, 2][5]`, `print(w)` prints `0` (`null` is documented). The same for `xs.get(i)` and `d.get(k)` on a missing key, and for a list changed during a `for` loop over it (`for y in xs: xs.pop()`).
 - A `null` inside a vector read by a loop: `for x in list [1, null, 3].to_vec(): print(x)` prints `1`, `0`, `3` (`0.0` for floats, `false` for bools). `to_list()` of such a vec gives a `list[int]` with a `null` in it.
 - `when` on a vec compares elementwise and reads the first result: `fn g(a) -> when a:` / `1 -> 'one'` / `_ -> 'other'` returns `'other'` for `g(vec [1, 1])` with no error. `if a == 1` correctly fails with "vec used as a condition".
+
+**`+` with an operand of unknown type is typed `str`.** The checker gives `a + b` the type `str` when either side has an unknown type (`any`), whatever the values are. A `str` annotation then trusts it: `x: any = 1`, then `z: str = x + x` stores the int `2` with no error (`type(z)` is `int`); the same through a `str` return annotation (`fn g(a: any) str -> a + a` returns an int) and a `str` struct field (`S { name: x + x }`). Correct programs are rejected too, because `sum`, `min` and `max` of a vec have type `any` (they can be `null`): `v = vec [1.0, 2.0]`, `w = sum(v) + sum(v)`, then `print(w + 1)` fails with `operator 'PLUS' requires numeric operands, got str and int`, and `sqrt(x + x)` with `argument 1 of 'sqrt' expects float, got str`. `-`, `*` and `/` are typed correctly. Workaround: give the operand a type first (`s: float = sum(v)`).
 
 **The parser accepts two expressions with no separator.**
 - Several statements on one line run as separate statements: `price = 4`, `qty = 3`, then `total = price qty` / `print(total)` prints `4` with no error (`total = price`, then `qty` as a statement). `y = 'a' 'b'` gives `'a'`. `fn f(x) -> x + 1 print(9)` gives `f` a two-statement body, so `f(1)` prints `9` and returns `null`.
@@ -85,8 +88,37 @@ Checked against the compiler on 2026-11-12 and 2026-11-13. The structural causes
 - A wrong argument type for a fully annotated function or an `extern fn`, from an untyped value, reports `expected int, got str` without the function or parameter name (ordinary functions say `argument 'x' of 'f' expects int, got str`).
 - Stdlib runtime errors use the old `.` spelling: `io::read` on a closed file says `io.read() expects an open file (resource is closed)`; `csv.read`, `random.randint` and `blas.dot` likewise.
 - `qext::box(int)` in native code doesn't compile (ambiguous between the `int64_t`, `double` and `bool` overloads); pass an `int64_t`.
+- A program that imports `std/blas` starts OpenBLAS's thread pool (one thread per CPU), and then allocating large vecs makes the GC print `GC Warning: Repeated allocation of very large block (appr. size 78128 KiB): May lead to memory leak and poor performance` to stderr, and vec allocation gets erratic (`2.5 * a + b` on 10M-element vecs with `blas::axpy` measured 30 ms with `OPENBLAS_NUM_THREADS=1`, 135 ms without). The same program without `incl 'std/blas'`, or with `OPENBLAS_NUM_THREADS=1`, prints nothing (`src/benchmarks/RESULTS.md`).
 
 ---
+
+## 2026-11-13: Benchmark suite; `std/blas` gemm, syrk and transposed gemv
+
+Commits: not yet committed
+
+### Breaking
+- `blas::blas_gemv`, the `extern fn` binding under `blas::gemv`, takes a fifth argument, `trans`. Call `blas::gemv`, whose new `trans` parameter defaults to `false`.
+
+### Added
+- **`std/blas`**: `blas::gemm(a, m, k, b, n)`, the matrix product of `a` (`m x k`) and `b` (`k x n`) (`cblas_dgemm`); `blas::syrk(a, rows, cols)`, the Gram matrix `aᵀa` with both triangles filled (`cblas_dsyrk`); and a `trans` parameter on `blas::gemv` that multiplies by the transpose. Matrices are flat row-major vecs with explicit dimensions, as for `gemv`. A dimension that is negative, above `INT_MAX`, or doesn't multiply to the vector's length, or a result of more than `INT_MAX` elements, is a runtime error naming the routine (`blas.gemm: b has 3 elements, but k * n = 2 * 1`); a dimension of 0 gives zeros of the result's shape.
+
+  ```quark
+  incl 'std/blas'
+
+  m = vec [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]                 // 2 x 3, row-major
+  print(blas::gemv(m, 2, 3, vec [1.0, 1.0], true))       // [5.0, 7.0, 9.0]
+  print(blas::gemm(m, 2, 3, vec [1.0, 0.0, 0.0, 1.0, 1.0, 1.0], 2))   // [4.0, 5.0, 10.0, 11.0]
+  print(blas::syrk(m, 2, 3))                             // 3 x 3: [17.0, 22.0, 27.0, ...]
+  ```
+- **Benchmark suite** in `src/benchmarks/` (`python3 bench.py run`, documented in `src/benchmarks/README.md`). 18 benchmarks (plain loops, column arithmetic and reductions, sorting, grouping, joins, strings, linear algebra) compare Quark's `list`, `vec` and `vec` + `std/blas` code with pure Python, NumPy, pandas, Polars, R loops, R vectors, `data.frame` and `data.table`. Every implementation reads the same generated data and its result is checked against a reference implementation; each runs in its own process, single-threaded by default. A `quark_tbl` entry is reserved in the benchmarks a table implementation will cover.
+
+### Changed
+- A `blas::gemv` dimension above `INT_MAX` says `blas.gemv: rows=... cols=...: BLAS supports dimensions up to 2147483647` instead of reporting a size mismatch.
+
+### Internal
+- The BLAS glue checks every matrix shape in one place (`qblas::check_shape`).
+- `TestStdBlas` checks the new routines' results and 16 more error cases: wrong dimensions, results over `INT_MAX` elements, i64 inputs, missing entries, `null` and an `int` reaching a parameter through `any`, and a wrong argument count through a function value.
+- Known issues (above) gains the `+`-typed-as-`str` bug and the OpenBLAS thread-pool GC warning, both found with the benchmarks. The first measurements and what they show (list building, dict hashing and strings no faster than CPython; `vec` close to NumPy; `std/blas` on par with NumPy and R) are in `src/benchmarks/RESULTS.md`.
 
 ## 2026-11-13: Docs overhaul
 

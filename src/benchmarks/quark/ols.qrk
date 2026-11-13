@@ -1,0 +1,82 @@
+// ols.qrk - least squares by the normal equations, beta = solve(X'X, X'y),
+// for X with n rows and p columns (README.md#ols).
+incl './lib/harness'
+incl './lib/matrix'
+incl 'std/blas'
+
+// X as a list of row lists: accumulate X'X (upper triangle) and X'y row by
+// row, then mirror the triangle.
+fn ols_list(x: list, y: list, p: int) list ->
+    xtx = matrix::zeros(p)
+    xty = list []
+    for i in range(p):
+        xty.push(0.0)
+    for t in range(len(x)):
+        row: list = x[t]
+        yt: float = y[t]
+        for i in range(p):
+            ri: float = row[i]
+            cur: float = xty[i]
+            xty[i] = cur + ri * yt
+            xi: list = xtx[i]
+            for j in range(i, p):
+                rj: float = row[j]
+                acc: float = xi[j]
+                xi[j] = acc + ri * rj
+    for i in range(p):
+        xi: list = xtx[i]
+        for j in range(i):
+            xj: list = xtx[j]
+            xi[j] = xj[i]
+    matrix::solve(xtx, xty)
+
+// X as a list of column vecs: each entry of X'X and X'y is one dot product.
+fn ols_vec(cols: list, y: vec, p: int) list ->
+    xtx = matrix::zeros(p)
+    xty = list []
+    for i in range(p):
+        ci: vec = cols[i]
+        xty.push(sum(ci * y))
+        xi: list = xtx[i]
+        for j in range(i, p):
+            cj: vec = cols[j]
+            g = sum(ci * cj)
+            xi[j] = g
+            xj: list = xtx[j]
+            xj[i] = g
+    matrix::solve(xtx, xty)
+
+// X as one flat row-major vec: X'X with syrk, X'y with a transposed gemv.
+fn ols_blas(x: vec, y: vec, n: int, p: int) list ->
+    g = blas::syrk(x, n, p)
+    xty = blas::gemv(x, n, p, y, true)
+    matrix::solve(matrix::row_lists(g.to_list(), p, p), xty.to_list())
+
+// The checksum: sum(beta[j] * (j + 1)).
+fn ols_check(beta: list) float ->
+    s = 0.0
+    for j in range(len(beta)):
+        b: float = beta[j]
+        s = s + b * (j + 1)
+    s
+
+p = harness::params()
+impl: str = p.impl
+n = harness::int_param(p, 'n')
+k = harness::int_param(p, 'p')
+x = harness::read_f64(p, 'ols_x.f64', n * k)
+y = harness::read_f64(p, 'ols_y.f64', n)
+if impl == 'quark_list':
+    rows = matrix::row_lists(x.to_list(), n, k)
+    yl = y.to_list()
+    out = harness::measure(p, 'ols', fn() -> ols_list(rows, yl, k))
+    harness::check(p, 'ols', ols_check(out))
+elseif impl == 'quark_vec':
+    cols = matrix::col_vecs(x.to_list(), n, k)
+    out = harness::measure(p, 'ols', fn() -> ols_vec(cols, y, k))
+    harness::check(p, 'ols', ols_check(out))
+elseif impl == 'quark_blas':
+    out = harness::measure(p, 'ols', fn() -> ols_blas(x, y, n, k))
+    harness::check(p, 'ols', ols_check(out))
+else:
+    harness::unknown_impl(p, 'ols')

@@ -1,0 +1,33 @@
+// reduce.qrk - sum, min, max and mean of one f64 column (README.md#reduce).
+incl './lib/harness'
+
+fn reduce_list(xs: list) list ->
+    first: float = xs[0]
+    s = 0.0
+    lo = first
+    hi = first
+    for x in xs:
+        v: float = x
+        s = s + v
+        if v < lo:
+            lo = v
+        if v > hi:
+            hi = v
+    list [s, lo, hi, s / len(xs)]
+
+fn reduce_vec(a: vec) list ->
+    s = sum(a)
+    list [s, min(a), max(a), s / len(a)]
+
+p = harness::params()
+impl: str = p.impl
+a = harness::read_f64(p, 'a.f64', harness::int_param(p, 'n'))
+if impl == 'quark_list':
+    al = a.to_list()
+    out = harness::measure(p, 'reduce', fn() -> reduce_list(al))
+    harness::check(p, 'reduce', harness::sum_list(out))
+elseif impl == 'quark_vec':
+    out = harness::measure(p, 'reduce', fn() -> reduce_vec(a))
+    harness::check(p, 'reduce', harness::sum_list(out))
+else:
+    harness::unknown_impl(p, 'reduce')

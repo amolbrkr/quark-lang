@@ -1,0 +1,17 @@
+// fib.qrk - recursive Fibonacci: the cost of a function call (README.md#fib).
+incl './lib/harness'
+
+fn fib(n: int) int ->
+    if n < 2:
+        n
+    else:
+        fib(n - 1) + fib(n - 2)
+
+p = harness::params()
+impl: str = p.impl
+n = harness::int_param(p, 'n')
+if impl == 'quark_list':
+    r = harness::measure(p, 'fib', fn() -> fib(n))
+    harness::check(p, 'fib', r)
+else:
+    harness::unknown_impl(p, 'fib')

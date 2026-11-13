@@ -269,9 +269,11 @@ src/core/stdlib/blas_glue.hpp    header-only glue; includes cblas.h and quark/ex
 | `scal(a: float, x: vec)` | `cblas_dscal` | new vector `a*x` |
 | `nrm2(x: vec)` | `cblas_dnrm2` | `float` |
 | `asum(x: vec)` | `cblas_dasum` | `float` |
-| `gemv(a: vec, rows: int, cols: int, x: vec)` | `cblas_dgemv`, row-major | new vector of length `rows` |
+| `gemv(a: vec, rows: int, cols: int, x: vec, trans: bool = false)` | `cblas_dgemv`, row-major | new vector of length `rows` (`cols` with `trans`) |
+| `gemm(a: vec, m: int, k: int, b: vec, n: int)` | `cblas_dgemm`, row-major | new `m x n` matrix |
+| `syrk(a: vec, rows: int, cols: int)` | `cblas_dsyrk`, row-major, upper triangle mirrored | new `cols x cols` matrix `aᵀa` |
 
-`gemv` takes the matrix as a flat row-major f64 vector with explicit dimensions, because Quark has no matrix type.
+Matrices are flat row-major f64 vectors with explicit dimensions, because Quark has no matrix type. Every routine checks that each matrix's dimensions are non-negative, at most `INT_MAX`, and multiply to its length (`qblas::check_shape`). `gemm` has no transpose flags: `aᵀa` is `syrk` (half the work of a general product, and what NumPy and R use for it), and `aᵀx` is `gemv` with `trans`.
 
 ```quark
 incl 'std/blas'

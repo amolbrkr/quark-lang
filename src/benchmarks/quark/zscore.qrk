@@ -1,0 +1,61 @@
+// zscore.qrk - standardize a column: z = (a - mean(a)) / sd(a), sd with
+// n - 1 (README.md#zscore).
+incl './lib/harness'
+incl 'std/blas'
+
+fn zscore_list(a: list) list ->
+    n = len(a)
+    s = 0.0
+    for x in a:
+        v: float = x
+        s = s + v
+    m = s / n
+    ss = 0.0
+    for x in a:
+        v: float = x
+        ss = ss + (v - m) * (v - m)
+    sd = sqrt(ss / (n - 1))
+    z = list []
+    for x in a:
+        v: float = x
+        z.push((v - m) / sd)
+    z
+
+fn zscore_vec(a: vec) vec ->
+    m = sum(a) / len(a)
+    d = a - m
+    sd = sqrt(sum(d * d) / (len(a) - 1))
+    d / sd
+
+fn zscore_blas(a: vec) vec ->
+    m = sum(a) / len(a)
+    d = a - m
+    sd = sqrt(blas::dot(d, d) / (len(a) - 1))
+    blas::scal(1.0 / sd, d)
+
+// The checksum: sum(z * b).
+fn weighted_list(z: list, b: list) float ->
+    s = 0.0
+    for i in range(len(z)):
+        x: float = z[i]
+        y: float = b[i]
+        s = s + x * y
+    s
+
+p = harness::params()
+impl: str = p.impl
+n = harness::int_param(p, 'n')
+a = harness::read_f64(p, 'a.f64', n)
+b = harness::read_f64(p, 'b.f64', n)
+if impl == 'quark_list':
+    al = a.to_list()
+    out = harness::measure(p, 'zscore', fn() -> zscore_list(al))
+    harness::check(p, 'zscore', weighted_list(out, b.to_list()))
+elseif impl == 'quark_vec':
+    out: vec = harness::measure(p, 'zscore', fn() -> zscore_vec(a))
+    harness::check(p, 'zscore', sum(out * b))
+elseif impl == 'quark_blas':
+    out: vec = harness::measure(p, 'zscore', fn() -> zscore_blas(a))
+    harness::check(p, 'zscore', sum(out * b))
+else:
+    harness::unknown_impl(p, 'zscore')

@@ -1,0 +1,29 @@
+// expr.qrk - z = (a*a - b) * 0.5 + (a - b) / (b*b + 1), an expression with
+// several intermediate results (README.md#expr).
+incl './lib/harness'
+
+fn expr_list(a: list, b: list) list ->
+    z = list []
+    for i in range(len(a)):
+        x: float = a[i]
+        y: float = b[i]
+        z.push((x * x - y) * 0.5 + (x - y) / (y * y + 1.0))
+    z
+
+fn expr_vec(a: vec, b: vec) vec -> (a * a - b) * 0.5 + (a - b) / (b * b + 1.0)
+
+p = harness::params()
+impl: str = p.impl
+n = harness::int_param(p, 'n')
+a = harness::read_f64(p, 'a.f64', n)
+b = harness::read_f64(p, 'b.f64', n)
+if impl == 'quark_list':
+    al = a.to_list()
+    bl = b.to_list()
+    out = harness::measure(p, 'expr', fn() -> expr_list(al, bl))
+    harness::check(p, 'expr', harness::sum_list(out))
+elseif impl == 'quark_vec':
+    out = harness::measure(p, 'expr', fn() -> expr_vec(a, b))
+    harness::check(p, 'expr', sum(out))
+else:
+    harness::unknown_impl(p, 'expr')

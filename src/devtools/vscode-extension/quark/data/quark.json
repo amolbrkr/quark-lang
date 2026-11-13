@@ -291,8 +291,18 @@
         },
         {
           "name": "gemv",
-          "signature": "gemv(a: vec, rows: int, cols: int, x: vec) vec",
-          "doc": "flat vec of length rows * cols; x has length cols."
+          "signature": "gemv(a: vec, rows: int, cols: int, x: vec, trans: bool = false) vec",
+          "doc": "result cols."
+        },
+        {
+          "name": "gemm",
+          "signature": "gemm(a: vec, m: int, k: int, b: vec, n: int) vec",
+          "doc": "the result is m x n, row-major."
+        },
+        {
+          "name": "syrk",
+          "signature": "syrk(a: vec, rows: int, cols: int) vec",
+          "doc": "flat): the cols x cols Gram matrix, row-major, both triangles filled."
         }
       ]
     },

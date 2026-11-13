@@ -1,0 +1,41 @@
+// ewma.qrk - exponentially weighted moving average, a sequential recurrence
+// y[0] = x[0], y[i] = alpha * x[i] + (1 - alpha) * y[i - 1] (README.md#ewma).
+incl './lib/harness'
+
+fn ewma_list(xs: list, alpha: float) list ->
+    beta = 1.0 - alpha
+    first: float = xs[0]
+    prev = first
+    out = list [prev]
+    for i in range(1, len(xs)):
+        x: float = xs[i]
+        prev = alpha * x + beta * prev
+        out.push(prev)
+    out
+
+// Vectors have no recurrence operation: read the elements in a loop and
+// build the result as a list.
+fn ewma_vec(v: vec, alpha: float) vec ->
+    beta = 1.0 - alpha
+    first: float = v[0]
+    prev = first
+    out = list [prev]
+    for i in range(1, len(v)):
+        x: float = v[i]
+        prev = alpha * x + beta * prev
+        out.push(prev)
+    out.to_vec()
+
+p = harness::params()
+impl: str = p.impl
+a = harness::read_f64(p, 'a.f64', harness::int_param(p, 'n'))
+alpha = to_float(p.alpha)
+if impl == 'quark_list':
+    al = a.to_list()
+    out = harness::measure(p, 'ewma', fn() -> ewma_list(al, alpha))
+    harness::check(p, 'ewma', harness::sum_list(out))
+elseif impl == 'quark_vec':
+    out = harness::measure(p, 'ewma', fn() -> ewma_vec(a, alpha))
+    harness::check(p, 'ewma', sum(out))
+else:
+    harness::unknown_impl(p, 'ewma')

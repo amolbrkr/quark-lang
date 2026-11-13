@@ -1,0 +1,33 @@
+// wordcount.qrk - split a text at single spaces and count each word
+// (README.md#wordcount).
+incl './lib/harness'
+
+fn wordcount_list(text: str) dict ->
+    counts = dict {}
+    for w in text.split(' '):
+        c = counts.get(w)
+        if c == null:
+            counts.set(w, 1)
+        else:
+            ci: int = c
+            counts.set(w, ci + 1)
+    counts
+
+// The checksum: distinct words + sum(count^2) / words.
+fn wordcount_check(counts: dict) float ->
+    total = 0
+    sq = 0.0
+    for v in counts.values():
+        c: int = v
+        total = total + c
+        sq = sq + to_float(c) * c
+    len(counts) + sq / total
+
+p = harness::params()
+impl: str = p.impl
+text = harness::read_text(p, 'words.txt')
+if impl == 'quark_list':
+    out = harness::measure(p, 'wordcount', fn() -> wordcount_list(text))
+    harness::check(p, 'wordcount', wordcount_check(out))
+else:
+    harness::unknown_impl(p, 'wordcount')

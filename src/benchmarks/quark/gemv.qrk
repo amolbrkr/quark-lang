@@ -1,0 +1,43 @@
+// gemv.qrk - y = A x for an n x n matrix (README.md#gemv).
+incl './lib/harness'
+incl './lib/matrix'
+incl 'std/blas'
+
+fn gemv_list(a: list, x: list) list ->
+    y = list []
+    for r in a:
+        row: list = r
+        s = 0.0
+        for j in range(len(row)):
+            aij: float = row[j]
+            xj: float = x[j]
+            s = s + aij * xj
+        y.push(s)
+    y
+
+fn gemv_vec(rows: list, x: vec) vec ->
+    y = list []
+    for r in rows:
+        row: vec = r
+        y.push(sum(row * x))
+    y.to_vec()
+
+p = harness::params()
+impl: str = p.impl
+n = harness::int_param(p, 'n')
+a = harness::read_f64(p, 'gemv_a.f64', n * n)
+x = harness::read_f64(p, 'gemv_x.f64', n)
+if impl == 'quark_list':
+    rows = matrix::row_lists(a.to_list(), n, n)
+    xl = x.to_list()
+    out = harness::measure(p, 'gemv', fn() -> gemv_list(rows, xl))
+    harness::check(p, 'gemv', harness::sum_list(out))
+elseif impl == 'quark_vec':
+    rows = matrix::row_vecs(a.to_list(), n, n)
+    out = harness::measure(p, 'gemv', fn() -> gemv_vec(rows, x))
+    harness::check(p, 'gemv', sum(out))
+elseif impl == 'quark_blas':
+    out = harness::measure(p, 'gemv', fn() -> blas::gemv(a, n, n, x))
+    harness::check(p, 'gemv', sum(out))
+else:
+    harness::unknown_impl(p, 'gemv')

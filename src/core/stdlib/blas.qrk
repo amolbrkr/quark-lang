@@ -1,5 +1,9 @@
 // std/blas - BLAS routines over f64 vectors, via OpenBLAS (CBLAS).
 //
+// Matrices are flat f64 vectors in row-major order, with their dimensions
+// passed explicitly; a dimension that doesn't match a vector's length is a
+// runtime error.
+//
 // Requires OpenBLAS:
 //   Debian/Ubuntu: sudo apt install libopenblas-dev
 //   macOS:         brew install openblas, then pass
@@ -17,7 +21,9 @@ extern fn blas_axpy(a: float, x: vec, y: vec) vec as 'qblas_axpy'
 extern fn blas_scal(a: float, x: vec) vec as 'qblas_scal'
 extern fn blas_nrm2(x: vec) float as 'qblas_nrm2'
 extern fn blas_asum(x: vec) float as 'qblas_asum'
-extern fn blas_gemv(a: vec, rows: int, cols: int, x: vec) vec as 'qblas_gemv'
+extern fn blas_gemv(a: vec, rows: int, cols: int, x: vec, trans: bool) vec as 'qblas_gemv'
+extern fn blas_gemm(a: vec, m: int, k: int, b: vec, n: int) vec as 'qblas_gemm'
+extern fn blas_syrk(a: vec, rows: int, cols: int) vec as 'qblas_syrk'
 
 module blas:
     // Dot product of x and y.
@@ -36,5 +42,15 @@ module blas:
     fn asum(x: vec) float -> blas_asum(x)
 
     // Matrix-vec product. a is a rows x cols matrix stored row-major as a
-    // flat vec of length rows * cols; x has length cols.
-    fn gemv(a: vec, rows: int, cols: int, x: vec) vec -> blas_gemv(a, rows, cols, x)
+    // flat vec of length rows * cols; x has length cols and the result rows.
+    // With trans, the transpose of a times x: x has length rows and the
+    // result cols.
+    fn gemv(a: vec, rows: int, cols: int, x: vec, trans: bool = false) vec -> blas_gemv(a, rows, cols, x, trans)
+
+    // Matrix product of a (m x k) and b (k x n), both row-major and flat;
+    // the result is m x n, row-major.
+    fn gemm(a: vec, m: int, k: int, b: vec, n: int) vec -> blas_gemm(a, m, k, b, n)
+
+    // The transpose of a times a, for a rows x cols matrix a (row-major,
+    // flat): the cols x cols Gram matrix, row-major, both triangles filled.
+    fn syrk(a: vec, rows: int, cols: int) vec -> blas_syrk(a, rows, cols)

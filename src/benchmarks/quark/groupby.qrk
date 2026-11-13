@@ -1,0 +1,39 @@
+// groupby.qrk - sum and count of a value per string key (README.md#groupby).
+// Vectors have no grouping, so there is no quark_vec; quark_tbl is planned.
+incl './lib/harness'
+
+fn groupby_list(keys: list, vals: list) list ->
+    sums = dict {}
+    counts = dict {}
+    for i in range(len(keys)):
+        k: str = keys[i]
+        v: float = vals[i]
+        s = sums.get(k)
+        if s == null:
+            sums.set(k, v)
+            counts.set(k, 1)
+        else:
+            sf: float = s
+            c: int = counts.get(k)
+            sums.set(k, sf + v)
+            counts.set(k, c + 1)
+    list [sums, counts]
+
+// The checksum: sum(sum_k * count_k) / rows + groups.
+fn groupby_check(sums: dict, counts: dict, rows: int) float ->
+    t = 0.0
+    for k in sums.keys():
+        s: float = sums.get(k)
+        c: int = counts.get(k)
+        t = t + s * c
+    t / rows + len(sums)
+
+p = harness::params()
+impl: str = p.impl
+keys = harness::read_lines(p, 'grp_k.txt')
+vals = harness::read_f64(p, 'grp_v.f64', -1).to_list()
+if impl == 'quark_list':
+    out: list = harness::measure(p, 'groupby', fn() -> groupby_list(keys, vals))
+    harness::check(p, 'groupby', groupby_check(out[0], out[1], len(keys)))
+else:
+    harness::unknown_impl(p, 'groupby')

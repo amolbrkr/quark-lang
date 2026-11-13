@@ -1,0 +1,92 @@
+// harness.qrk - shared harness for the Quark benchmark programs.
+//
+// Every benchmark program is run once per implementation, as
+//   <program> impl=<id> data=<dir> warmup=<n> reps=<n> budget=<s> [param=value ...]
+// and prints one line per timed run and one checksum line (bench.py parses
+// them; the protocol is in src/benchmarks/README.md):
+//   TIME   <bench> <impl> <rep> <seconds>
+//   CHECK  <bench> <impl> <value>
+
+incl 'std/sys'
+incl 'std/time'
+
+extern 'bench_io.hpp'
+extern fn read_f64_native(path: str, n: int) vec as 'qbench_read_f64'
+extern fn read_lines_native(path: str) list as 'qbench_read_lines'
+extern fn read_text_native(path: str) str as 'qbench_read_text'
+
+// The key=value arguments as a dict of strings.
+fn params() dict ->
+    p = dict {}
+    for a in sys::args():
+        arg: str = a
+        parts = arg.split('=')
+        if len(parts) < 2:
+            print('bad argument (expected key=value): ' + arg)
+            sys::exit(2)
+        p.set(parts[0], parts.slice(1, len(parts)).join('='))
+    p
+
+// An int parameter.
+fn int_param(p: dict, name: str) int -> to_int(p.get(name))
+
+// The first n values of a data file of doubles (all of them when n < 0).
+fn read_f64(p: dict, file: str, n: int) vec ->
+    dir: str = p.data
+    read_f64_native(dir + '/' + file, n)
+
+// The lines of a data text file.
+fn read_lines(p: dict, file: str) list ->
+    dir: str = p.data
+    read_lines_native(dir + '/' + file)
+
+// A data text file as one string.
+fn read_text(p: dict, file: str) str ->
+    dir: str = p.data
+    read_text_native(dir + '/' + file)
+
+// Runs f (no arguments) `warmup` times untimed, then up to `reps` times
+// timed, printing a TIME line per timed run. Stops early once the runs
+// (warmup included) have taken `budget` seconds, after at least one timed
+// run. Returns the result of the last run.
+fn measure(p: dict, bench: str, f: fn) ->
+    impl: str = p.impl
+    warmup = int_param(p, 'warmup')
+    reps = int_param(p, 'reps')
+    budget = to_float(p.budget)
+    spent = 0.0
+    out: any = null
+    for w in range(warmup):
+        t0 = time::clock()
+        out = f()
+        spent = spent + (time::clock() - t0)
+    r = 0
+    while r < reps:
+        t0 = time::clock()
+        out = f()
+        dt = time::clock() - t0
+        print('TIME\t' + bench + '\t' + impl + '\t' + to_str(r) + '\t' + to_str(dt))
+        spent = spent + dt
+        r = r + 1
+        if spent > budget:
+            break
+    out
+
+// Prints the checksum line for this run.
+fn check(p: dict, bench: str, value: float) ->
+    impl: str = p.impl
+    print('CHECK\t' + bench + '\t' + impl + '\t' + to_str(value))
+
+// Stops with an error for an implementation id the program doesn't have.
+fn unknown_impl(p: dict, bench: str) ->
+    impl: str = p.impl
+    print('unknown implementation for ' + bench + ': ' + impl)
+    sys::exit(2)
+
+// The sum of a list of floats (for checksums; Quark lists have no sum).
+fn sum_list(xs: list) float ->
+    s = 0.0
+    for x in xs:
+        v: float = x
+        s = s + v
+    s

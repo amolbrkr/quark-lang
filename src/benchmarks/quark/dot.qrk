@@ -1,0 +1,30 @@
+// dot.qrk - dot product of two f64 columns (README.md#dot).
+incl './lib/harness'
+incl 'std/blas'
+
+fn dot_list(a: list, b: list) float ->
+    s = 0.0
+    for i in range(len(a)):
+        x: float = a[i]
+        y: float = b[i]
+        s = s + x * y
+    s
+
+p = harness::params()
+impl: str = p.impl
+n = harness::int_param(p, 'n')
+a = harness::read_f64(p, 'a.f64', n)
+b = harness::read_f64(p, 'b.f64', n)
+if impl == 'quark_list':
+    al = a.to_list()
+    bl = b.to_list()
+    r = harness::measure(p, 'dot', fn() -> dot_list(al, bl))
+    harness::check(p, 'dot', r)
+elseif impl == 'quark_vec':
+    r = harness::measure(p, 'dot', fn() -> sum(a * b))
+    harness::check(p, 'dot', r)
+elseif impl == 'quark_blas':
+    r = harness::measure(p, 'dot', fn() -> blas::dot(a, b))
+    harness::check(p, 'dot', r)
+else:
+    harness::unknown_impl(p, 'dot')

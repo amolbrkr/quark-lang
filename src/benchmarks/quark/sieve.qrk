@@ -1,0 +1,30 @@
+// sieve.qrk - count the primes below n with the sieve of Eratosthenes
+// (README.md#sieve). Vectors are immutable, so there is no quark_vec.
+incl './lib/harness'
+
+fn sieve(n: int) int ->
+    s = list []
+    for t in range(n):
+        s.push(true)
+    s[0] = false
+    s[1] = false
+    i = 2
+    while i * i < n:
+        if s[i]:
+            for j in range(i * i, n, i):
+                s[j] = false
+        i = i + 1
+    count = 0
+    for x in s:
+        if x:
+            count = count + 1
+    count
+
+p = harness::params()
+impl: str = p.impl
+n = harness::int_param(p, 'n')
+if impl == 'quark_list':
+    r = harness::measure(p, 'sieve', fn() -> sieve(n))
+    harness::check(p, 'sieve', r)
+else:
+    harness::unknown_impl(p, 'sieve')

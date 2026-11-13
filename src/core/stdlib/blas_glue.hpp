@@ -99,35 +99,117 @@ inline double qblas_asum(QVector* x) {
     return cblas_dasum(n, qext::as_f64(x).data, 1);
 }
 
-// a (rows x cols, row-major, flattened) times x, as a new vector of length rows.
-inline QVector* qblas_gemv(QVector* a, int64_t rows, int64_t cols, QVector* x) {
+// Matrix shapes. Matrices are flat row-major f64 vectors with explicit
+// dimensions (Quark has no matrix type), so every routine checks that the
+// dimensions are non-negative, fit a CBLAS int, and multiply to the vector's
+// length.
+namespace qblas {
+
+inline void check_shape(const char* fn, const char* arg, int len, int64_t rows, int64_t cols,
+                        const char* rows_name, const char* cols_name) {
+    if (rows < 0 || cols < 0) {
+        fail(fn, "%s and %s must not be negative, got %s=%lld %s=%lld", rows_name, cols_name,
+             rows_name, static_cast<long long>(rows), cols_name, static_cast<long long>(cols));
+    }
+    if (rows > INT_MAX || cols > INT_MAX) {
+        fail(fn, "%s=%lld %s=%lld: BLAS supports dimensions up to %d", rows_name,
+             static_cast<long long>(rows), cols_name, static_cast<long long>(cols), INT_MAX);
+    }
+    if ((cols != 0 && rows > static_cast<int64_t>(len) / cols) || rows * cols != len) {
+        fail(fn, "%s has %d elements, but %s * %s = %lld * %lld", arg, len, rows_name, cols_name,
+             static_cast<long long>(rows), static_cast<long long>(cols));
+    }
+}
+
+// check_result stops when a result would have more elements than a BLAS
+// vector may (INT_MAX). Inputs are already limited to that, but a product
+// with an empty inner dimension (k = 0, or rows = 0 in syrk) has a zero
+// result whose size isn't bounded by any input.
+inline void check_result(const char* fn, int64_t rows, int64_t cols) {
+    if (rows != 0 && cols > static_cast<int64_t>(INT_MAX) / rows) {
+        fail(fn, "the result would have %lld x %lld elements; BLAS vectors are limited to %d",
+             static_cast<long long>(rows), static_cast<long long>(cols), INT_MAX);
+    }
+}
+
+// zeros returns a new f64 vector of n zeros.
+inline QVector* zeros(int64_t n) {
+    QVector* out = qext::new_f64(static_cast<size_t>(n));
+    double* d = qext::as_f64_mut(out).data;
+    for (int64_t i = 0; i < n; i++) d[i] = 0.0;
+    return out;
+}
+
+}  // namespace qblas
+
+// a (rows x cols, row-major, flattened) times x, as a new vector of length
+// rows; with trans, the transpose of a times x (x has rows elements, the
+// result cols).
+inline QVector* qblas_gemv(QVector* a, int64_t rows, int64_t cols, QVector* x, bool trans) {
     const char* fn = "blas.gemv";
     int na = qblas::check_f64(fn, "a", a);
     int nx = qblas::check_f64(fn, "x", x);
-    if (rows < 0 || cols < 0) {
-        qblas::fail(fn, "rows and cols must not be negative, got rows=%lld cols=%lld",
-                    static_cast<long long>(rows), static_cast<long long>(cols));
-    }
-    if (rows > INT_MAX || cols > INT_MAX ||
-        (cols != 0 && rows > static_cast<int64_t>(na) / cols) || rows * cols != na) {
-        qblas::fail(fn, "a has %d elements, but rows * cols = %lld * %lld",
-                    na, static_cast<long long>(rows), static_cast<long long>(cols));
-    }
-    if (nx != cols) {
+    qblas::check_shape(fn, "a", na, rows, cols, "rows", "cols");
+    const int64_t want = trans ? rows : cols;
+    if (nx != want) {
+        if (trans) {
+            qblas::fail(fn, "x has %d elements, but the matrix has %lld rows (trans multiplies by the transpose)",
+                        nx, static_cast<long long>(rows));
+        }
         qblas::fail(fn, "x has %d elements, but the matrix has %lld columns", nx, static_cast<long long>(cols));
     }
-    QVector* out = qext::new_f64(static_cast<size_t>(rows));
-    if (rows == 0) {
-        return out;
+    const int64_t out_len = trans ? cols : rows;
+    if (rows == 0 || cols == 0) {
+        return qblas::zeros(out_len);
     }
-    double* y = qext::as_f64_mut(out).data;
-    if (cols == 0) {
-        for (int64_t i = 0; i < rows; i++) y[i] = 0.0;
-        return out;
-    }
-    cblas_dgemv(CblasRowMajor, CblasNoTrans, static_cast<int>(rows), static_cast<int>(cols),
+    QVector* out = qext::new_f64(static_cast<size_t>(out_len));
+    cblas_dgemv(CblasRowMajor, trans ? CblasTrans : CblasNoTrans,
+                static_cast<int>(rows), static_cast<int>(cols),
                 1.0, qext::as_f64(a).data, static_cast<int>(cols),
-                qext::as_f64(x).data, 1, 0.0, y, 1);
+                qext::as_f64(x).data, 1, 0.0, qext::as_f64_mut(out).data, 1);
+    return out;
+}
+
+// a (m x k) times b (k x n), both row-major and flattened, as a new m x n
+// row-major vector.
+inline QVector* qblas_gemm(QVector* a, int64_t m, int64_t k, QVector* b, int64_t n) {
+    const char* fn = "blas.gemm";
+    int na = qblas::check_f64(fn, "a", a);
+    int nb = qblas::check_f64(fn, "b", b);
+    qblas::check_shape(fn, "a", na, m, k, "m", "k");
+    qblas::check_shape(fn, "b", nb, k, n, "k", "n");
+    qblas::check_result(fn, m, n);
+    if (m == 0 || n == 0 || k == 0) {
+        return qblas::zeros(m * n);
+    }
+    QVector* out = qext::new_f64(static_cast<size_t>(m * n));
+    cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                static_cast<int>(m), static_cast<int>(n), static_cast<int>(k),
+                1.0, qext::as_f64(a).data, static_cast<int>(k),
+                qext::as_f64(b).data, static_cast<int>(n),
+                0.0, qext::as_f64_mut(out).data, static_cast<int>(n));
+    return out;
+}
+
+// The transpose of a times a, for a (rows x cols, row-major, flattened): a
+// new cols x cols row-major vector with both triangles filled.
+inline QVector* qblas_syrk(QVector* a, int64_t rows, int64_t cols) {
+    const char* fn = "blas.syrk";
+    int na = qblas::check_f64(fn, "a", a);
+    qblas::check_shape(fn, "a", na, rows, cols, "rows", "cols");
+    qblas::check_result(fn, cols, cols);
+    if (rows == 0 || cols == 0) {
+        return qblas::zeros(cols * cols);
+    }
+    QVector* out = qext::new_f64(static_cast<size_t>(cols * cols));
+    double* c = qext::as_f64_mut(out).data;
+    const int nc = static_cast<int>(cols);
+    cblas_dsyrk(CblasRowMajor, CblasUpper, CblasTrans, nc, static_cast<int>(rows),
+                1.0, qext::as_f64(a).data, nc, 0.0, c, nc);
+    // dsyrk writes only the upper triangle; mirror it into the lower one.
+    for (int64_t i = 0; i < cols; i++) {
+        for (int64_t j = 0; j < i; j++) c[i * cols + j] = c[j * cols + i];
+    }
     return out;
 }
 

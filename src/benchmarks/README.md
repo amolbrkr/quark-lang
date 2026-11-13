@@ -7,6 +7,8 @@ The latest measurements and what they show are in [RESULTS.md](RESULTS.md).
 ## Contents
 
 - [Quick start](#quick-start)
+  - [Prerequisites](#prerequisites)
+  - [Reproducing the numbers](#reproducing-the-numbers)
 - [What is compared](#what-is-compared)
 - [Rules every implementation follows](#rules-every-implementation-follows)
 - [Benchmarks](#benchmarks)
@@ -22,20 +24,49 @@ The latest measurements and what they show are in [RESULTS.md](RESULTS.md).
 
 ## Quick start
 
-Requirements: everything Quark needs (Go, clang++, and OpenBLAS for `std/blas`: `sudo apt install libopenblas-dev`), Python 3.11+ (with `uv` or `venv`), and R with `data.table` (`install.packages('data.table')`). A missing language or library only skips its implementations.
+From a fresh clone, on a machine with the prerequisites below:
 
 ```bash
 cd src/benchmarks
-python3 bench.py setup                    # .venv with numpy, pandas, polars, pyarrow (requirements.txt)
+python3 bench.py setup                    # .venv with the pinned Python libraries; installs data.table if missing (~1 min)
+python3 bench.py run --preset small       # every implementation once on small inputs (~2-4 min); checks they agree
+python3 bench.py run                      # default sizes, one thread per library (~15 min, 300 MB of data)
+```
+
+Checked on Linux on 2026-11-13: a fresh clone ran `setup` and the `small` preset with every implementation agreeing. `setup` and `run` print what is available; anything missing is skipped and listed in the report (no OpenBLAS: only `quark_blas`; no R: the R implementations; no data.table: `r_dt`), so a partial setup still runs.
+
+More commands:
+
+```bash
 python3 bench.py list                     # benchmarks and their implementations
-python3 bench.py run --preset small       # every implementation once, small inputs (~4 min); checks they agree
-python3 bench.py run                      # default sizes, one thread per library (~15 min)
 python3 bench.py run --threads 0          # each library at its default thread count
 python3 bench.py run --bench groupby,join --lang quark,python
 python3 bench.py run --quark /path/to/quark      # a different compiler build, e.g. another branch
 ```
 
-`bench.py run` builds the compiler in `src/core/quark` (unless `--quark` is given), generates the input data once per preset into `data/`, builds one Quark program per benchmark into `build/`, runs every implementation, and writes `results/<date>_<preset>_t<threads>/` with `report.md`, `results.json` (environment, configuration, every run) and `times.csv` (one row per timed run). `bench.py report <dir>` rebuilds `report.md` from `results.json`. `data/`, `build/`, `results/` and `.venv/` are not committed.
+### Prerequisites
+
+| | Needed for | Linux (Debian/Ubuntu) | macOS | Windows |
+|---|---|---|---|---|
+| Go 1.21+, clang++ | Quark | `sudo apt install clang`; Go from [go.dev](https://go.dev/dl/) if the distribution's is older than 1.21 | `brew install llvm go` | Go and LLVM installers; `clang++` on the `PATH` |
+| OpenBLAS | `quark_blas` only | `sudo apt install libopenblas-dev` | `brew install openblas`, then `export QUARK_LIB_PATH="$(brew --prefix openblas)/lib" QUARK_INCLUDE_PATH="$(brew --prefix openblas)/include"` | no standard package; `quark_blas` is skipped |
+| Python 3.11+, or [uv](https://docs.astral.sh/uv/) | Python implementations, data generation | `sudo apt install python3 python3-venv`, or uv (it downloads Python 3.11 itself) | `brew install python` or uv | python.org installer or uv; run `python bench.py ...` |
+| R 4.x | R implementations | `sudo apt install r-base r-base-dev` (data.table compiles from source) | CRAN installer | CRAN installer; `Rscript` is found under Program Files, or set `BENCH_RSCRIPT` |
+
+`setup` creates `.venv/` and installs `requirements.txt` into it (with uv when it is on the `PATH`, else `venv` and pip); it never touches the system Python. If data.table is missing, it installs it from CRAN into the R user library (`R_LIBS_USER`, created if needed); `setup --no-r-packages` skips that.
+
+**Windows is not tested yet.** The driver has the Windows paths (`.venv\Scripts\python.exe`, `.exe` programs, finding `Rscript`), but no run has been made there; peak memory is not measured on Windows (it comes from `wait4`).
+
+### Reproducing the numbers
+
+- **Fixed**: the input data (seeded, the same files on every machine), the code of every implementation, and the Python libraries (`requirements.txt`).
+- **Not fixed, but recorded** in the report's Setup table: the Python patch version (uv picks the newest 3.11), R and data.table (current CRAN), the system OpenBLAS, clang and Go, the CPU and the load average.
+- Absolute times depend on the machine. Compare implementations within one run; to compare two Quark compilers, use `--quark` on the same machine. In our checks, medians of reruns on a quiet machine agreed within about 5%, except Quark's list implementations, whose garbage collection makes runs vary more; on a shared or virtual machine expect 10% or more (check the load average in the report, and rerun a suspicious benchmark with `--bench`).
+- `RESULTS.md` records the machine and versions behind its numbers.
+
+### Output and options
+
+`bench.py run` builds the compiler in `src/core/quark` (unless `--quark` is given), generates the input data once per preset into `data/`, builds the Quark programs into `build/` (one per benchmark, plus `<bench>_blas` for the `std/blas` implementations), runs every implementation, and writes `results/<date>_<preset>_t<threads>/` with `report.md`, `results.json` (environment, configuration, every run) and `times.csv` (one row per timed run). `bench.py report <dir>` rebuilds `report.md` from `results.json`. `data/`, `build/`, `results/` and `.venv/` are not committed.
 
 Options of `run`: `--preset small|default|large`, `--bench`, `--impl`, `--lang` (comma-separated filters), `--threads N` (default 1; 0 = library defaults), `--warmup` (default 1), `--reps` (default 5), `--budget` (seconds per implementation, default 30), `--timeout` (seconds before a process is killed, default 600), `--quark PATH`, `--out DIR`, `--regen` (rewrite the data), `--strict` (exit 1 when an implementation fails or disagrees).
 
@@ -176,7 +207,9 @@ Sum and count of a value per string key: 1M rows, 1,000 distinct keys (`id000`-`
 
 Left join of 1M `(k, v)` rows to a 100,000-row `(k, w)` table on a string key, giving the joined `w` column (every key is found). Checksum: `sum(v · w)`.
 
-- `quark_list`: a `dict` from the second table, then a lookup per row. `py_list`: `dict(zip(...))` and a comprehension.
+The pandas, Polars, data.frame and data.table implementations are real data frame joins. Quark has no data frame yet, so its only implementation is the one a Quark user can write today, a `dict` and lists, like the pure Python one. `quark_tbl` comes with the join verb, which is planned after tables v0.1 (`tables_v0_1_spec.md` §9), later than the other table verbs.
+
+- `quark_list`: a `dict` from the second table, then a lookup per row. Its time is all runtime code (about 70% the hash lookups, 25% building the result list, 10% building the dict), so it doesn't change with the back end. A key missing from the dict would give `0.0` rather than an error (the `d.get(k)` known issue in the changelog); the data has none. `py_list`: `dict(zip(...))` and a comprehension.
 - `numpy`: no hash join: sort the dimension keys, `np.searchsorted`, and mark keys that don't match (NaN), so it is a real left join.
 - `pandas`: `merge(how='left')`; `polars`: `join(how='left')`; `r_vec`: `w[match(k, dim_k)]`; `r_df`: `merge(all.x = TRUE)` (sorts by key); `r_dt`: `dim[fact, on = 'k']`.
 
@@ -230,7 +263,7 @@ Least squares by the normal equations, `β = solve(XᵀX, Xᵀy)`, for `X` with 
 For each benchmark and implementation, `bench.py` starts one process:
 
 ```
-build/quark/<bench>  bench=<b> impl=<id> data=<dir> warmup=1 reps=5 budget=30 [params]
+build/quark/<bench>[_blas]  bench=<b> impl=<id> data=<dir> warmup=1 reps=5 budget=30 [params]
 .venv/bin/python python/run.py  bench=... (same arguments)
 Rscript --no-init-file r/run.R  bench=... (same arguments)
 ```
@@ -277,7 +310,7 @@ Compare tiers as well as languages: `quark_list` against `py_list` and `r_loop` 
 A benchmark:
 1. If it needs new input, generate it in `datagen.py` and bump `VERSION` (cached data is regenerated when it changes).
 2. Add a `Bench` entry to `BENCHMARKS` in `bench.py`: name, group, one-line title, parameters from the preset sizes, implementations, planned implementations, and a tolerance if the default 1e-9 doesn't fit.
-3. Implement it in `quark/<name>.qrk` (one program for all Quark implementations, dispatching on `impl`), `python/impls.py` (`@impl(bench, id)`) and `r/impls.R` (`impl(bench, id, fn)`). Each implementation loads its data, calls `measure` with the work, and returns or prints the checksum computed from the result.
+3. Implement it in `quark/<name>.qrk` (one program for the Quark implementations, dispatching on `impl`; a `quark_blas` implementation goes in `quark/<name>_blas.qrk`, so that a machine without OpenBLAS skips only it), `python/impls.py` (`@impl(bench, id)`) and `r/impls.R` (`impl(bench, id, fn)`). Each implementation loads its data, calls `measure` with the work, and returns or prints the checksum computed from the result.
 4. Document it in [Benchmarks](#benchmarks): what it computes, the checksum, and what each implementation does differently.
 5. `python3 bench.py run --preset small --bench <name>` must show every implementation agreeing.
 
@@ -291,7 +324,8 @@ The `quark_tbl` implementations: once tables compile, for each benchmark that li
 | `bench.py` | The driver: presets, the list of benchmarks and implementations, data generation, builds, runs, checks, report (Python standard library only) |
 | `datagen.py` | Writes the input files (needs NumPy; run in `.venv`) |
 | `requirements.txt` | Pinned Python libraries |
-| `quark/<bench>.qrk` | The Quark implementations of one benchmark |
+| `quark/<bench>.qrk` | The Quark implementations of one benchmark, except `quark_blas` |
+| `quark/<bench>_blas.qrk` | The `quark_blas` implementation (`std/blas` needs OpenBLAS at build time) |
 | `quark/lib/harness.qrk` | Arguments, timing loop, TIME/CHECK output, data loading |
 | `quark/lib/bench_io.hpp` | Native loaders for the data files (`extern fn`) |
 | `quark/lib/matrix.qrk` | Matrix setup helpers and the small linear solver |

@@ -19,6 +19,7 @@ How the compiler and runtime work: the pipeline, the runtime value system, code 
 12. [Soundness contract](#12-soundness-contract)
 13. [Roadmap: lowering pass and typed IR](#13-roadmap-lowering-pass-and-typed-ir)
 14. [Structural debt](#14-structural-debt)
+15. [Performance findings](#15-performance-findings)
 
 ---
 
@@ -591,3 +592,31 @@ Independent of §13 and can be done in any order. Each is a decision made in mor
 - Numeric conversions: float→int casts are unchecked in `floor`, `round`, `ceil`, `to_int`, `fillna` and `range`; `to_int(str)` ignores `ERANGE`; `abs` uses `llabs`; `range` steps with an unchecked add. One `q_checked_f2i` plus the `core/checked.hpp` helpers cover all of these (and the numeric known issues).
 - `types/vector.hpp` (about 1250 lines): nested reader lambdas multiply template instantiations, about eight per-dtype switches repeat each other, and `q_vec_validate` is called by some entry points and not others. Proposed split: `vector/layout.hpp` (struct, bitmap, buffers, builders: the Arrow contract `ext/api.hpp` depends on), `kernels.hpp` (arithmetic, comparison), `reduce.hpp` (reductions, with `all`/`any`), `convert.hpp` (`to_vec`, `to_list`, `astype`, `fillna`), `index.hpp` (indexing, masks). A single `q_vec_visit_dtype(v, f)` would replace the switches. Worth doing before the D12/D13 vector work in the tables spec.
 - `QFilePayload` holds no pointers and could use `q_malloc_atomic`.
+
+---
+
+## 15) Performance Findings
+
+Measured with the benchmark suite (`src/benchmarks/`; the numbers and how they were checked are in `src/benchmarks/RESULTS.md`, one thread, 2026-11-13). Each item is a cost the suite found, its cause, and a direction to try; none is scheduled yet. To measure a change, rerun the affected benchmarks against the old and new compiler: `python3 bench.py run --bench fib,reduce --lang quark --quark <path>`.
+
+**Generated code**
+- **Source-location tracking is most of the cost of a function call.** Every generated function saves the current location on entry and restores it on exit (`QSourceLocGuard`, plus an exception cleanup path), and every statement records its location. `fib(30)`, rebuilt by hand with the runtime headers: 22.1 ms with three stores per statement (the current scheme), 10.6 ms with one pointer store into a static table of locations, 8.7 ms with that and no per-call save and restore, 7.3 ms with no tracking, 4.3 ms as plain C++. Direction: the pointer table, then avoiding the per-call save and restore (for example by recording the location at call sites instead).
+- **Arithmetic on call results must stay unboxed.** Boxing both results of `fib(n - 1) + fib(n - 2)` and adding them with the generic `q_add` (not inlined; it tests for vectors and strings first) costs 31.5 against 22.4 ms for `q_checked_add` on the two `int64`s. The lowering pass emits the typed add when both operand types are proven.
+- **Overflow checks** cost the last 40% to plain C++ in `fib` (7.7 against 4.3 ms). That is the price of checked integers; it may shrink where the compiler can prove a range.
+
+**Vectors**
+- **Fresh memory dominates large element-wise operations.** `2.5 * a + b` on 10M doubles takes 15 ms into memory already mapped and 74 ms into a new `malloc` buffer, because every 4 KB page faults on its first write. NumPy asks the kernel for huge pages for large arrays (`madvise(MADV_HUGEPAGE)`): 30 ms with them, 82 ms without. Quark's GC reuses its heap and takes 47 ms. Direction: huge pages for large vec buffers.
+- **Dense fast paths.** Division checks every slot for null and every divisor for zero, `sum` and the mask filter test validity per element even when `null_count == 0`, and the filter switches on the dtype inside its loop (`filter` 195 ms; NumPy 180 ms, Polars 27 ms). Direction: one loop for vectors without nulls, written so clang can vectorize it.
+- **Keep reductions fast when they follow the table aggregates (D13).** A first version (uncommitted, on `lowering-ir`) took `sum` of 10M doubles from 12.2 to 31.8 ms (`long double` accumulation: x87, no SIMD; a null and NaN test per element) and `min`/`max` from 6.1 to 35 ms (a per-element dtype switch). Direction: the dense path above, `double` accumulation (pairwise summation if accuracy is the goal), and a NaN test only where NaN can occur.
+- **Fixed cost per operation** is about 5.6 µs for a 300-element vector (allocation and validation), so row-by-row code on short vectors is slower with `vec` than with lists (`gemm`: 1.02 s against 0.36 s).
+- **No fusion**: an expression of eight operations writes seven 80 MB temporaries (195 ms; NumPy 117 ms, Polars 94 ms).
+
+**Lists, dicts and strings** (the list tier is no faster than CPython for these)
+- **`list.push`** costs 35-65 ns per element (C++'s `push_back` 19 ns on the same machine). A `QList` is a `std::vector<QValue>` on the GC's scanned heap, so every collection scans every element of every live list, even a `list[float]`; a list of 10M bools peaks at 789 MB (Python: 85 MB), and runs vary by up to 3 times. Directions: allocate the buffer of an `int`/`float`/`bool` list atomic (never scanned), or store such lists unboxed (`list[T]`); a fill constructor (`[x] * n`) and `reserve`.
+- **Dict lookups** build a new key string and hash it again on every `get` and `set`, in a node-based `std::unordered_map`; "get, then set" is two full lookups. A dict-based group-by of 1M rows takes 332 ms (CPython 397 ms, Polars 55 ms). Directions: open addressing with stored hashes, an update-in-place operation. The table engine already groups with its own open-addressing table.
+- **Strings** are NUL-terminated without a stored length: every method calls `strlen` again, `lower` calls the locale's `tolower` per byte, and every step allocates. `trim().lower().replace()` on 1M strings takes 530 ms (CPython 402 ms). Directions: store the length; ASCII fast paths.
+- **Sorting** compares `QValue`s with a type-checking comparator: 280 ms for 1M floats (NumPy 27 ms, R 156 ms). Direction: sort raw doubles when the element type is known; give `vec` a sort.
+
+**Libraries**
+- A program that imports `std/blas` starts OpenBLAS's thread pool at load (one thread per CPU), and then large vec allocations make the GC print `Repeated allocation of very large block` warnings and get slower (`blas::axpy` on 10M doubles: 30 ms with `OPENBLAS_NUM_THREADS=1`, 135 ms without). Direction: find why the pool disturbs the GC's large-block allocation, or start OpenBLAS with one thread and let programs ask for more.
+

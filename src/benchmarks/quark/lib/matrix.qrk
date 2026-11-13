@@ -88,3 +88,19 @@ fn solve(a: list, b: list) list ->
         x[r] = s / d
         r = r - 1
     x
+
+// The gemm checksum: sum(C[i][j] * (i + 1)) / n, from the row sums of C.
+fn gemm_check(row_sums: list, n: int) float ->
+    s = 0.0
+    for i in range(n):
+        r: float = row_sums[i]
+        s = s + r * (i + 1)
+    s / n
+
+// The ols checksum: sum(beta[j] * (j + 1)).
+fn ols_check(beta: list) float ->
+    s = 0.0
+    for j in range(len(beta)):
+        b: float = beta[j]
+        s = s + b * (j + 1)
+    s

@@ -1,6 +1,7 @@
 // dot.qrk - dot product of two f64 columns (README.md#dot).
+// The std/blas implementation is in dot_blas.qrk, so that a machine without
+// OpenBLAS skips only that one.
 incl './lib/harness'
-incl 'std/blas'
 
 fn dot_list(a: list, b: list) float ->
     s = 0.0
@@ -22,9 +23,6 @@ if impl == 'quark_list':
     harness::check(p, 'dot', r)
 elseif impl == 'quark_vec':
     r = harness::measure(p, 'dot', fn() -> sum(a * b))
-    harness::check(p, 'dot', r)
-elseif impl == 'quark_blas':
-    r = harness::measure(p, 'dot', fn() -> blas::dot(a, b))
     harness::check(p, 'dot', r)
 else:
     harness::unknown_impl(p, 'dot')

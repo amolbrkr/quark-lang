@@ -1,8 +1,9 @@
 // ols.qrk - least squares by the normal equations, beta = solve(X'X, X'y),
 // for X with n rows and p columns (README.md#ols).
+// The std/blas implementation is in ols_blas.qrk, so that a machine without
+// OpenBLAS skips only that one.
 incl './lib/harness'
 incl './lib/matrix'
-incl 'std/blas'
 
 // X as a list of row lists: accumulate X'X (upper triangle) and X'y row by
 // row, then mirror the triangle.
@@ -46,20 +47,6 @@ fn ols_vec(cols: list, y: vec, p: int) list ->
             xj[i] = g
     matrix::solve(xtx, xty)
 
-// X as one flat row-major vec: X'X with syrk, X'y with a transposed gemv.
-fn ols_blas(x: vec, y: vec, n: int, p: int) list ->
-    g = blas::syrk(x, n, p)
-    xty = blas::gemv(x, n, p, y, true)
-    matrix::solve(matrix::row_lists(g.to_list(), p, p), xty.to_list())
-
-// The checksum: sum(beta[j] * (j + 1)).
-fn ols_check(beta: list) float ->
-    s = 0.0
-    for j in range(len(beta)):
-        b: float = beta[j]
-        s = s + b * (j + 1)
-    s
-
 p = harness::params()
 impl: str = p.impl
 n = harness::int_param(p, 'n')
@@ -70,13 +57,10 @@ if impl == 'quark_list':
     rows = matrix::row_lists(x.to_list(), n, k)
     yl = y.to_list()
     out = harness::measure(p, 'ols', fn() -> ols_list(rows, yl, k))
-    harness::check(p, 'ols', ols_check(out))
+    harness::check(p, 'ols', matrix::ols_check(out))
 elseif impl == 'quark_vec':
     cols = matrix::col_vecs(x.to_list(), n, k)
     out = harness::measure(p, 'ols', fn() -> ols_vec(cols, y, k))
-    harness::check(p, 'ols', ols_check(out))
-elseif impl == 'quark_blas':
-    out = harness::measure(p, 'ols', fn() -> ols_blas(x, y, n, k))
-    harness::check(p, 'ols', ols_check(out))
+    harness::check(p, 'ols', matrix::ols_check(out))
 else:
     harness::unknown_impl(p, 'ols')

@@ -63,7 +63,7 @@ Each doc owns one topic; others link to it instead of repeating it:
 | `grammar.md` | Syntax, keywords, precedence |
 | `semantics.md` | Language behaviour (values, types, errors, modules) |
 | `stdlib.md` | Prelude builtins and `std/` modules (`builtins/catalog.go` and `src/core/stdlib/` are the source of truth) |
-| `architecture.md` | Compiler and runtime internals, the soundness contract (§12), the back-end roadmap (§13) |
+| `architecture.md` | Compiler and runtime internals, the soundness contract (§12), the back-end roadmap (§13), performance findings from the benchmarks (§15) |
 | `error_codes.md` | Every `QK-*` and `INV-*` code |
 | `*_spec.md` | One feature's design and decisions; a status line at the top says what is implemented |
 | `changelog.md` | History. Known issues (soundness bugs) live here |

@@ -94,7 +94,7 @@ Checked against the compiler on 2026-11-12 and 2026-11-13. The structural causes
 
 ## 2026-11-13: Benchmark suite; `std/blas` gemm, syrk and transposed gemv
 
-Commits: not yet committed
+Commits: `41b8279`; the follow-ups (`architecture.md` §15, the benchmark setup changes below) are not yet committed
 
 ### Breaking
 - `blas::blas_gemv`, the `extern fn` binding under `blas::gemv`, takes a fifth argument, `trans`. Call `blas::gemv`, whose new `trans` parameter defaults to `false`.
@@ -113,10 +113,12 @@ Commits: not yet committed
 - **Benchmark suite** in `src/benchmarks/` (`python3 bench.py run`, documented in `src/benchmarks/README.md`). 18 benchmarks (plain loops, column arithmetic and reductions, sorting, grouping, joins, strings, linear algebra) compare Quark's `list`, `vec` and `vec` + `std/blas` code with pure Python, NumPy, pandas, Polars, R loops, R vectors, `data.frame` and `data.table`. Every implementation reads the same generated data and its result is checked against a reference implementation; each runs in its own process, single-threaded by default. A `quark_tbl` entry is reserved in the benchmarks a table implementation will cover.
 
 ### Changed
+- Benchmark suite setup, after a fresh-clone check: the `quark_blas` implementations are separate programs (`quark/<bench>_blas.qrk`), so a machine without OpenBLAS skips only them (before, the build failure took down every Quark implementation of `arith`, `dot`, `zscore`, `gemv`, `gemm` and `ols`). `bench.py setup` checks for Python 3.11+, installs data.table from CRAN into the R user library when it is missing (`--no-r-packages` skips that), and prints what is available; `run` prints the same and reports missing pieces as skipped. The driver has Windows paths (`.venv\Scripts\python.exe`, `.exe` programs, `Rscript` under Program Files or `BENCH_RSCRIPT`; no peak memory, since there is no `wait4`), untested so far, and reads peak memory in the right unit on macOS.
 - A `blas::gemv` dimension above `INT_MAX` says `blas.gemv: rows=... cols=...: BLAS supports dimensions up to 2147483647` instead of reporting a size mismatch.
 
 ### Internal
 - The BLAS glue checks every matrix shape in one place (`qblas::check_shape`).
+- `architecture.md` §15 (new) lists the performance costs the benchmarks found, each with its cause, measurements and a direction: source-location tracking (two thirds of a call's cost in `fib`), boxed arithmetic on call results, page faults on fresh vec buffers (huge pages), missing dense fast paths and fusion in vec kernels, keeping D13 reductions fast, list push and GC scanning, dict key hashing, strings without a stored length, sorting, and the OpenBLAS thread pool.
 - `TestStdBlas` checks the new routines' results and 16 more error cases: wrong dimensions, results over `INT_MAX` elements, i64 inputs, missing entries, `null` and an `int` reaching a parameter through `any`, and a wrong argument count through a function value.
 - Known issues (above) gains the `+`-typed-as-`str` bug and the OpenBLAS thread-pool GC warning, both found with the benchmarks. The first measurements and what they show (list building, dict hashing and strings no faster than CPython; `vec` close to NumPy; `std/blas` on par with NumPy and R) are in `src/benchmarks/RESULTS.md`.
 

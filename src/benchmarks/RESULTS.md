@@ -274,7 +274,9 @@ The same Quark programs built with the compiler of the `lowering-ir` worktree as
 | ols | Quark vec | 82.9 ms | 117 ms | 1.41 |
 | ols | Quark vec+blas | 18.5 ms | 17.2 ms | 0.93 |
 
-Every checksum agreed with the reference. The one clear gain is `fib` (31.7 → 22.3 ms). The other ratios below 1 are within the master run's own spread: its `join` runs ranged from 310 to 465 ms, its `vec` Mandelbrot runs from 247 to 508 ms, and `gemm` with BLAS measured 4.5 ms on master once the machine was quiet. The reductions are slower: `reduce` 4.2 times, and every `vec` benchmark that calls `sum` by 1.3-1.5 times. The branch's new `sum` of an f64 vec accumulates in `long double` (x87 instructions, no SIMD) and checks every element for null and NaN, and `min`/`max` compare through a per-element dtype switch. A dense path (no nulls, and a NaN test only when one occurs) with `double` accumulation, pairwise if accuracy matters, should recover the old speed.
+Every checksum agreed with the reference. The one clear gain is `fib` (31.7 → 22.3 ms). The other ratios below 1 are within the master run's own spread: its `join` runs ranged from 310 to 465 ms, its `vec` Mandelbrot runs from 247 to 508 ms, and `gemm` with BLAS measured 4.5 ms on master once the machine was quiet. Rerun on a quiet machine with both compilers alternating (3 rounds of 7 runs), `join` took 406 ms on master and 413 ms on `lowering-ir`: no difference.
+
+The reductions are slower: `reduce` 4.2 times (24.9 against 103.9 ms in the quiet rerun), and every `vec` benchmark that calls `sum` by 1.3-1.5 times. Timed alone on 10M doubles, `sum` went from 12.2 to 31.8 ms and `min` and `max` from 6.1 to 35 ms. The branch's new `sum` of an f64 vec accumulates in `long double` (x87 instructions, no SIMD) and checks every element for null and NaN, and `min`/`max` compare through a per-element dtype switch. A dense path (no nulls, and a NaN test only when one occurs) with `double` accumulation, pairwise if accuracy matters, should recover the old speed.
 
 Where `fib`'s time goes. Master compiles `fib(n - 1) + fib(n - 2)` by boxing both results into `QValue`s and calling the runtime's generic `q_add`, which checks for vectors and strings before it adds two ints, and which clang doesn't inline. The lowering pass knows that `fib` returns `int` and emits `q_checked_add` on the two `int64`s. Rebuilding the generated function in C++ with the runtime headers, and removing one layer at a time, reproduces both numbers and shows what is left:
 
@@ -282,11 +284,13 @@ Where `fib`'s time goes. Master compiles `fib(n - 1) + fib(n - 2)` by boxing bot
 |---|---|
 | master: boxed results, `q_add`, source locations | 31.5 ms |
 | lowering-ir: `q_checked_add` on `int64`, source locations | 22.4 ms |
+| the same with locations as one pointer into a static table (newer `lowering-ir` work), saved and restored per call | 10.6 ms |
+| the same without the per-call save and restore | 8.7 ms |
 | the same without source-location tracking | 7.4 ms |
 | overflow-checked `int64` arithmetic only | 7.8 ms |
 | plain C++ | 4.5 ms |
 
-Two thirds of the remaining time is source-location tracking. Every generated function saves the thread-local current location on entry and restores it on exit (`QSourceLocGuard`, which also adds an exception cleanup path), and every statement stores three fields; that costs about 5.5 ns per call. Storing one integer that indexes a static table of locations measured no slower than no tracking at all for loops (`architecture.md` §12.9). The overflow checks cost the rest (7.8 against 4.5 ms).
+Two thirds of the remaining time is source-location tracking. Every generated function saves the thread-local current location on entry and restores it on exit (`QSourceLocGuard`, which also adds an exception cleanup path), and every statement stores three fields; that costs about 5.5 ns per call. The `lowering-ir` worktree has since moved to one pointer store per statement into a static table of locations; measured the same way, that recovers most of it (10.6 ms), and dropping the per-call save and restore would give 8.7 ms. The overflow checks cost the rest (7.8 against 4.5 ms). These items are tracked in `architecture.md` §15.
 
 ## What this means for the table work
 

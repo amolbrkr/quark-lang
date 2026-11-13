@@ -1,6 +1,7 @@
 // arith.qrk - z = 2.5 * a + b over two f64 columns (README.md#arith).
+// The std/blas implementation is in arith_blas.qrk, so that a machine without
+// OpenBLAS skips only that one.
 incl './lib/harness'
-incl 'std/blas'
 
 fn arith_list(a: list, b: list) list ->
     z = list []
@@ -22,9 +23,6 @@ if impl == 'quark_list':
     harness::check(p, 'arith', harness::sum_list(out))
 elseif impl == 'quark_vec':
     out = harness::measure(p, 'arith', fn() -> 2.5 * a + b)
-    harness::check(p, 'arith', sum(out))
-elseif impl == 'quark_blas':
-    out = harness::measure(p, 'arith', fn() -> blas::axpy(2.5, a, b))
     harness::check(p, 'arith', sum(out))
 else:
     harness::unknown_impl(p, 'arith')

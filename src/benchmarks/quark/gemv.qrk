@@ -1,7 +1,8 @@
 // gemv.qrk - y = A x for an n x n matrix (README.md#gemv).
+// The std/blas implementation is in gemv_blas.qrk, so that a machine without
+// OpenBLAS skips only that one.
 incl './lib/harness'
 incl './lib/matrix'
-incl 'std/blas'
 
 fn gemv_list(a: list, x: list) list ->
     y = list []
@@ -35,9 +36,6 @@ if impl == 'quark_list':
 elseif impl == 'quark_vec':
     rows = matrix::row_vecs(a.to_list(), n, n)
     out = harness::measure(p, 'gemv', fn() -> gemv_vec(rows, x))
-    harness::check(p, 'gemv', sum(out))
-elseif impl == 'quark_blas':
-    out = harness::measure(p, 'gemv', fn() -> blas::gemv(a, n, n, x))
     harness::check(p, 'gemv', sum(out))
 else:
     harness::unknown_impl(p, 'gemv')

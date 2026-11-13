@@ -1,7 +1,8 @@
 // zscore.qrk - standardize a column: z = (a - mean(a)) / sd(a), sd with
 // n - 1 (README.md#zscore).
+// The std/blas implementation is in zscore_blas.qrk, so that a machine without
+// OpenBLAS skips only that one.
 incl './lib/harness'
-incl 'std/blas'
 
 fn zscore_list(a: list) list ->
     n = len(a)
@@ -27,12 +28,6 @@ fn zscore_vec(a: vec) vec ->
     sd = sqrt(sum(d * d) / (len(a) - 1))
     d / sd
 
-fn zscore_blas(a: vec) vec ->
-    m = sum(a) / len(a)
-    d = a - m
-    sd = sqrt(blas::dot(d, d) / (len(a) - 1))
-    blas::scal(1.0 / sd, d)
-
 // The checksum: sum(z * b).
 fn weighted_list(z: list, b: list) float ->
     s = 0.0
@@ -53,9 +48,6 @@ if impl == 'quark_list':
     harness::check(p, 'zscore', weighted_list(out, b.to_list()))
 elseif impl == 'quark_vec':
     out: vec = harness::measure(p, 'zscore', fn() -> zscore_vec(a))
-    harness::check(p, 'zscore', sum(out * b))
-elseif impl == 'quark_blas':
-    out: vec = harness::measure(p, 'zscore', fn() -> zscore_blas(a))
     harness::check(p, 'zscore', sum(out * b))
 else:
     harness::unknown_impl(p, 'zscore')

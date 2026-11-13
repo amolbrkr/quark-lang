@@ -28,7 +28,9 @@ REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 COMPILER_DIR = os.path.join(REPO, "src", "core", "quark")
 STDLIB = os.path.join(REPO, "src", "core", "stdlib")
 VENV = os.path.join(HERE, ".venv")
-VENV_PY = os.path.join(VENV, "bin", "python")
+IS_WIN = os.name == "nt"
+EXE = ".exe" if IS_WIN else ""
+VENV_PY = os.path.join(VENV, "Scripts", "python.exe") if IS_WIN else os.path.join(VENV, "bin", "python")
 
 # ----------------------------------------------------------------- presets
 # Input sizes. "default" is the reference configuration; "small" checks that
@@ -165,9 +167,33 @@ def r_env(env=None):
     return env
 
 
+def find_rscript():
+    """Rscript from $BENCH_RSCRIPT, the PATH, or (Windows) the newest R under
+    Program Files, which the R installer doesn't put on the PATH."""
+    if os.environ.get("BENCH_RSCRIPT"):
+        return os.environ["BENCH_RSCRIPT"]
+    found = shutil.which("Rscript")
+    if found or not IS_WIN:
+        return found
+    import glob
+    import re
+    hits = []
+    for root in {os.environ.get("ProgramFiles", r"C:\Program Files"), os.environ.get("ProgramW6432", "")}:
+        if root:
+            hits += glob.glob(os.path.join(root, "R", "R-*", "bin", "Rscript.exe"))
+
+    def version(path):
+        return [int(x) for x in re.findall(r"\d+", os.path.basename(os.path.dirname(os.path.dirname(path))))]
+
+    return max(hits, key=version) if hits else None
+
+
+RSCRIPT = find_rscript()
+
+
 def sh(cmd, **kw):
     """Output of a command, or '' when it fails or doesn't exist."""
-    if cmd and cmd[0] == "Rscript":
+    if cmd and cmd[0] and cmd[0] == RSCRIPT:
         kw.setdefault("env", r_env())
     try:
         return subprocess.run(cmd, capture_output=True, text=True, timeout=60, **kw).stdout.strip()
@@ -225,10 +251,12 @@ def tool_status(r_needed):
         for line in out.splitlines():
             m, ok = line.split()
             st["python_libs"][m] = ok == "True"
-    st["r"] = shutil.which("Rscript") is not None
+    st["r"] = RSCRIPT is not None
     st["data.table"] = False
     if st["r"] and r_needed:
-        st["data.table"] = sh(["Rscript", "-e", "cat(requireNamespace('data.table', quietly=TRUE))"]) == "TRUE"
+        st["data.table"] = sh([RSCRIPT, "-e", "cat(requireNamespace('data.table', quietly=TRUE))"]) == "TRUE"
+    import ctypes.util
+    st["openblas"] = ctypes.util.find_library("openblas") is not None or bool(system_openblas())
     return st
 
 
@@ -271,7 +299,7 @@ def environment(quark_exe, threads):
                     cpu = line.split(":", 1)[1].strip()
                     break
     except OSError:
-        cpu = platform.processor()
+        cpu = sh(["sysctl", "-n", "machdep.cpu.brand_string"]) or platform.processor()
     env["cpu"] = cpu
     env["cpus"] = os.cpu_count()
     try:
@@ -279,11 +307,16 @@ def environment(quark_exe, threads):
             kb = int(f.readline().split()[1])
             env["memory_gb"] = round(kb / 1024 / 1024, 1)
     except (OSError, ValueError, IndexError):
-        pass
+        mem = sh(["sysctl", "-n", "hw.memsize"])
+        if mem.isdigit():
+            env["memory_gb"] = round(int(mem) / 1024 ** 3, 1)
     env["os"] = f"{platform.system()} {platform.release()}"
-    vm = sh(["systemd-detect-virt", "--vm"])
-    container = sh(["systemd-detect-virt", "--container"])
-    env["virtualized"] = ", ".join(x for x in (vm, container) if x and x != "none") or "bare metal"
+    if shutil.which("systemd-detect-virt"):
+        vm = sh(["systemd-detect-virt", "--vm"])
+        container = sh(["systemd-detect-virt", "--container"])
+        env["virtualized"] = ", ".join(x for x in (vm, container) if x and x != "none") or "bare metal"
+    else:
+        env["virtualized"] = "unknown"
     env["threads"] = threads
     env["clang"] = first_line(sh(["clang++", "--version"]))
     env["go"] = sh(["go", "version"])
@@ -298,12 +331,21 @@ def environment(quark_exe, threads):
                                 "import numpy as np\n"
                                 "c = np.show_config(mode='dicts')['Build Dependencies']['blas']\n"
                                 "print(c.get('name'), c.get('version'))"])
-    if shutil.which("Rscript"):
-        env["r"] = sh(["Rscript", "-e", "cat(R.version.string)"])
-        env["r_blas"] = sh(["Rscript", "-e", "cat(extSoftVersion()[['BLAS']])"])
-        env["data.table"] = sh(["Rscript", "-e", "cat(as.character(packageVersion('data.table')))"])
-    env["load_average_start"] = [round(x, 2) for x in os.getloadavg()]
+    if RSCRIPT:
+        env["r"] = sh([RSCRIPT, "-e", "cat(R.version.string)"])
+        env["r_blas"] = sh([RSCRIPT, "-e", "cat(extSoftVersion()[['BLAS']])"])
+        env["data.table"] = sh([RSCRIPT, "-e", "cat(as.character(packageVersion('data.table')))"])
+    env["load_average_start"] = load_average()
     return env
+
+
+def load_average():
+    """The 1, 5 and 15 minute load averages, or None where the OS has none
+    (Windows)."""
+    try:
+        return [round(x, 2) for x in os.getloadavg()]
+    except (AttributeError, OSError):
+        return None
 
 
 # ----------------------------------------------------------------- datagen
@@ -333,29 +375,50 @@ def ensure_data(preset, sizes, force=False):
 
 
 def build_compiler():
-    exe = os.path.join(COMPILER_DIR, "quark")
+    exe = os.path.join(COMPILER_DIR, "quark" + EXE)
     print("building the Quark compiler ...", flush=True)
     subprocess.run(["go", "build", "-o", exe, "."], cwd=COMPILER_DIR, check=True)
     return exe
 
 
+def program(bench, impl_id):
+    """The Quark program that holds an implementation. The std/blas ones are
+    separate programs, so a machine without OpenBLAS skips only them."""
+    return f"{bench}_blas" if impl_id == "quark_blas" else bench
+
+
+OPENBLAS_HINT = ("OpenBLAS not found; quark_blas needs it (Debian/Ubuntu: sudo apt install libopenblas-dev; "
+                 "Fedora: sudo dnf install openblas-devel; macOS: brew install openblas, then set QUARK_LIB_PATH "
+                 "and QUARK_INCLUDE_PATH as in stdlib.md)")
+
+
 def build_quark(quark_exe, benches, build_dir):
-    """Builds one executable per Quark benchmark; returns {bench: seconds}
-    and {bench: error}."""
+    """Builds the Quark programs the benchmarks need; returns
+    {program: seconds} and {program: (kind, message)}, kind being "error" or
+    "no-openblas"."""
     os.makedirs(build_dir, exist_ok=True)
     env = dict(os.environ, QUARK_STDLIB_ROOT=STDLIB)
     times, errors = {}, {}
+    programs = []
     for b in benches:
-        src = os.path.join(HERE, "quark", f"{b.name}.qrk")
-        exe = os.path.join(build_dir, b.name)
+        for impl_id in b.impls:
+            if IMPL[impl_id].lang == "quark" and program(b.name, impl_id) not in programs:
+                programs.append(program(b.name, impl_id))
+    for name in programs:
+        src = os.path.join(HERE, "quark", f"{name}.qrk")
+        exe = os.path.join(build_dir, name)
         t0 = time.time()
         r = subprocess.run([quark_exe, "build", src, "-o", exe], env=env, capture_output=True, text=True)
-        times[b.name] = round(time.time() - t0, 2)
-        if r.returncode != 0:
-            errors[b.name] = (r.stdout + r.stderr).strip()
-            print(f"  quark build {b.name}: FAILED", flush=True)
+        times[name] = round(time.time() - t0, 2)
+        text = (r.stdout + r.stderr).strip()
+        if r.returncode == 0:
+            print(f"  quark build {name}: {times[name]:.1f} s", flush=True)
+        elif name.endswith("_blas") and ("QK-FFI-002" in text or ("QK-FFI-003" in text and "cblas.h" in text)):
+            errors[name] = ("no-openblas", OPENBLAS_HINT + "\n" + text)
+            print(f"  quark build {name}: skipped, OpenBLAS not found", flush=True)
         else:
-            print(f"  quark build {b.name}: {times[b.name]:.1f} s", flush=True)
+            errors[name] = ("error", text)
+            print(f"  quark build {name}: FAILED", flush=True)
     return times, errors
 
 
@@ -367,23 +430,36 @@ def command(impl_id, bench, data_dir, args, build_dir):
     kv = [f"bench={bench.name}", f"impl={impl_id}", f"data={data_dir}"]
     kv += [f"{k}={v}" for k, v in args.items()]
     if lang == "quark":
-        return [os.path.join(build_dir, bench.name)] + kv
+        return [os.path.join(build_dir, program(bench.name, impl_id) + EXE)] + kv
     if lang == "python":
         return [VENV_PY, os.path.join(HERE, "python", "run.py")] + kv
-    return ["Rscript", "--no-init-file", os.path.join(HERE, "r", "run.R")] + kv
+    return [RSCRIPT, "--no-init-file", os.path.join(HERE, "r", "run.R")] + kv
+
+
+def peak_rss_mb(usage):
+    # ru_maxrss is in KiB on Linux and in bytes on macOS.
+    return usage.ru_maxrss / (1024 * 1024 if sys.platform == "darwin" else 1024)
 
 
 def run_process(cmd, env, timeout):
-    """Runs cmd; returns (status, stdout, stderr, peak_rss_mb, wall)."""
+    """Runs cmd; returns (status, stdout, stderr, peak_rss_mb, wall). Peak
+    memory comes from wait4, so it is None on Windows."""
     with tempfile.TemporaryFile("w+") as out, tempfile.TemporaryFile("w+") as err:
         t0 = time.time()
         proc = subprocess.Popen(cmd, stdout=out, stderr=err, env=env, cwd=HERE)
         status, rss = "ok", None
-        while True:
+        if not hasattr(os, "wait4"):
+            try:
+                status = "ok" if proc.wait(timeout=timeout) == 0 else "error"
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+                status = "timeout"
+        while hasattr(os, "wait4"):
             pid, code, usage = os.wait4(proc.pid, os.WNOHANG)
             if pid != 0:
                 proc.returncode = os.waitstatus_to_exitcode(code)
-                rss = usage.ru_maxrss / 1024  # KiB on Linux
+                rss = peak_rss_mb(usage)
                 if proc.returncode != 0:
                     status = "error"
                 break
@@ -391,7 +467,7 @@ def run_process(cmd, env, timeout):
                 proc.kill()
                 _, code, usage = os.wait4(proc.pid, 0)
                 proc.returncode = -9
-                status, rss = "timeout", usage.ru_maxrss / 1024
+                status, rss = "timeout", peak_rss_mb(usage)
                 break
             time.sleep(0.02)
         wall = time.time() - t0
@@ -445,9 +521,13 @@ def run_suite(args):
     st = tool_status(r_needed="r" in langs)
     if not st["python"]:
         sys.exit("no .venv: run `python3 bench.py setup` first (data generation needs numpy)")
+    print_status(st, langs)
+    print()
+    # Without go and clang++ the Quark rows are reported as skipped.
+    build_q = "quark" in langs and st["clang"] and st["go"]
 
     quark_exe = args.quark
-    if "quark" in langs and quark_exe is None:
+    if build_q and quark_exe is None:
         quark_exe = build_compiler()
     if quark_exe:
         quark_exe = os.path.abspath(quark_exe)
@@ -461,7 +541,7 @@ def run_suite(args):
     env_info = environment(quark_exe, args.threads)
 
     builds, build_errors = {}, {}
-    if "quark" in langs:
+    if build_q:
         quark_benches = [b for b in benches if any(IMPL[i].lang == "quark" for i in b.impls)]
         builds, build_errors = build_quark(quark_exe, quark_benches, build_dir)
 
@@ -481,10 +561,12 @@ def run_suite(args):
                 row["status"] = "planned"
             elif not impl_available(impl_id, st):
                 row["status"] = "skipped"
-                row["error"] = f"{imp.label} is not available on this machine"
-            elif imp.lang == "quark" and b.name in build_errors:
-                row["status"] = "error"
-                row["error"] = "build failed: " + build_errors[b.name][-2000:]
+                row["error"] = {"quark": "go and clang++ are needed", "python": "the library is not in .venv",
+                                "r": "Rscript (or data.table) not found"}[imp.lang]
+            elif imp.lang == "quark" and program(b.name, impl_id) in build_errors:
+                kind, text = build_errors[program(b.name, impl_id)]
+                row["status"] = "skipped" if kind == "no-openblas" else "error"
+                row["error"] = ("" if kind == "no-openblas" else "build failed: ") + text[-2000:]
             else:
                 cmd = command(impl_id, b, data_dir, dict(params, warmup=args.warmup, reps=args.reps,
                                                          budget=args.budget), build_dir)
@@ -506,7 +588,7 @@ def run_suite(args):
                 print(f"  {b.name:<11} {r['impl']:<11} CHECK FAILED: {r['check']}", flush=True)
         runs += bench_runs
 
-    env_info["load_average_end"] = [round(x, 2) for x in os.getloadavg()]
+    env_info["load_average_end"] = load_average()
     results = {
         "env": env_info,
         "config": {"preset": args.preset, "threads": args.threads, "warmup": args.warmup, "reps": args.reps,
@@ -700,24 +782,71 @@ def write_report(results, path):
 # --------------------------------------------------------------- commands
 
 
-def cmd_setup(_args):
+# pandas 3 and NumPy 2.4 (requirements.txt) need Python 3.11 or newer.
+PY_MIN = (3, 11)
+
+
+def install_data_table():
+    """Installs data.table from CRAN into the R user library, creating it."""
+    code = ('lib <- path.expand(Sys.getenv("R_LIBS_USER")); '
+            'dir.create(lib, recursive = TRUE, showWarnings = FALSE); '
+            'install.packages("data.table", lib = lib, repos = "https://cloud.r-project.org")')
+    print("\ninstalling data.table from CRAN into the R user library ...", flush=True)
+    return subprocess.run([RSCRIPT, "-e", code], env=r_env()).returncode == 0
+
+
+def print_status(st, langs=LANGS):
+    """Prints what can run here, for the languages in langs."""
+    ok = lambda v: "ok" if v else "MISSING"
+    if "quark" in langs:
+        if not (st["clang"] and st["go"]):
+            print("Quark:  MISSING: needs go and clang++ (Quark implementations are skipped)")
+        elif st["openblas"]:
+            print("Quark:  ok; OpenBLAS ok")
+        else:
+            print("Quark:  ok; OpenBLAS not found, so quark_blas is skipped. " + OPENBLAS_HINT.split("(", 1)[1].rstrip(")"))
+    if "python" in langs:
+        if st["python"]:
+            version = sh([VENV_PY, "-c", "import platform; print(platform.python_version())"])
+            libs = ", ".join(f"{k} {ok(v)}" for k, v in st["python_libs"].items())
+            print(f"Python: .venv (Python {version}): {libs}")
+        else:
+            print("Python: MISSING .venv (run `bench.py setup`)")
+    if "r" in langs:
+        if not st["r"]:
+            print("R:      MISSING: Rscript not found on the PATH; set BENCH_RSCRIPT to its path "
+                  "(R implementations are skipped)")
+        elif st["data.table"]:
+            print(f"R:      {RSCRIPT}; data.table ok")
+        else:
+            print(f"R:      {RSCRIPT}; data.table MISSING, so r_dt is skipped (`bench.py setup` installs it)")
+
+
+def cmd_setup(args):
+    uv = shutil.which("uv")
     if not os.path.exists(VENV_PY):
-        uv = shutil.which("uv")
         if uv:
+            # uv downloads Python 3.11 itself when it isn't installed.
             subprocess.run([uv, "venv", "--python", "3.11", VENV], check=True)
+        elif sys.version_info < PY_MIN:
+            sys.exit(f"Python {platform.python_version()} is too old: the pinned pandas and NumPy need 3.11 or "
+                     "newer. Run this with a newer Python, or install uv (https://docs.astral.sh/uv/), which "
+                     "downloads one.")
         else:
             subprocess.run([sys.executable, "-m", "venv", VENV], check=True)
     req = os.path.join(HERE, "requirements.txt")
-    uv = shutil.which("uv")
     if uv:
         subprocess.run([uv, "pip", "install", "--python", VENV_PY, "-r", req], check=True)
     else:
         subprocess.run([VENV_PY, "-m", "pip", "install", "-r", req], check=True)
     st = tool_status(r_needed=True)
-    print("\nPython libraries:", ", ".join(f"{k} {'ok' if v else 'MISSING'}" for k, v in st["python_libs"].items()))
-    print("R:", "ok" if st["r"] else "MISSING (Rscript not found)")
-    print("R data.table:", "ok" if st["data.table"] else "MISSING (install.packages('data.table'))")
-    print("clang++:", "ok" if st["clang"] else "MISSING", " go:", "ok" if st["go"] else "MISSING")
+    if st["r"] and not st["data.table"] and not args.no_r_packages:
+        if not install_data_table():
+            print("data.table did not install; r_dt will be skipped (see the R output above)")
+        st = tool_status(r_needed=True)
+    print()
+    print_status(st)
+    print("\nNext: python3 bench.py run --preset small   (about 2-4 minutes; checks every implementation agrees)")
 
 
 def cmd_list(_args):
@@ -737,7 +866,8 @@ def cmd_report(args):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("setup", help="create .venv and install the Python libraries")
+    sp = sub.add_parser("setup", help="create .venv with the Python libraries, install data.table if missing")
+    sp.add_argument("--no-r-packages", action="store_true", help="don't install data.table")
     sub.add_parser("list", help="list benchmarks and implementations")
     rp = sub.add_parser("report", help="rebuild report.md from a results directory")
     rp.add_argument("dir")

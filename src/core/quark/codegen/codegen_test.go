@@ -722,8 +722,8 @@ func TestCodegen_DictEmitsQvDict(t *testing.T) {
 	if len(res.TypeErrors) > 0 {
 		t.Fatalf("unexpected type errors: %v", res.TypeErrors)
 	}
-	if !strings.Contains(res.CPP, "qv_dict()") {
-		t.Fatalf("expected qv_dict() for dict literal, cpp=\n%s", res.CPP)
+	if !strings.Contains(res.CPP, "qv_dict(") {
+		t.Fatalf("expected qv_dict(...) for dict literal, cpp=\n%s", res.CPP)
 	}
 	if !strings.Contains(res.CPP, "q_dict_set(") {
 		t.Fatalf("expected q_dict_set for dict entries, cpp=\n%s", res.CPP)

@@ -103,8 +103,7 @@ inline QValue q_int(QValue v) {
             return qv_int(result);
         }
         default: {
-            static const char* names[] = {"int","float","str","bool","null","list","vec","dict","fn","result","resource","struct","tbl"};
-            const char* tname = (v.type >= 0 && v.type <= 12) ? names[v.type] : "unknown";
+            const char* tname = q_type_name(v.type);
             q_runtime_reportf("runtime error: to_int() cannot convert %s to int\n", tname);
             std::exit(1);
         }
@@ -134,8 +133,7 @@ inline QValue q_float(QValue v) {
             return qv_float(result);
         }
         default: {
-            static const char* names[] = {"int","float","str","bool","null","list","vec","dict","fn","result","resource","struct","tbl"};
-            const char* tname = (v.type >= 0 && v.type <= 12) ? names[v.type] : "unknown";
+            const char* tname = q_type_name(v.type);
             q_runtime_reportf("runtime error: to_float() cannot convert %s to float\n", tname);
             std::exit(1);
         }

@@ -1058,7 +1058,16 @@ inline QValue q_to_list(QValue input) {
         std::exit(1);
     }
     const QVector& v = *input.data.vector_val;
-    QValue out = qv_list(static_cast<int>(v.count));
+    // The list holds the vec's dtype (to_list() is typed list[int] for a
+    // vec[int]); a null slot is boxed as null, as before.
+    const QElemType* elem = nullptr;
+    switch (v.type) {
+        case QVector::Type::F64: elem = &q_elem_float; break;
+        case QVector::Type::I64: elem = &q_elem_int; break;
+        case QVector::Type::BOOL: elem = &q_elem_bool; break;
+        case QVector::Type::STR: elem = &q_elem_str; break;
+    }
+    QValue out = qv_list(static_cast<int>(v.count), elem);
     QList& items = *out.data.list_val;
     items.reserve(v.count);
     for (size_t i = 0; i < v.count; i++) {

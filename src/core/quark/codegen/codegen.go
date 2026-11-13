@@ -93,6 +93,10 @@ type Generator struct {
 	// checkedCells holds the captured variables of the lambda being generated
 	// that may still be unassigned; they are read with q_cell_get.
 	checkedCells map[*types.Symbol]bool
+	// Element type descriptors (static QElemType constants, elemtype.go),
+	// collected while generating and placed after the struct definitions.
+	elemDescs     strings.Builder
+	elemDescNames map[string]string
 }
 
 func New() *Generator {
@@ -342,7 +346,7 @@ func boxNative(callExpr string, nativeReturn string) string {
 	case "bool":
 		return fmt.Sprintf("qv_bool(%s)", callExpr)
 	case "const char*":
-		return fmt.Sprintf("qv_string(%s)", callExpr)
+		return fmt.Sprintf("q_box_native_str(%s)", callExpr)
 	case "QVector*":
 		return fmt.Sprintf("qv_vector_ptr(%s)", callExpr)
 	case "QList*":
@@ -424,6 +428,9 @@ func (g *Generator) Generate(node *ast.TreeNode) string {
 
 	// Emit struct definitions (QStructDef statics)
 	g.emitStructDefs()
+	// Element type descriptors go here; they are collected while the rest is
+	// generated (elemDesc).
+	descPos := g.output.Len()
 	g.emitDefaultArgFns()
 
 	// Generate function definitions
@@ -479,7 +486,11 @@ func (g *Generator) Generate(node *ast.TreeNode) string {
 	g.indentLevel--
 	g.emit("}\n")
 
-	return g.output.String()
+	out := g.output.String()
+	if g.elemDescs.Len() == 0 {
+		return out
+	}
+	return out[:descPos] + "// Element types of lists and dicts\n" + g.elemDescs.String() + "\n" + out[descPos:]
 }
 
 // hoistScopes emits, at the start of one or more scopes, everything their
@@ -758,19 +769,20 @@ func (g *Generator) lambdaDisplayName(node *ast.TreeNode) string {
 }
 
 // paramTagChecks maps non-scalar annotations to their QValue tag and whether
-// null is accepted (reference types other than result accept null, as in the
-// checker).
+// null is accepted: only resource does (structs have their own check), as in
+// the checker; `list`, `dict`, `vec` and `fn` mean a list, dict, vec or
+// function.
 var paramTagChecks = map[string]struct {
 	tag       string
 	allowNull bool
 }{
 	"str":      {"VAL_STRING", false},
-	"list":     {"VAL_LIST", true},
-	"dict":     {"VAL_DICT", true},
-	"vec":      {"VAL_VECTOR", true},
+	"list":     {"VAL_LIST", false},
+	"dict":     {"VAL_DICT", false},
+	"vec":      {"VAL_VECTOR", false},
 	"result":   {"VAL_RESULT", false},
 	"resource": {"VAL_RESOURCE", true},
-	"fn":       {"VAL_FUNC", true},
+	"fn":       {"VAL_FUNC", false},
 }
 
 // paramNameNode is the identifier node of a parameter.
@@ -2009,14 +2021,20 @@ func (g *Generator) generateWhile(node *ast.TreeNode) string {
 	return "qv_null()"
 }
 
+// generateList emits a list literal. The list records the element type the
+// analyzer gave the literal, which every later write is checked against.
 func (g *Generator) generateList(node *ast.TreeNode) string {
+	desc := "nullptr"
+	if lt, ok := g.nodeType(node).(*types.ListType); ok {
+		desc = g.elemDesc(lt.ElementType)
+	}
 	if len(node.Children) == 0 {
-		return "qv_list(8)"
+		return fmt.Sprintf("qv_list(8, %s)", desc)
 	}
 
 	// Generate list with initial elements
 	temp := g.newTemp()
-	g.emitLine("QValue %s = qv_list(%d);", temp, len(node.Children))
+	g.emitLine("QValue %s = qv_list(%d, %s);", temp, len(node.Children), desc)
 
 	for _, child := range node.Children {
 		elem := g.generateExpr(child)
@@ -2073,9 +2091,15 @@ func (g *Generator) generateVector(node *ast.TreeNode) string {
 	return fmt.Sprintf("q_to_vec(%s)", tempList)
 }
 
+// generateDict emits a dict literal, which records its value type like a
+// list literal.
 func (g *Generator) generateDict(node *ast.TreeNode) string {
+	desc := "nullptr"
+	if dt, ok := g.nodeType(node).(*types.DictType); ok {
+		desc = g.elemDesc(dt.ValueType)
+	}
 	temp := g.newTemp()
-	g.emitLine("QValue %s = qv_dict();", temp)
+	g.emitLine("QValue %s = qv_dict(%s);", temp, desc)
 
 	for _, pair := range node.Children {
 		if pair == nil || len(pair.Children) < 2 {
@@ -2202,7 +2226,7 @@ func (g *Generator) generateLambdaFunc(node *ast.TreeNode) {
 	// Generate body - for lambdas, the body is a single expression
 	result := g.generateExpr(bodyNode)
 	// Lambdas return QValue — box any scalar result.
-	g.emitLine("return %s;", result)
+	g.emitLine("return %s;", g.checkedReturn(node, bodyNode, result))
 
 	g.indentLevel--
 	g.emit("}\n\n")

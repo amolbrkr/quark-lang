@@ -98,6 +98,8 @@ func (a *Analyzer) analyzeStructDef(node *ast.TreeNode) Type {
 		}
 		if fieldNode.DefaultValue != nil && fieldIdx < len(st.Fields) {
 			defaultType := a.Analyze(fieldNode.DefaultValue)
+			SettleContainers(st.Fields[fieldIdx].Type, defaultType)
+			a.contextLiteral(fieldNode.DefaultValue, st.Fields[fieldIdx].Type)
 			if !isUnknownType(defaultType) && !IsErrorType(defaultType) && !CanAssign(st.Fields[fieldIdx].Type, defaultType) {
 				a.errorAt(fieldNode, "default value type '%s' is not compatible with field type '%s'", defaultType.String(), st.Fields[fieldIdx].Type.String())
 			}
@@ -143,6 +145,11 @@ func (a *Analyzer) analyzeStructLiteral(node *ast.TreeNode) Type {
 		// Type-check value expression
 		valueNode := pair.Children[1]
 		valueType := a.Analyze(valueNode)
+		if isUnknownType(field.Type) {
+			escapePending(valueType)
+		}
+		SettleContainers(field.Type, valueType)
+		a.contextLiteral(valueNode, field.Type)
 
 		if !isUnknownType(valueType) && !IsErrorType(valueType) && !CanAssign(field.Type, valueType) {
 			a.errorAt(pair, "cannot assign value of type '%s' to field '%s' of type '%s'", valueType.String(), fieldName, field.Type.String())

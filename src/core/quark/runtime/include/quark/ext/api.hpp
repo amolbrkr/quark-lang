@@ -76,19 +76,24 @@ inline QValue box(bool v)        { return qv_bool(v); }
 inline QValue box(const char* v) { return qv_string(v); }
 // Takes ownership of an already GC-allocated buffer (no copy).
 inline QValue box_own(char* v)   { return qv_string_own(v); }
+// A list, dict, vec or fn is never null in Quark (null is qext::null_val()),
+// so boxing a nullptr one is an error.
 inline QValue box(QVector* v) {
+    if (!v) panic("box: null vec pointer (return qext::null_val() for null)");
     QValue q;
     q.type = QValue::VAL_VECTOR;
     q.data.vector_val = v;
     return q;
 }
 inline QValue box(QList* v) {
+    if (!v) panic("box: null list pointer (return qext::null_val() for null)");
     QValue q;
     q.type = QValue::VAL_LIST;
     q.data.list_val = v;
     return q;
 }
 inline QValue box(QDict* v) {
+    if (!v) panic("box: null dict pointer (return qext::null_val() for null)");
     QValue q;
     q.type = QValue::VAL_DICT;
     q.data.dict_val = v;
@@ -96,6 +101,7 @@ inline QValue box(QDict* v) {
 }
 // A fn value received as QClosure* (an `fn` parameter), boxed back unchanged.
 inline QValue box(QClosure* v) {
+    if (!v) panic("box: null closure pointer (return qext::null_val() for null)");
     QValue q;
     q.type = QValue::VAL_FUNC;
     q.data.func_val = static_cast<void*>(v);
@@ -318,11 +324,23 @@ inline QValue dict_get(QDict* d, const char* key) {
     return it->second;
 }
 
-// Set a key/value pair. Creates the key if it doesn't exist.
+// Set a key/value pair. Creates the key if it doesn't exist. The value is
+// checked against the dict's value type (a float dict widens an int).
 inline void dict_set(QDict* d, const char* key, QValue value) {
     if (!d || !key) return;
-    d->entries[QDictKey(key)] = value;
+    d->entries[QDictKey(key)] = q_elem_store(d->elem, value, "qext::dict_set()", true, key);
 }
+
+// Append a value to a list, checked against the list's element type (a
+// float list widens an int). Prefer it to push_back, which skips the check:
+// a list created by Quark code may have a fixed element type.
+inline void list_push(QList* l, QValue value) {
+    if (!l) panic("list_push: null list pointer");
+    l->push_back(q_elem_store(l->elem, value, "qext::list_push()"));
+}
+
+// Create an empty list that holds values of any type.
+inline QList* new_list() { return q_new<QList>(); }
 
 // Returns the number of entries in the dict.
 inline size_t dict_size(const QDict* d) {
@@ -425,9 +443,21 @@ inline QClosure* q_as_closure(QValue v) {
     return static_cast<QClosure*>(v.data.func_val);
 }
 
-// Boxing wrappers for native return values back to QValue.
-// Used by wrapExternReturn() in codegen.
+// Boxing wrappers for native return values back to QValue (codegen
+// boxNative). A native function declared to return a str, list, dict, vec or
+// fn that returns nullptr is an error: those types don't include null.
+[[noreturn]] inline void q_native_null_return(const char* type) {
+    q_runtime_reportf("runtime error: a native function declared to return %s returned a null pointer\n", type);
+    std::exit(1);
+}
+
+inline QValue q_box_native_str(const char* v) {
+    if (!v) q_native_null_return("str");
+    return qv_string(v);
+}
+
 inline QValue qv_vector_ptr(QVector* v) {
+    if (!v) q_native_null_return("vec");
     QValue q;
     q.type = QValue::VAL_VECTOR;
     q.data.vector_val = v;
@@ -435,6 +465,7 @@ inline QValue qv_vector_ptr(QVector* v) {
 }
 
 inline QValue qv_list_ptr(QList* v) {
+    if (!v) q_native_null_return("list");
     QValue q;
     q.type = QValue::VAL_LIST;
     q.data.list_val = v;
@@ -442,6 +473,7 @@ inline QValue qv_list_ptr(QList* v) {
 }
 
 inline QValue qv_dict_ptr(QDict* v) {
+    if (!v) q_native_null_return("dict");
     QValue q;
     q.type = QValue::VAL_DICT;
     q.data.dict_val = v;
@@ -449,6 +481,7 @@ inline QValue qv_dict_ptr(QDict* v) {
 }
 
 inline QValue qv_closure_ptr(QClosure* v) {
+    if (!v) q_native_null_return("fn");
     QValue q;
     q.type = QValue::VAL_FUNC;
     q.data.func_val = static_cast<void*>(v);

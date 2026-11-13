@@ -6,6 +6,7 @@
 #include "../core/constructors.hpp"
 #include "string.hpp"
 #include "dict.hpp"
+#include "elemtype.hpp"
 
 // Push item to end of list
 inline QValue q_push(QValue list, QValue item) {
@@ -13,7 +14,7 @@ inline QValue q_push(QValue list, QValue item) {
         q_runtime_reportf("runtime error: push() expects list as first argument\n");
         std::exit(1);
     }
-    list.data.list_val->push_back(item);
+    list.data.list_val->push_back(q_elem_store(list.data.list_val->elem, item, "push()"));
     return list;
 }
 
@@ -84,6 +85,7 @@ inline QValue q_set(QValue list, QValue index, QValue value) {
         q_runtime_reportf("runtime error: set() index %d out of range (list length %d)\n", idx, len);
         std::exit(1);
     }
+    value = q_elem_store(list.data.list_val->elem, value, "set()");
     (*list.data.list_val)[idx] = value;
     return value;
 }
@@ -103,6 +105,7 @@ inline QValue q_insert(QValue list, QValue index, QValue item) {
     if (idx < 0) idx = len + idx;
     if (idx < 0) idx = 0;
     if (idx > len) idx = len;
+    item = q_elem_store(list.data.list_val->elem, item, "insert()");
     list.data.list_val->insert(list.data.list_val->begin() + idx, item);
     return list;
 }
@@ -129,21 +132,21 @@ inline QValue q_remove(QValue list, QValue index) {
     return item;
 }
 
-// Concatenate two lists, returns new list
+// Concatenate two lists into a new list with a's element type; b's elements
+// are checked against it unless b's element type already is one.
 inline QValue q_list_concat(QValue a, QValue b) {
-    if (a.type != QValue::VAL_LIST || b.type != QValue::VAL_LIST) {
-        return qv_null();
+    if (a.type != QValue::VAL_LIST || !a.data.list_val || b.type != QValue::VAL_LIST || !b.data.list_val) {
+        q_runtime_reportf("runtime error: concat() expects two lists, got %s and %s\n", q_type_name(a.type), q_type_name(b.type));
+        std::exit(1);
     }
-    QValue result = qv_list();
-    if (a.data.list_val) {
-        for (const auto& item : *a.data.list_val) {
-            result.data.list_val->push_back(item);
-        }
+    const QElemType* elem = a.data.list_val->elem;
+    QValue result = qv_list(static_cast<int>(a.data.list_val->size() + b.data.list_val->size()), elem);
+    for (const auto& item : *a.data.list_val) {
+        result.data.list_val->push_back(item);
     }
-    if (b.data.list_val) {
-        for (const auto& item : *b.data.list_val) {
-            result.data.list_val->push_back(item);
-        }
+    bool checked = !q_elem_sub(b.data.list_val->elem, elem);
+    for (const auto& item : *b.data.list_val) {
+        result.data.list_val->push_back(checked ? q_elem_store(elem, item, "concat()") : item);
     }
     return result;
 }
@@ -169,9 +172,9 @@ inline QValue q_slice(QValue list, QValue start, QValue end) {
     // Clamp to bounds
     if (s < 0) s = 0;
     if (e > len) e = len;
-    if (s >= e) return qv_list();
+    if (s >= e) return qv_list(0, list.data.list_val->elem);
 
-    QValue result = qv_list(e - s);
+    QValue result = qv_list(e - s, list.data.list_val->elem);
     for (int i = s; i < e; i++) {
         result.data.list_val->push_back((*list.data.list_val)[i]);
     }
@@ -251,7 +254,7 @@ inline QValue q_range(QValue end) {
         std::exit(1);
     }
 
-    QValue result = qv_list();
+    QValue result = qv_list(0, &q_elem_int);
     for (long long i = 0; i < e; i++) {
         result.data.list_val->push_back(qv_int(i));
     }
@@ -280,7 +283,7 @@ inline QValue q_range(QValue start, QValue end) {
         std::exit(1);
     }
 
-    QValue result = qv_list();
+    QValue result = qv_list(0, &q_elem_int);
     if (s < e) {
         for (long long i = s; i < e; i++) {
             result.data.list_val->push_back(qv_int(i));
@@ -329,7 +332,7 @@ inline QValue q_range(QValue start, QValue end, QValue step) {
         std::exit(1);
     }
 
-    QValue result = qv_list();
+    QValue result = qv_list(0, &q_elem_int);
     if (st > 0) {
         for (long long i = s; i < e; i += st) {
             result.data.list_val->push_back(qv_int(i));

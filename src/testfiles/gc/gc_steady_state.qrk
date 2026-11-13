@@ -22,12 +22,12 @@ fn make_counter(start) ->
 fn churn(path) ->
     for i in range(4000):
         // lists and short-key dicts
-        xs = list [i, to_str(i), list [i, i]]
+        xs: list = list [i, to_str(i), list [i, i]]
         xs.push(dict {a: i, b: 'value'})
         // strings
         s = ('item-' + to_str(i) + '-').upper().split('-').join('+')
         // dict keys longer than the small-string buffer
-        d = dict {}
+        d: dict = dict {}
         d.set('a_rather_long_dictionary_key_' + to_str(i), i)
         d.set('another_long_dictionary_key_name', xs)
         d.set('a_third_long_key_for_the_leak_check', s)

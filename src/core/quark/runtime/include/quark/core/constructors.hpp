@@ -127,11 +127,13 @@ inline QValue q_result_error(const QValue& v) {
     return qv_null();
 }
 
-// List value constructor with optional initial capacity
-inline QValue qv_list(int initial_cap = 0) {
+// List value constructor with optional initial capacity and the element
+// type every value written into it must have (nullptr: any value).
+inline QValue qv_list(int initial_cap = 0, const QElemType* elem = nullptr) {
     QValue q;
     q.type = QValue::VAL_LIST;
     q.data.list_val = q_new<QList>();
+    q.data.list_val->elem = elem;
     if (initial_cap > 0) {
         q.data.list_val->reserve(initial_cap);
     }

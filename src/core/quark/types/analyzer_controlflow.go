@@ -24,9 +24,23 @@ func (a *Analyzer) analyzeIfStatement(node *ast.TreeNode) Type {
 	}
 	a.checkCondition(node.Children[0], a.Analyze(node.Children[0]))
 	resultType := a.Analyze(node.Children[1])
-	for i := 2; i < len(node.Children); i++ {
-		branchType := a.Analyze(node.Children[i])
-		resultType = MergeTypes(resultType, branchType)
+	// Without an else, no branch may run and the if's value is null, so void
+	// joins its type (as for a when with no matching arm).
+	hasElse := false
+	for _, branch := range node.Children[2:] {
+		if branch.NodeType == ast.IfStatementNode && branch.Token == nil && len(branch.Children) >= 2 {
+			// elseif: [condition, block]
+			a.checkCondition(branch.Children[0], a.Analyze(branch.Children[0]))
+			branchType := a.Analyze(branch.Children[1])
+			a.nodeTypes[branch] = branchType
+			resultType = MergeTypes(resultType, branchType)
+			continue
+		}
+		hasElse = true
+		resultType = MergeTypes(resultType, a.Analyze(branch))
+	}
+	if !hasElse {
+		resultType = MergeTypes(resultType, TypeVoid)
 	}
 	return resultType
 }

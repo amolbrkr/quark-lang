@@ -1,0 +1,88 @@
+// Element types, variable types and return annotations (architecture.md §12.9).
+
+fn id(v) -> v
+
+// A float list widens the ints written into it.
+fs = list [1.5]
+fs.push(2)
+fs.insert(0, 3)
+fs.set(1, 4)
+fs[2] = 5
+for f in fs:
+    print(f)
+
+// So does a float dict.
+d = dict { a: 1.5 }
+d.b = 2
+d.set('c', 3)
+print(d.b + d.c)
+
+// An empty list takes the type of its first write: the loop below reads
+// raw ints.
+out = list []
+for i in range(5):
+    out.push(i * i)
+total = 0
+for v in out:
+    total = total + v
+print(total)
+
+// An empty list stored into a typed slot takes the slot's type.
+grid = list [list [1, 2]]
+grid.push(list [])
+grid[1].push(7)
+print(grid)
+
+// An annotated list holds any value.
+mixed: list = list [1, 2]
+mixed.push('three')
+mixed.push(id(4.5))
+print(mixed)
+md: dict = dict { a: 1 }
+md.b = 'two'
+print(md)
+
+// A list of mixed literals keeps each value as written.
+nums = list [1, 2.5]
+nums.push(3)
+for n in nums:
+    print(n + 1)
+
+// An untyped function can write values of the list's type.
+fn add_one(xs) -> xs.push(1)
+ints = list [0]
+add_one(ints)
+print(ints)
+fn add_float(xs) -> xs.push(1.25)
+floats = list [0.5]
+add_one(floats)
+add_float(floats)
+print(floats)
+
+// Lists made by builtins have element types too, and a list from a
+// function with an untyped parameter holds any value.
+words = 'a,b'.split(',')
+words.push('c')
+print(words)
+r = range(3)
+r.push(3)
+print(r.concat(list [4]))
+print(r.slice(1, 3))
+fn collect(xs: list) -> xs
+anything = collect(list [1])
+anything.push('x')
+print(anything)
+
+// Variables keep their first value's type: an untyped one stays untyped.
+x = id('hello')
+x = 5
+x = 'back to str'
+print(x)
+
+// Return annotations are checked: an int result widens to a float return.
+fn half(n) float -> n
+print(half(3))
+fn whole(n: int) float -> n
+print(whole(4))
+fn name_of(p) str -> p
+print(name_of('quark'))

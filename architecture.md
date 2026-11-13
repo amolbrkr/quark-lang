@@ -66,11 +66,17 @@ When either the parameter type or argument type is unknown or `any`, the check i
 
 #### Assignability rules
 
-- `any` is assignable to/from everything
-- `null` is assignable to reference types (list, dict, fn, result)
-- `int` is assignable to `float` (promotion)
-- Collections are covariant in element type
+`CanAssign(dst, src)` (`types/types.go`) is the rule for a value stored into a slot (variable, parameter, element, field, return value); `IsSubtype` is the same without conversion, used below the top level:
+
+- `any` accepts everything; a value of type `any` is a subtype of nothing else (it is checked where it is stored, or rejected for an untyped variable)
+- `int` is assignable to `float` (widened where it is stored), but `list[int]` is not a subtype of `list[float]`
+- `null` is a value of struct and `resource` types only (not `list`, `dict`, `vec`, `fn` or `result`; decided 2026-11-13)
+- Containers are covariant in element type (`list[int]` is a `list[any]`), never the other way (`list[any]` is not a `list[int]`): a list's static element type is a guarantee about every value in it (§12.9)
+- A union destination accepts a value of any of its options; a union source must fit for every option
+- A function value fits a signature with the same arity whose return type it returns; a value typed only `fn` fits no specific signature
 - All other combinations require exact match
+
+**Pending containers.** An empty `list []` / `dict {}` literal has a pending `ListType`/`DictType` (`NewPendingList`) that reads as `list[any]` until its element type is decided: by the container type it is stored into or merged with (`SettleContainers`, `MergeTypes`), or by its first write (`checkElemWrite` → `FixElementType`). Pending types of literals stored into each other become peers and are fixed together. One passed where writes can't be seen (an untyped parameter, an `any` slot) is fixed to `any` (`escapePending`). Every alias shares the one type object, so the fix applies to all of them and to the literal's runtime descriptor.
 
 ### 1.5 Invariants → Validated
 
@@ -228,8 +234,9 @@ The symbol's `Storage` (`ir.StorageCell`) records the decision; codegen reads an
 
 ### 2.4 Container Types
 
-- **QList**: `std::vector<QValue, q_allocator<QValue>>` — GC-managed dynamic array
-- **QDict**: `std::unordered_map<std::string, QValue, ..., q_allocator<...>>` — string-keyed hash map
+- **QList**: a `std::vector<QValue, q_allocator<QValue>>` (GC-managed dynamic array) plus `elem`, the `const QElemType*` element type it was created with (`nullptr` for any value)
+- **QDict**: a `std::unordered_map<std::string, QValue, ..., q_allocator<...>>` (string-keyed hash map) plus `elem`, its value type
+- **QElemType** (`core/value.hpp`, checks in `types/elemtype.hpp`): a runtime type descriptor — tag, element type for lists and dicts, ok/err types for results, the `QStructDef` for structs, the dtype for vecs. Scalars use the runtime's `q_elem_int`/`_float`/`_bool`/`_str`; codegen emits one static `_qet_N` per other type (`codegen/elemtype.go`). Every list and dict write in the runtime goes through `q_elem_store` (push, set, insert, concat, `d.k = v`, `.set`, `qext::list_push`, `qext::dict_set`), which widens an int for a float container and rejects anything else; a container value must have an element type that `q_elem_sub` accepts (no conversion).
 - **QVector**: Typed columnar storage with four dtype variants (f64, i64, bool, str). Buffers follow the Arrow layout: string vectors use offsets plus UTF-8 bytes (not pointers per element), and nulls are tracked in an Arrow validity bitmap that is `nullptr` when the vector has no nulls (`types/vector.hpp`).
 - **QResult**: `{ bool is_ok; QValue payload; }` — tagged ok/err wrapper
 
@@ -607,7 +614,7 @@ A single `q_vec_visit_dtype(v, f)` would replace the per-dtype switches.
 - **`internal/testutil` repeats the pipeline instead of calling the driver.** `Analyze` (`testutil.go:58-68`) runs the analyzer even after loader errors, on a tree the loader didn't finish; the driver stops there (`driver.go:100-103`). Loader errors lose their code and location and are mixed into `ParserErrors`; it uses `analyzer.Errors()` where the driver uses `Diagnostics()`/`HasErrors()`; it always compiles as `test_input.qrk`. Only 5 tests use the driver path, so a test can pass while the CLI behaves differently. Fix: `testutil` calls `driver.CompileSource` and exposes its result.
 - **None of the known issues found in the review were caught by the suite.** The misuse paths that rule 2 of the robustness bar asks for are thin for: aliasing and mutation of containers, `any` values flowing into typed code, conditional and repeated expression contexts (short-circuit, ternary, `while` condition, `elseif`), definitions inside loop bodies, generated-name collisions, and numeric limits (int64 boundaries, float→int, NaN, indexes past 2^31).
 
-### 12.6 Open design question: element types
+### 12.6 Design question: element types (decided 2026-11-13, see 12.9)
 
 The largest class of known issues is codegen reading a raw value based on an element type or narrowed type the analyzer got wrong (aliases, mutation through a function, index and key assignment, `any` values pushed into a list, narrowing inside a branch). There are three ways out, which trade execution speed against effort:
 
@@ -616,6 +623,8 @@ The largest class of known issues is codegen reading a raw value based on an ele
 3. **Both.** Checked reads now, and remove the check where tracking can prove the type.
 
 This needs a decision before the bugs in that group are fixed.
+
+*Decided 2026-11-13, implemented 2026-11-13:* none of the three as stated. The language rules change so that inferred types can't go stale (rules A, B, D, E in 12.9), and the one case the compiler can't see (an untyped function changing a typed list) is caught by checking writes, not reads. Reads stay raw. See 12.9 for the reasoning and the measurements.
 
 ### 12.7 Target design: a lowering pass and a typed IR
 
@@ -686,7 +695,9 @@ Each step ends with the full suite green and is committed on its own.
 
    *Done 2026-11-13.* The symbol is `types.Symbol` (it holds a `types.Type`, and `ir` can't import `types`); the storage kind is `ir.Storage`. Codegen's storage code is in `codegen/storage.go`. Also fixed on the way, since they were on the same path: typed declarations and default-typed parameters now check values of unknown type, loop bodies go through `generateBlock` (so `fn` works in loop bodies and errors have the right line), and every generated C++ name starts with `quark___`.
 3. **Lower, IR, verify, emit.** Build `lower/` and the emitter next to `codegen/`, selected by a driver switch while in progress. Run the smoke and integration suites through both back ends and compare outputs; switch the default once they match, then delete `codegen/`. Exit: the expression-timing and loop-body known issues are fixed, and the verifier runs on every compile.
-4. **Element types** (12.6): implement the chosen answer in lowering as `Unbox`/`Check`, plus the analyzer changes it needs.
+4. **Element types** (12.6, 12.9): rules A, B, D and E in the analyzer, checked writes into typed lists and dicts in the runtime, and in lowering an `Unbox` only for proven types (the verifier rejects any other). Rules A, B and E don't depend on the IR and can be done before step 3.
+
+   *Rules A-E done 2026-11-13, before step 3 (12.9, Status).* What is left of this step is the lowering side: `Unbox` only for proven types, enforced by the verifier.
 
 In parallel with any step:
 - runtime consolidation (12.4): one type-name table, one renderer, `q_fatalf`, 64-bit indexes, checked float→int conversions, the `vector.hpp` split;
@@ -695,3 +706,73 @@ In parallel with any step:
 - the missing misuse tests (12.5).
 
 Interim patches to the current codegen are limited to severe bugs that can't wait for step 3; today that is only the `while` condition evaluated once (an infinite loop). Other expression-timing and storage bugs are fixed by steps 2-3 rather than patched in code those steps replace.
+
+### 12.9 Soundness contract and the cost of checks (decided 2026-11-13)
+
+**Why silent wrong results keep appearing.** The analyzer's types do two jobs. For diagnostics a type is a best guess, and optimism is fine there: a parameter typed from its default, `x` narrowed to `int` after `x = 5`, a list's element type widened after `push`. For codegen the same type is a guarantee: it reads the raw union field (`.data.int_val`) whenever the analyzer says `int`. Nothing connected the two, so each time the checker inferred more, it created a new false guarantee. Every silent wrong result found so far has this shape: a slot (variable, parameter, element, return value) whose type the analyzer states, with a way in that nothing guards.
+
+**The contract.** A static type is a guarantee only when every way a value can reach the slot is guarded: proven at compile time, or checked at runtime. Codegen may read raw bytes only for such types.
+
+Parameters already work this way, which is why they are sound:
+
+```
+fn add(x: int, y: int = 10) int -> x + y
+add('x', 29)          // compile error: argument 1 of 'add' expects int, got str
+p = 9 * 133
+add(p, 93)            // proven int: no check
+add(20, id('oops'))   // id is untyped: checked on entry, runtime error
+```
+
+One way in (the call), and it is guarded; after `long long quark_y = q_param_int(...)` the body reads raw bytes forever.
+
+**The rules that extend this to every slot** (Breaking; all compile-time unless noted):
+
+- **A. Variables don't narrow.** A variable whose first value is `any` stays `any`; assigning an `int` later doesn't make it an `int`. Today `x = id('hello')`, `if false:` / `x = 5`, `y = x`, `print(y + 1)` prints garbage. To get raw speed, convert once: `n: int = x` (one check, raw afterwards).
+- **B. A list's or dict's element type is fixed when it is created.** `xs = list [1, 2]` is `list[int]` for good, and `xs.push('s')` is a compile error. A list that mixes types is written `xs: list = list [1, 2]` (the plain `list` annotation means any element type). Today `b = a`, `b.push('s')` widens `b`'s type but not `a`'s, and `for v in a` reads the string as an int.
+- **C. An untyped function changing a typed list is checked when it writes** (runtime). `fn add_x(xs) -> xs.push('x')` can't be rejected at compile time, because `xs` is untyped there. A list (and dict) records the element type it was created with, and `push`, `set`, `insert` and key assignment check the value against it; an int written into a float list is widened. This is how Java arrays work (`ArrayStoreException`). Reads stay raw.
+- **D. Return annotations are checked on every function**, like parameters: at compile time when the body's type is known, otherwise once on return. Today `fn f(c) int -> if c: 1`, then `y = f(false)`, `print(y + 10)` prints `10` (null read as 0).
+- **E. A value of the wrong type stored under a dict key is an error**, not a warning.
+
+**Measured cost** (2026-11-13; tight loops that do nothing but the operation, so the worst case; `-O3 -march=x86-64-v3`, best of 5, hand-edited generated C++):
+
+| Benchmark | Base | Variant | Change |
+|---|---|---|---|
+| 20M `out.push(i)` | 0.330s | element tag check on each write (rule C) | +1.6% |
+| 100M list element reads (`for v in xs: total = total + v`) | 0.775s | tag check on each read (the alternative to C) | +1.5% |
+| 30M calls of `fn step(x: int, k: int = 3) int` | 0.160s | checked return (rule D) | -0.1% |
+| same | 0.160s | parameter checks removed | -0.4% |
+
+Rules A, B and E cost nothing at runtime, and let the compiler prove more types, so more reads stay raw. A check is one well-predicted compare; checking writes was chosen over checking reads because it keeps reads raw, which the next item depends on.
+
+**Where the time actually goes** (the 100M-read loop, 7.75 ns per element):
+
+| Change | Time | Per element |
+|---|---|---|
+| current: `q_iter_get(xs, qv_int(i)).data.int_val` | 0.775s | 7.75 ns |
+| read the list's array directly (type known to be a list) | 0.186s | 1.86 ns (-76%) |
+| direct read plus a tag check | 0.189s | 1.89 ns |
+| direct read, source location as one integer store instead of three fields | 0.171s | 1.71 ns (-9%) |
+
+So the levers are, in order:
+
+1. **Direct element access** when the receiver is known to be a list (about 4x on list loops), in step 3's lowering. The loop must re-check the list's size each iteration, since the body may shrink it (a known issue today).
+2. **Source locations as one integer.** Step 2 sets `q_set_source_loc(file, line, col)` before every statement of a loop body (so runtime errors there report the right line); three stores per statement cost about 9% on the list loop. A static table of locations and one `int` store per statement measured the same as no location. Step 2 shipped with the three-store version (`0cf468d`), so this is next.
+3. Tag checks: about 1.5% where they're needed at all; not worth avoiding at the cost of soundness.
+
+**Finding the remaining holes mechanically.**
+
+- In step 3 the contract becomes a verifier rule: lowering emits a raw `Unbox` only for a proven type and a `Check` otherwise, and the verifier rejects an `Unbox` the analyzer didn't prove.
+- A *checked mode* (a build flag that turns every raw read into a checked one) is an oracle: running the test corpus in both modes, any check failure or difference in output is a soundness bug.
+- A differential test does the same for single expressions: `print(E)` (boxed, trusts nothing) must print what `x = E`, `print(x)` (stored as the claimed type) prints. Run by hand on 42 builtin, method and operator expressions on 2026-11-13, it found no mismatch.
+
+**Decided 2026-11-13: these annotations don't accept `null`.** `null` for a `list`, `dict`, `vec` or `fn` parameter used to be accepted by the checker and by ordinary functions but rejected by fully annotated functions and `extern fn` (`q_as_list`). Now `null` is a value of struct and `resource` types only, in the checker (`IsSubtype`), in `q_param_*`/`q_var_*`/`q_field_*`/`q_ret_*` (`paramTagChecks`), and in native boxing (`qv_list_ptr(nullptr)`, `q_box_native_str(nullptr)` and `qext::box(nullptr)` are errors). Struct and resource annotations still accept `null`; whether they should too is open.
+
+**Status (2026-11-13).** Rules A-E are implemented, outside the planned IR (step 3), since none of them needed it:
+
+- A: `assignName`/`checkReassign` (`types/analyzer_expressions.go`) never change a symbol's type after its first value. A variable holding a function keeps its signature (`IsSubtype` on `FunctionType`), and assigning a lambda to an existing name in an enclosing scope assigns it (it used to declare a new local).
+- B: `checkElemWrite` checks push/insert/set/concat (`checkMutation`), `l[i] = v` and `d.k = v` against the container's element type; `widenReceiverOnMutation` is gone. An empty literal's type is decided by its first write (user decision, 2026-11-13; see Pending containers in §1.4). A literal under a `list`/`dict` annotation is typed by it (`contextLiteral`), so `xs: list = list [1, 2]` holds anything. Element types of functions drop the return type (`ElementOf`), since the runtime check can only see that a value is a function.
+- C: `QElemType` descriptors on every list and dict, checked by `q_elem_store` (§2.4). Reads stay raw.
+- D: `validateReturnType` rejects a body that can end without a value (an `if` without `else` now adds `void` to its type, as a non-exhaustive `when` already did); `checkedReturn` (`codegen/elemtype.go`) widens or checks (`q_ret_*`) a QValue-convention function's result when its type isn't proven.
+- E: a wrong-typed dict value is an error (was a warning).
+
+Remaining holes in this area: `xs.get(i)` / `d.get(k)` / a list read past its end return `null` typed as the element type; a vec with nulls read by a loop or `to_list()` gives a typed list with nulls in it; native code that appends with `push_back` directly skips the check (use `qext::list_push`).

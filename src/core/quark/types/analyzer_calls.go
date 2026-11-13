@@ -94,6 +94,7 @@ func (a *Analyzer) resolveMethodCall(call, funcNode *ast.TreeNode, argTypes []Ty
 					plan.MinArity = totalMin
 					plan.MaxArity = totalMax
 					a.checkArity(call, "extern method '"+methodName+"'", sig.MinArgs, sig.MaxArgs, argCount)
+					a.settleArgs(sig.Type.ParamTypes, argTypes, argNodes)
 					a.checkArgTypes(methodName, sig.Type.ParamTypes, argTypes, argNodes)
 					a.callPlans[call] = &plan
 					return methodCallResult{returnType: sig.Type.ReturnType, receiverType: receiverType, resolved: true}
@@ -106,8 +107,7 @@ func (a *Analyzer) resolveMethodCall(call, funcNode *ast.TreeNode, argTypes []Ty
 				a.callPlans[call] = &ir.CallPlan{CalleeName: methodName, MinArity: totalMin, MaxArity: totalMax, Dispatch: ir.DispatchBuiltin, RuntimeSymbol: runtimeSym, IsMethod: true, ReceiverNode: receiverNode, ReceiverTypeKey: string(receiverKey)}
 				a.checkArity(call, "method '"+methodName+"'", sig.MinArgs, sig.MaxArgs, argCount)
 				a.checkArgTypes(methodName, sig.Type.ParamTypes, argTypes, argNodes)
-				// Flow typing: widen element type on mutation methods
-				a.widenReceiverOnMutation(receiverNode, receiverType, methodName, argTypes)
+				a.checkMutation(receiverType, methodName, argTypes, argNodes)
 				ret := refineMethodReturnType(sig.Type.ReturnType, receiverType, methodName)
 				switch methodName {
 				case "to_vec":
@@ -275,6 +275,7 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 				plan.MinArity = sig.MinArgs
 				plan.MaxArity = sig.MaxArgs
 				a.checkArity(node, "extern fn '"+name+"'", sig.MinArgs, sig.MaxArgs, argCount)
+				a.settleArgs(sig.Type.ParamTypes, argTypes, argNodes)
 				a.checkArgTypes(name, sig.Type.ParamTypes, argTypes, argNodes)
 				a.callPlans[node] = &plan
 				return sig.Type.ReturnType
@@ -292,6 +293,7 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 			return unresolved()
 		}
 		unresolved()
+		a.settleArgs(nil, argTypes, argNodes)
 		// A value typed `fn` (or one of several signatures) is called as a
 		// closure; its arity and argument types are checked at runtime, but
 		// a call none of the possible signatures accepts is rejected now.
@@ -318,6 +320,7 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 		a.deferFixedDispatch(a.callPlans[node], a.currentScope.Lookup(calleeName))
 	}
 	a.checkArity(node, what, minArity, maxArity, argCount)
+	a.settleArgs(funcType.ParamTypes, argTypes, argNodes)
 	a.checkArgTypes(calleeName, funcType.ParamTypes, argTypes, argNodes)
 	a.checkCallbackArgs(calleeName, funcType, argTypes, argNodes)
 	return funcType.ReturnType
@@ -373,56 +376,60 @@ func inferAstypeReturnType(receiverType Type, argNodes []*ast.TreeNode) Type {
 	}
 }
 
-// resolveReceiverSymbol resolves a receiver expression (e.g., an identifier node)
-// back to its symbol in the current scope, for flow-typing updates.
-func (a *Analyzer) resolveReceiverSymbol(node *ast.TreeNode) *Symbol {
-	if node == nil {
-		return nil
+// checkMutation checks the value a builtin method writes into its list or
+// dict receiver against the receiver's element type (rule B): push, insert
+// and set on lists, set on dicts, and the elements concat copies into its
+// result (which has the receiver's element type).
+func (a *Analyzer) checkMutation(receiverType Type, methodName string, argTypes []Type, argNodes []*ast.TreeNode) {
+	valueArg := -1
+	switch receiverType.(type) {
+	case *ListType:
+		switch methodName {
+		case "push":
+			valueArg = 0
+		case "set", "insert":
+			valueArg = 1
+		case "concat":
+			if len(argTypes) >= 1 {
+				if other, ok := argTypes[0].(*ListType); ok && !other.Pending {
+					a.checkElemWrite(receiverType, other.ElementType, argNodes[0], "")
+				}
+			}
+			return
+		}
+	case *DictType:
+		if methodName == "set" {
+			valueArg = 1
+		}
 	}
-	if node.NodeType == ast.IdentifierNode {
-		name := node.TokenLiteral()
-		return a.currentScope.Lookup(name)
+	if valueArg < 0 || valueArg >= len(argTypes) {
+		return
 	}
-	return nil
+	key := ""
+	if _, isDict := receiverType.(*DictType); isDict && len(argNodes) > 0 && argNodes[0].Token != nil && argNodes[0].Token.Type == token.STRING {
+		key = argNodes[0].Token.Literal
+	}
+	a.checkElemWrite(receiverType, argTypes[valueArg], argNodes[valueArg], key)
 }
 
-// widenReceiverOnMutation checks if a method call is a mutation (push/set/insert)
-// and widens the receiver symbol's element type accordingly.
-func (a *Analyzer) widenReceiverOnMutation(receiverNode *ast.TreeNode, receiverType Type, methodName string, argTypes []Type) {
-	listType, isList := receiverType.(*ListType)
-	if !isList {
-		return
-	}
-	// Determine the new element type from the mutation
-	var newElemType Type
-	switch methodName {
-	case "push":
-		if len(argTypes) >= 1 {
-			newElemType = argTypes[0]
+// settleArgs relates the arguments of a call to a user function or extern fn
+// to its parameter types: a pending (empty literal) list passed to a
+// `list` parameter, or to an untyped one, may get any value there; a literal
+// passed to a `list` parameter holds any value (contextLiteral).
+func (a *Analyzer) settleArgs(params []Type, argTypes []Type, argNodes []*ast.TreeNode) {
+	for i, at := range argTypes {
+		var pt Type = TypeAny
+		if i < len(params) && params[i] != nil {
+			pt = params[i]
 		}
-	case "set":
-		if len(argTypes) >= 2 {
-			newElemType = argTypes[1] // set(index, value)
+		if isUnknownType(pt) {
+			escapePending(at)
+			continue
 		}
-	case "insert":
-		if len(argTypes) >= 2 {
-			newElemType = argTypes[1] // insert(index, value)
+		SettleContainers(pt, at)
+		if i < len(argNodes) {
+			a.contextLiteral(argNodes[i], pt)
 		}
-	default:
-		return
-	}
-	if newElemType == nil || IsErrorType(newElemType) || isUnknownType(newElemType) {
-		return
-	}
-	// If the element already covers this type, nothing to do
-	if CanAssign(listType.ElementType, newElemType) {
-		return
-	}
-	// Widen the element type
-	widened := MergeTypes(listType.ElementType, newElemType)
-	sym := a.resolveReceiverSymbol(receiverNode)
-	if sym != nil {
-		sym.Type = &ListType{ElementType: widened}
 	}
 }
 

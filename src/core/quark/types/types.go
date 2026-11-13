@@ -62,9 +62,39 @@ func IsErrorType(t Type) bool {
 	return ok
 }
 
-// ListType represents a list of elements
+// ListType represents a list of elements.
+//
+// A list's element type is fixed by where it is created (rule B,
+// architecture.md §12.9): the literal's elements, the builtin that made it,
+// or for an empty `list []` the slot it is first stored into or its first
+// write (Pending, see fix). Every value written into it must have that type,
+// checked at compile time when the value's type is known and by the runtime
+// element descriptor otherwise, so reads can trust it.
 type ListType struct {
 	ElementType Type
+	pending
+}
+
+// pending is the state of the type of an empty list or dict literal whose
+// element type isn't known yet. Until it is fixed it reads as any. peers are
+// pending types of other literals stored in the same places, which must get
+// the same element type.
+type pending struct {
+	Pending bool
+	// FixedLine is the line of the write that fixed the element type (0 when
+	// the type came from the literal itself), for messages.
+	FixedLine int
+	peers     []Type
+}
+
+// NewPendingList is the type of an empty `list []` literal.
+func NewPendingList() *ListType {
+	return &ListType{ElementType: TypeAny, pending: pending{Pending: true}}
+}
+
+// NewPendingDict is the type of an empty `dict {}` literal.
+func NewPendingDict() *DictType {
+	return &DictType{KeyType: TypeString, ValueType: TypeAny, pending: pending{Pending: true}}
 }
 
 func (t *ListType) String() string {
@@ -94,10 +124,12 @@ func (t *ListType) Equals(other Type) bool {
 	return false
 }
 
-// DictType represents a dictionary
+// DictType represents a dictionary. Keys are always strings at runtime;
+// the value type is fixed like a list's element type (see ListType).
 type DictType struct {
 	KeyType   Type
 	ValueType Type
+	pending
 }
 
 func (t *DictType) String() string {
@@ -371,83 +403,203 @@ func IsComparable(t Type) bool {
 	return false
 }
 
-// CanAssign checks if srcType can be assigned to dstType
+// CanAssign reports whether a value of type src can be stored where a value
+// of type dst is expected (a variable, parameter, element, field or return
+// value). An int is widened where a float is stored. Below the top level
+// (the elements of a list, the payload of a result) values are shared, not
+// converted, so they need a subtype (IsSubtype).
 func CanAssign(dstType, srcType Type) bool {
-	// ErrorType is permissive — error already reported upstream
 	if IsErrorType(dstType) || IsErrorType(srcType) {
 		return true
 	}
-	// Any type can be assigned to any (destination is any)
-	if dstType.Equals(TypeAny) {
-		return true
-	}
-	// Source is any — only assignable if destination is also any (already handled above)
-	// This prevents unsound assignments like list[int] <- list[any]
-	if srcType.Equals(TypeAny) {
-		return dstType.Equals(TypeAny)
-	}
-	// Null can be assigned to any reference type except result: a result is
-	// always ok(...) or err(...), so `r == null` can't stand in for is_err(r).
-	if srcType.Equals(TypeNull) {
-		_, isList := dstType.(*ListType)
-		_, isDict := dstType.(*DictType)
-		_, isFunc := dstType.(*FunctionType)
-		_, isStruct := dstType.(*StructType)
-		_, isVec := dstType.(*VectorType)
-		isResource := dstType.Equals(TypeResource)
-		return isList || isDict || isFunc || isStruct || isVec || isResource || dstType.Equals(TypeFn)
-	}
-	// `fn` accepts every function value; a function value typed only as `fn`
-	// can go where a specific signature is expected (checked when called).
-	if dstType.Equals(TypeFn) {
-		return IsCallableType(srcType)
-	}
-	if _, ok := dstType.(*FunctionType); ok && srcType.Equals(TypeFn) {
-		return true
-	}
-	// Int can be promoted to float
 	if dstType.Equals(TypeFloat) && srcType.Equals(TypeInt) {
 		return true
 	}
-	// List covariance: list[any] accepts list[T] for any T
-	if dstList, ok := dstType.(*ListType); ok {
-		if srcList, ok := srcType.(*ListType); ok {
-			if dstList.ElementType.Equals(TypeAny) || srcList.ElementType.Equals(TypeAny) {
-				return true
-			}
-			return CanAssign(dstList.ElementType, srcList.ElementType)
-		}
-	}
-	// Dict covariance: dict[any,any] accepts dict[K,V]
-	if dstDict, ok := dstType.(*DictType); ok {
-		if srcDict, ok := srcType.(*DictType); ok {
-			if (dstDict.KeyType.Equals(TypeAny) || CanAssign(dstDict.KeyType, srcDict.KeyType)) &&
-				(dstDict.ValueType.Equals(TypeAny) || CanAssign(dstDict.ValueType, srcDict.ValueType)) {
-				return true
+	if u, ok := dstType.(*UnionType); ok {
+		if _, srcIsUnion := srcType.(*UnionType); !srcIsUnion {
+			for _, opt := range u.Options {
+				if CanAssign(opt, srcType) {
+					return true
+				}
 			}
 		}
 	}
-	// Vector covariance: vec[any] accepts vec[T]
-	if dstVec, ok := dstType.(*VectorType); ok {
-		if srcVec, ok := srcType.(*VectorType); ok {
-			if dstVec.ElementType.Equals(TypeAny) || srcVec.ElementType.Equals(TypeAny) {
+	return IsSubtype(dstType, srcType)
+}
+
+// IsSubtype reports whether every value of type src is also a value of type
+// dst, with no conversion. A list whose static type says list[T] holds only
+// T values (rule B), so a list[int] is a list[any] but not a list[float]
+// (its ints would be read as floats), and a list[any] is not a list[int].
+func IsSubtype(dstType, srcType Type) bool {
+	if IsErrorType(dstType) || IsErrorType(srcType) {
+		return true
+	}
+	if dstType.Equals(TypeAny) {
+		return true
+	}
+	if srcType.Equals(TypeAny) {
+		return false
+	}
+	if u, ok := srcType.(*UnionType); ok {
+		if len(u.Options) == 0 {
+			return false
+		}
+		for _, opt := range u.Options {
+			if !IsSubtype(dstType, opt) {
+				return false
+			}
+		}
+		return true
+	}
+	if u, ok := dstType.(*UnionType); ok {
+		for _, opt := range u.Options {
+			if IsSubtype(opt, srcType) {
 				return true
 			}
-			return CanAssign(dstVec.ElementType, srcVec.ElementType)
 		}
+		return false
 	}
-	if dstResult, ok := dstType.(*ResultType); ok {
-		if srcResult, ok := srcType.(*ResultType); ok {
-			okAssignable := dstResult.OkType.Equals(TypeAny) || CanAssign(dstResult.OkType, srcResult.OkType)
-			errAssignable := dstResult.ErrType.Equals(TypeAny) || CanAssign(dstResult.ErrType, srcResult.ErrType)
-			return okAssignable && errAssignable
+	// null is a value of the struct and resource types only: `list`, `dict`,
+	// `vec` and `fn` mean a list, dict, vec or function (decided 2026-11-13),
+	// and a result is always ok(...) or err(...), so `r == null` can't stand
+	// in for is_err(r).
+	if srcType.Equals(TypeNull) {
+		_, isStruct := dstType.(*StructType)
+		return isStruct || dstType.Equals(TypeResource) || dstType.Equals(TypeNull)
+	}
+	// `fn` accepts every function value. A value known only as `fn` has no
+	// known signature, so it isn't a value of a specific one: calls through
+	// a signature trust its return type.
+	if dstType.Equals(TypeFn) {
+		return IsCallableType(srcType)
+	}
+	switch dst := dstType.(type) {
+	case *ListType:
+		src, ok := srcType.(*ListType)
+		return ok && IsSubtype(dst.ElementType, src.ElementType)
+	case *DictType:
+		src, ok := srcType.(*DictType)
+		return ok && IsSubtype(dst.ValueType, src.ValueType)
+	case *VectorType:
+		src, ok := srcType.(*VectorType)
+		if !ok {
+			return false
 		}
-	}
-	// Struct types: nominal equality only
-	if _, ok := dstType.(*StructType); ok {
-		return dstType.Equals(srcType)
+		return dst.ElementType.Equals(TypeAny) || dst.ElementType.Equals(src.ElementType)
+	case *ResultType:
+		src, ok := srcType.(*ResultType)
+		return ok && IsSubtype(dst.OkType, src.OkType) && IsSubtype(dst.ErrType, src.ErrType)
+	case *FunctionType:
+		src, ok := srcType.(*FunctionType)
+		if !ok || len(dst.ParamTypes) != len(src.ParamTypes) || dst.MinArity() != src.MinArity() {
+			return false
+		}
+		for i, p := range dst.ParamTypes {
+			sp := src.ParamTypes[i]
+			if !p.Equals(sp) && !p.Equals(TypeAny) && !sp.Equals(TypeAny) {
+				return false
+			}
+		}
+		return IsSubtype(dst.ReturnType, src.ReturnType)
+	case *StructType:
+		return dst.Equals(srcType)
 	}
 	return dstType.Equals(srcType)
+}
+
+// SettleContainers fixes a pending (empty literal) list or dict type from
+// the container type it is stored into or compared with, in either
+// direction, including the containers nested in both. Pending types that
+// meet each other become peers and are fixed together.
+func SettleContainers(dst, src Type) {
+	switch d := dst.(type) {
+	case *ListType:
+		if s, ok := src.(*ListType); ok && d != s {
+			settleElems(d, s, &d.pending, &s.pending, d.ElementType, s.ElementType)
+		}
+	case *DictType:
+		if s, ok := src.(*DictType); ok && d != s {
+			settleElems(d, s, &d.pending, &s.pending, d.ValueType, s.ValueType)
+		}
+	case *ResultType:
+		if s, ok := src.(*ResultType); ok {
+			SettleContainers(d.OkType, s.OkType)
+			SettleContainers(d.ErrType, s.ErrType)
+		}
+	}
+}
+
+func settleElems(d, s Type, dp, sp *pending, de, se Type) {
+	switch {
+	case dp.Pending && sp.Pending:
+		dp.peers = append(dp.peers, s)
+		sp.peers = append(sp.peers, d)
+	case sp.Pending:
+		FixElementType(s, de, 0)
+	case dp.Pending:
+		FixElementType(d, se, 0)
+	default:
+		SettleContainers(de, se)
+	}
+}
+
+// FixElementType gives the pending list or dict type t (and its peers) the
+// element type elem, at the write on line. A null or void write doesn't
+// decide anything.
+func FixElementType(t Type, elem Type, line int) {
+	if elem == nil || IsErrorType(elem) || elem.Equals(TypeNull) || elem.Equals(TypeVoid) {
+		return
+	}
+	elem = ElementOf(elem)
+	var p *pending
+	switch c := t.(type) {
+	case *ListType:
+		if !c.Pending {
+			return
+		}
+		c.ElementType = elem
+		p = &c.pending
+	case *DictType:
+		if !c.Pending {
+			return
+		}
+		c.ValueType = elem
+		p = &c.pending
+	default:
+		return
+	}
+	p.Pending = false
+	p.FixedLine = line
+	peers := p.peers
+	p.peers = nil
+	for _, peer := range peers {
+		FixElementType(peer, elem, line)
+	}
+}
+
+// ElementOf is the type a container records for elements of type t. A
+// function's return type is dropped: a function stored in a list can be
+// replaced by untyped code with one returning something else, and the
+// runtime check on that write sees only that it is a function.
+func ElementOf(t Type) Type {
+	switch v := t.(type) {
+	case *FunctionType:
+		if v.ReturnType.Equals(TypeAny) && v.AnnotatedReturnType == nil {
+			return v
+		}
+		erased := *v
+		erased.ReturnType = TypeAny
+		erased.AnnotatedReturnType = nil
+		return &erased
+	case *UnionType:
+		opts := make([]Type, len(v.Options))
+		for i, opt := range v.Options {
+			opts[i] = ElementOf(opt)
+		}
+		return MergeTypes(opts...)
+	}
+	return t
 }
 
 // IsCallableType reports whether t is a function value type: a signature, the
@@ -474,6 +626,7 @@ func IsCallableType(t Type) bool {
 // MergeTypes combines multiple type possibilities into the most precise representation.
 // ErrorType is filtered out — it should not appear in merged results.
 func MergeTypes(types ...Type) Type {
+	settleMerged(types)
 	resultTypes := make([]*ResultType, 0)
 	hasNonResult := false
 	for _, t := range types {
@@ -576,5 +729,47 @@ func typeKey(t Type) string {
 		return "union[" + strings.Join(parts, "|") + "]"
 	default:
 		return fmt.Sprintf("%T:%s", t, t.String())
+	}
+}
+
+// settleMerged fixes pending (empty literal) container types among types
+// from the one known container type of their kind, if there is exactly
+// one: `list [list [], list [1]]` is a list[list[int]].
+func settleMerged(types []Type) {
+	var known, pend []Type
+	for _, t := range types {
+		switch c := t.(type) {
+		case *ListType:
+			if c.Pending {
+				pend = append(pend, c)
+			} else {
+				known = append(known, c)
+			}
+		case *DictType:
+			if c.Pending {
+				pend = append(pend, c)
+			} else {
+				known = append(known, c)
+			}
+		}
+	}
+	if len(pend) == 0 || len(known) == 0 {
+		return
+	}
+	for _, p := range pend {
+		var match Type
+		for _, k := range known {
+			if fmt.Sprintf("%T", k) != fmt.Sprintf("%T", p) {
+				continue
+			}
+			if match != nil && typeKey(match) != typeKey(k) {
+				match = nil
+				break
+			}
+			match = k
+		}
+		if match != nil {
+			SettleContainers(match, p)
+		}
 	}
 }

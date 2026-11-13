@@ -4,6 +4,7 @@
 
 #include "../core/value.hpp"
 #include "../core/constructors.hpp"
+#include "elemtype.hpp"
 #include <unordered_map>
 #include <string>
 #include <string_view>
@@ -33,14 +34,20 @@ using QDictMap = std::unordered_map<
     q_allocator<std::pair<const QDictKey, QValue>>
 >;
 
+// elem is the value type the dict was created with (types/elemtype.hpp),
+// nullptr for any value; every write checks the value against it.
 struct QDict {
     QDictMap entries;
+    const QElemType* elem = nullptr;
 };
 
-inline QValue qv_dict() {
+inline const QElemType* q_dict_elem(const QDict* d) { return d ? d->elem : nullptr; }
+
+inline QValue qv_dict(const QElemType* elem = nullptr) {
     QValue q;
     q.type = QValue::VAL_DICT;
     q.data.dict_val = q_new<QDict>();
+    q.data.dict_val->elem = elem;
     return q;
 }
 
@@ -89,6 +96,7 @@ inline QValue q_dict_set(QValue dict, QValue key, QValue value) {
         dict.data.dict_val = q_new<QDict>();
     }
     const char* raw_key = key.data.string_val ? key.data.string_val : "";
+    value = q_elem_store(dict.data.dict_val->elem, value, "set()", true, raw_key);
     dict.data.dict_val->entries[QDictKey(raw_key)] = value;
     return dict;
 }

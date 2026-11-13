@@ -616,7 +616,7 @@ func TestSmokePrograms_Run(t *testing.T) {
 				"2",
 				"10",
 				"empty",
-				"null",
+				"[]",
 				"Ada",
 				"null",
 				"London",
@@ -657,6 +657,27 @@ func TestSmokePrograms_Run(t *testing.T) {
 				"6",
 				"0", "10", "0", "1",
 				"6.0",
+			),
+		},
+		{
+			name: "element_types",
+			file: filepath.Join(testfilesDir, "smoke_element_types.qrk"),
+			expected: join(
+				"3.0", "4.0", "5.0",
+				"5.0",
+				"30",
+				"[[1, 2], [7]]",
+				"[1, 2, 'three', 4.5]",
+				"{a: 1, b: 'two'}",
+				"2", "3.5", "4",
+				"[0, 1]",
+				"[0.5, 1.0, 1.25]",
+				"['a', 'b', 'c']",
+				"[0, 1, 2, 3, 4]",
+				"[1, 2]",
+				"[1, 'x']",
+				"back to str",
+				"3.0", "4.0", "quark",
 			),
 		},
 		{
@@ -899,6 +920,70 @@ func TestSemanticsSafety_Rejected(t *testing.T) {
 		{"decl_struct_other", "struct P:\n    n: int\nstruct Q:\n    n: int\nfn id(v) -> v\np: P = id(Q { n: 1 })\n", "variable 'p' is declared P but got Q"},
 		{"decl_captured_from_any", "fn id(v) -> v\nx: int = id('s')\nf = fn() -> x\nprint(f())\n", "variable 'x' is declared int but got str"},
 		{"decl_in_fn_from_any", "fn id(v) -> v\nfn f(a) ->\n    n: int = a\n    n + 1\nprint(f(id('s')))\n", "variable 'n' is declared int but got str"},
+		// Element types are fixed when a list or dict is created (rules B, C,
+		// E, architecture.md §12.9): checked at compile time when the value's
+		// type is known, by the runtime otherwise.
+		{"elem_push_alias", "a = list [1, 2]\nb = a\nb.push('s')\n", "cannot add str to list[int]"},
+		{"elem_index_assign", "l = list [1]\nl[0] = 'str'\n", "cannot add str to list[int]"},
+		{"elem_insert", "l = list [1]\nl.insert(0, true)\n", "cannot add bool to list[int]"},
+		{"elem_concat", "l = list [1]\nprint(l.concat(list ['a']))\n", "cannot add str to list[int]"},
+		{"elem_concat_not_list", "fn id(v) -> v\nprint(list [1].concat(id(5)))\n", "concat() expects two lists, got list and int"},
+		{"elem_concat_any_list", "fn id(v) -> v\nprint(list [1].concat(id(list ['a'])))\n", "concat() can't add a str to a list of int"},
+		{"elem_push_untyped_fn", "fn add(xs) -> xs.push('x')\nl = list [1, 2]\nadd(l)\n", "push() can't add a str to a list of int"},
+		{"elem_set_untyped_fn", "fn s(xs) -> xs.set(0, 'a')\nl = list [1]\ns(l)\n", "set() can't add a str to a list of int"},
+		{"elem_insert_untyped_fn", "fn s(xs) -> xs.insert(0, 1.5)\nl = list [1]\ns(l)\n", "insert() can't add a float to a list of int"},
+		{"elem_push_any_value", "fn id(v) -> v\nzs = list [1, 2]\nzs.push(id('hello'))\n", "push() can't add a str to a list of int"},
+		{"elem_push_null", "fn id(v) -> v\nzs = list [1, 2]\nzs.push(id(null))\n", "push() can't add a null to a list of int"},
+		{"elem_float_list_from_untyped", "fn add(xs) -> xs.push('a')\nl = list [1.5]\nadd(l)\n", "push() can't add a str to a list of float"},
+		{"elem_nested_untyped", "fn add_row(grid, row) -> grid.push(row)\nrows = list [list [1, 2]]\nadd_row(rows, list ['a'])\n", "push() can't add a list[str] to a list of list[int]"},
+		{"elem_nested_int_into_float", "a = list [1, 2]\nb = list [list [1.5]]\nb.push(a)\n", "cannot add list[int] to list[list[float]]"},
+		{"elem_nested_any_into_int", "fn f(xs: list) -> xs\ng = list [list [1]]\ng.push(f(list []))\n", "cannot add list[any] to list[list[int]]"},
+		{"elem_nested_vec_dtype", "fn put(xs) -> xs.push(vec [1.5])\nvs = list [vec [1, 2]]\nput(vs)\n", "push() can't add a vec to a list of vec[int]"},
+		{"elem_nested_result", "fn put(xs) -> xs.push(ok 'a')\nrs = list [ok 1]\nput(rs)\n", "push() can't add a result to a list of result[int, any]"},
+		{"elem_nested_struct", "struct P:\n    n: int\nstruct Q:\n    n: int\nfn put(xs) -> xs.push(Q { n: 1 })\nps = list [P { n: 1 }]\nput(ps)\n", "push() can't add a Q to a list of P"},
+		{"elem_first_write", "out = list []\nfor i in range(3):\n    out.push(i)\nout.push('x')\n", "set by its first write, on line 3"},
+		{"elem_first_write_runtime", "fn add(xs) -> xs.push('s')\nout = list []\nout.push(1)\nadd(out)\n", "push() can't add a str to a list of int"},
+		{"elem_empty_into_typed_var", "xs = list [1]\nxs = list []\nxs.push('a')\n", "cannot add str to list[int]"},
+		{"elem_list_var_from_any_list", "fn f(xs: list) -> xs\nys = list [1]\nys = f(ys)\n", "cannot assign value of type 'list[any]' to 'list[int]'"},
+		{"elem_dict_key", "d = dict { a: 1 }\nd.b = 'hello'\n", "cannot store str under key 'b' of dict[str, int]"},
+		{"elem_dict_set", "d = dict { a: 1 }\nd.set('b', 'x')\n", "cannot store str under key 'b' of dict[str, int]"},
+		{"elem_dict_untyped_fn", "fn setk(d) ->\n    d.k = 's'\nm = dict { a: 1 }\nsetk(m)\n", "can't store a str under key 'k' of a dict of int"},
+		{"elem_dict_set_untyped_fn", "fn setk(d) -> d.set('k', list [1])\nm = dict { a: 1 }\nsetk(m)\n", "can't store a list[int] under key 'k' of a dict of int"},
+		// A function stored in a list doesn't keep its return type: untyped code
+		// can replace it with one returning something else.
+		{"elem_fn_return_not_trusted", "fs = list [fn() -> 1]\nfn put(xs) -> xs.push(fn() -> 'a')\nput(fs)\ng = fs[1]\nz = g()\nprint(z + 1)\n", "got str and int"},
+		// Variables don't narrow (rule A).
+		{"var_no_narrow_branch", "fn id(v) -> v\nx = id('hello')\nif false:\n    x = 5\ny = x\nprint(y + 1)\n", "got str and int"},
+		{"var_no_narrow_loop", "fn id(v) -> v\nx = id('s')\nfor i in range(0):\n    x = 5\nz = x\nprint(z + 1)\n", "got str and int"},
+		{"var_no_narrow_field", "struct P:\n    n: int\nfn id(v) -> v\nx = id(2.5)\nif false:\n    x = 5\nprint(P { n: x })\n", "field 'n' of P expects int, got float"},
+		{"fn_var_signature", "g = fn() -> 5\nrun = fn() -> g()\ng = fn() -> 'abc'\n", "cannot assign fn() -> str to 'g', which holds fn() -> int"},
+		{"fn_var_signature_in_loop", "g = fn() -> 5\nfor i in range(2):\n    g = fn() -> 'abc'\n", "cannot assign fn() -> str to 'g'"},
+		{"fn_var_from_fn_value", "g = fn() -> 5\nh: fn = fn() -> 'a'\ng = h\n", "cannot assign fn to 'g'"},
+		{"union_arith_not_int", "xs = list [1, 2.5]\nfor v in xs:\n    z = v + 1\n    n: int = z\n", "cannot assign value of type 'union[float | int]' to 'int'"},
+		// Return annotations are checked on every function (rule D).
+		{"return_if_without_else", "fn f(c) int ->\n    if c:\n        1\nprint(f(false) + 10)\n", "can end without a value"},
+		{"return_when_no_match", "fn f(c) str ->\n    when c:\n        1 -> 'one'\nprint(f(2))\n", "can end without a value"},
+		{"return_unknown_checked", "fn f(k) int -> k()\nprint(f(fn() -> 'str') + 1)\n", "function 'f' declares return type int but returned str"},
+		{"return_unknown_float", "fn id(v) -> v\nfn f(x) float -> id(x)\nprint(f('a'))\n", "function 'f' declares return type float but returned str"},
+		{"return_list_null", "fn id(v) -> v\nfn f(x) list -> id(x)\nprint(f(null))\n", "function 'f' declares return type list but returned null"},
+		{"return_list_null_native", "fn id(v) -> v\nfn f() list -> id(null)\nprint(f())\n", "expected list, got null"},
+		{"return_struct_other", "struct P:\n    n: int\nstruct Q:\n    n: int\nfn id(v) -> v\nfn f() P -> id(Q { n: 1 })\nprint(f())\n", "function 'f' declares return type P but returned Q"},
+		{"return_lambda_checked", "fn id(v) -> v\nh = fn(x) bool -> id(x)\nprint(h(1))\n", "function 'h' declares return type bool but returned int"},
+		// `list`, `dict`, `vec` and `fn` annotations don't accept null (decided
+		// 2026-11-13); struct and resource annotations do.
+		{"null_list_param", "fn g(l: list) -> 1\ng(null)\n", "argument 1 of 'g' expects list[any], got null"},
+		{"null_list_param_runtime", "fn id(v) -> v\nfn g(l: list) -> 1\ng(id(null))\n", "argument 'l' of 'g' expects list, got null"},
+		{"null_dict_param_runtime", "fn id(v) -> v\nfn g(d: dict) -> 1\ng(id(null))\n", "argument 'd' of 'g' expects dict, got null"},
+		{"null_vec_param_runtime", "fn id(v) -> v\nfn g(v: vec) -> 1\ng(id(null))\n", "argument 'v' of 'g' expects vec, got null"},
+		{"null_fn_param", "fn g(k: fn) -> 1\ng(null)\n", "argument 1 of 'g' expects fn, got null"},
+		{"null_fn_param_runtime", "fn id(v) -> v\nfn g(k: fn) -> 1\ng(id(null))\n", "argument 'k' of 'g' expects fn, got null"},
+		{"null_list_native_param", "fn id(v) -> v\nfn g(l: list) int -> 1\ng(id(null))\n", "expected list, got null"},
+		{"null_list_decl", "l: list = null\n", "cannot assign value of type 'null' to 'list[any]'"},
+		{"null_list_decl_runtime", "fn id(v) -> v\nl: list = id(null)\n", "variable 'l' is declared list but got null"},
+		{"null_list_field", "struct S:\n    xs: list\nprint(S { xs: null })\n", "cannot assign value of type 'null' to field 'xs'"},
+		{"null_list_field_runtime", "struct S:\n    xs: list\nfn id(v) -> v\nprint(S { xs: id(null) })\n", "field 'xs' of S expects list, got null"},
+		{"null_list_default", "fn g(l: list = null) -> 1\nprint(g())\n", "default value type 'null' doesn't match parameter type"},
+		{"null_list_reassign", "xs = list [1]\nxs = null\n", "cannot assign value of type 'null' to 'list[int]'"},
 		// A parameter typed by a literal default is checked on entry like an
 		// annotated one.
 		{"default_typed_param_int", "fn foo(y = 0) ->\n    z = y\n    z + 1\nfn id(v) -> v\nprint(foo(id('abc')))\n", "argument 'y' of 'foo' expects int, got str"},
@@ -1817,7 +1902,7 @@ func TestParamAnnotationsEnforced(t *testing.T) {
 		"print(scale(1, 2))",
 		"print(g(id(3), 1))",
 		"print(kinds(1, 'b'))",
-		"print(first(null))",
+		"print(first(list []))",
 		"print(add_n(1))",
 		"print(id(2) | scale(3))",
 		"",
@@ -1827,7 +1912,7 @@ func TestParamAnnotationsEnforced(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := strings.TrimSpace(normalizeNewlines(runQuarkIn(t, tmp, "run", "ok.qrk")))
-	if want := "2.0\n3.0\nint str\nnull\n11\n6.0"; got != want {
+	if want := "2.0\n3.0\nint str\nlist\n11\n6.0"; got != want {
 		t.Fatalf("output:\n%s\nwant:\n%s", got, want)
 	}
 

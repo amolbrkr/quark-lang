@@ -8,24 +8,16 @@ Sections follow [Keep a Changelog](https://keepachangelog.com/): **Breaking**, *
 
 ---
 
-## Known issues (as of `b46be3d` plus uncommitted changes)
+## Known issues (as of `0cf468d` plus uncommitted changes)
 
 These were checked against the current compiler on 2026-11-12, in a codebase health review; all of them predate modules v0.2. The structural causes and the plan for them are in `architecture.md` §12.
 
 ### Wrong results with no error
 
-**A value is read with the wrong type.** The compiler trusts an element type or narrowed type it inferred wrongly and reads the raw value (codegen `toScalar` for values the analyzer typed exactly, and the `for` loop element read). Which fix to use is an open design question (`architecture.md` §12.6).
-- A list or dict changed through another name keeps its old element type: `a = list [1, 2]`, `b = a`, `b.push('s')`, `for x in a: print(x)` prints `1`, `2`, then a number such as `139966802534384`. The same happens when the change goes through a function (`fn add(xs) -> xs.push('x')`, then `add(l)`), through `l[0] = 'str'` on a list of ints, through `d.b = 'hello'` on a dict of ints (only a warning), through `d.set` inside a function, and for the results of `l.concat(list ['a'])` and `l.push('x')`. In a loop, a read before a `push` gets garbage on the second iteration.
-- Pushing an int into a float list: `l = list [1.5]`, `l.push(2)`, `for e in l: print(e)` prints `1.5`, then `1e-323`. `d.b = 2` on a dict of floats does the same.
-- Pushing an `any` value into a list: `fn id(v) -> v`, `zs = list [1, 2]`, `zs.push(id('hello'))`, `w = zs[2]`, `print(w + 1)` prints a number.
-- An `any` variable that gets a typed value inside a branch keeps that type after it: `fn id(v) -> v`, `x = id('hello')`, `if false:` / `x = 5`, then `y = x`, `print(y + 1)` prints a number. With `x = id(2.5)`, `P { n: x }` stores `2.5` in an `int` field.
-- A list read past its end, stored in a variable: `w = list [1, 2][5]`, `print(w)` prints `0` (`null` is documented). The same for a list changed during a `for` loop over it (`for y in xs: xs.pop()`).
-- A `null` inside a vector read by a loop: `for x in list [1, null, 3].to_vec(): print(x)` prints `1`, `0`, `3` (`0.0` for floats, `false` for bools).
+**A `null` is read as an element type.** Element types are fixed and every write is checked since the §12.9 work (2026-11-13), but a few reads still return `null` where the compiler assumed an element:
+- A list read past its end, stored in a variable: `w = list [1, 2][5]`, `print(w)` prints `0` (`null` is documented). The same for `xs.get(i)` and `d.get(k)` on a missing key, and for a list changed during a `for` loop over it (`for y in xs: xs.pop()`).
+- A `null` inside a vector read by a loop: `for x in list [1, null, 3].to_vec(): print(x)` prints `1`, `0`, `3` (`0.0` for floats, `false` for bools). `to_list()` of such a vec gives a `list[int]` with a `null` in it.
 - `when` on a vec compares elementwise and reads the first result: `fn g(a) -> when a:` / `1 -> 'one'` / `_ -> 'other'` returns `'other'` for `g(vec [1, 1])` with no error. `if a == 1` correctly fails with "vec used as a condition".
-
-**Return annotations of ordinary functions aren't checked.** Parameters are checked on entry; returns are checked only for fully annotated (native) functions.
-- `fn f(c) int ->` / `if c:` / `1`, then `print(f(false) + 10)` prints `10`: the `null` is read as `0`.
-- `fn f(k) int -> k()`, then `print(f(fn() -> 'str') + 1)` prints a number.
 
 **Part of an expression runs at the wrong time.** A method call's receiver is computed before the whole statement, not where the expression needs it.
 - `and`, `or` and `x if c else y` run both sides: `false and noisy().upper()` and `'x' if true else noisy().upper()` both call `noisy()`.
@@ -41,27 +33,87 @@ These were checked against the current compiler on 2026-11-12, in a codebase hea
 - `sys::exit(256)` exits with status 0.
 - `io::read` stops at a NUL byte: on a file containing `ab\0cd`, the first read returns `ab` and the next returns `''`.
 - `csv::parse('a,"b"x,c')` returns `[['a', 'bx', 'c']]` instead of an error.
-- `list [1].concat(x)`, with `x` an `any` holding `5`, returns `null`. `'abc'[i]` with a non-int `i` returns `null`; the list version is an error.
+- `'abc'[i]` with a non-int `i` returns `null`; the list version is an error.
 - `sum(vec [9007199254740993, 1])` is `9007199254740992.0`: int vecs are summed in floating point.
 - `min(n, 1.0)` with `n = to_float('nan')` is `1.0`, but `min(1.0, n)` is `nan`. Sorting a list that contains NaN is undefined behavior in the C++ sort.
-- An `extern fn` declared to return `list` or `vec` that returns `nullptr` gives an empty container (`len` 0, `type()` `list`). One declared to return `str` that returns `nullptr` gives `null` where the compiler assumed a `str`.
 
 ### Fails loudly, but with a C++ error, a wrong location or a misleading message
 
 - An `elseif` whose condition calls a method fails in clang: `elseif name().upper() == 'B':` gives `expected expression`.
 - A prelude builtin used as a value passes the checker and fails in clang: `f = len`, then `print(f('ab'))`, or `print(len)`, gives `use of undeclared identifier 'quark_len'`. Extern fns used as values work (they have thunks).
 - `struct S` inside a `fn` body fails with `internal: struct 'S' not pre-declared`.
-- A call written above a `fn` declaration is checked less than one below it. `print(apply(fn(a, b) -> a + b))` above `fn apply(k) -> k(1)` is a runtime error, below it a compile error. The same for `print(f(5))` above `fn f(r: result)`.
+- A call written above a `fn` declaration is checked less than one below it. `print(apply(fn(a, b) -> a + b))` above `fn apply(k) -> k(1)` is a runtime error, below it a compile error.
 - Calling a function value with more than 12 arguments compiles and always fails at runtime (`function call supports up to 12 arguments, got 13`); it could be a compile error.
 - A struct field named with `__` (`a__b: int`) is accepted in the `struct` and rejected only where a literal uses it.
 - A syntax error in an imported file is reported inside a load error located at the importer's `incl` line. Load errors in the main file show its absolute path, while check errors show the path as written. Several messages name token kinds instead of source text (`operator 'PLUS'`, `expected identifier after OK`, `no prefix parse function for NEWLINE`), and a multi-line `g = fn(x) ->` body gives about ten cascading `DEDENT` errors.
+- **Loop bodies are about 9% slower since `0cf468d`** (step 2). Every statement in a `for` or `while` body now sets its source location, so a runtime error there reports the right line; the three stores per statement measured +9% on a loop that only reads list elements. Storing one integer that indexes a static table of locations measured no slower than no location (`architecture.md` §12.9).
+- Native code that appends to a list with `push_back`, or writes `d->entries` directly, skips the element-type check; `qext::list_push` and `qext::dict_set` check it.
+- Tooling: the integration tests share one binary, `src/core/quark/quark_test`, which `TestMain` deletes at the start and end of every run. A second `go test` in the same checkout (another session, an editor) deletes it mid-run, and every integration test then fails with `fork/exec .../quark_test: no such file or directory`. Each run should build into its own temporary directory.
 - `qext::box(int)` in native code doesn't compile (ambiguous between the `int64_t`, `double` and `bool` overloads); pass an `int64_t`.
 
 ---
 
-## 2026-11-13: Table engine and CSV reader (runtime only)
+## 2026-11-13: Element types are fixed, variables don't narrow, return annotations are checked (architecture §12.9)
 
 Commits: not yet committed
+
+Implements rules A-E of `architecture.md` §12.9 and the `null` decision. Together they close the largest group of known issues: values read with a type the compiler had inferred wrongly, which printed garbage numbers.
+
+### Breaking
+- **A list keeps the element type it was created with** (rule B), through every name for it. Writing a value of another type is a compile-time error when the compiler knows the value's type:
+  ```
+  a = list [1, 2]
+  b = a
+  b.push('s')        // error: cannot add str to list[int]: a list keeps the element type it was created with
+  ```
+  The same for `insert`, `set`, `l[i] = v` and `concat` (`list [1].concat(list ['a'])`). To mix types, create the list under a `list` annotation: `xs: list = list [1, 2]`, then `xs.push('s')` works. A literal passed to a `list` parameter or stored in a `list` struct field holds any value too. A list of mixed literals (`list [1, 'a']`) accepts both types.
+- **A write the compiler can't check is checked by the runtime** (rule C): an untyped function's parameter, a value from `any`, native code.
+  ```
+  fn add(xs) -> xs.push('x')
+  l = list [1, 2]
+  add(l)             // runtime error: push() can't add a str to a list of int: a list keeps the element type ...
+  ```
+  Lists nested in lists are checked by their own element type: `fn add_row(g, r) -> g.push(r)`, `rows = list [list [1, 2]]`, `add_row(rows, list ['a'])` is `push() can't add a list[str] to a list of list[int]`. A `list[int]` can't go into a `list[list[float]]` (its ints would be read as floats), and a list made under a `list` annotation can't go into a `list[list[int]]`.
+- **A dict keeps its value type** (rule E): `d = dict { a: 1 }`, then `d.b = 'hello'` or `d.set('b', 'x')` is a compile-time error (it was a warning, and the value was later read as an int). `d: dict = dict { a: 1 }` holds any value. Untyped code is checked at runtime: `can't store a str under key 'k' of a dict of int`.
+- **A variable never narrows** (rule A). A variable whose first value has no known type stays untyped, whatever it is assigned later: `x = id('hello')`, then `if c: x = 5`, then `y = x` keeps `y` untyped (it used to make `y` an `int`, read from a string). Convert once with `n: int = x` to get a typed variable.
+- **A variable holding a function keeps its signature**: `g = fn() -> 5`, then `g = fn() -> 'abc'` is `cannot assign fn() -> str to 'g', which holds fn() -> int`. Declare `g: fn = fn() -> 5` to hold any function (calls through it return a value of unknown type). Assigning a value typed only `fn` to such a variable is an error for the same reason.
+- **Assigning a lambda to an existing name assigns that variable**, like every other assignment, also from a nested scope. `g = fn() -> 1` at the top level, then `g = fn() -> 2` inside a loop or function body, used to declare a second `g` there, so the outer `g` silently kept the old function.
+- **Return annotations are checked on every function** (rule D), not only fully annotated ones. A body that can end without a value is a compile-time error: `fn f(c) int ->` / `if c:` / `1` is `function 'f' declares return type 'int' but can end without a value`. A body of unknown type is checked when the function returns: `fn f(k) int -> k()`, `f(fn() -> 'str')` is `function 'f' declares return type int but returned str` (it printed a number).
+- **An `if` without `else` can have no value**: its type includes `void` (as a `when` with no matching arm already did), so the result of an untyped `fn f(c) ->` / `if c:` / `1` is no longer typed `int`. Code that does arithmetic on such a result directly, `f(true) + 1`, is now a compile-time error, since `f(false)` is `null`.
+- **`list`, `dict`, `vec` and `fn` annotations don't accept `null`** (decided 2026-11-13), for parameters, typed declarations, struct fields, defaults and returns, and for every kind of function: `fn g(l: list) -> 1`, `g(null)` is `argument 1 of 'g' expects list[any], got null`; from an untyped value, `argument 'l' of 'g' expects list, got null`. Use `xs: list = list []` for an optional list parameter, or `any` for a value that may be `null`. Struct and `resource` annotations still accept `null`.
+- **Native functions can't return a null pointer for `str`, `list`, `dict`, `vec` or `fn`.** An `extern fn` declared to return `list` that returns `nullptr` gave an empty list; it is now `a native function declared to return list returned a null pointer`; for `str` it gave `null`. `qext::box` of a null `QList*`, `QDict*`, `QVector*` or `QClosure*` is an error (use `qext::null_val()`).
+- `list.concat` with a value that isn't a list is a runtime error (`concat() expects two lists, got list and int`); it returned `null`.
+
+### Added
+- **An empty `list []` or `dict {}` takes its element type from its first write**, so accumulating loops stay fast: `out = list []`, `for i in range(n): out.push(i * i)` makes `out` a `list[int]`, and a later `for v in out: total = total + v` reads raw ints. Storing it into a typed slot decides it too (`xs = list [1]`, then `xs = list []` stays a `list[int]`; `grid.push(list [])` on a `list[list[int]]`). The error for a later mismatch names the line of the first write. Passing it to an untyped parameter first makes it hold any value.
+- An `int` written into a list of floats or a dict of floats is stored as a float: `l = list [1.5]`, `l.push(2)` gives `[1.5, 2.0]` (it read back as `1e-323`). An `int` returned by a function annotated `float` is widened: `fn f() float -> 1` returns `1.0`.
+- `qext::list_push(QList*, QValue)` appends with the element-type check, `qext::new_list()` creates a list that holds any value, and `qext::dict_set` now checks the dict's value type.
+
+### Fixed
+- *All of these printed garbage numbers or wrong values with no error.*
+- A list changed through another name, through a function (`fn add(xs) -> xs.push('x')`), through `l[0] = 'str'`, through `d.b = 'hello'` or `d.set` inside a function, or the results of `l.concat(list ['a'])` and `l.push('x')`, kept the old element type, so a loop over it read a string as an int.
+- `zs = list [1, 2]`, `zs.push(id('hello'))`, then `zs[2] + 1` read the string as an int; now a runtime error at the push.
+- An `any` variable assigned a typed value in a branch or a loop that may not run (`x = id('s')`, `for i in range(0): x = 5`) was trusted as that type afterwards; `P { n: x }` stored `2.5` in an `int` field.
+- *Found 2026-11-13 while doing this work, and predating it:*
+- **Arithmetic on an int-or-float value was typed `int`**: `xs = list [1, 2.5]`, `for v in xs: z = v + 1`, `print(z)` printed `4615063718147915776` for `2.5`. Its type is now int-or-float, and it prints `3.5`.
+- **A `list[int]` could be added to a `list[list[float]]`** (int → float promotion was applied to element types): `b = list [list [1.5]]`, `b.push(list [1, 2])`, then reading `b[1]`'s elements printed `5e-324`. Now a compile-time error.
+- **Reassigning a function variable changed the return type the compiler trusted**: `g = fn() -> 5`, `run = fn() -> g()`, `g = fn() -> 'abc'`, then `run() + 1` printed a number. Now a compile-time error (see Breaking).
+- A `vec[any]` or `list[any]` value could be assigned to a variable typed `vec[int]` or `list[int]`, which a loop then read raw; now a compile-time error.
+- A call written above `fn f(r: result)` didn't see that `r` is a result (`print(f(5))` above it was a runtime error); now it is a compile-time error like a call below it.
+
+### Changed
+- Messages for writes into lists and dicts name the container's element type and how to make a list that holds any value. The error for assigning a value of unknown type to a typed variable now suggests a typed declaration.
+
+### Internal
+- Types: `CanAssign` (stores, int → float) and the new `IsSubtype` (nested positions, no conversion; unions on both sides; `null` only for struct and resource; function values by arity and return type). Pending list and dict types (`NewPendingList`, `SettleContainers`, `FixElementType`, peers fixed together, `MergeTypes` settles them); `ElementOf` drops a function's return type in element positions.
+- Analyzer: `assignName` split into `assignName`/`checkReassign`; `checkElemWrite`, `checkMutation` (replaces `widenReceiverOnMutation`), `settleArgs`, `escapePending`, `contextLiteral`. `validateReturnType` rejects a body that may end without a value; `analyzeIfStatement` adds `void` when there is no `else`. Predeclared `fn` parameter types use `resolveTypeNodeStaticWithStructs` (so `result` parameters are known before the body is analyzed).
+- Runtime: `QList` is a struct deriving from the vector with an `elem` field; `QDict` has `elem`. `QElemType` and `q_elem_int`/`_float`/`_bool`/`_str` in `core/value.hpp`; `q_elem_sub`, `q_elem_is`, `q_elem_store` in `types/elemtype.hpp`. `q_push`, `q_set`, `q_insert`, `q_list_concat`, `q_dict_set` check; `range`, `split`, `keys`, `values`, `slice`, `concat` and `to_list` create typed lists. `q_ret_int`/`_float`/`_bool`/`_check`/`_struct` in `builtins/params.hpp`; `q_box_native_str`, null checks in `qv_*_ptr`. `q_type_name(ValueType)` in `core/value.hpp` is the canonical type-name table (the two copies in `conversion.hpp` use it).
+- Codegen: `codegen/elemtype.go` (`elemDesc` emits `_qet_N` descriptors after the struct definitions; `checkedReturn`). List and dict literals pass their element type; `paramTagChecks` no longer allows `null` for `list`/`dict`/`vec`/`fn`.
+- Tests: `smoke_element_types.qrk`; 55 `TestSemanticsSafety_Rejected` cases (writes from typed and untyped code and from `any`, nested lists, vecs, results and structs, first-write errors, no narrowing, function signatures, every return path, `null` for each annotation); `TestElementTypes_ModulesAndNative` (writes and returns through another module, `qext::list_push`/`dict_set`, native null returns). `smoke_printing`, `smoke_struct_fields`, `gc_steady_state` and two Go tests were updated for the breaking changes.
+
+## 2026-11-13: Table engine and CSV reader (runtime only)
+
+Commits: `e6a1db9`
 
 Nothing here is reachable from Quark code yet: the `tbl` type, queries and the `std/csv` bindings are the next step (`tables_v0_1_spec.md`, Revision 2, which records the design decisions of this day).
 
@@ -73,7 +125,7 @@ Nothing here is reachable from Quark code yet: the `tbl` type, queries and the `
 
 ## 2026-11-13: Variable storage decided by the analyzer (architecture §12.8 step 2)
 
-Commits: not yet committed
+Commits: `0cf468d`; the Docs entry below not yet committed
 
 ### Breaking
 - **A typed declaration checks its value.** `x: int = v`, where the compiler can't know `v`'s type (a value from an unannotated function, `unwrap`, a dict), is now a runtime error when `v` isn't an int: `variable 'x' is declared int but got str`. It used to store the value unchecked, so `x` held a string the compiler treated as an int (see Fixed). The rules are those of parameters: an int widens to `float`, `list`/`dict`/`vec`/`fn`/`resource` and structs accept `null`, `str` and `result` don't.
@@ -83,6 +135,7 @@ Commits: not yet committed
 ### Fixed
 - **An int assigned to a `float` variable read back as garbage.** `x = 1.5`, then `x = len(list [1, 2, 3])`, `print(x)` printed `1.5e-323`. The same happened to a `float` parameter (`fn f(a: float) -> a = 2`) and a loop variable over floats. It now prints `3.0`.
 - **A `float` declaration with an int value was stored as an int.** `x: float = len(l)` printed `3`; `y: float = 3`, then `y = 2.5`, printed `2`. They now print `3.0` and `2.5`.
+- *The next two were found on 2026-11-13 while doing this step, and predate it.*
 - **A typed declaration of a value of unknown type wasn't checked**, so reads trusted a type the value didn't have: `fn id(v) -> v`, `x: int = id('hello')`, `y = x`, `print(y + 1)` printed a large number; `x: str = id(5)` gave a `str` variable of type `int`. Both are now runtime errors (see Breaking).
 - **A parameter typed by a literal default wasn't checked at runtime**: `fn foo(y = 0) ->` / `z = y` / `z + 1`, called as `foo(id('abc'))`, printed a large number, and `fn foo(y = 0.5)` called as `foo(id(3))` printed `1.5e-323`.
 - **A variable first assigned in a `while` body and assigned again after the loop failed in clang** (`use of undeclared identifier 'quark_y'`). The two are different variables, as the checker already said, and now compile as two.
@@ -90,12 +143,16 @@ Commits: not yet committed
 - **A runtime error inside a `for` or `while` body was reported at the loop's line.** `for r in list [1, 2]:` / `x = r` / `print(r % 0)` now reports `modulo by zero at file.qrk:3:10`.
 - **A variable named `_lambda1` collided with the compiler's first lambda**: `_lambda1 = 5`, `f = fn(x) -> x + 1`, `print(f(_lambda1))` crashed with exit code 255 and no message, and `fn _lambda1()` plus any lambda failed in clang. Every name the compiler generates now starts with `quark___`, which no user name can produce. This also removes a rarer clash between a nested `fn` declaration and a module member (`fn f_` nested in a function, and `module f` with a member `_2`, could get the same C++ name).
 
+### Docs
+- `architecture.md` §12.9: why silent wrong results keep appearing (the analyzer's types are used both as guesses for diagnostics and as guarantees for raw reads), the soundness contract (a type is trusted only when every way into the slot is guarded), and the decided rules: variables don't narrow (A), element types are fixed when a list or dict is created (B), writes from untyped code into a typed list or dict are checked (C), return annotations are checked (D), a wrong-typed dict value is an error (E). With the measurements behind them: a tag check costs about 1.5% in a loop that does nothing else, a direct list element read is about 4x faster than `q_iter_get`, and the per-statement source location costs about 9%. None of this is implemented yet. §12.6 is marked decided and step 4 of §12.8 updated.
+
 ### Internal
 - **Symbols** (`architecture.md` §12.8 step 2). Every variable, parameter, loop variable, `when` binding and `fn` declaration is one `types.Symbol` with an `ID`, `Kind`, `StoreType` (the type all its values are known to have) and `Decl` (where codegen declares it). `Analysis.Refs` maps every resolved identifier node to its symbol, and `Analysis.Captures` lists each lambda's captured symbols. `finalizeSymbols` decides each symbol's `ir.Storage` (`ir/storage.go`: cell, int, float, bool or QValue) and its C++ name once, after the captures are final. `Analysis.CapturedByFunction`, `Analysis.CheckedCaptures` and the name-keyed capture lists are removed; `HoistScope.Cells` holds symbols, `FixedFn.Sym` is exported.
 - Codegen no longer keeps scope state: `declaredVars`, `cellVars`, `varTiers`, the scope stacks, `currentFuncNode`, `isCaptured` and `loopVarTier` are removed. `codegen/storage.go` holds what's left of storage handling: `varSym`, `readVar`, `assignSym` (declares at `Decl`, assigns otherwise; used by assignments and typed declarations), `storeValue`/`toScalar` (conversion and checks), and one type→check table (`checkFor`) shared by parameters (`q_param_*`), struct fields (`q_field_*`) and typed declarations (`q_var_*`). Loop bodies go through `generateBlock` (`emitBody`).
 - Runtime: `q_var_int`, `q_var_float`, `q_var_bool`, `q_var_check` and `q_var_struct` (`builtins/params.hpp`).
 - Generated names: lambdas `quark___lambdaN`, nested `fn` declarations `quark___fnN_name` (was `quark_name__N`), and a variable sharing its name with an earlier one `quark___v<id>_name`; native thunks name their parameters `_a0`, `_a1`, ...
 - Tests: `smoke_storage.qrk`; 13 `TestSemanticsSafety_Rejected` cases (typed declarations of each kind from `any` and `null`, captured and in-function declarations, default-typed parameters of functions and lambdas); two loop-body cases in `TestRuntimeErrorLocations`.
+
 
 ---
 

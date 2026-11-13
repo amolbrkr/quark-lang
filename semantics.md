@@ -52,7 +52,7 @@ Quark has **no implicit coercion** except in three narrow cases:
 
 2. **int → float promotion in mixed comparison**: `<`, `<=`, `>`, `>=`, `==`, `!=` promote the int operand when comparing int to float.
 
-3. **int → float widening at `float` parameters and struct fields**: an `int` argument passed to a parameter annotated `float`, of a Quark function or an `extern fn`, is converted to `float`, and so is an `int` stored in a `float` struct field (literal value or default). The reverse is not done: a `float` passed to an `int` parameter or field is an error (§13.2).
+3. **int → float widening where a `float` is stored**: an `int` argument passed to a parameter annotated `float` (of a Quark function or an `extern fn`), an `int` stored in a `float` struct field, variable, list element or dict value, and an `int` returned by a function annotated `float` are converted to `float`. The reverse is not done: a `float` passed to an `int` parameter or field is an error (§13.2). Nothing is converted below the top level: a `list[int]` is not a `list[float]` (§9.1).
 
 All other type mismatches are errors (compile-time when type info is available, runtime otherwise).
 
@@ -219,7 +219,7 @@ Default values must be **literals only** (int, float, string, bool, null, or emp
 
 ### 6.6 Return type annotations
 
-Return types are checked at compile time — no runtime cost. The analyzer infers the body's return type and checks it against the annotation. Mismatch produces a compile-time error. A body whose type can't be inferred (it returns an `any` value) is checked at runtime only in a fully annotated function, which is compiled to native C++ and converts its result with the checked `q_as_*` helpers (an `int` result widens to a `float` return type); other functions don't check it yet.
+A return annotation holds on every function, like a parameter annotation. The analyzer infers the body's type and checks it against the annotation at compile time; a mismatch is a compile-time error, and so is a body that can end without a value (an `if` without `else` or a `when` with no matching arm returns `null`, which only `any` accepts). A body whose type the compiler can't know (it returns an `any` value) is checked once when the function returns: `function 'f' declares return type int but returned str`. An `int` result of a `float` function is widened. See §13.3.
 
 ### 6.7 Calls through function values
 
@@ -292,7 +292,10 @@ The scrutinee is evaluated once. For result patterns, the analyzer checks that t
 Language semantics:
 
 - Created with `list [a, b, c]` (keyword required).
-- Lists are heterogeneous and mutable.
+- Lists are mutable. A list's **element type is fixed when it is created**: `list [1, 2]` is a `list[int]` for good, also through every other name for it (`b = a`), so `xs.push('s')`, `xs[0] = 's'` and `xs.set(0, 's')` on it are compile-time errors. A list of mixed literals (`list [1, 'a']`) holds those types. A list that holds values of any type is created under a `list` annotation: `xs: list = list [1, 2]` (also a literal passed to a `list` parameter or stored in a `list` struct field). An `int` written into a list of floats becomes a `float`.
+- An empty `list []` takes its element type from where it is first stored (`xs = list [1]`, then `xs = list []`, stays a `list[int]`) or else from its first write (`out = list []`, then `out.push(i)` makes it a `list[int]`); passed to an untyped parameter before that, it holds values of any type.
+- Code the compiler can't see the types of (an untyped function's parameter, a value from `any`, native code) is checked when it writes: `push() can't add a str to a list of int`. Lists made by builtins have element types too: `range` gives a `list[int]`, `split` and `keys` a `list[str]`, `values` the dict's value type, `slice` and `concat` the receiver's. `concat` checks the other list's elements against the receiver's element type.
+- Containers nested in a list are checked by their own element type: a `list[list[int]]` takes a `list[int]` but not a `list[str]`, a `list[float]` or a `list` annotated as holding anything. A function stored in a list keeps its parameters but not its return type (a call through it returns `any`).
 - Assignment is shallow for list values (aliases share the same underlying list data).
 - Negative indexing is supported where index-based methods are accepted (`-1` last item, `-2` second last, ...).
 
@@ -314,6 +317,7 @@ Method/index behavior:
 ### 9.2 Dicts
 
 - Created with `dict { key: value }`; keys in a literal are identifiers.
+- A dict's value type is fixed when it is created, like a list's element type (§9.1): `d = dict { a: 1 }`, then `d.b = 'x'` or `d.set('b', 'x')` is a compile-time error, and a write from untyped code is a runtime error. `d: dict = dict { a: 1 }` holds values of any type; an empty `dict {}` takes the type of its first value.
 - Keys are strings. `.get` and `.set` convert a non-string key to its string form, so `d.set(1, 2)` stores the key `'1'` and `d.get(1)` reads it back.
 - `d.key` names a key in the source, so reading a missing key with it is a runtime error: `dict has no key 'nmae'; use .get('nmae') if the key may be missing`. `d.get(key)` returns `null` for a missing key; use it when a key may be absent.
 
@@ -465,7 +469,7 @@ Warnings are emitted by semantic analysis for suspicious but still legal constru
 
 | Category | Examples |
 |----------|----------|
-| Suspicious assignments | Assigning a value whose type does not match an inferred dict value type |
+| Suspicious expressions | A ternary whose branches have incompatible types (`1 if c else 'a'`) |
 
 Warnings use `warning[QK-CHECK-002] (check): ...` formatting.
 
@@ -555,7 +559,7 @@ Each annotated parameter is enforced, whether or not the function's other parame
 - When the argument's type is known at compile time, it is checked then (`argument 1 of 'foo' expects int, got str`), at no runtime cost.
 - When it isn't (`any`, for example the result of `unwrap` or of an unannotated function), it is checked on entry to the function, and a mismatch is a runtime error naming the parameter: `argument 'x' of 'foo' expects int, got str`. Calls through a function value, pipes and default arguments are covered too.
 - An `int` passed to a `float` parameter is converted to `float`.
-- Reference-type annotations (`list`, `dict`, `vec`, `resource`, `fn`, struct names) also accept `null`, as at compile time. `result` doesn't: a result is always `ok(...)` or `err(...)`, so `null` can't be passed, stored, returned or used as a default where a `result` is expected, and `r == null` / `r != null` on a result is a compile error (use `is_ok`, `is_err` or `when`).
+- `list`, `dict`, `vec` and `fn` mean a list, dict, vec or function: they don't accept `null`, at compile time or at runtime, for any kind of function (an optional list parameter is written `xs: list = list []`; use `any` for a value that may be null). `result` doesn't either: a result is always `ok(...)` or `err(...)`, so `null` can't be passed, stored, returned or used as a default where a `result` is expected, and `r == null` / `r != null` on a result is a compile error (use `is_ok`, `is_err` or `when`). Struct and `resource` annotations accept `null`.
 
 A parameter without an annotation but with a literal default takes the default's type and is enforced the same way: `fn foo(y = 0)` has an `int` parameter, so `foo('a')` is a compile-time error and `foo(v)` with a `v` of unknown type is checked on entry. A `null` default gives no type.
 
@@ -563,7 +567,7 @@ Other unannotated parameters accept any value. Inside the body, annotated `int`,
 
 If a parameter has both a type annotation and a default value, the default's type must be assignable to the annotated type.
 
-Struct fields follow the same rules. A field value whose type is known at compile time is checked then (`cannot assign value of type 'str' to field 'x' of type 'int'`). Otherwise it is checked when the struct literal is built, so a field never holds a value of the wrong type: `field 'x' of P expects int, got str`. An `int` going into a `float` field, including a default, is converted to `float`, and reference-typed fields accept `null`.
+Struct fields follow the same rules. A field value whose type is known at compile time is checked then (`cannot assign value of type 'str' to field 'x' of type 'int'`). Otherwise it is checked when the struct literal is built, so a field never holds a value of the wrong type: `field 'x' of P expects int, got str`. An `int` going into a `float` field, including a default, is converted to `float`, and struct and `resource` fields accept `null`.
 
 ### 13.3 Return type annotations
 
@@ -571,7 +575,7 @@ Struct fields follow the same rules. A field value whose type is known at compil
 fn foo(x: int) int -> x + 1
 ```
 
-The annotated type is checked against the analyzer's inferred return type for the function body. If the body has branches returning different types, the inferred type is a union; the check succeeds if all non-void alternatives are assignable to the annotation.
+The annotated type is checked against the analyzer's inferred return type for the function body. If the body has branches returning different types, the inferred type is a union, and every alternative must be assignable to the annotation. A body that can end without a value (an `if` without `else`, a `when` with no matching arm) is a compile-time error unless the annotation is `any`. A body of unknown type is checked when the function returns, with the parameter rules (an `int` widens to `float`): `fn f(k) int -> k()`, then `f(fn() -> 'a')`, is the runtime error `function 'f' declares return type int but returned str`.
 
 ### 13.4 Variable type annotations
 
@@ -581,9 +585,9 @@ r: result = ok 1
 v: any = 1
 ```
 
-The annotated type constrains the initial value and future assignments. A value of incompatible type is a compile-time error. An initial value whose type isn't known at compile time (from `any`, for example the result of an unannotated function) is checked when it is stored, with the same rules as a parameter (an `int` widens to `float`, reference types accept `null`): `x: int = id('a')` is a runtime error, `variable 'x' is declared int but got str`. So a typed variable never holds a value of another type.
+The annotated type constrains the initial value and future assignments. A value of incompatible type is a compile-time error. An initial value whose type isn't known at compile time (from `any`, for example the result of an unannotated function) is checked when it is stored, with the same rules as a parameter (an `int` widens to `float`, struct and `resource` types accept `null`): `x: int = id('a')` is a runtime error, `variable 'x' is declared int but got str`. So a typed variable never holds a value of another type.
 
-A variable keeps the type of its first value (or its annotation) for its whole life. A `float` variable assigned an `int` holds the widened float: `x = 1.5`, then `x = 2`, `print(x)` prints `2.0`.
+A variable keeps the type of its first value (or its annotation) for its whole life; it never narrows. A `float` variable assigned an `int` holds the widened float: `x = 1.5`, then `x = 2`, `print(x)` prints `2.0`. A variable whose first value has no known type (`x = id('a')`, with `id` untyped) stays untyped whatever it is assigned later, so `x = 5` doesn't make it an `int`; convert it once to get a typed variable: `n: int = x` (checked when stored). A variable holding a function keeps that function's signature, including its return type: `g = fn() -> 5`, then `g = fn() -> 'a'`, is a compile-time error. Declare `g: fn = ...` to hold any function (calls through it return `any`). Assigning a lambda to a name that already exists, in this scope or an enclosing one, assigns that variable, as any other assignment does.
 
 Builtin function names (`sum`, `len`, `max`, ...) are bindings that can't be reassigned, so `sum = 0` is a compile-time error, also inside a function body. A parameter may reuse a builtin's name (`fn f(sum) -> sum`). Names declared with `fn` are fixed the same way: `f = ...` or `f: int = ...` after `fn f` is an error.
 

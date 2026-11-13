@@ -21,38 +21,10 @@ func functionTypeFromLambdaNodeWithStructs(lambdaNode *ast.TreeNode, structTypes
 			} else {
 				paramTypes[i] = TypeAny
 			}
+		} else if t := resolveTypeNodeStaticWithStructs(spec.typeNode, structTypes); t != nil {
+			paramTypes[i] = t
 		} else {
-			typeName := spec.typeNode.TokenLiteral()
-			switch typeName {
-			case "int":
-				paramTypes[i] = TypeInt
-			case "float":
-				paramTypes[i] = TypeFloat
-			case "str":
-				paramTypes[i] = TypeString
-			case "bool":
-				paramTypes[i] = TypeBool
-			case "null":
-				paramTypes[i] = TypeNull
-			case "list":
-				paramTypes[i] = &ListType{ElementType: TypeAny}
-			case "dict":
-				paramTypes[i] = &DictType{KeyType: TypeAny, ValueType: TypeAny}
-			case "vec":
-				paramTypes[i] = &VectorType{ElementType: TypeAny}
-			case "resource":
-				paramTypes[i] = TypeResource
-			case "fn":
-				paramTypes[i] = TypeFn
-			default:
-				if structTypes != nil {
-					if st, ok := structTypes[typeName]; ok {
-						paramTypes[i] = st
-						break
-					}
-				}
-				paramTypes[i] = TypeAny
-			}
+			paramTypes[i] = TypeAny
 		}
 		if spec.defaultValue != nil {
 			defaultCount++

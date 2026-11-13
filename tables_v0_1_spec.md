@@ -15,7 +15,7 @@ This section records the decisions of 2026-11-13. It supersedes the rest of this
 | # | Decision |
 |---|---|
 | D1 | **Eager, in-memory, columnar.** Every verb runs to completion and returns a new immutable table; there is no lazy plan in v0.1. Columns use the existing `QVector` buffers (Arrow layout: f64/i64 values, bit-packed bool, int32 offsets + UTF-8 for str, validity bitmaps), so `t.salary` is a `vec` without copying. Only the flat primitive layouts are used; no Arrow library. |
-| D2 | **Typed by a struct.** `t: Employee = csv::read_file(path)`: the struct gives column names and types, and the compiler checks every column reference and expression against it. The schema flows through each verb, so the compiler knows every intermediate table's columns. |
+| D2 | **Typed by a struct.** `t: tbl[Employee] = csv::read_file(path)` (D10): the struct gives column names and types, and the compiler checks every column reference and expression against it. The schema flows through each verb, so the compiler knows every intermediate table's columns. |
 | D3 | **Query syntax: one row name per pipe** (`t \| e -> verb(...) \| verb(...)`), re-bound at each verb to that verb's input row. `e` may only appear as `e.col` inside verb arguments. |
 | D4 | **Verbs v0.1:** `filter`, `mutate` (add or replace columns), `sort`, `group_by`, `summarize`. No `reduce`: `summarize` without `group_by` aggregates the whole table into one row. `map` over vecs/tables (like `purrr::map`) comes later. |
 | D5 | **`summarize` returns an ungrouped table**, so there is no `ungroup()`. `group_by` returns a grouped table that only `summarize` accepts (a compile-time error otherwise). |
@@ -23,6 +23,14 @@ This section records the decisions of 2026-11-13. It supersedes the rest of this
 | D7 | **Row indices are int32**: a table holds at most 2,147,483,647 rows (typical healthcare/pharma data is 100K-500K rows). |
 | D8 | **CSV/TSV reader written in-house**, parsing straight into typed column buffers; no third-party CSV library. |
 | D9 | **Group order is key order** (ascending, nulls last), as in dplyr, so `summarize` output is deterministic. |
+| D10 | **The table type is written `tbl[Employee]`** (decided 2026-11-13): `staff: tbl[Employee] = ...`, `fn top(t: tbl[Employee]) tbl[Employee] -> ...`. A bare struct annotation (`t: Employee`) always means one struct value, never a table. It is the first bracketed type; `list[T]` follows the same form (D16). |
+| D11 | **Queries need a known row type** (first implementation). A query on a table whose row struct the compiler doesn't know (`t = csv::read_file(path)` with no annotation) is a compile-time error that says to give the table a row struct. Such tables can still be printed, rendered with `fmt::table` and written. Runtime-checked queries on them come with the inference extension (R2.6). |
+| D12 | **Missing values stay in columns; a value taken out must be present** (the "middle path", decided 2026-11-13). Vectors and table columns keep their validity mask, so `vec [1, null, 3]` and CSV gaps are allowed, and vectorized code handles them (arithmetic and comparisons propagate nulls, aggregates skip them, `filter` drops null predicates). Reading one element as a scalar (`for x in v`, `v[i]`, later a row as a struct) checks it, and a null is a runtime error (`v[3] is missing; use fillna or drop_na first`). There are no nullable types (`T?`). `fillna` stays and `drop_na` is added, as the bridges from "may be missing" to "present". The analyzer may later skip the check where it can prove a vector has no nulls (a literal without `null`, the result of `fillna`, arithmetic on such vectors). |
+| D13 | **Vector reductions follow the table aggregate rules** (D6), since `sum(t.salary)` and `summarize(s = sum(e.salary))` must agree: an int vec sums exactly to an int (overflow is a runtime error), `min`/`max` keep the element type, NaN is skipped, an all-missing sum is 0, and `min`/`max`/`mean` of no values are null instead of an error. A breaking change for programs using vec reductions. |
+| D14 | **`tbl` parameters have one null rule** before `tbl` work starts: today a `null` argument to a `list`/`dict`/`vec`/`fn` parameter is accepted or rejected depending on how the function compiles (changelog Known issues). The rule is fixed for those types, and `tbl` follows it. |
+| D15 | **The old `std/csv` is removed** (`csv::parse` and `csv::read`, which return lists of str lists). `std/csv` is rebuilt on the new reader (`csv::read_file`, `csv::write_file`, and a text form such as `csv::parse_text`, all with tables). Breaking. Empty and `NA` cells are missing in every column, as in readr. |
+| D17 | **Columns are matched to struct fields by name; a mapping renames them** (decided 2026-11-13). By default a field `id` reads the header column `id`, exactly; a missing column is an error (`employee.csv: no column named 'id' in the header (columns: EmpID, EmpDept, EmpSalary); map it with dict { id: 'EmpID' }`). A literal `dict` argument maps fields to header text: `csv::read_file('employee.csv', dict { id: 'EmpID', dept: 'EmpDept', sal: 'Salary ($)' })`. Its keys are checked against the struct at compile time (an unknown field is a compile error), its values against the header at read time; unmapped fields match by their own name. The mapping must be a literal; a dict built at runtime is a compile error. The table's column names are always the struct's field names. Nothing is matched by position unless the file has no header. |
+| D16 | **`list[T]` is planned.** A typed list of scalars (`list[float]`) would be stored like `vec` today (columnar, with a mask), plain `list` stays `list[any]`, and `vec` can then be folded into `list[T]`. Not part of the first table implementation. |
 
 ### R2.2 Query surface (planned)
 
@@ -33,7 +41,7 @@ struct Employee:
     dept: str
     salary: float
 
-staff: Employee = unwrap(csv::read_file('staff.csv'))
+staff: tbl[Employee] = unwrap(csv::read_file('staff.csv'))
 
 stats = staff | e ->
     filter(e.salary >= 100_000)
@@ -80,10 +88,40 @@ Measured on 500K rows (`-O2`, one core, Linux x86_64, 2026-11-13): `group_by` + 
 
 ### R2.5 Not yet
 
-- Compiler: `tbl` type and struct-typed tables, the query node, digit separators, `std/csv` bindings returning `result`, printing.
+**Prerequisites, before `tbl` compiler work starts:**
+1. D12: checked element reads of vectors (`for x in v`, `v[i]`), fixing the Known issue where a null element is read as `0`. Plus `drop_na`.
+2. D13: vector reductions aligned with the table aggregates.
+3. D14: one null rule for `list`/`dict`/`vec`/`fn` parameters, which `tbl` then follows.
+4. CSV reader: validate UTF-8 in str columns (Arrow's `utf8` requires it); report `line 12: column 'name' is not valid UTF-8 (the file may be Latin-1)`, or transcode with an encoding option.
+
+**The first implementation:**
+- Compiler: the `tbl[T]` type (D10), the query node and verb checks (D3-D5, D11), digit separators, `std/csv` rebuilt on the new reader (D15), printing.
 - Verbs after v0.1: joins, `select`/`rename`, `distinct`, `n_distinct`, `slice`/`head`.
 - Column types: `date` (int32 days, Arrow `date32`), then timestamps and categoricals.
-- Header names that aren't identifiers (`Employee ID`) need a renaming option on read.
+- Inspection (decided 2026-11-13):
+  - `print(t)` shows the row count, the column names with types, and the first 10 rows (like a tibble).
+  - `head(t, n = 6)` / `tail(t, n = 6)` return a `tbl`, and also work as query steps.
+  - `describe(t, n = 5)` prints one line per column: name, type, and the first `n` values (R `str`, `dplyr::glimpse`). `n` sets how many values are shown.
+  - `summary(t)` returns a table with one row per column, which prints like any table. Number columns get count, missing, mean, sd, min, q1, median, q3 and max; str and bool columns get count, missing, distinct count and the most common value. It is computed with the engine's aggregates, so it follows D6 (missing values skipped). Median and quartiles need a quantile kernel (on a sorted copy of the non-missing values, R's default type 7 interpolation), which the engine doesn't have yet.
+
+### R2.6 Extension: schema inference at compile time (planned, after the first implementation)
+
+When the path is a string literal (`staff = csv::read_file('staff.csv')`), the compiler reads the file while compiling, infers the row struct the same way the runtime does (D8, all rows scanned), and checks every query against it, like F# type providers. At runtime the reader checks the file still matches the inferred types, and a mismatch is a runtime error naming the column.
+
+- A compiler flag skips inference to keep compiles fast; reads are then typed at runtime only.
+- If the file can't be read at compile time (missing, no permission), the compiler emits a warning and the read is typed at runtime.
+- A path the compiler can't know (`read_file(args[0])`) gets no inference and is handled entirely at runtime. With this extension, queries on such tables become possible with runtime column checks (lifting D11).
+- A column whose values aren't all one type (`'123', 'abc', 9.5`) is inferred as `str`, with a note saying why: in a CSV every value is text.
+
+### R2.7 Arrow conformance
+
+Columns follow the Arrow columnar format for the types used: float64 (`g`), int64 (`l`), boolean (`b`, bit-packed LSB first), utf8 (`u`, int32 offsets); a table is a struct array (`+s`) or record batch with no struct-level nulls; `date` will be date32 (`tdD`). Validity bitmaps are LSB first and absent when there are no nulls; buffers are 64-byte aligned; offsets are 0; arrays are immutable. D12 changes no layout.
+
+Known differences:
+- Buffer lengths are exact, not padded to 64 bytes (Arrow recommends it; the IPC format requires 8-byte padding). In-memory sharing through the C Data Interface doesn't need it; writing IPC/Parquet would pad while serializing.
+- str columns aren't yet checked for valid UTF-8 (R2.5 prerequisite 4).
+- int32 offsets cap a str column at 2 GiB of text (Arrow `large_utf8` isn't used).
+- Conformance is checked byte by byte (`TestVectorArrowLayout`), not yet against an Arrow implementation. FFI P5 (the C Data Interface export) should come with a round-trip test through pyarrow or the Arrow C library, and must keep exported buffers alive for the GC until the consumer's release callback runs.
 
 ## 1. Purpose
 

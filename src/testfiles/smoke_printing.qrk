@@ -23,7 +23,7 @@ print(len(to_str(range(100))))
 print(len(fmt::full(range(1000))))
 
 // A list that contains itself.
-xs = list [1]
+xs: list = list [1]
 xs.push(xs)
 print(xs)
 

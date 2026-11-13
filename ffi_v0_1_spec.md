@@ -176,6 +176,12 @@ New header `runtime/include/quark/ext/arrow.hpp`:
 
 Zero-copy *import* needs vectors that can wrap foreign buffers, with an owner and a release callback. That's deferred until profiling shows the import copy matters.
 
+Conformance caveats to handle in P5 (recorded 2026-11-13 in `tables_v0_1_spec.md` R2.7):
+- **Padding.** Vector buffers are 64-byte aligned but sized exactly, not padded to 64 bytes. The C Data Interface doesn't require padding, so export can point at them as is; writing Arrow IPC or Parquet must pad while serializing.
+- **UTF-8.** Arrow `utf8` (`u`) requires valid UTF-8. Export must only ever see str vectors that are valid UTF-8: the CSV reader will validate on read (tables R2.5, prerequisite 4), and any other path that builds str vectors from native bytes must validate too. Import should check, since a producer's bad bytes would otherwise reach Quark strings.
+- **Large strings.** int32 offsets cap a str vector at 2 GiB. Import of `U` (`large_utf8`, int64 offsets) is either a clear error or a checked conversion when the data fits.
+- **Proof.** P5 lands with a round-trip test through a real Arrow implementation (pyarrow or the Arrow C library, skipped when absent, like `TestStdBlas`). Today conformance is only checked byte by byte (`TestVectorArrowLayout`).
+
 ### P6. Tables with a runtime schema (fixes G9)
 
 - Runtime: `q_struct_def_create(name, field_names, n)` builds a GC-allocated `QStructDef` at runtime. `qext::new_table(names, columns, n)` builds a `QTable` from it.

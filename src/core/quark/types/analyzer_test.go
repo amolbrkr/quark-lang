@@ -112,7 +112,7 @@ func TestDictHelpers_BuiltinsRegistered(t *testing.T) {
 }
 
 func TestWarnings_DoNotFailTypeErrors(t *testing.T) {
-	analyzer, _, parseErrs, typeErrs := testutil.Analyze("d = dict { a: 1 }\nd.a = 'x'\n")
+	analyzer, _, parseErrs, typeErrs := testutil.Analyze("x = 1 if true else 'x'\n")
 	if len(parseErrs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", parseErrs)
 	}

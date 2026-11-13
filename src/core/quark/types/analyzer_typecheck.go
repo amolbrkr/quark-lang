@@ -200,32 +200,34 @@ func (a *Analyzer) validateReturnType(funcType *FunctionType, inferredType Type,
 		a.returnValidated[errorNode] = true
 	}
 	annotated := funcType.AnnotatedReturnType
-	if isUnknownType(inferredType) {
-		funcType.ReturnType = annotated
+	funcType.ReturnType = annotated
+	if annotated.Equals(TypeAny) {
+		escapePending(inferredType)
 		return
 	}
-	if !canReturnAs(annotated, inferredType) {
-		a.errorAt(errorNode, "function '%s' declares return type '%s' but body returns '%s'", funcName, annotated.String(), inferredType.String())
-	}
-	funcType.ReturnType = annotated
-}
-
-func canReturnAs(annotated Type, inferred Type) bool {
-	if CanAssign(annotated, inferred) {
-		return true
-	}
-	if union, ok := inferred.(*UnionType); ok {
-		for _, opt := range union.Options {
-			if opt.Equals(TypeVoid) {
-				continue
-			}
-			if !CanAssign(annotated, opt) {
-				return false
+	// A body that can end without a value (an if without else, a when
+	// without a matching arm) returns null, which no annotation but any
+	// accepts.
+	if u, ok := inferredType.(*UnionType); ok {
+		rest := make([]Type, 0, len(u.Options))
+		for _, opt := range u.Options {
+			if !opt.Equals(TypeVoid) {
+				rest = append(rest, opt)
 			}
 		}
-		return true
+		if len(rest) < len(u.Options) {
+			a.errorAt(errorNode, "function '%s' declares return type '%s' but can end without a value (an if without else, or a when with no matching arm, returns null); give every branch a value", funcName, annotated.String())
+			return
+		}
 	}
-	return false
+	// Otherwise a body of unknown type is checked when it returns (codegen).
+	if isUnknownType(inferredType) {
+		return
+	}
+	SettleContainers(annotated, inferredType)
+	if !CanAssign(annotated, inferredType) {
+		a.errorAt(errorNode, "function '%s' declares return type '%s' but body returns '%s'", funcName, annotated.String(), inferredType.String())
+	}
 }
 
 func (a *Analyzer) validateDefaultValues(specs []paramSpec, funcType *FunctionType, errorNode *ast.TreeNode) {

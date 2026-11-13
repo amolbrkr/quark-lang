@@ -118,7 +118,7 @@ inline QValue q_split(QValue str, QValue sep) {
     const char* s = str.data.string_val;
     const char* d = sep.data.string_val;
     if (d[0] == '\0') {
-        QValue out = qv_list(1);
+        QValue out = qv_list(1, &q_elem_str);
         out.data.list_val->push_back(str);
         return out;
     }
@@ -126,7 +126,7 @@ inline QValue q_split(QValue str, QValue sep) {
     std::string hay(s);
     std::string delim(d);
 
-    QValue out = qv_list();
+    QValue out = qv_list(0, &q_elem_str);
     size_t start = 0;
     while (true) {
         size_t pos = hay.find(delim, start);

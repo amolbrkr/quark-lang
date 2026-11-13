@@ -1,6 +1,8 @@
 package types
 
 import (
+	"fmt"
+
 	"quark/ast"
 	"quark/token"
 )
@@ -153,9 +155,7 @@ func (a *Analyzer) assignMember(target, value *ast.TreeNode) Type {
 		return rightType
 	}
 	if dictType, ok := objectType.(*DictType); ok {
-		if !isUnknownType(rightType) && !IsErrorType(rightType) && !isUnknownType(dictType.ValueType) && !CanAssign(dictType.ValueType, rightType) {
-			a.warnAt(target, "assigning '%s' to dict with value type '%s'", rightType.String(), dictType.ValueType.String())
-		}
+		a.checkElemWrite(dictType, rightType, target, target.Children[1].TokenLiteral())
 		return rightType
 	}
 	if !isUnknownType(objectType) {
@@ -183,6 +183,7 @@ func (a *Analyzer) assignIndex(target, value *ast.TreeNode) Type {
 			if !isIntLike(indexType) && !isUnknownType(indexType) {
 				a.errorAt(target.Children[1], "list index must be int, got %s", indexType.String())
 			}
+			a.checkElemWrite(targetType, rightType, target, "")
 		case *DictType:
 			a.errorAt(target, "use dot access for dict assignment: d.key = value")
 		default:
@@ -195,7 +196,10 @@ func (a *Analyzer) assignIndex(target, value *ast.TreeNode) Type {
 }
 
 // assignName analyzes `name = value`: the first assignment defines the
-// variable, later ones must fit its type.
+// variable and its type, later ones must fit that type. A variable never
+// narrows (rule A, architecture.md §12.9): one whose first value has no
+// known type stays untyped whatever it is assigned later, and one holding a
+// function keeps that function's signature.
 func (a *Analyzer) assignName(target, value *ast.TreeNode) Type {
 	varName := target.TokenLiteral()
 	// `fn len(x) -> ...` or `len = ...` would rebind a builtin or extern fn,
@@ -217,47 +221,152 @@ func (a *Analyzer) assignName(target, value *ast.TreeNode) Type {
 		a.Analyze(value)
 		return TypeError
 	}
+	sym := a.currentScope.Lookup(varName)
 	if value.NodeType == ast.LambdaNode {
-		// A variable holding a function: defined before the lambda is
-		// analyzed so the lambda can call itself through it.
-		if a.currentScope.LookupLocal(varName) == nil {
-			funcType := functionTypeFromLambdaNodeWithStructs(value, a.structTypes)
-			a.recordDef(a.declareSym(varName, funcType, true, SymLocal, nil, target), target)
-		}
 		a.pendingFuncName = varName
+		if sym == nil {
+			// A variable holding a function: defined before the lambda is
+			// analyzed so the lambda can call itself through it.
+			funcType := functionTypeFromLambdaNodeWithStructs(value, a.structTypes)
+			sym = a.declareSym(varName, funcType, true, SymLocal, nil, target)
+			a.recordDef(sym, target)
+			rightType := a.Analyze(value)
+			if ft, ok := rightType.(*FunctionType); ok {
+				sym.Type = ft
+			}
+			return rightType
+		}
 	}
 	rightType := a.Analyze(value)
-	sym := a.currentScope.Lookup(varName)
 	if sym == nil {
 		a.recordDef(a.declareSym(varName, rightType, true, SymLocal, rightType, target), target)
 		return rightType
 	}
 	a.refs[target] = sym
 	a.markParamReassigned(sym)
-	if _, dstIsFunc := sym.Type.(*FunctionType); dstIsFunc {
-		if srcFunc, srcIsFunc := rightType.(*FunctionType); srcIsFunc {
-			sym.Type = srcFunc
-			return rightType
-		}
+	a.checkReassign(target, sym, rightType)
+	return rightType
+}
+
+// checkReassign checks a later assignment of a value of type rightType to
+// the variable sym, whose type was set by its declaration or first value.
+func (a *Analyzer) checkReassign(target *ast.TreeNode, sym *Symbol, rightType Type) {
+	if IsErrorType(rightType) || IsErrorType(sym.Type) {
+		return
 	}
-	if isUnknownType(rightType) && !sym.Type.Equals(TypeAny) {
-		a.errorAt(target, "cannot assign value of unknown type to '%s'", sym.Type.String())
-		return rightType
+	if isUnknownType(sym.Type) {
+		escapePending(rightType)
+		return
+	}
+	if isUnknownType(rightType) {
+		a.errorAt(target, "cannot assign value of unknown type to '%s'; convert it first with a typed declaration (n: %s = value)", sym.Type.String(), sym.Type.String())
+		return
 	}
 	if _, srcIsResult := rightType.(*ResultType); srcIsResult {
-		if _, dstIsResult := sym.Type.(*ResultType); !dstIsResult && !isUnknownType(sym.Type) {
+		if _, dstIsResult := sym.Type.(*ResultType); !dstIsResult {
 			a.errorAt(target, "[C-TYPE] cannot assign result to '%s'; use 'unwrap()' or 'when' to extract the value", sym.Type.String())
-			return rightType
+			return
 		}
 	}
-	if !CanAssign(sym.Type, rightType) && !isUnknownType(rightType) {
-		a.errorAt(target, "cannot assign value of type '%s' to '%s'", rightType.String(), sym.Type.String())
-		return rightType
+	SettleContainers(sym.Type, rightType)
+	if CanAssign(sym.Type, rightType) {
+		return
 	}
-	if !isUnknownType(rightType) && sym.Type.Equals(TypeAny) {
-		sym.Type = rightType
+	name := target.TokenLiteral()
+	if _, isFn := sym.Type.(*FunctionType); isFn {
+		a.errorAt(target, "cannot assign %s to '%s', which holds %s: a variable keeps the type of its first value; declare it '%s: fn = ...' to hold any function", rightType.String(), name, sym.Type.String(), name)
+		return
 	}
-	return rightType
+	a.errorAt(target, "cannot assign value of type '%s' to '%s'", rightType.String(), sym.Type.String())
+}
+
+// checkElemWrite checks a value of type valueType written into the list or
+// dict of type container (push, insert, set, concat, index or key
+// assignment; key names the dict key, when known). An empty literal's
+// pending type takes the first value's type. A value of unknown type is
+// checked by the runtime, which knows each container's element type
+// (rule C).
+func (a *Analyzer) checkElemWrite(container, valueType Type, at *ast.TreeNode, key string) {
+	if IsErrorType(valueType) {
+		return
+	}
+	var elem Type
+	var p *pending
+	switch c := container.(type) {
+	case *ListType:
+		elem, p = c.ElementType, &c.pending
+	case *DictType:
+		elem, p = c.ValueType, &c.pending
+	default:
+		return
+	}
+	if p.Pending {
+		if isUnknownType(valueType) {
+			valueType = TypeAny
+		}
+		FixElementType(container, valueType, nodeLine(at))
+		return
+	}
+	if isUnknownType(elem) {
+		escapePending(valueType)
+		return
+	}
+	if isUnknownType(valueType) {
+		return
+	}
+	SettleContainers(elem, valueType)
+	if CanAssign(elem, valueType) {
+		return
+	}
+	origin := ""
+	if p.FixedLine > 0 {
+		origin = fmt.Sprintf(" (set by its first write, on line %d)", p.FixedLine)
+	}
+	if _, isDict := container.(*DictType); isDict {
+		where := "in"
+		if key != "" {
+			where = fmt.Sprintf("under key '%s' of", key)
+		}
+		a.errorAt(at, "cannot store %s %s %s: a dict keeps the value type it was created with%s; create it as 'd: dict = dict {...}' to hold mixed values", valueType.String(), where, container.String(), origin)
+		return
+	}
+	a.errorAt(at, "cannot add %s to %s: a list keeps the element type it was created with%s; create it as 'xs: list = list [...]' to hold mixed values", valueType.String(), container.String(), origin)
+}
+
+// escapePending fixes a pending (empty literal) list or dict passed where the
+// compiler can't see what is written into it (an untyped parameter, an `any`
+// variable or element) to hold any value.
+func escapePending(t Type) {
+	switch c := t.(type) {
+	case *ListType:
+		if c.Pending {
+			FixElementType(c, TypeAny, 0)
+		}
+	case *DictType:
+		if c.Pending {
+			FixElementType(c, TypeAny, 0)
+		}
+	}
+}
+
+// contextLiteral types a non-empty list or dict literal written where an
+// annotation says `list` or `dict` (a typed declaration, an annotated
+// parameter, a struct field) as that annotation, so it holds values of any
+// type: `xs: list = list [1, 2]` can later get a str.
+func (a *Analyzer) contextLiteral(node *ast.TreeNode, slot Type) {
+	if node == nil || len(node.Children) == 0 {
+		return
+	}
+	switch t := slot.(type) {
+	case *ListType:
+		if node.NodeType == ast.ListNode && t.ElementType.Equals(TypeAny) {
+			a.nodeTypes[node] = slot
+		}
+	case *DictType:
+		if node.NodeType == ast.DictNode && t.ValueType.Equals(TypeAny) {
+			a.nodeTypes[node] = slot
+		}
+	}
 }
 
 // analyzeBinary analyzes arithmetic, comparison and `and`/`or`.
@@ -371,7 +480,11 @@ func (a *Analyzer) analyzeArith(node *ast.TreeNode, leftType, rightType Type) Ty
 		if op == token.DIVIDE || leftType.Equals(TypeFloat) || rightType.Equals(TypeFloat) {
 			return TypeFloat
 		}
-		return TypeInt
+		if leftType.Equals(TypeInt) && rightType.Equals(TypeInt) {
+			return TypeInt
+		}
+		// An operand that may be an int or a float (union[float | int]).
+		return MergeTypes(TypeInt, TypeFloat)
 	}
 	if isUnknownType(leftType) || isUnknownType(rightType) {
 		return TypeAny
@@ -429,16 +542,17 @@ func (a *Analyzer) analyzeEquality(node *ast.TreeNode, leftType, rightType Type)
 	return TypeBool
 }
 
+// analyzeList types a list literal: its element type is that of its
+// elements; an empty literal's is decided by its first write (pending).
 func (a *Analyzer) analyzeList(node *ast.TreeNode) Type {
 	if len(node.Children) == 0 {
-		return &ListType{ElementType: TypeAny}
+		return NewPendingList()
 	}
-	elemType := a.Analyze(node.Children[0])
-	for _, child := range node.Children[1:] {
-		childType := a.Analyze(child)
-		elemType = MergeTypes(elemType, childType)
+	elemTypes := make([]Type, 0, len(node.Children))
+	for _, child := range node.Children {
+		elemTypes = append(elemTypes, a.Analyze(child))
 	}
-	return &ListType{ElementType: elemType}
+	return &ListType{ElementType: ElementOf(MergeTypes(elemTypes...))}
 }
 
 func (a *Analyzer) analyzeVector(node *ast.TreeNode) Type {
@@ -474,7 +588,7 @@ func (a *Analyzer) analyzeVector(node *ast.TreeNode) Type {
 
 func (a *Analyzer) analyzeDict(node *ast.TreeNode) Type {
 	if len(node.Children) == 0 {
-		return &DictType{KeyType: TypeString, ValueType: TypeAny}
+		return NewPendingDict()
 	}
 	seenKeys := make(map[string]struct{})
 	var valueType Type
@@ -507,7 +621,7 @@ func (a *Analyzer) analyzeDict(node *ast.TreeNode) Type {
 	if valueType == nil {
 		valueType = TypeAny
 	}
-	return &DictType{KeyType: TypeString, ValueType: valueType}
+	return &DictType{KeyType: TypeString, ValueType: ElementOf(valueType)}
 }
 
 func (a *Analyzer) analyzeIndex(node *ast.TreeNode) Type {
@@ -574,6 +688,11 @@ func (a *Analyzer) analyzeVarDecl(node *ast.TreeNode) Type {
 			return declType
 		}
 	}
+	if isUnknownType(declType) {
+		escapePending(valueType)
+	}
+	SettleContainers(declType, valueType)
+	a.contextLiteral(valueNode, declType)
 	if !CanAssign(declType, valueType) && !isUnknownType(valueType) {
 		a.errorAt(nameNode, "cannot assign value of type '%s' to '%s'", valueType.String(), declType.String())
 	}

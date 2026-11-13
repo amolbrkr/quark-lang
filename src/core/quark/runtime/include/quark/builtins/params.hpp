@@ -35,9 +35,10 @@ inline bool q_param_bool(QValue v, const char* fn, const char* param) {
     return v.data.bool_val;
 }
 
-// q_param_check checks a non-scalar annotation. Reference types (list, dict,
-// vector, resource, fn) also accept null, as the checker does; a result never
-// does (it is always ok(...) or err(...)).
+// q_param_check checks a non-scalar annotation. allowNull is set for
+// resource only (structs use q_param_struct): `list`, `dict`, `vec` and `fn`
+// mean a list, dict, vec or function, and a result is always ok(...) or
+// err(...), as in the checker.
 inline QValue q_param_check(QValue v, QValue::ValueType tag, bool allowNull, const char* expected, const char* fn, const char* param) {
     if (v.type == tag || (allowNull && v.type == QValue::VAL_NULL)) return v;
     q_param_type_error(v, expected, fn, param);
@@ -132,6 +133,46 @@ inline QValue q_var_struct(QValue v, const QStructDef* def, const char* var) {
         return v;
     }
     q_var_type_error(v, def->name, var);
+}
+
+// Return values of functions with a return annotation (`fn f(c) int -> ...`)
+// whose body's type the compiler couldn't prove: checked once on return,
+// with the same rules as parameters (float widens an int; struct and
+// resource annotations accept null, the others don't).
+[[noreturn]] inline void q_ret_type_error(QValue v, const char* expected, const char* fn) {
+    QValue got = q_type(v);
+    q_runtime_reportf("runtime error: function '%s' declares return type %s but returned %s\n",
+                      fn, expected, got.data.string_val ? got.data.string_val : "unknown");
+    std::exit(1);
+}
+
+inline long long q_ret_int(QValue v, const char* fn) {
+    if (v.type != QValue::VAL_INT) q_ret_type_error(v, "int", fn);
+    return v.data.int_val;
+}
+
+inline double q_ret_float(QValue v, const char* fn) {
+    if (v.type == QValue::VAL_FLOAT) return v.data.float_val;
+    if (v.type == QValue::VAL_INT) return static_cast<double>(v.data.int_val);
+    q_ret_type_error(v, "float", fn);
+}
+
+inline bool q_ret_bool(QValue v, const char* fn) {
+    if (v.type != QValue::VAL_BOOL) q_ret_type_error(v, "bool", fn);
+    return v.data.bool_val;
+}
+
+inline QValue q_ret_check(QValue v, QValue::ValueType tag, bool allowNull, const char* expected, const char* fn) {
+    if (v.type == tag || (allowNull && v.type == QValue::VAL_NULL)) return v;
+    q_ret_type_error(v, expected, fn);
+}
+
+inline QValue q_ret_struct(QValue v, const QStructDef* def, const char* fn) {
+    if (v.type == QValue::VAL_NULL) return v;
+    if (v.type == QValue::VAL_STRUCT && v.data.struct_val && v.data.struct_val->def == def) {
+        return v;
+    }
+    q_ret_type_error(v, def->name, fn);
 }
 
 #endif // QUARK_BUILTINS_PARAMS_HPP

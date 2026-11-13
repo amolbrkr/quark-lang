@@ -18,9 +18,18 @@ struct QStruct;
 struct QStructDef;
 struct QTable;
 
-// Type alias for list storage — uses q_allocator so the GC can scan
-// the vector's internal buffer for pointers to collectible objects.
-using QList = std::vector<QValue, q_allocator<QValue>>;
+struct QElemType;
+
+// List storage — uses q_allocator so the GC can scan the vector's internal
+// buffer for pointers to collectible objects. `elem` is the element type the
+// list was created with (types/elemtype.hpp), nullptr for any value; every
+// write through the runtime checks the value against it, so code that reads
+// the elements can trust their type. Native code that appends with
+// push_back directly must keep to it (qext::list_push checks it).
+struct QList : std::vector<QValue, q_allocator<QValue>> {
+    using std::vector<QValue, q_allocator<QValue>>::vector;
+    const QElemType* elem = nullptr;
+};
 
 // QValue: Tagged union for all Quark runtime values
 struct QValue {
@@ -75,5 +84,43 @@ struct QResult {
     bool is_ok;
     QValue payload;
 };
+
+// QElemType describes the element type of a list or the value type of a
+// dict (checks in types/elemtype.hpp); nullptr stands for any value.
+struct QElemType {
+    QValue::ValueType tag;
+    const QElemType* elem;  // list and dict: element type; result: ok type (nullptr: any)
+    const QElemType* err;   // result: err type (nullptr: any)
+    const QStructDef* sdef; // struct: its definition
+    int vdtype;             // vec: QVector::Type as int, -1 for any dtype
+    const char* name;       // the type as the compiler writes it: "int", "list[int]"
+};
+
+inline constexpr QElemType q_elem_int{QValue::VAL_INT, nullptr, nullptr, nullptr, -1, "int"};
+inline constexpr QElemType q_elem_float{QValue::VAL_FLOAT, nullptr, nullptr, nullptr, -1, "float"};
+inline constexpr QElemType q_elem_bool{QValue::VAL_BOOL, nullptr, nullptr, nullptr, -1, "bool"};
+inline constexpr QElemType q_elem_str{QValue::VAL_STRING, nullptr, nullptr, nullptr, -1, "str"};
+
+// q_type_name is the name Quark uses for a value type ("int", "str", ...),
+// as type() returns it. Struct values are shown by their struct's name where
+// the struct definition is available (q_value_type_name in elemtype.hpp).
+inline const char* q_type_name(QValue::ValueType t) {
+    switch (t) {
+        case QValue::VAL_INT: return "int";
+        case QValue::VAL_FLOAT: return "float";
+        case QValue::VAL_STRING: return "str";
+        case QValue::VAL_BOOL: return "bool";
+        case QValue::VAL_NULL: return "null";
+        case QValue::VAL_LIST: return "list";
+        case QValue::VAL_VECTOR: return "vec";
+        case QValue::VAL_DICT: return "dict";
+        case QValue::VAL_FUNC: return "fn";
+        case QValue::VAL_RESULT: return "result";
+        case QValue::VAL_RESOURCE: return "resource";
+        case QValue::VAL_STRUCT: return "struct";
+        case QValue::VAL_TABLE: return "tbl";
+    }
+    return "unknown";
+}
 
 #endif // QUARK_CORE_VALUE_HPP

@@ -30,13 +30,14 @@ r2 = Row { id: id(7), score: id(3) }
 print(r2.score / 2)
 print(r2.id + 1)
 
-// reference fields accept their type or null, also from untyped paths
+// reference fields accept their type, also from untyped paths; struct
+// fields also accept null (list, dict, vec and fn fields don't)
 o = Outer { inner: id(Inner { n: 4 }), tags: id(list [1, 2]), run: id(fn(x) -> x * 2), name: id('ok') }
 print(o.inner.n)
 print(len(o.tags))
 f = o.run
 print(f(5))
-o2 = Outer { inner: id(null), tags: null, run: null, name: 'empty' }
+o2 = Outer { inner: id(null), tags: list [], run: fn(x) -> x, name: 'empty' }
 print(o2.name)
 print(o2.tags)
 

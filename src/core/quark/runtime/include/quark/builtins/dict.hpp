@@ -31,7 +31,7 @@ inline QValue q_dkeys(QValue dict) {
         std::exit(1);
     }
 
-    QValue out = qv_list(static_cast<int>(dict.data.dict_val->entries.size()));
+    QValue out = qv_list(static_cast<int>(dict.data.dict_val->entries.size()), &q_elem_str);
     for (const auto& kv : dict.data.dict_val->entries) {
         out.data.list_val->push_back(qv_string(kv.first.c_str()));
     }
@@ -45,7 +45,7 @@ inline QValue q_dvalues(QValue dict) {
         std::exit(1);
     }
 
-    QValue out = qv_list(static_cast<int>(dict.data.dict_val->entries.size()));
+    QValue out = qv_list(static_cast<int>(dict.data.dict_val->entries.size()), dict.data.dict_val->elem);
     for (const auto& kv : dict.data.dict_val->entries) {
         out.data.list_val->push_back(kv.second);
     }

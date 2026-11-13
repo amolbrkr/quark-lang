@@ -235,8 +235,8 @@ staff: tbl[Employee] = unwrap(csv::read_file('staff.csv'))
 
 ## 9. Limitations
 
-- A `struct` inside a function body is not supported and fails with `internal: struct 'S' not pre-declared` (changelog, Known issues). Define it at the top level or in a module.
-- A field named with `__` (`a__b: int`) is accepted in the declaration and rejected only where a literal uses it (changelog, Known issues).
+- A `struct` inside a function body is not supported and fails with `internal: struct 'S' not pre-declared` (`known_issues.md`). Define it at the top level or in a module.
+- A field named with `__` (`a__b: int`) is accepted in the declaration and rejected only where a literal uses it (`known_issues.md`).
 - A parse error in a field default is reported one line below the field.
 - **Known bug (found 2026-11-13):** struct equality is rejected only where the compiler sees that both operands are structs. Through a value of unknown type, or inside lists, `==` returns `false` even for the same value: `fn id(v) -> v`, `a = P { x: 1 }`, then `id(a) == id(a)` and `list [a] == list [a]` print `false`. It should be a runtime error.
 - Not planned for v0.1: methods, recursive defaults, a struct update helper, `vec` of structs.

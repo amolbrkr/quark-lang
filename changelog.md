@@ -6,9 +6,11 @@ Quark has no tagged releases yet, so entries are grouped by date and by piece of
 
 Sections follow [Keep a Changelog](https://keepachangelog.com/): **Breaking**, **Added**, **Changed**, **Fixed**, **Removed**, **Internal**. "Breaking" covers anything that can make a program that worked before fail to compile, fail at runtime, or print something different.
 
+Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here; an entry's Fixed section says when one is fixed.
+
 ## Contents
 
-- [Known issues (as of `fd6822c`)](#known-issues-as-of-fd6822c)
+- [2026-11-13: Known issues move to `known_issues.md`](#2026-11-13-known-issues-move-to-known_issuesmd)
 - [2026-11-13: Benchmark suite; `std/blas` gemm, syrk and transposed gemv](#2026-11-13-benchmark-suite-stdblas-gemm-syrk-and-transposed-gemv)
 - [2026-11-13: Vec reductions follow the table aggregates; `std/stats` (tables D13)](#2026-11-13-vec-reductions-follow-the-table-aggregates-stdstats-tables-d13)
 - [2026-11-13: A missing vec entry taken out as one value is an error (tables D12)](#2026-11-13-a-missing-vec-entry-taken-out-as-one-value-is-an-error-tables-d12)
@@ -32,66 +34,20 @@ Sections follow [Keep a Changelog](https://keepachangelog.com/): **Breaking**, *
 
 ---
 
-## Known issues (as of `fd6822c`)
+## 2026-11-13: Known issues move to `known_issues.md`
 
-Checked against the compiler on 2026-11-12 and 2026-11-13. The structural causes and the plan for them are in `architecture.md` §12-14.
+Commits: not yet committed
 
-### Wrong results with no error
+No compiler, runtime or stdlib changes.
 
-**A `null` is read as an element type.** Element types are fixed and every write is checked since the §12.9 work (2026-11-13), but a few reads still return `null` where the compiler assumed an element:
-- A list read past its end, stored in a variable: `w = list [1, 2][5]`, `print(w)` prints `0` (`null` is documented). The same for `xs.get(i)` and `d.get(k)` on a missing key, and for a list changed during a `for` loop over it (`for y in xs: xs.pop()`).
-- A `null` inside a vector read by a loop: `for x in list [1, null, 3].to_vec(): print(x)` prints `1`, `0`, `3` (`0.0` for floats, `false` for bools). `to_list()` of such a vec gives a `list[int]` with a `null` in it.
-- `when` on a vec compares elementwise and reads the first result: `fn g(a) -> when a:` / `1 -> 'one'` / `_ -> 'other'` returns `'other'` for `g(vec [1, 1])` with no error. `if a == 1` correctly fails with "vec used as a condition".
-
-**`+` with an operand of unknown type is typed `str`.** The checker gives `a + b` the type `str` when either side has an unknown type (`any`), whatever the values are. A `str` annotation then trusts it: `x: any = 1`, then `z: str = x + x` stores the int `2` with no error (`type(z)` is `int`); the same through a `str` return annotation (`fn g(a: any) str -> a + a` returns an int) and a `str` struct field (`S { name: x + x }`). Correct programs are rejected too, because `sum`, `min` and `max` of a vec have type `any` (they can be `null`): `v = vec [1.0, 2.0]`, `w = sum(v) + sum(v)`, then `print(w + 1)` fails with `operator 'PLUS' requires numeric operands, got str and int`, and `sqrt(x + x)` with `argument 1 of 'sqrt' expects float, got str`. `-`, `*` and `/` are typed correctly. Workaround: give the operand a type first (`s: float = sum(v)`).
-
-**The parser accepts two expressions with no separator.**
-- Several statements on one line run as separate statements: `price = 4`, `qty = 3`, then `total = price qty` / `print(total)` prints `4` with no error (`total = price`, then `qty` as a statement). `y = 'a' 'b'` gives `'a'`. `fn f(x) -> x + 1 print(9)` gives `f` a two-statement body, so `f(1)` prints `9` and returns `null`.
-- An unclosed string ends at the end of the line with no error: `msg = "hello` then `print(msg)` prints `hello`.
-- A `fn` declaration whose body is an inline `when` swallows the next top-level statement: after `fn pick(x) -> when x:` / `    1 -> 'one'` / `    _ -> 'other'`, a following `print(pick(1))` becomes part of `pick`'s body, so the program prints nothing. Only the first statement after the arms is affected (`x = 5` / `print(x)` after it run); a lambda (`g = fn(x) -> when x: ...`) and the block form (`fn pick(x) ->` / `    when x: ...`) are fine.
-
-**Structs and extern methods.**
-- `==` on structs reached through an untyped path is always `false`, with no error: `struct P:` / `x: int`, `fn id(v) -> v`, `a = P { x: 1 }`, then `print(id(a) == id(a))` and `print(list [a] == list [a])` both print `false`. A direct `a == a` is a compile error (structs have no `==`).
-- Extern methods with one receiver and name collide silently and leak across files. If `e1.qrk` declares `extern fn str.shout() str as 'h1_shout'` and `e2.qrk` declares the same method as `'h2_shout'`, a script that includes both can call `'a'.shout()` unqualified and gets e2's function, while `e1::one('a')` (which calls `s.shout()` inside e1) gets h1's. Declaring the same method twice in one file is accepted too. Methods are registered by `(receiver, name)` in one table (`a.methods`, `types/analyzer_modules.go`), and the loader doesn't resolve them per file.
-
-**Stdlib lookup and `print`.**
-- Any directory named `stdlib` in the script's directory or a parent is used as the standard library, before the real one and with no warning (`findStdlibRoot`, `loader/loader.go`). With `/tmp/x/stdlib/io.qrk` present, `incl 'std/io'` in `/tmp/x/a/main.qrk` silently loads that file; without one it fails with `cannot find module 'std/io': file '/tmp/x/stdlib/io.qrk' does not exist`.
-- A misspelled `print` alignment is ignored: `print('x', '|\n', 5, 'rigth', '.')` prints `x....|` (left-aligned) with no error.
-
-**Runtime numbers and edge cases.**
-- List indexes in methods are cut to 32 bits: `list [10, 20, 30].get(4294967296)` returns `10`, and `xs.set(4294967297, 99)` writes element 1 (the same for `insert` and `remove`). `xs[i]` and `s[i]` take the whole index.
-- `abs(-9223372036854775807 - 1)` returns `0`.
-- `to_int('99999999999999999999')` returns `9223372036854775807`. `to_int(1e19)`, `floor(1e30)`, `round(-1e300)` and `fillna(1e30)` on an int vec give arbitrary values; `fillna(2.7)` on an int vec stores `2`.
-- `range(0.5, 3.0)` is `[0, 1, 2]`. `range(9223372036854775800, 9223372036854775807, 5)` never ends, and a lowered `for` loop over it wraps to negative numbers.
-- `d.set(1, 'a')` and `d.set('1', 'b')` write the same key: `d` prints `{'1': 'b'}`.
-- `sys::exit(256)` exits with status 0.
-- `io::read` stops at a NUL byte: on a file containing `ab\0cd`, the first read returns `ab` and the next returns `''`.
-- `csv::parse('a,"b"x,c')` returns `[['a', 'bx', 'c']]` instead of an error.
-- Two-argument `min`/`max` with NaN depend on the order: `min(n, 1.0)` with `n = to_float('nan')` is `1.0`, but `min(1.0, n)` is `nan` (vec reductions skip NaN). Sorting a list that contains NaN is undefined behavior in the C++ sort.
-
-**Unbounded recursion crashes with no message.** `print('before')`, `fn f(n) -> f(n + 1)`, `f(0)` overflows the C++ stack: the binary dies with a segmentation fault (status 139), `quark run` exits with 255 and prints nothing, not even `before`, since buffered output is lost. It should be a runtime error with a location, and output printed before it should appear.
-
-### Fails loudly, but with a C++ error, a wrong location or a misleading message
-
-- A prelude builtin used as a value passes the checker and fails in clang: `f = len`, then `print(f('ab'))`, or `print(len)`, gives `use of undeclared identifier 'quark_len'`. Extern fns used as values work (they have thunks).
-- `struct S` inside a `fn` body fails with `internal: struct 'S' not pre-declared`.
-- A call written above a `fn` declaration is checked less than one below it. `print(apply(fn(a, b) -> a + b))` above `fn apply(k) -> k(1)` is a runtime error, below it a compile error.
-- Calling a function value with more than 12 arguments compiles and always fails at runtime (`function call supports up to 12 arguments, got 13`); it could be a compile error.
-- A struct field named with `__` (`a__b: int`) is accepted in the `struct` and rejected only where a literal uses it.
-- A syntax error in an imported file is reported inside a load error located at the importer's `incl` line. Load errors in the main file show its absolute path, while check errors show the path as written. Several messages name token kinds instead of source text (`operator 'PLUS'`, `expected identifier after OK`, `no prefix parse function for NEWLINE`), and a multi-line `g = fn(x) ->` body gives about ten cascading `DEDENT` errors.
-- Native code that appends to a list with `push_back`, or writes `d->entries` directly, skips the element-type check; `qext::list_push` and `qext::dict_set` check it.
-- Tooling: the integration tests share one binary, `src/core/quark/quark_test`, which `TestMain` deletes at the start and end of every run. A second `go test` in the same checkout (another session, an editor) deletes it mid-run, and every integration test then fails with `fork/exec .../quark_test: no such file or directory`. Each run should build into its own temporary directory.
-- A field read on a struct of unknown type that lacks the field says `dot access is only supported on dict; got type 'struct'` (`fn id(v) -> v`, `p = id(P { x: 1 })`, `p.y`).
-- A wrong argument type for a fully annotated function or an `extern fn`, from an untyped value, reports `expected int, got str` without the function or parameter name (ordinary functions say `argument 'x' of 'f' expects int, got str`).
-- Stdlib runtime errors use the old `.` spelling: `io::read` on a closed file says `io.read() expects an open file (resource is closed)`; `csv.read`, `random.randint` and `blas.dot` likewise.
-- `qext::box(int)` in native code doesn't compile (ambiguous between the `int64_t`, `double` and `bool` overloads); pass an `int64_t`.
-- A program that imports `std/blas` starts OpenBLAS's thread pool (one thread per CPU), and then allocating large vecs makes the GC print `GC Warning: Repeated allocation of very large block (appr. size 78128 KiB): May lead to memory leak and poor performance` to stderr, and vec allocation gets erratic (`2.5 * a + b` on 10M-element vecs with `blas::axpy` measured 30 ms with `OPENBLAS_NUM_THREADS=1`, 135 ms without). The same program without `incl 'std/blas'`, or with `OPENBLAS_NUM_THREADS=1`, prints nothing (`src/benchmarks/RESULTS.md`).
-
----
+### Docs
+- **`known_issues.md`** (new) holds the bugs not fixed yet, each with a reproduction, moved unchanged from the top of this file, plus how to add one: what is wrong, a reproduction, where and when it was found, and its reach when a change made it easier to hit. This file is now only the history.
+- **CLAUDE.md, Robustness Bar**: a bug found outside the task at hand is recorded in `known_issues.md` and reported at the top of the final summary, not fixed in the same run (new rule 7; known issues are fixed in runs of their own). A hole a change makes easier to hit is recorded with its reach and reported first, for the user to decide (rule 3; it used to require fixing it in the same change or stopping to ask). An issue that prevents a clean implementation of the task stops the work: the agent explains it with a reproduction, the options and their trade-offs (with code snippets) and a recommendation, instead of working around it (new rule 8). The Changelog section and the docs table point to the new file.
+- Every reference to "Known issues in changelog.md" now points to `known_issues.md` (README, semantics, grammar, stdlib, architecture, and the FFI, structs and modules specs). Three sentences that pointed at issues fixed by the `lowering-ir` merge are corrected: the README said changing a list during a `for` loop over it isn't checked (it is a runtime error), `src/benchmarks/README.md` said a missing dict key in the join reads as `0.0` (it is a runtime error), and `src/benchmarks/RESULTS.md` called the `+` typing bug open.
 
 ## 2026-11-13: Benchmark suite; `std/blas` gemm, syrk and transposed gemv
 
-Commits: `41b8279`; the follow-ups (`architecture.md` §15, the benchmark setup changes below) are not yet committed
+Commits: `41b8279`, `cbb3ea7`, `c92a964`
 
 ### Breaking
 - `blas::blas_gemv`, the `extern fn` binding under `blas::gemv`, takes a fifth argument, `trans`. Call `blas::gemv`, whose new `trans` parameter defaults to `false`.
@@ -115,12 +71,13 @@ Commits: `41b8279`; the follow-ups (`architecture.md` §15, the benchmark setup 
 
 ### Internal
 - The BLAS glue checks every matrix shape in one place (`qblas::check_shape`).
-- `architecture.md` §15 (new) lists the performance costs the benchmarks found, each with its cause, measurements and a direction: source-location tracking (two thirds of a call's cost in `fib`), boxed arithmetic on call results, page faults on fresh vec buffers (huge pages), missing dense fast paths and fusion in vec kernels, keeping D13 reductions fast, list push and GC scanning, dict key hashing, strings without a stored length, sorting, and the OpenBLAS thread pool.
+- `architecture.md` §15 (new) lists the performance costs the benchmarks found, each with its cause, measurements and a direction: source-location tracking (two thirds of a call's cost in `fib`), boxed arithmetic on call results, page faults on fresh vec buffers (huge pages), missing dense fast paths and fusion in vec kernels, list push and GC scanning, dict key hashing, strings without a stored length, sorting, and the OpenBLAS thread pool.
 - `TestStdBlas` checks the new routines' results and 16 more error cases: wrong dimensions, results over `INT_MAX` elements, i64 inputs, missing entries, `null` and an `int` reaching a parameter through `any`, and a wrong argument count through a function value.
-- Known issues (above) gains the `+`-typed-as-`str` bug and the OpenBLAS thread-pool GC warning, both found with the benchmarks. The first measurements and what they show (list building, dict hashing and strings no faster than CPython; `vec` close to NumPy; `std/blas` on par with NumPy and R) are in `src/benchmarks/RESULTS.md`.
+- Known issues (now `known_issues.md`) gains the OpenBLAS thread-pool GC warning, found with the benchmarks. They also found that `+` with an operand of unknown type was typed `str`, which the new back end's work fixes (that entry, Fixed). The first measurements and what they show (list building, dict hashing and strings no faster than CPython; `vec` close to NumPy; `std/blas` on par with NumPy and R) are in `src/benchmarks/RESULTS.md`.
+
 ## 2026-11-13: Vec reductions follow the table aggregates; `std/stats` (tables D13)
 
-Commits: not yet committed
+Commits: `571cab3` (merged in `5ff0225`)
 
 Implements `tables_v0_1_spec.md` D13: `sum`, `min` and `max` of a vector follow the table aggregate rules, so `sum(t.x)` and `summarize(s = sum(e.x))` will agree. Two decisions were taken while implementing it: `min`/`max`/mean of a vector with no present values are a runtime error (D13 had said `null`), and the mean is `stats::mean` in a new `std/stats` module rather than a prelude builtin.
 
@@ -148,7 +105,7 @@ Implements `tables_v0_1_spec.md` D13: `sum`, `min` and `max` of a vector follow 
 
 ## 2026-11-13: A missing vec entry taken out as one value is an error (tables D12)
 
-Commits: not yet committed
+Commits: `571cab3` (merged in `5ff0225`)
 
 Implements `tables_v0_1_spec.md` D12, the first prerequisite of the table compiler work: vectors keep their missing entries, and a missing entry can't leave a vector as a single value. Before, it was read as `0` (`0.0`, `false`) into a typed variable.
 
@@ -174,7 +131,7 @@ Implements `tables_v0_1_spec.md` D12, the first prerequisite of the table compil
 
 ## 2026-11-13: New back end: lowering pass, typed IR and verifier (architecture §13)
 
-Commits: not yet committed
+Commits: `571cab3` (merged in `5ff0225`)
 
 The C++ back end is rewritten (`architecture.md` §1.6). The new one lowers the analyzed program to a small typed IR in which every temporary, conversion, runtime check and evaluation step is explicit, verifies the IR, and prints it. This fixes the "part of an expression runs at the wrong time" group of known issues as a whole, and it is the back end the table compiler work will target. It replaces `codegen/`, which is removed. The whole test suite passes on it, and loops run as fast as before.
 
@@ -208,6 +165,7 @@ The C++ back end is rewritten (`architecture.md` §1.6). The new one lowers the 
 - An `elseif` condition with a method call compiles: `elseif name().upper() == 'B':` failed in clang (`expected expression`). Such a condition also runs only when the conditions before it were false.
 - A member or index assignment that is the last statement of a function computes its value once: `fn setit(d) ->` / `    d.x = bump()` called `bump()` twice, once to store and once for the function's result.
 - A variable assigned by a `while` condition can be read after the loop: `while s = xs.get(i):` / `...`, then `print(s)`.
+- `+` with an operand of unknown type is no longer typed `str`. The checker counted a value of unknown type as a string (and as a bool and an int), so a `str` annotation trusted the sum: `x: any = 1`, then `z: str = x + x` stored the int `2` with no error, and so did a `str` return annotation (`fn g(a: any) str -> a + a`) and a `str` struct field. Each is now a runtime error (`variable 'z' is declared str but got int`). Correct programs the wrong type rejected compile: `y = x + x`, then `y + 1` (`operator 'PLUS' requires numeric operands, got str and int`), `sqrt(x + x)`, and, with the D13 typing of `sum`, `w = sum(v) + sum(v)`, then `w + 1`.
 - `and` and `or` of two bools are plain C++ `&&` and `||`; a loop testing `n % 3 == 0 and n % 5 != 0 or n % 7 == 0` runs about 45% faster.
 - `'abc'[i]` with an `i` of unknown type that isn't an int is a runtime error (`str index must be int, got float`); it returned `null`. `xs[4294967296]` and `'abc'[4294967297]` are out of range; the index was cut to 32 bits (`'abc'[4294967297]` was `'b'`).
 - A `for` loop over a value of unknown type that isn't a list, string or vec fails before the first iteration, also when it is empty: `for k in id(dict {}):` ran zero times with no error (a non-empty dict failed). The message names the type (`for-loop iterable must be list, string, or vec, got null`; a `null` said `len() expects str, list, dict, or vec`).
@@ -233,7 +191,7 @@ The C++ back end is rewritten (`architecture.md` §1.6). The new one lowers the 
 
 ## 2026-11-13: Docs overhaul
 
-Commits: not yet committed
+Commits: `44a6460`, `f782060`
 
 No compiler, runtime or stdlib changes. Every doc was rewritten against the current compiler, and each claim was checked by running programs or reading the code. Each doc now starts with a table of contents and describes only the current state; superseded designs and finished plans are removed (git history keeps them).
 
@@ -245,7 +203,7 @@ No compiler, runtime or stdlib changes. Every doc was rewritten against the curr
 - **stdlib.md, error_codes.md, stdlib_expansion_v0_1_spec.md**: element types of returned lists, dict value-type errors, vec reductions as they behave today (with the planned D13 change), `std/csv` marked for replacement; `INV-SYMBOL`, `INV-STORAGE`, `INV-FIXED-FN`, `INV-OPERATOR` and `INV-ASSIGN-TARGET` added, and `INV-ARGCHECK` removed; the expansion spec's CSV section points to the tables spec, and every name uses `::`.
 - **structs, modules and FFI specs, editor extension README**: rewritten as current references, with the implementation deviations folded into the rules. Structs: imported and module structs, widening, `null` rules, `fn` fields, no separate schema type. FFI: the current interface, callbacks, the `qext` API; DuckDB after native tables.
 - **CLAUDE.md**: new "Docs" section: which doc owns which topic, and the current-state-only rule. It also stops calling Quark dynamically typed, and the `qv_null()` rule is fixed.
-- **Known issues** (above) gains bugs found while checking: two expressions with no separator are accepted (`total = price qty`), unclosed strings, struct `==` through untyped values, extern methods colliding across files, the `stdlib/` folder hijack, a misspelled `print` alignment being ignored, and four misleading messages.
+- **Known issues** (now `known_issues.md`) gains bugs found while checking: two expressions with no separator are accepted (`total = price qty`), unclosed strings, struct `==` through untyped values, extern methods colliding across files, the `stdlib/` folder hijack, a misspelled `print` alignment being ignored, and four misleading messages.
 
 ## 2026-11-13: Element types are fixed, variables don't narrow, return annotations are checked (architecture §12)
 

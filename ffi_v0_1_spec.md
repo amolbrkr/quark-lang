@@ -97,7 +97,7 @@ Results are built with the runtime constructors `qv_ok(v)` / `qv_err(v)` for now
 
 ### 2.5 Rules for glue code
 
-- **Element types.** Every list and dict carries its element type (`architecture.md` §12). Add to lists with `qext::list_push` and to dicts with `qext::dict_set`, which check it. `push_back` or writing `d->entries` directly skips the check, and a wrong element would be read with the wrong type (changelog, Known issues).
+- **Element types.** Every list and dict carries its element type (`architecture.md` §12). Add to lists with `qext::list_push` and to dicts with `qext::dict_set`, which check it. `push_back` or writing `d->entries` directly skips the check, and a wrong element would be read with the wrong type (`known_issues.md`).
 - **Vectors are immutable** once returned to Quark. Write only into vectors the glue has just created.
 - **GC.** Memory reachable from Quark values must be GC memory (`qext::malloc`, or `q_allocator` for C++ containers stored in runtime data). The collector doesn't scan `malloc` memory and never runs destructors.
 - **Boxing ints:** `qext::box(1)` is ambiguous in C++ (between the `int64_t`, `double` and `bool` overloads); pass an `int64_t`.

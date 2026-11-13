@@ -1,6 +1,6 @@
 # Quark Language Semantics
 
-How Quark programs behave: values, types, scoping, functions, errors. Syntax and operator precedence are in **grammar.md**, builtins and stdlib modules in **stdlib.md**, compiler and runtime internals in **architecture.md**. Current bugs are listed under "Known issues" in **changelog.md**, not here.
+How Quark programs behave: values, types, scoping, functions, errors. Syntax and operator precedence are in **grammar.md**, builtins and stdlib modules in **stdlib.md**, compiler and runtime internals in **architecture.md**. Current bugs are listed in **known_issues.md**, not here.
 
 ## Contents
 
@@ -348,7 +348,7 @@ The methods are listed in stdlib.md.
 
 ### 9.3 Ranges
 
-`range(end)`, `range(start, end)` and `range(start, end, step)` return a `list[int]`, from `start` (default 0) up to but not including `end`; a negative `step` counts down. `step = 0` is a runtime error. Pass ints: float arguments are accepted and truncated, which is a known issue (changelog.md).
+`range(end)`, `range(start, end)` and `range(start, end, step)` return a `list[int]`, from `start` (default 0) up to but not including `end`; a negative `step` counts down. `step = 0` is a runtime error. Pass ints: float arguments are accepted and truncated, which is a known issue (known_issues.md).
 
 ### 9.4 Vectors
 
@@ -403,7 +403,7 @@ An imported file may only contain definitions, at the top level and in module bo
 
 ### 10.5 Structs across files
 
-A struct may be defined at a file's top level or in a module body (not in a function body; a known issue in changelog.md). Its identity is its definition: `a::Point` and `b::Point` are different types at compile time, and at runtime the parameter and field checks compare struct definitions, not names. `type()`, `print` and diagnostics show an imported struct as `stem::Point` (the defining file's stem, whatever alias imported it) and a main-script struct bare (`Point`).
+A struct may be defined at a file's top level or in a module body (not in a function body; a known issue in known_issues.md). Its identity is its definition: `a::Point` and `b::Point` are different types at compile time, and at runtime the parameter and field checks compare struct definitions, not names. `type()`, `print` and diagnostics show an imported struct as `stem::Point` (the defining file's stem, whatever alias imported it) and a main-script struct bare (`Point`).
 
 ### 10.6 Cycles and deduplication
 

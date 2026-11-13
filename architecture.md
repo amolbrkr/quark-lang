@@ -502,7 +502,7 @@ All tests run from `src/core/quark` with `go test ./...`.
 - **Package tests**: lexer, parser, loader (`loader/modules_v02_test.go`), analyzer, `lower/` (every smoke program lowers and verifies; malformed IR is rejected), `emit/` (the C++ shapes of each lowering) and `internal/editordata` (generated editor data, grammar coverage, snippets parse, and the extension's JS tests when `node` is available).
 - **GC self-check**: a standalone C++ program that allocates every kind of runtime value and checks with `GC_base()` that every object and buffer is on the GC heap.
 
-The integration binary is shared: a second `go test` in the same checkout deletes it mid-run, and every integration test then fails with `fork/exec .../quark_test: no such file or directory` (`changelog.md`, Known issues).
+The integration binary is shared: a second `go test` in the same checkout deletes it mid-run, and every integration test then fails with `fork/exec .../quark_test: no such file or directory` (`known_issues.md`).
 
 ---
 
@@ -551,7 +551,7 @@ A runtime function's `QValue` result is never unboxed on trust; a function whose
 
 The reads that could give `null` where the analyzer said "element" are closed: `xs[i]` and `s[i]` out of range are runtime errors (`q_index`), and `xs.get(i)` and `d.get(k)` have type `any`.
 
-**Holes left** (listed with reproductions in `changelog.md`, Known issues): native code writing lists directly skips the element check.
+**Holes left** (listed with reproductions in `known_issues.md`): native code writing lists directly skips the element check.
 
 **Finding holes mechanically** (planned):
 - A *checked mode* build flag turns every raw read into a checked one; running the test corpus in both modes, any check failure or output difference is a soundness bug.
@@ -605,7 +605,6 @@ Measured with the benchmark suite (`src/benchmarks/`; the numbers and how they w
 **Vectors**
 - **Fresh memory dominates large element-wise operations.** `2.5 * a + b` on 10M doubles takes 15 ms into memory already mapped and 74 ms into a new `malloc` buffer, because every 4 KB page faults on its first write. NumPy asks the kernel for huge pages for large arrays (`madvise(MADV_HUGEPAGE)`): 30 ms with them, 82 ms without. Quark's GC reuses its heap and takes 47 ms. Direction: huge pages for large vec buffers.
 - **Dense fast paths.** Division checks every slot for null and every divisor for zero, `sum` and the mask filter test validity per element even when `null_count == 0`, and the filter switches on the dtype inside its loop (`filter` 195 ms; NumPy 180 ms, Polars 27 ms). Direction: one loop for vectors without nulls, written so clang can vectorize it.
-- **Keep reductions fast when they follow the table aggregates (D13).** A first version (uncommitted, on `lowering-ir`) took `sum` of 10M doubles from 12.2 to 31.8 ms (`long double` accumulation: x87, no SIMD; a null and NaN test per element) and `min`/`max` from 6.1 to 35 ms (a per-element dtype switch). Direction: the dense path above, `double` accumulation (pairwise summation if accuracy is the goal), and a NaN test only where NaN can occur.
 - **Fixed cost per operation** is about 5.6 µs for a 300-element vector (allocation and validation), so row-by-row code on short vectors is slower with `vec` than with lists (`gemm`: 1.02 s against 0.36 s).
 - **No fusion**: an expression of eight operations writes seven 80 MB temporaries (195 ms; NumPy 117 ms, Polars 94 ms).
 

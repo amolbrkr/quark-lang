@@ -58,7 +58,7 @@ Dot syntax has three uses, and `::` one:
 - `x.method(args)`: a method of the receiver's type. A method the type doesn't have is a compile-time error when the type is known (`type 'int' has no method 'upper'`).
 - `io::exists(path)`: a member of an imported file. `incl 'std/io'` binds `io`; `incl 'std/io' as name` binds another name. `io.exists` is an error.
 
-Builtin names can't be redefined or assigned (`len = 1`, `fn print(x) -> ...` are compile-time errors). A builtin can't be used as a value yet (`f = len` fails in clang; changelog.md Known issues).
+Builtin names can't be redefined or assigned (`len = 1`, `fn print(x) -> ...` are compile-time errors). A builtin can't be used as a value yet (`f = len` fails in clang; known_issues.md).
 
 ### How values print
 
@@ -144,7 +144,7 @@ type(42) | print()          // int
 len('hello') | print()      // 5
 ```
 
-Some edge cases of `to_int` and `to_float` give wrong values instead of errors (`to_int('99999999999999999999')`, `to_int(1e19)`); see changelog.md Known issues.
+Some edge cases of `to_int` and `to_float` give wrong values instead of errors (`to_int('99999999999999999999')`, `to_int(1e19)`); see known_issues.md.
 
 ### Results
 
@@ -191,7 +191,7 @@ range(5, 2).join(', ') | print()       // 5, 4, 3
 range(10, 0, -2).join(', ') | print()  // 10, 8, 6, 4, 2
 ```
 
-A float argument is truncated instead of rejected (`range(0.5, 3.0)` is `[0, 1, 2]`), and ranges near the int64 limit misbehave; see changelog.md Known issues.
+A float argument is truncated instead of rejected (`range(0.5, 3.0)` is `[0, 1, 2]`), and ranges near the int64 limit misbehave; see known_issues.md.
 
 ### Math
 
@@ -214,7 +214,7 @@ sqrt(16) | print()         // 4.0
 floor(3.7) | print()       // 3
 ```
 
-`abs` of the smallest int64, `floor`/`ceil`/`round` of floats outside the int64 range, and two-argument `min`/`max` with NaN give wrong values; see changelog.md Known issues.
+`abs` of the smallest int64, `floor`/`ceil`/`round` of floats outside the int64 range, and two-argument `min`/`max` with NaN give wrong values; see known_issues.md.
 
 ---
 
@@ -295,7 +295,7 @@ list [1, 2, 3].join('+') | print()            // 1+2+3
 print(type(list [1, 2, 3].to_vec()))          // vec[i64]
 ```
 
-Known issues (changelog.md): indexes above 32 bits wrap in `.get`, `.set`, `.insert` and `.remove` (`xs[i]` takes the whole 64-bit index); sorting a list that contains NaN is undefined.
+Known issues (known_issues.md): indexes above 32 bits wrap in `.get`, `.set`, `.insert` and `.remove` (`xs[i]` takes the whole 64-bit index); sorting a list that contains NaN is undefined.
 
 ---
 
@@ -332,7 +332,7 @@ for item in mydict.items():
     print(item.key)
 ```
 
-Known issues (changelog.md): `d.set(1, ...)` and `d.set('1', ...)` write the same key.
+Known issues (known_issues.md): `d.set(1, ...)` and `d.set('1', ...)` write the same key.
 
 ---
 
@@ -377,7 +377,7 @@ for x in v:                  // runtime error: vec element 1 is missing; use fil
 | `.to_list()` | `-> list` | List of the elements, typed by the dtype. A vector with missing entries is a runtime error (`to_list() of a vec with 2 missing entries; use fillna or drop_na first`) |
 | `.enumerate()` | `-> list` | List of `{index, value}` dicts, as for lists; a missing entry is a runtime error |
 
-Known issues (changelog.md): `fillna(2.7)` on an int vector stores `2`.
+Known issues (known_issues.md): `fillna(2.7)` on an int vector stores `2`.
 
 ### Reductions
 
@@ -437,7 +437,7 @@ File I/O over `src/core/stdlib/io.hpp`. Import with `incl 'std/io' as io`. An op
 
 Reading, writing or seeking a closed file (or `null`) is a runtime error: `io.read() expects an open file (resource is closed)`.
 
-Limits: writes are unbuffered; a file that is never closed stays open until the program exits; `binary` only changes newline handling on Windows; a read stops at a NUL byte (changelog.md Known issues). `std/io` is for text. A rework is proposed in `stdlib_expansion_v0_1_spec.md` §6.
+Limits: writes are unbuffered; a file that is never closed stays open until the program exits; `binary` only changes newline handling on Windows; a read stops at a NUL byte (known_issues.md). `std/io` is for text. A rework is proposed in `stdlib_expansion_v0_1_spec.md` §6.
 
 ```quark
 incl 'std/io' as io
@@ -507,7 +507,7 @@ Program arguments, environment variables and exit status. Import with `incl 'std
 |---|---|---|
 | `args` | `-> list` | Command-line arguments after the program name, as strings. With `quark run`, arguments after `--` are passed: `quark run tool.qrk -- in.csv -v` |
 | `env` | `name: str -> str or null` | Value of the environment variable `name`, or `null` when it isn't set |
-| `exit` | `code: int = 0` | Flush output and exit with status `code`; `0` means success. Only the low 8 bits reach the OS (`sys::exit(256)` exits with 0; changelog.md Known issues) |
+| `exit` | `code: int = 0` | Flush output and exit with status `code`; `0` means success. Only the low 8 bits reach the OS (`sys::exit(256)` exits with 0; known_issues.md) |
 
 ```quark
 incl 'std/sys' as sys
@@ -539,7 +539,7 @@ The current module reads CSV into rows of strings. Every field is a `str`; conve
 
 Fields may be quoted with `"..."`; a quoted field can contain the separator, line breaks and doubled quotes (`""` is one `"`). Lines end with `\n` or `\r\n`; blank lines are skipped. `sep` must be one character (`';'`, `'\t'`, ...); anything else is a runtime error. The header row is returned like any other row.
 
-Text after a closing quote is accepted instead of rejected: `csv::parse('a,"b"x,c')` returns `[['a', 'bx', 'c']]` (changelog.md Known issues).
+Text after a closing quote is accepted instead of rejected: `csv::parse('a,"b"x,c')` returns `[['a', 'bx', 'c']]` (known_issues.md).
 
 ```quark
 incl 'std/csv' as csv

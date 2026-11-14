@@ -80,6 +80,8 @@ Fixes from the "Wrong results with no error" section of `known_issues.md`: each 
 
 ## 2026-11-14: Table benchmarks; README language goals
 
+Commits: `59ef3f3`
+
 ### Added
 - **Table implementations in the benchmark suite** (`src/benchmarks/`, `quark_tbl`): `reduce`, `arith`, `expr`, `zscore`, `filter`, `sort`, `groupby` and `strings` now have a `tbl` implementation written with the query verbs, for example `t | e -> group_by(e.k) | summarize(s = sum(e.v), n = count())`. A table can only be read from CSV in tables v0.1, so `datagen.py` also writes the inputs as CSV files (`cols.csv`, `sort.csv`, `rows.csv`, `strings.csv`; floats in shortest round-trip form, so they read back to the same doubles) and `quark/lib/tables.qrk` reads them typed by a row struct. `join` and `wordcount` keep `quark_tbl` as planned (no join verb, no table built from a list yet).
 - **Three table benchmarks**, each against pandas, Polars and data.table (and pure Python, NumPy or base R where they apply): `query` (filter, mutate, group by two keys, four aggregates, sort, on 1M rows), `sortkeys` (sort 1M rows by a string key, then a float descending) and `readcsv` (read a 52 MB, 5-column CSV file into a typed table). The default preset's data grows from about 290 MB to 740 MB.

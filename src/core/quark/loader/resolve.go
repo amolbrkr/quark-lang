@@ -142,7 +142,7 @@ func (ml *ModuleLoader) walk(n *ast.TreeNode, c rctx) {
 		return
 	}
 	switch n.NodeType {
-	case ast.InclNode, ast.ExternHeaderNode, ast.ExternLinkNode, ast.ExternIncludePathNode:
+	case ast.InclNode, ast.ExternHeaderNode, ast.ExternLinkNode, ast.ExternIncludePathNode, ast.ExternSourceNode:
 		return
 	case ast.ModuleNode:
 		ml.walkModule(n, c)

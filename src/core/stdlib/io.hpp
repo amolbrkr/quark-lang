@@ -24,6 +24,30 @@ struct QFilePayload {
     bool binary;
 };
 
+// Closes the fd once. A second call is a no-op, so an explicit close and the
+// finalizer cannot both close it. Does not allocate GC memory.
+inline void q_file_payload_close(void* payload) {
+    auto* file = static_cast<QFilePayload*>(payload);
+    if (file == nullptr || file->fd < 0) {
+        return;
+    }
+    int fd = file->fd;
+    file->fd = -1;
+#ifdef _WIN32
+    _close(fd);
+#else
+    ::close(fd);
+#endif
+}
+
+inline void q_file_ensure_closer() {
+    static const bool ready = [] {
+        q_resource_set_close(QRES_KIND_FILE, q_file_payload_close);
+        return true;
+    }();
+    (void)ready;
+}
+
 inline QValue q_file_err_with_detail(const char* op, const std::string& detail) {
     std::string msg(op);
     msg += ": ";
@@ -96,6 +120,7 @@ inline QFilePayload* q_expect_file_payload(QValue file, const char* op) {
 
 // Open `path` with mode 'r', 'w' or 'a'. Returns ok(resource) or err(message).
 inline QValue q_file_open(const char* path, const char* mode, bool binary) {
+    q_file_ensure_closer();
     int fd = q_file_open_native(path, mode, binary);
     if (fd == -2) {
         return q_file_err_with_detail("open", "mode must be 'r', 'w' or 'a'");
@@ -204,13 +229,20 @@ inline QValue q_file_close(QValue file) {
     if (!payload) {
         return q_file_err_with_detail("close", "file payload missing");
     }
+    if (payload->fd < 0) {
+        q_resource_invalidate(handle);
+        return qv_ok(qv_null());
+    }
 
+    int fd = payload->fd;
+    payload->fd = -1;
 #ifdef _WIN32
-    int rc = _close(payload->fd);
+    int rc = _close(fd);
 #else
-    int rc = ::close(payload->fd);
+    int rc = ::close(fd);
 #endif
     if (rc != 0) {
+        payload->fd = fd;
         return q_file_sys_err("close", nullptr);
     }
 

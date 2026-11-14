@@ -9,7 +9,7 @@ import (
 )
 
 func TestExternDirectives_Parse(t *testing.T) {
-	src := "extern include_path 'include'\nextern link 'openblas'\nextern 'glue.hpp'\nlink = 1\n"
+	src := "extern include_path 'include'\nextern link 'openblas'\nextern source 'glue.cpp'\nextern 'glue.hpp'\nlink = 1\n"
 	node, errs := testutil.Parse(src)
 	if len(errs) > 0 {
 		t.Fatalf("unexpected parse errors: %v", errs)
@@ -20,6 +20,7 @@ func TestExternDirectives_Parse(t *testing.T) {
 	}{
 		{ast.ExternIncludePathNode, "include"},
 		{ast.ExternLinkNode, "openblas"},
+		{ast.ExternSourceNode, "glue.cpp"},
 		{ast.ExternHeaderNode, "glue.hpp"},
 	}
 	if len(node.Children) != len(want)+1 {
@@ -35,8 +36,8 @@ func TestExternDirectives_Parse(t *testing.T) {
 		}
 	}
 	// `link` is a contextual word: still usable as an identifier.
-	if node.Children[3].NodeType != ast.AssignNode {
-		t.Fatalf("expected 'link = 1' to parse as an assignment, got %s", node.Children[3].NodeType)
+	if node.Children[len(want)].NodeType != ast.AssignNode {
+		t.Fatalf("expected 'link = 1' to parse as an assignment, got %s", node.Children[len(want)].NodeType)
 	}
 }
 
@@ -52,8 +53,8 @@ func TestExternDirectives_Errors(t *testing.T) {
 		{"path in library name", "extern link '/opt/lib/duckdb'\n", "--lib-path"},
 		{"flag in library name", "extern link '-lduckdb'\n", "leading '-'"},
 		{"include is not a directive", "extern include 'dir'\n", "use extern include_path"},
-		{"source not supported yet", "extern source 'glue.cpp'\n", "extern source is not supported yet"},
-		{"unknown word", "extern frobnicate 'x'\n", "'link' or 'include_path'"},
+		{"trailing words on source", "extern source 'glue.cpp' extra\n", "options after the string are reserved"},
+		{"unknown word", "extern frobnicate 'x'\n", "'include_path' or 'source'"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

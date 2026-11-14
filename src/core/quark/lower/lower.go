@@ -153,7 +153,7 @@ func (l *lowerer) program(root *ast.TreeNode) {
 	}
 	for _, child := range root.Children {
 		switch child.NodeType {
-		case ast.ModuleNode, ast.ExternHeaderNode, ast.ExternLinkNode, ast.ExternIncludePathNode,
+		case ast.ModuleNode, ast.ExternHeaderNode, ast.ExternLinkNode, ast.ExternIncludePathNode, ast.ExternSourceNode,
 			ast.ExternFnNode, ast.StructDefNode, ast.FnDeclNode:
 			continue
 		}
@@ -788,7 +788,7 @@ func (l *lowerer) stmt(node *ast.TreeNode) {
 	case ast.ContinueNode:
 		l.add(&Continue{})
 	case ast.ModuleNode, ast.StructDefNode, ast.ExternHeaderNode, ast.ExternFnNode,
-		ast.ExternLinkNode, ast.ExternIncludePathNode:
+		ast.ExternLinkNode, ast.ExternIncludePathNode, ast.ExternSourceNode:
 	case ast.FnDeclNode:
 		// Hoisted: the scope's start created it.
 	case ast.AssignNode, ast.VarDeclNode:

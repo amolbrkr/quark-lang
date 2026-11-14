@@ -33,13 +33,14 @@ Stages: `parse`, `load`, `check`, `build` (clang++ compile and link), `runtime`.
 | Code | Stage | Meaning | Emitted from |
 | --- | --- | --- | --- |
 | `QK-PARSE-001` | `parse` | Syntax error. Also covers lexer errors, reported with the lexer's message: `unexpected indent`, `expected indented block`, `inconsistent indentation`, `unexpected character '#'`, `'\0' is not supported in string literals`. A bad character inside an expression is reported by the parser instead (`expected RPAR but got ILLEGAL`). Also a pipe target that isn't a call, and anything after an `extern` directive's string. | `src/core/quark/parser/parser.go` |
-| `QK-LOAD-001` | `load` | Import and name resolution (modules v0.2): a file that can't be found, an unsupported import path, an import cycle; an imported file or directory name that isn't `[a-z][a-z0-9_]*`; a statement (anything but a definition or constant) in an imported file; a name defined twice at the top level of a file, a module member named like a top-level name, an import binding named like a definition or another binding, two names that would get the same internal name; a name containing `__`; an unknown or malformed qualified name (`'fmt' (std/fmt) has no 'show_vector'; did you mean 'show_vec'?`, a re-export like `geo::io::open`); `.` on an import binding or module (`'io' is an imported file; use io::exists`); assigning an imported name or constant; a bare name in an imported file that the file doesn't define; `incl` of a same-file module or `incl` outside the top level; an `extern link` / `extern include_path` inside a block or module; an extern method declared twice for one receiver in a file, or named like a prelude method of any type; a `QUARK_STDLIB_ROOT` that isn't a directory, or no stdlib next to the compiler. | `src/core/quark/loader/files.go`, `loader.go`, `resolve.go` |
+| `QK-LOAD-001` | `load` | Import and name resolution (modules v0.2): a file that can't be found, an unsupported import path, an import cycle; an imported file or directory name that isn't `[a-z][a-z0-9_]*`; a statement (anything but a definition or constant) in an imported file; a name defined twice at the top level of a file, a module member named like a top-level name, an import binding named like a definition or another binding, two names that would get the same internal name; a name containing `__`; an unknown or malformed qualified name (`'fmt' (std/fmt) has no 'show_vector'; did you mean 'show_vec'?`, a re-export like `geo::io::open`); `.` on an import binding or module (`'io' is an imported file; use io::exists`); assigning an imported name or constant; a bare name in an imported file that the file doesn't define; `incl` of a same-file module or `incl` outside the top level; an `extern link` / `extern include_path` / `extern source` inside a block or module; an extern method declared twice for one receiver in a file, or named like a prelude method of any type; a `QUARK_STDLIB_ROOT` that isn't a directory, or no stdlib next to the compiler. | `src/core/quark/loader/files.go`, `loader.go`, `resolve.go` |
 | `QK-CHECK-001` | `check` | Semantic or type error found by the analyzer: wrong argument types or counts, unknown methods, wrong-typed writes into lists and dicts, `null` where an annotation rejects it, call-shape mismatches of callbacks, return annotations, redefined builtins, duplicate or reassigned `fn` declarations in a nested scope, and so on. | `src/core/quark/types/analyzer.go` |
 | `QK-CHECK-002` | `check` | Warning (does not stop compilation). Currently emitted for one case: the two branches of `x if c else y` have incompatible types (`ternary branches have incompatible types: 'int' and 'str'`). | `src/core/quark/types/analyzer.go` (`warnAt`), called from `analyzer_controlflow.go` |
 | `QK-RUNTIME-001` | `runtime` | Any runtime failure; see [Runtime errors](#runtime-errors). | `src/core/quark/runtime/include/quark/core/diagnostics.hpp` |
-| `QK-FFI-001` | `load` | An `extern include_path` directory that doesn't exist, or a `std/` include path when no stdlib directory can be found. | `src/core/quark/loader/loader.go` |
+| `QK-FFI-001` | `load` | An `extern include_path` directory that doesn't exist, an `extern source` file that doesn't exist, or a `std/` path when no stdlib directory can be found. | `src/core/quark/loader/loader.go` |
 | `QK-FFI-002` | `build` | An `extern link` library that can't be found. Notes list the file names tried and the directories searched. | `src/core/quark/toolchain/native.go` |
-| `QK-FFI-003` | `build` | A C++ compile error inside an extern glue header or a file it includes (for example a missing `#include`). Names the glue file and line; clang's full output is printed above it. | `src/core/quark/toolchain/native.go` |
+| `QK-FFI-003` | `build` | A C++ compile error inside an extern glue header, an extern glue source, or a file one of them includes (for example a missing `#include`). Names the glue file and line; clang's full output is printed above it. | `src/core/quark/toolchain/native.go` |
+| `QK-FFI-004` | `runtime` | A native handle of the wrong kind, a closed handle, or a value that is not a resource, reported by `qext::handle_get` and `qext::handle_close` (`expected qffi.item, got file`, `qffi.item is closed`). | `src/core/quark/runtime/include/quark/ext/api.hpp` |
 
 A C++ compile or link error outside glue code has no code: `quark` prints clang's output and `Compilation failed: ...`. It means a wrong `extern fn` symbol or header, or a compiler bug.
 
@@ -54,7 +55,7 @@ error[QK-RUNTIME-001] (runtime): modulo by zero at file.qrk:3:10
 - The location is the statement that failed. After a call returns, the caller's statement is current again (every generated function restores it), so an error later in the same statement points there, not into the callee.
 - Code from an imported user file reports that file (`lib/helpers.qrk:3:11`). Code in `std/` modules sets no location, so an error raised inside the stdlib (usually a bad argument) points at the user's call.
 - An annotated parameter that receives a value of the wrong type is reported at the call: `argument 'x' of 'f' expects int, got str`. A fully annotated function compiled to native C++ (most stdlib module functions) reports it as `expected int, got float`, without the parameter name.
-- Errors raised by native extension code through `qext` start with `extension error:` (`extension error: blas.dot: x must be an f64 vec, got i64; ...`).
+- Errors raised by native extension code through `qext` start with `extension error:` (`extension error: blas.dot: x must be an f64 vec, got i64; ...`). A wrong or closed extension handle is `QK-FFI-004` instead. `std/io` still reports a closed file as `QK-RUNTIME-001` (`io.read() expects an open file (resource is closed)`).
 
 The code is deliberately coarse for now; the message carries the detail.
 
@@ -121,7 +122,7 @@ Run on every compile after lowering (`src/core/quark/lower/verify.go`, `architec
 
 ## Planned codes
 
-- `QK-FFI-004` (runtime): wrong handle kind or use of a closed handle (`specs/ffi_v0_1_spec.md` P8). Today these are `QK-RUNTIME-001`.
+None.
 
 ## Rules for new codes
 

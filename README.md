@@ -7,8 +7,8 @@ by default, with built-in types for data such as vectors and tables.
 ## Contents
 
 - [Language goals](#language-goals)
-  - [Checked before it runs](#checked-before-it-runs)
   - [Tables with typed queries](#tables-with-typed-queries)
+  - [Checked before it runs](#checked-before-it-runs)
   - [Vectors for whole columns](#vectors-for-whole-columns)
   - [Linear algebra with BLAS](#linear-algebra-with-blas)
   - [Measured against Python and R](#measured-against-python-and-r)
@@ -52,57 +52,15 @@ error. Quark treats these as equal goals.
 - **Quick to write.** A small, familiar language core with a sensible
 syntax. Types are inferred, so you can iterate quickly and add type
 annotations before the code goes to production.
-- **Fast.**  Queries on Quark's tables (`tbl`) run as fast as the best data frame 
+- **Fast.** Queries on Quark's tables (`tbl`) match the best data frame
 libraries on one thread, and a recursive `fib` runs 25 times faster than CPython 3.11
-and 150 times faster than R. See the [benchmark results](src/benchmarks/RESULTS.md).
+and 115 times faster than R. The figures are in [Measured against Python and R](#measured-against-python-and-r).
 The compiler, written in Go, translates each program to C++17 and builds 
 it with clang into a standalone native binary.
 - **Trustworthy.** The compiler checks as much as it can before the program
 runs. What it can't know (data read at runtime, values typed `any`, native
 code) is checked where it is used, and a mismatch stops the program with a
 message and a source location.
-
-### Checked before it runs
-
-The compiler infers the type of every variable, list, dict, table and
-function result it can. It checks argument types, the element type of every
-list and dict, return types, how a function calls the functions passed to it,
-every name across files, and every column a query reads. None of these
-mistakes needs an annotation to be caught (saved as `ov.qrk`,
-`quark check ov.qrk` reports):
-
-```quark
-prices = list [12.5, 3.0]          // inferred: a list of float
-prices.push('n/a')
-
-fn apply(k, v) -> k(v)
-fn add(a, b) -> a + b
-print(apply(add, 1))
-
-fn mean(xs) float ->
-    if len(xs) > 0:
-        sum(xs) / len(xs)
-```
-
-```text
-error[QK-CHECK-001] (check): cannot add str to list[float]: a list keeps the element type it was created with; create it as 'xs: list = list [...]' to hold mixed values at ov.qrk:2:13
-error[QK-CHECK-001] (check): argument 1 of 'apply' is called with 1 argument (line 4), but 'add' takes 2 arguments at ov.qrk:6:13
-error[QK-CHECK-001] (check): function 'mean' declares return type 'float' but can end without a value (an if without else, or a when with no matching arm, returns null); give every branch a value at ov.qrk:8:1
-```
-
-Values the compiler can't know are checked when they are used. The same
-`push` through an unannotated function fails at the write, with its location:
-
-```quark
-fn add_row(rows, r) -> rows.push(r)
-prices = list [12.5, 3.0]
-add_row(prices, 'n/a')
-// runtime error: push() can't add a str to a list of float: a list keeps the element type it was created with ...
-```
-
-The aim is that a program that compiles runs as intended. The compiler
-doesn't reach that everywhere yet: the known cases are listed in
-[known_issues.md](known_issues.md).
 
 ### Tables with typed queries
 
@@ -167,8 +125,50 @@ avg = sales | s -> group_by(s.region) | summarize(m = mean(s.product))
 Each verb compiles to a typed loop over the column buffers, with no
 expression interpreter and no temporary columns. On 1M rows and one thread, a
 five-step query (filter, mutate, group by two keys, four aggregates, sort)
-takes 134 ms with Quark, against 142 ms for R's data.table, 167 ms for Polars
-and 198 ms for pandas. More in [Tables](#tables).
+takes 90 ms with Quark, against 89 ms for R's data.table, 99 ms for Polars
+and 164 ms for pandas. More in [Tables](#tables).
+
+### Checked before it runs
+
+The compiler infers the type of every variable, list, dict, table and
+function result it can. It checks argument types, the element type of every
+list and dict, return types, how a function calls the functions passed to it,
+every name across files, and every column a query reads. None of these
+mistakes needs an annotation to be caught (saved as `ov.qrk`,
+`quark check ov.qrk` reports):
+
+```quark
+prices = list [12.5, 3.0]          // inferred: a list of float
+prices.push('n/a')
+
+fn apply(k, v) -> k(v)
+fn add(a, b) -> a + b
+print(apply(add, 1))
+
+fn mean(xs) float ->
+    if len(xs) > 0:
+        sum(xs) / len(xs)
+```
+
+```text
+error[QK-CHECK-001] (check): cannot add str to list[float]: a list keeps the element type it was created with; create it as 'xs: list = list [...]' to hold mixed values at ov.qrk:2:13
+error[QK-CHECK-001] (check): argument 1 of 'apply' is called with 1 argument (line 4), but 'add' takes 2 arguments at ov.qrk:6:13
+error[QK-CHECK-001] (check): function 'mean' declares return type 'float' but can end without a value (an if without else, or a when with no matching arm, returns null); give every branch a value at ov.qrk:8:1
+```
+
+Values the compiler can't know are checked when they are used. The same
+`push` through an unannotated function fails at the write, with its location:
+
+```quark
+fn add_row(rows, r) -> rows.push(r)
+prices = list [12.5, 3.0]
+add_row(prices, 'n/a')
+// runtime error: push() can't add a str to a list of float: a list keeps the element type it was created with ...
+```
+
+The aim is that a program that compiles runs as intended. The compiler
+doesn't reach that everywhere yet: the known cases are listed in
+[known_issues.md](known_issues.md).
 
 ### Vectors for whole columns
 
@@ -190,7 +190,7 @@ More in [Vectors](#vectors).
 ### Linear algebra with BLAS
 
 `std/blas` hands vector buffers to OpenBLAS without copying them, so its
-routines run at NumPy's speed or within about 20% of it. A least-squares fit
+routines run at NumPy's speed or within about 25% of it. A least-squares fit
 by the normal equations:
 
 ```quark
@@ -212,29 +212,38 @@ It needs OpenBLAS (`sudo apt install libopenblas-dev` or `brew install openblas`
 
 The benchmark suite in `src/benchmarks` runs the same work on the same data
 in Quark, Python (pure, NumPy, pandas, Polars) and R (base, data.table), with
-each tool written the way its users write it. Some results, one thread each,
-the fastest Python and R implementation shown:
+each tool written the way its users write it. The figures below are medians
+from the one-thread run on 2026-11-14 (12 logical CPUs, Windows). Each column
+is the fastest implementation in that language.
 
 | Work | Quark | Python | R |
 |---|---|---|---|
-| Recursive `fib(30)` | 10.7 ms | 264 ms | 1.59 s |
-| Mandelbrot on a 400 × 400 grid | 13.8 ms (loops) | 102 ms (NumPy) | 274 ms |
-| Query on 1M rows: filter, mutate, group by two keys, sort | 134 ms (`tbl`) | 167 ms (Polars) | 142 ms (data.table) |
-| Sum and count per key, 1M rows | 52 ms (`tbl`) | 55 ms (Polars) | 60 ms (data.table) |
-| An 8-operation expression on 10M rows | 59 ms (`tbl`) | 93 ms (Polars) | 326 ms |
-| Matrix product, 300 × 300 | 4.1 ms (`std/blas`) | 3.5 ms (NumPy) | 3.8 ms |
-| Keep the rows where `a > 0.5`, 10M rows | 99 ms (`tbl`) | 24 ms (Polars) | 261 ms (data.table) |
-| Sort 1M rows by a string, then a float | 1.13 s (`tbl`) | 364 ms (pandas) | 255 ms (data.table) |
-| Read a 52 MB CSV file | 513 ms (`tbl`) | 226 ms (pandas) | 301 ms (data.table) |
-| Trim, lowercase and replace in 1M strings | 491 ms (`tbl`) | 192 ms (pandas) | 3.17 s |
+| Recursive `fib(30)` | 8.5 ms | 210 ms | 983 ms |
+| Mandelbrot on a 400 × 400 grid | 15.6 ms (loops) | 394 ms (NumPy) | 290 ms |
+| Query on 1M rows: filter, mutate, group by two keys, sort | 90 ms (`tbl`) | 99 ms (Polars) | 89 ms (data.table) |
+| Sum and count per key, 1M rows | 36 ms (`tbl`) | 34 ms (Polars) | 52 ms (data.table) |
+| An 8-operation expression on 10M rows | 35 ms (`tbl`) | 76 ms (Polars) | 141 ms |
+| Matrix product, 300 × 300 | 1.9 ms (`std/blas`) | 1.6 ms (NumPy) | 18 ms (reference BLAS) |
+| Keep the rows where `a > 0.5`, 10M rows | 31 ms (`tbl`) | 20 ms (Polars) | 170 ms (data.table) |
+| Sort 1M rows by a string, then a float | 529 ms (`tbl`) | 293 ms (pandas) | 168 ms (data.table) |
+| Read a 52 MB CSV file | 596 ms (`tbl`) | 187 ms (Polars) | 206 ms (data.table) |
+| Trim, lowercase and replace in 1M strings | 351 ms (`tbl`) | 187 ms (Polars) | 3.07 s |
 
-Loops and recursion are many times faster than Python and R. Queries,
-grouping and fused column expressions are as fast as the best data frame
-libraries or faster, and simple column arithmetic is within 1.3 times of
-them. Filtering, sorting, string work and CSV reading are behind
-them today, each for a cause in the runtime that is written down with a
-direction. All the numbers, the machine, and those causes are in
-[src/benchmarks/RESULTS.md](src/benchmarks/RESULTS.md).
+Loops and recursion are many times faster than Python and R. On one thread,
+a query and a group-by match the best data frame library, a fused column
+expression is about twice as fast as Polars, and filtering is within 1.5
+times of Polars. Column arithmetic through `std/blas` is within 1.2 times of
+Polars, and the matrix product is within 25% of NumPy. R's matrix product in
+this table is the reference BLAS that R ships with on Windows, not OpenBLAS,
+so that cell is not a BLAS comparison. Sorting, string cleaning and reading
+CSV are still behind: a two-key sort of 1M rows takes about 3 times as long
+as data.table, cleaning 1M strings about twice as long as Polars, and reading
+the 52 MB file about 3 times as long. Polars and data.table use a thread pool
+by default, and this table pins every library to one thread. With those
+defaults the same CSV read is about 12 times faster in Polars and about 7
+times faster in data.table, because Quark's reader stays on one thread. How
+the suite measures this is in
+[src/benchmarks/README.md](src/benchmarks/README.md).
 
 > **Maturity.** Quark is early and changes often. Large parts of the compiler
 > were written with AI assistance; use it at your own risk, and please file
@@ -1003,8 +1012,9 @@ extern fn add1(x: int) int as 'my_add1'
 print(add1(41))     // 42
 ```
 
-`extern link 'name'` links a native library and `extern include_path 'dir'`
-adds a header directory; both apply to the whole program. Glue code uses the
+`extern link 'name'` links a native library, `extern include_path 'dir'`
+adds a header directory, and `extern source 'file.cpp'` compiles a glue
+file on its own. All three apply to the whole program. Glue code uses the
 `qext::` API. See [specs/ffi_v0_1_spec.md](specs/ffi_v0_1_spec.md) and
 `src/core/stdlib/blas.qrk` for a complete example.
 
@@ -1076,7 +1086,6 @@ date columns, and compile-time schema inference for CSV files
 - Element types in annotations: `list[T]`.
 - Struct methods and whole-struct equality.
 - Result helpers such as `unwrap_or` and `map_ok`.
-- `extern source` (separately compiled C++ files; today it is a parse error).
 
 **Known limitations** (deliberate gaps, not bugs):
 

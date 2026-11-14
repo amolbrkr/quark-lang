@@ -29,11 +29,14 @@
 #include "../types/table.hpp"
 #include "../types/closure.hpp"
 #include "../types/function.hpp"
+#include "../types/resource.hpp"
 
+#include <cstdarg>
 #include <cstdint>
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <string_view>
 
 // ============================================================
@@ -378,6 +381,100 @@ inline QValue call(QClosure* fn, QValue a0, QValue a1) {
 inline QValue call(QClosure* fn, QValue a0, QValue a1, QValue a2) {
     if (!fn) panic("call: null closure");
     return q_call3(box(fn), a0, a1, a2);
+}
+
+// ------------------------------------------------------------
+// Results. A failure caused by input or the environment returns one of
+// these; panic is for a bug in the glue (a broken invariant).
+// ------------------------------------------------------------
+
+inline QValue ok(QValue v) { return qv_ok(v); }
+
+inline QValue err(const char* msg) {
+    if (!msg) panic("err: null message");
+    return qv_err(qv_string(msg));
+}
+
+inline QValue err(const std::string& msg) { return err(msg.c_str()); }
+
+inline QValue errf(const char* fmt, ...) {
+    if (!fmt) panic("errf: null format");
+    va_list ap;
+    va_start(ap, fmt);
+    va_list ap2;
+    va_copy(ap2, ap);
+    int n = std::vsnprintf(nullptr, 0, fmt, ap);
+    va_end(ap);
+    if (n < 0) {
+        va_end(ap2);
+        panic("errf: formatting failed");
+    }
+    char* buf = static_cast<char*>(q_malloc_atomic(static_cast<size_t>(n) + 1));
+    if (!buf) {
+        va_end(ap2);
+        panic("errf: out of memory");
+    }
+    std::vsnprintf(buf, static_cast<size_t>(n) + 1, fmt, ap2);
+    va_end(ap2);
+    return qv_err(qv_string_own(buf));
+}
+
+// ------------------------------------------------------------
+// Extension handles. Kinds are names the extension chooses (`duckdb.connection`).
+// A handle is a `resource` in Quark. close runs the kind's function once;
+// a later handle_get is QK-FFI-004. Closing an already closed handle does nothing.
+// ------------------------------------------------------------
+
+inline uint16_t define_handle_kind(const char* name, QResourceCloseFn close_fn) {
+    return q_define_handle_kind(name, close_fn);
+}
+
+// `parent` is kept reachable for as long as the new handle is. Pass
+// null_val() when the handle has no parent. A null payload is a glue bug.
+inline QValue new_handle(uint16_t kind, void* payload, QValue parent) {
+    if (!payload) panic("new_handle: null payload");
+    const auto& kinds = q_resource_kinds();
+    if (kind == QRES_KIND_NONE || kind >= kinds.size() || kinds[kind].name.empty()) {
+        panicf("new_handle: unknown handle kind %u", static_cast<unsigned>(kind));
+    }
+    uint16_t flags = QRES_FLAG_OWNED;
+    if (kinds[kind].close != nullptr) {
+        flags = static_cast<uint16_t>(flags | QRES_FLAG_FINALIZABLE);
+    }
+    QResourceHandle* handle = q_resource_create(kind, payload, flags, parent);
+    if (!handle) panic("new_handle: out of memory");
+    return qv_resource(handle);
+}
+
+// The handle's payload, or QK-FFI-004 if it is missing, closed, or a different kind.
+template <typename T>
+inline T* handle_get(QValue value, uint16_t kind) {
+    const char* want = q_resource_kind_name(kind);
+    if (value.type == QValue::VAL_NULL) {
+        q_ffi_fail("expected %s, got null", want);
+    }
+    if (value.type != QValue::VAL_RESOURCE || value.data.resource_val == nullptr) {
+        q_ffi_fail("expected %s, got %s", want, q_type_name(value.type));
+    }
+    QResourceHandle* handle = value.data.resource_val;
+    if (handle->kind != kind) {
+        q_ffi_fail("expected %s, got %s", want, q_resource_kind_name(handle->kind));
+    }
+    QResourceSlot* slot = nullptr;
+    QResourceHandle* out = nullptr;
+    const char* err = nullptr;
+    if (!q_resource_resolve(value, kind, slot, out, err) || slot->payload == nullptr) {
+        q_ffi_fail("%s is closed", want);
+    }
+    return static_cast<T*>(slot->payload);
+}
+
+inline void handle_close(QValue value) {
+    if (value.type != QValue::VAL_RESOURCE || value.data.resource_val == nullptr) {
+        const char* got = value.type == QValue::VAL_NULL ? "null" : q_type_name(value.type);
+        q_ffi_fail("handle_close: expected a resource, got %s", got);
+    }
+    q_resource_release(value.data.resource_val);
 }
 
 } // namespace qext

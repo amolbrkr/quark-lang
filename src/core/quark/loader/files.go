@@ -207,7 +207,7 @@ func (ml *ModuleLoader) loadImports(f *srcFile) {
 
 	for _, child := range f.ast.Children {
 		switch {
-		case child.NodeType == ast.ExternLinkNode || child.NodeType == ast.ExternIncludePathNode:
+		case isBuildDirective(child.NodeType):
 			ml.recordExternDirective(child, path)
 			continue
 		case child.NodeType == ast.ExternHeaderNode:
@@ -422,7 +422,7 @@ func (ml *ModuleLoader) checkDefinitionsOnly(f *srcFile) {
 				continue
 			}
 			switch stmt.NodeType {
-			case ast.StructDefNode, ast.ExternHeaderNode, ast.ExternFnNode, ast.ExternLinkNode, ast.ExternIncludePathNode:
+			case ast.StructDefNode, ast.ExternHeaderNode, ast.ExternFnNode, ast.ExternLinkNode, ast.ExternIncludePathNode, ast.ExternSourceNode:
 				continue
 			case ast.InclNode:
 				continue // placement is checked by checkNestedIncl

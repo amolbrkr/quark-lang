@@ -43,7 +43,7 @@ Reserved (`token/token.go`):
 
 `incl as module extern fn struct if elseif else for while break continue when in and or true false null ok err list dict vec result`
 
-`_` is its own token (the wildcard pattern). The type names `int`, `float`, `str`, `bool`, `any` and `resource` are ordinary identifiers that the checker resolves in type positions. `link` and `include_path` are contextual words after `extern`.
+`_` is its own token (the wildcard pattern). The type names `int`, `float`, `str`, `bool`, `any` and `resource` are ordinary identifiers that the checker resolves in type positions. `link`, `include_path` and `source` are contextual words after `extern`.
 
 Identifiers are letters, digits and `_`, starting with a letter or `_`. A name containing `__` is a load error: that form is reserved for compiler-generated names.
 
@@ -105,7 +105,7 @@ Block           ::= NEWLINE INDENT { Statement NEWLINE } DEDENT
 Each statement ends at a newline. An inline block is one statement on the header's line: `if x > 5: print('big')`, `fn sq(x) -> x * x`. Anything after a complete statement on its line is a parse error, never a second statement: `total = price qty` is `unexpected 'qty' after 'price'; put each statement on its own line, or join the two with an operator`. The same holds for a `when` arm and a struct field, one per line. A statement that ends with an indented block of its own ends with that block, so the next line starts a new statement: after `fn pick(x) -> when x:` and its arms, the next line is not part of `pick`.
 
 Where statements may appear:
-- `incl`, `extern link`, `extern include_path` and `module`: the top level of a file only.
+- `incl`, `extern link`, `extern include_path`, `extern source` and `module`: the top level of a file only.
 - `struct`: the top level or a module body.
 - An imported file may only contain definitions (semantics.md §10.4).
 
@@ -141,6 +141,7 @@ A `QualifiedName` is a value, a call target or a pipe target; a `TypeName` is an
 ExternStatement   ::= "extern" STRING                          (header)
                   |   "extern" "link" STRING
                   |   "extern" "include_path" STRING
+                  |   "extern" "source" STRING
                   |   ExternFnDecl
 
 ExternFnDecl      ::= "extern" "fn" ExternName Parameters [ Type ] "as" STRING
@@ -151,7 +152,7 @@ ReceiverType      ::= "int" | "float" | "str" | "bool" | "list" | "dict" | "vec"
 - `extern 'path.hpp'` `#include`s a C++ header, resolved relative to the declaring file (`std/...` in the stdlib).
 - `extern fn name(...) T as 'symbol'` binds a free function; `extern fn list.name(...) T as 'symbol'` adds a method to a builtin type. The return type comes before `as`, with no `->`.
 - Nothing may follow a directive's string on its line. `extern link` takes a bare library name (`'openblas'`, not `'-lopenblas'` or `'libopenblas.so'`).
-- `extern source` and `extern include` are parse errors (`extern source` is planned: `specs/ffi_v0_1_spec.md` P2).
+- `extern source 'file.cpp'` names a glue file compiled on its own (`specs/ffi_v0_1_spec.md`). `extern include` is a parse error (`use extern include_path`).
 
 Semantics: semantics.md §10.8 and `specs/ffi_v0_1_spec.md`.
 
@@ -440,7 +441,7 @@ These are not part of Quark, by decision or because they are planned in a spec:
 |---|---|
 | Table literals (`tbl[Employee] { id: vec [...], ... }`) | Deferred: `specs/tables_v0_2_spec.md` §6.1 |
 | Written element types (`list[int]`) | Planned: `specs/tables_v0_1_spec.md` D16 |
-| `extern source` | Planned: `specs/ffi_v0_1_spec.md` P2 |
+| `extern include` | Not a directive: use `extern include_path` or `extern 'file.hpp'` |
 | `struct` inside a function body | Not supported; currently an internal error (known_issues.md) |
 | `return` | None: a function's value is its last statement (semantics.md §6.1) |
 | `in` as an operator | None: use `any(v == x)`, `d.get(k) != null`, `s.contains(sub)` |

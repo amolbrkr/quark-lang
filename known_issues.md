@@ -1,6 +1,6 @@
 # Known issues
 
-Bugs in the compiler, runtime, standard library and tools that are not fixed yet, each with a reproduction. Last checked against the compiler at `c92a964` (2026-11-13, after the `lowering-ir` merge). The structural causes behind many of them, and the plan for them, are in `architecture.md` §12-14.
+Bugs in the compiler, runtime, standard library and tools that are not fixed yet, each with a reproduction. Last checked against the working tree on 2026-11-14 (FFI phase 2: P2/P3/P4 uncommitted; prior baseline `c92a964`). The structural causes behind many of them, and the plan for them, are in `architecture.md` §12-14.
 
 This file lists bugs only. Deliberate gaps (features that don't exist yet) are in README.md, Known limitations; what changed and what was fixed is in `changelog.md`.
 
@@ -22,10 +22,11 @@ When a change fixes an issue, delete its entry here and describe the fix under F
 
 ## Wrong results with no error
 
-None.
+- `qext::handle_close` on a parent handle is allowed while a child that named it as `parent` is still open. The parent's close function runs and frees its payload; the child stays usable from Quark (`handle_get` on the child succeeds). For a real library object (a DB connection whose native pointer is only valid while the database lives), later use of the child is a use-after-free in native code, with no Quark error. Reproduction: `p = parent(); c = child(p); close(p); print(read_child(c))` prints the child's payload. The parent field only orders GC finalizers (`specs/ffi_v0_1_spec.md` §2.8); it does not reject an explicit close. Found 2026-11-14 reviewing FFI phase 2 (P3). Reach: P3 adds `handle_close` and parents, which SQLite/DuckDB are meant to use.
 
 ## Fails loudly, but with a C++ error, a wrong location or a misleading message
 
+- `qext::define_handle_kind` in a glue header that is both `extern 'hdr.hpp'`-included into the generated program and `#include`d from an `extern source` runs twice at startup and aborts with `error[QK-RUNTIME-001] (runtime): handle kind 'qffi.x' is already defined` (no Quark location). A `static const uint16_t KIND = qext::define_handle_kind(...)` at namespace scope in the header is one initializer per translation unit; with `extern source` there are two. The kind define belongs in the `.cpp` only (or a C++17 `inline` variable), but the message does not say that, and the same header worked when the glue was header-only. Found 2026-11-14 reviewing FFI phase 2 (P2+P3). Reach: adding `extern source` to an existing header that registered kinds makes a program that used to run fail at startup.
 - A struct named like a builtin type is accepted, and the annotation then means the builtin: `struct int:` / `    x: int`, then `p: int = int { x: 1 }` is `cannot assign value of type 'int' to 'int'`, and `struct vec:` is a parse error (`expected struct name after 'struct'`). It should be a clear error at the `struct` (`'int' is a builtin type; choose another name`). Found 2026-11-13 while adding the `tbl` type (tables v0.1). Reach: `tbl` is now a builtin type name, so a program with `struct tbl:`, which worked before, now gets these messages where it uses `tbl` as an annotation.
 - A prelude builtin used as a value passes the checker and fails in clang: `f = len`, then `print(f('ab'))`, or `print(len)`, gives `use of undeclared identifier 'quark_len'`. Extern fns used as values work (they have thunks).
 - `struct S` inside a `fn` body fails with `internal: struct 'S' not pre-declared`.

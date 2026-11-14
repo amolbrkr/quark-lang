@@ -3,6 +3,7 @@
 #define QUARK_CORE_DIAGNOSTICS_HPP
 
 #include <cstdarg>
+#include <cstdlib>
 #include <cstring>
 #include <cstdio>
 
@@ -34,19 +35,27 @@ struct QSourceLocGuard {
     QSourceLocGuard& operator=(const QSourceLocGuard&) = delete;
 };
 
-inline void q_runtime_reportf(const char* fmt, ...) {
+inline void q_report_message(const char* code, const char* message) {
+    const QSourceLoc& loc = *q_runtime_loc;
+    if (loc.line > 0 && loc.col > 0) {
+        std::fprintf(stderr, "error[%s] (runtime): %s at %s:%d:%d\n", code, message, loc.file, loc.line, loc.col);
+    } else if (loc.line > 0) {
+        std::fprintf(stderr, "error[%s] (runtime): %s at %s:%d\n", code, message, loc.file, loc.line);
+    } else {
+        std::fprintf(stderr, "error[%s] (runtime): %s\n", code, message);
+    }
+}
+
+inline void q_format_report(const char* code, const char* fmt, va_list args) {
     char buffer[2048];
-    va_list args;
-    va_start(args, fmt);
     std::vsnprintf(buffer, sizeof(buffer), fmt, args);
-    va_end(args);
 
     size_t len = std::strlen(buffer);
     for (; len > 0; --len) {
-        if (buffer[len-1] != '\n' && buffer[len-1] != '\r') {
+        if (buffer[len - 1] != '\n' && buffer[len - 1] != '\r') {
             break;
         }
-        buffer[len-1] = '\0';
+        buffer[len - 1] = '\0';
     }
 
     const char* message = buffer;
@@ -54,15 +63,23 @@ inline void q_runtime_reportf(const char* fmt, ...) {
     if (std::strncmp(message, prefix, std::strlen(prefix)) == 0) {
         message += std::strlen(prefix);
     }
+    q_report_message(code, message);
+}
 
-    const QSourceLoc& loc = *q_runtime_loc;
-    if (loc.line > 0 && loc.col > 0) {
-        std::fprintf(stderr, "error[QK-RUNTIME-001] (runtime): %s at %s:%d:%d\n", message, loc.file, loc.line, loc.col);
-    } else if (loc.line > 0) {
-        std::fprintf(stderr, "error[QK-RUNTIME-001] (runtime): %s at %s:%d\n", message, loc.file, loc.line);
-    } else {
-        std::fprintf(stderr, "error[QK-RUNTIME-001] (runtime): %s\n", message);
-    }
+inline void q_runtime_reportf(const char* fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    q_format_report("QK-RUNTIME-001", fmt, args);
+    va_end(args);
+}
+
+// QK-FFI-004: a handle of the wrong kind, or use of a handle that is closed.
+[[noreturn]] inline void q_ffi_fail(const char* fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    q_format_report("QK-FFI-004", fmt, args);
+    va_end(args);
+    std::exit(1);
 }
 
 #endif // QUARK_CORE_DIAGNOSTICS_HPP

@@ -38,7 +38,7 @@ Measured problems (2026-11-11, Linux x86_64):
 2. **Results for failures caused by the environment** (missing file, bad date string). Programming errors (a negative count, an unknown format code) are runtime errors.
 3. **Convenience first, then control.** Each module gets one-call helpers for the common case (`io::read_text(path)`) next to the handle-based API (`io::open`, `io::read_line`).
 4. **Structs for compound returns.** A module can define structs (`time::Parts`), which give every field its own type. A dict keeps one value type, so a dict mixing ints and strings would have to hold `any` and every read of it would be unchecked (decision 9).
-5. **Compile cost counts.** Glue headers are compiled into every program that imports the module; `extern source` (FFI P2), which would cache them, isn't implemented. A module should add well under a second to a build.
+5. **Compile cost counts.** A glue header is compiled into every program that imports the module. `extern source` compiles and caches the implementation, so a large module should put its body there and leave the header as declarations. A module should add well under a second to a build.
 6. **No new syntax.** No string interpolation, no varargs in Quark functions, no keyword arguments (language-scope decisions of 2026-11-10).
 
 ## 3. `std/fmt`: Printing Without `to_str`
@@ -238,7 +238,7 @@ Implemented (2026-11-14). One function, `uniform(lo: float = 0.0, hi: float = 1.
 
 ### 9.2 JSON
 
-The most common format after CSV. Candidates: [nlohmann/json](https://github.com/nlohmann/json) (MIT, single header, but 5.1s of compile time per importing program until FFI P2, §10), or an in-house parser of a few hundred lines mapping to dict/list/str/int/float/bool/null. Proposed API: `json::parse(text) result`, `json::read(path) result`, `json::format(x, indent = 0) str`, `json::write(path, x) result`. Dict keys are strings already, so objects map directly. JSON values are mixed, so parsed lists and dicts hold any value (`list`, `dict` without an element type); reading them into typed values goes through typed declarations or struct literals, which check at runtime.
+The most common format after CSV. Candidates: [nlohmann/json](https://github.com/nlohmann/json) (MIT, single header; as a glue header it costs about 5.1s per importing program, so it belongs in an `extern source`), or an in-house parser of a few hundred lines mapping to dict/list/str/int/float/bool/null. Proposed API: `json::parse(text) result`, `json::read(path) result`, `json::format(x, indent = 0) str`, `json::write(path, x) result`. Dict keys are strings already, so objects map directly. JSON values are mixed, so parsed lists and dicts hold any value (`list`, `dict` without an element type); reading them into typed values goes through typed declarations or struct literals, which check at runtime.
 
 ### 9.3 Subprocesses
 
@@ -252,20 +252,20 @@ The most common format after CSV. Candidates: [nlohmann/json](https://github.com
 
 Measured 2026-11-11 (`quark build`, PCH warm, Linux x86_64): a one-line program builds in 1.1s; the same program importing `io`, `fmt`, `sys`, `csv`, `time` and `random` builds in 3.6s, even if it calls none of them. Nearly all of that is `std/fmt`: its 437-line glue header costs 1.9s, because every import recompiles the glue at `-O3` inside the program's translation unit. This proposal makes the glue much larger (format mini-language, buffered I/O), and some of it needs heavy standard headers on their own: `<filesystem>` adds 0.7s, `<regex>` 0.7s, `<iomanip>` 0.4s; nlohmann/json (48,158 lines) 5.1s.
 
-- **P2 (separately compiled glue sources)** should come first. With stdlib glue compiled once and cached (`extern source`), an import costs only its declarations and a link, so build time stays near 1.1s however much the stdlib grows. Stdlib glue includes only runtime headers, which are already part of the PCH cache key, so the stdlib is the simple first case for P2's dependency tracking. P2 also makes nlohmann/json (§9.2) affordable.
-- **P3 (extension handles), at least its finalizers**, should come before the `std/io` rework (§6.2). Closing forgotten files is part of P3; doing it for files alone first means writing it twice. P3's dynamic handle kinds also give `stdin()`/`stdout()`/`stderr()` and later SQLite and DuckDB handles one mechanism. Parent references aren't needed by the stdlib.
-- **P4 (result helpers) and `QK-FFI-004`** are small and help every new function that returns a result or checks a handle; do them alongside.
+- **P2 (separately compiled glue sources)** shipped 2026-11-14. Stdlib glue can be compiled once and cached (`extern source`), so an import costs its declarations and a link. P2 also makes nlohmann/json (§9.2) affordable. The stdlib modules themselves are still header-only.
+- **P3 (extension handles)** shipped 2026-11-14, including finalizers. A file handle the program has dropped is closed when the collector runs. The `std/io` rework (§6.2) can use the same kinds for `stdin()`/`stdout()`/`stderr()`.
+- **P4 (result helpers) and `QK-FFI-004`** shipped 2026-11-14.
 
 Shipped without waiting on P2 (2026-11-14): the `std/sys` and `std/time` additions, and `std/random`. Multi-argument `print` is still decision 1.
 
-FFI Phase 2 as specified ends with `std/sqlite`; the stdlib needs only P2, P3 and P4 from it, so the order can be P2, P3, P4, then stdlib phase 1, then SQLite.
+`std/sqlite` is still open (`specs/ffi_v0_1_spec.md` §5.4). The stdlib rework no longer waits on P2, P3 or P4.
 
 ## 11. Rollout
 
 | Phase | Contents | Done when |
 |---|---|---|
 | 1. Daily friction | multi-argument `print` (if decision 1 is accepted), `sys::eprint` (**done**), `fmt::format` and helpers, `io` whole-file and line helpers, buffering, file finalizers and flush at exit | a log-writing script needs no `to_str` chains, guessed sizes or manual flushing; the `io` write benchmark is within 2× of Python |
-| 2. Scripting | `sys` additions (**done**), `std/time` dates and durations except the named stopwatch (**done**), `std/fs` (waits on FFI P2) | a script can find files, check modification times and print readable dates and durations |
+| 2. Scripting | `sys` additions (**done**), `std/time` dates and durations except the named stopwatch (**done**), `std/fs` | a script can find files, check modification times and print readable dates and durations |
 | 3. Data generators | `random` additions (**done**) | `normal_vec(1000000, 0.0, 1.0)` builds a `vec[f64]` without a list in between |
 | 4. Formats | JSON, subprocesses | — |
 

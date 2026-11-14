@@ -466,7 +466,7 @@ File I/O over `src/core/stdlib/io.hpp`. Import with `incl 'std/io' as io`. An op
 
 Reading, writing or seeking a closed file (or `null`) is a runtime error: `io.read() expects an open file (resource is closed)`.
 
-Limits: writes are unbuffered; a file that is never closed stays open until the program exits; `binary` only changes newline handling on Windows; a read whose bytes contain a NUL is an `err`. `std/io` is for text. A rework is proposed in `specs/stdlib_expansion_v0_1_spec.md` §6.
+Limits: writes are unbuffered; a file handle the program is still holding stays open, and one it has dropped is closed when the collector runs (explicit `close` is still how a program knows the close succeeded); `binary` only changes newline handling on Windows; a read whose bytes contain a NUL is an `err`. `std/io` is for text. A rework is proposed in `specs/stdlib_expansion_v0_1_spec.md` §6.
 
 ```quark
 incl 'std/io' as io

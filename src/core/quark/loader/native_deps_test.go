@@ -100,3 +100,41 @@ func TestNativeDeps_DirectiveInsideModuleRejected(t *testing.T) {
 		t.Fatalf("expected top-level error, got: %v", ml.Errors())
 	}
 }
+
+func TestNativeDeps_Sources(t *testing.T) {
+	tmp := t.TempDir()
+	entry := filepath.Join(tmp, "main.qrk")
+	sub := filepath.Join(tmp, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(sub, "glue.cpp")
+	writeFile(t, src, "int x;\n")
+	writeFile(t, entry, "extern source 'missing.cpp'\nincl './sub/m'\n")
+	// Same source twice, resolved relative to the declaring file.
+	writeFile(t, filepath.Join(sub, "m.qrk"), "extern source 'glue.cpp'\nextern source 'glue.cpp'\nmodule m:\n    fn f() -> 1\n")
+
+	ml := NewModuleLoader()
+	ml.ResolveImports(parseRoot(t, entry), entry)
+	diags := ml.Diagnostics()
+	if len(diags) != 1 || diags[0].Code != "QK-FFI-001" || diags[0].Location == nil || diags[0].Location.Line != 1 {
+		t.Fatalf("expected QK-FFI-001 at line 1, got %v", ml.Errors())
+	}
+	deps := ml.NativeDeps()
+	if len(deps.Sources) != 1 || deps.Sources[0] != src {
+		t.Fatalf("sources: got %v, want [%s]", deps.Sources, src)
+	}
+}
+
+func TestNativeDeps_SourceInsideModuleRejected(t *testing.T) {
+	tmp := t.TempDir()
+	entry := filepath.Join(tmp, "main.qrk")
+	writeFile(t, entry, "module m:\n    extern source 'glue.cpp'\n    fn f() -> 1\n")
+
+	ml := NewModuleLoader()
+	ml.ResolveImports(parseRoot(t, entry), entry)
+	errs := strings.Join(ml.Errors(), "\n")
+	if !strings.Contains(errs, "extern source must be at the top level") {
+		t.Fatalf("expected top-level error, got: %v", ml.Errors())
+	}
+}

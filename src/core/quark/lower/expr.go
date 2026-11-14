@@ -199,7 +199,7 @@ func (l *lowerer) expr(node *ast.TreeNode) Expr {
 	case ast.QueryNode:
 		return l.query(node)
 	case ast.ModuleNode, ast.StructDefNode, ast.ExternHeaderNode, ast.ExternFnNode,
-		ast.ExternLinkNode, ast.ExternIncludePathNode:
+		ast.ExternLinkNode, ast.ExternIncludePathNode, ast.ExternSourceNode:
 		return nullValue()
 	case ast.BreakNode:
 		l.add(&Break{})

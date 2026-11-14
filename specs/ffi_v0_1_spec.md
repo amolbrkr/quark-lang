@@ -1,6 +1,6 @@
 # Quark FFI v0.1 Spec
 
-Status: Phase 1 implemented 2026-11-04 (native library directives, CLI search paths, int→float widening at the boundary, build diagnostics `QK-FFI-001`–`003`, `libqffi_test`, `std/blas`). Since then: function values cross the boundary as `QClosure*` (2026-11-12), native code is held to the element-type and `null` rules (2026-11-13), and a bare `tbl` crosses it as a `QTable*` (2026-11-13, the part of P6 `std/csv` needs). Not implemented: separately compiled glue (P2; `extern source` is a parse error), extension handles (P3, `QK-FFI-004`), `qext` result helpers (P4), the Arrow bridge (P5), building tables in glue code (the rest of P6), and the SQLite and DuckDB providers. The table decisions of 2026-11-13 (`specs/tables_v0_1_spec.md`) put the native eager table engine first and make DuckDB a later, optional provider (D1); P5 and P6 follow that spec (§4).
+Status: Phase 1 implemented 2026-11-04 (native library directives, CLI search paths, int→float widening at the boundary, build diagnostics `QK-FFI-001`–`003`, `libqffi_test`, `std/blas`). Since then: function values cross the boundary as `QClosure*` (2026-11-12), native code is held to the element-type and `null` rules (2026-11-13), and a bare `tbl` crosses it as a `QTable*` (2026-11-13, the part of P6 `std/csv` needs). P2, P3 and P4 are implemented 2026-11-14 (separately compiled glue, extension handles with finalizers, `QK-FFI-004`, `qext` result helpers). Not implemented: the Arrow bridge (P5), building tables in glue code (the rest of P6), and the SQLite and DuckDB providers. SQLite waits on the column-type rule in §5.4. The table decisions of 2026-11-13 (`specs/tables_v0_1_spec.md`) put the native eager table engine first and make DuckDB a later, optional provider (D1); P5 and P6 follow that spec (§4).
 Last Updated: 2026-11-14
 Canonical for native interop: `extern` declarations, linking, the `qext` API, handles. Related: `semantics.md` §10.8 (language summary), `architecture.md` §7–8 (pipeline and resource registry), `specs/tables_v0_1_spec.md`.
 
@@ -39,7 +39,7 @@ Canonical for native interop: `extern` declarations, linking, the `qext` API, ha
 
 Quark calls native C and C++ code through one mechanism, `extern` (the Quark Extensions Interface, QEI): a C++ glue header is `#include`d into the generated program, and `extern fn` binds a Quark name to a C++ function in it. One-line directives link native libraries and add include paths. The stdlib is built on the same path (`std/io`, `std/fmt`, `std/sys`, `std/time`, `std/random`, `std/csv`, `std/blas`).
 
-Still to come: separately compiled glue, typed handles with finalizers for library objects, result helpers, an Arrow C Data Interface bridge, and tables built by native code. They are added in the order the providers need them: SQLite, then DuckDB (§5).
+Still to come: an Arrow C Data Interface bridge, tables built by native code, and the SQLite and DuckDB providers (§5). Separately compiled glue, extension handles and result helpers are part of the interface below.
 
 ## 2. The Current Interface
 
@@ -47,11 +47,13 @@ Still to come: separately compiled glue, typed handles with finalizers for libra
 
 ```quark
 extern 'math_glue.hpp'                               // #include the glue header
+extern source 'math_glue.cpp'                        // compile the implementation on its own
 extern fn fast_sqrt(x: float) float as 'my_sqrt'     // Quark name -> C++ symbol
 extern fn list.shuffle2(seed: int) list as 'q_shuf'  // a method on list
 ```
 
 - `extern '<path>'` includes a header, resolved relative to the declaring `.qrk` file, or in the stdlib for `std/...`. Text after the string is a parse error.
+- `extern source '<path>'` names a C++ file compiled as its own translation unit and linked into the program (§2.6). The header then holds declarations. Header-only glue, with the implementation `inline` in the header, still works and does not need `extern source`.
 - `extern fn name(params) [ReturnType] as 'symbol'` binds `name` to the C++ function `symbol`. `as 'symbol'` is required. An unannotated parameter or return is `any` (`QValue`).
 - `extern fn type.name(...)` adds a method to `str`, `list`, `dict` or `vec`; the receiver is passed as the first C++ argument. The method is visible only in the file that declares it (`specs/implemented/modules_v0_2_spec.md` rule 12); a library exposes it through a function. Its name can't be the name of a prelude method of any type, and it can't be declared twice for one receiver in a file.
 - An `extern fn` can be declared at the top level of a file, in a module body or in a function body. It is a definition of its file like any other (`specs/implemented/modules_v0_2_spec.md`): reached as `file::name` from an importer, file-scoped, and an error to define twice in one file. Free extern fns are first-class values (`g = io::exists`, `x | kid()`): the back end emits a `QValue` thunk for each.
@@ -91,9 +93,11 @@ C function-pointer callbacks (a `void*` userdata trampoline for APIs such as `qs
 | Lists | `new_list()` (holds any value), `list_push` (checks the list's element type) |
 | Dicts | `dict_get`, `dict_set` (checks the dict's value type), `dict_size`, `dict_has` |
 | Calls | `call(fn, ...)`, 0–3 arguments |
+| Results | `ok(v)`, `err(msg)`, `err(std::string)`, `errf(fmt, ...)`. `err` / `errf` box the message as a string |
+| Handles | `define_handle_kind(name, close)`, `new_handle(kind, payload, parent)`, `handle_get<T>(value, kind)`, `handle_close(value)` (§2.8) |
 | Errors | `panic(msg)`, `panicf(fmt, ...)`: a runtime error at the Quark call site |
 
-Results are built with the runtime constructors `qv_ok(v)` / `qv_err(v)` for now (P4 adds `qext` wrappers).
+`panic` is for a bug in the glue. A failure caused by input or the environment returns `result` through `ok` / `err`.
 
 ### 2.5 Rules for glue code
 
@@ -102,7 +106,7 @@ Results are built with the runtime constructors `qv_ok(v)` / `qv_err(v)` for now
 - **GC.** Memory reachable from Quark values must be GC memory (`qext::malloc`, or `q_allocator` for C++ containers stored in runtime data). The collector doesn't scan `malloc` memory and never runs destructors.
 - **Boxing ints:** `qext::box(1)` is ambiguous in C++ (between the `int64_t`, `double` and `bool` overloads); pass an `int64_t`.
 - **C++ symbols are global.** Two glue headers defining the same C++ function clash in C++, whichever Quark files include them.
-- **Failures.** A programming error (wrong vector type, mismatched lengths) uses `qext::panic`. Failures caused by input or the environment should return `result` (P4).
+- **Failures.** A programming error (wrong vector type, mismatched lengths) uses `qext::panic`. Failures caused by input or the environment return `result` via `qext::ok` / `qext::err`.
 
 ### 2.6 Native libraries
 
@@ -110,12 +114,14 @@ Decided 2026-11-04: one directive per line, no grouped block (§8.1, D1).
 
 ```quark
 extern 'blas_glue.hpp'          // glue header, #included
+extern source 'blas_glue.cpp'   // glue implementation, compiled and cached
 extern link 'openblas'          // link libopenblas
 extern include_path 'include'   // add an include search path, relative to this file
 ```
 
-- `link` and `include_path` are contextual words after `extern`, not reserved keywords. The directive is `include_path`, not `include`, because `extern '<path>'` already includes a header (D2).
-- Directives must be at the top level of a file (inside a block or module: `QK-LOAD-001`). They may appear in any file, including stdlib modules; the loader collects them across all imported files into `loader.NativeDeps{IncludeDirs, Libs, Headers}` (one `NativeLib{Name, File, Line, Column}` record per `extern link`), removes duplicates, and the driver stores them in `Unit.Native`.
+- `link`, `include_path` and `source` are contextual words after `extern`, not reserved keywords. The directive is `include_path`, not `include`, because `extern '<path>'` already includes a header (D2).
+- `extern source` resolves like a header: relative to the declaring file, or under the stdlib for `std/...`. The file must exist (`QK-FFI-001` otherwise). It is compiled with the program's flags, include directories and precompiled runtime header, and linked with the program. Objects are cached at `~/.cache/quark/obj/`. The cache key is the compiler, the compile flags, the include directories, the precompiled-header key (runtime and GC header state), the source bytes, and the path, size and mtime of every header the source includes. The same file named more than once is compiled once. A C++ error in the source is `QK-FFI-003`.
+- Directives must be at the top level of a file (inside a block or module: `QK-LOAD-001`). They may appear in any file, including stdlib modules; the loader collects them across all imported files into `loader.NativeDeps{IncludeDirs, Libs, Headers, Sources}` (one `NativeLib{Name, File, Line, Column}` record per `extern link`), removes duplicates, and the driver stores them in `Unit.Native`.
 - Paths in directives are relative to the declaring file and point at files shipped with the module. Where a library is installed on a given machine belongs on the command line or in the environment, never in `.qrk` source, so there is no directive for library search paths.
 - Link order: a module's libraries come before those of the modules it imports. A library requested more than once keeps its last position, so it stays after everything that needs it (this matters for static libraries).
 - Words after the string (`extern link 'duckdb' static`) are reserved for per-library options. None exist; anything there is `QK-PARSE-001`.
@@ -136,15 +142,35 @@ Environment: `QUARK_LIB_PATH` and `QUARK_INCLUDE_PATH`, OS path-list separated.
 
 | Code | Stage | Meaning |
 |---|---|---|
-| `QK-FFI-001` | load | `extern include_path` directory not found |
+| `QK-FFI-001` | load | `extern include_path` directory not found, or `extern source` file not found |
 | `QK-FFI-002` | build | `extern link` library not found |
-| `QK-FFI-003` | build | C++ error inside a glue header, reported at the header's line |
+| `QK-FFI-003` | build | C++ error inside a glue header or glue source, reported at that file's line |
+| `QK-FFI-004` | runtime | Wrong handle kind, closed handle, or a non-resource passed to `qext::handle_get` / `handle_close` |
 
 For `QK-FFI-002` and `QK-FFI-003`, `quark run` prints only the diagnostic, not the generated C++. Other C++ compile or link errors print clang's output and a short note (check `extern fn` symbols and headers, otherwise it's a compiler bug; rerun with `--debug` to keep the C++).
 
 ### 2.8 Resource handles
 
-`runtime/include/quark/types/resource.hpp`: a generational slot registry. Every handle has the single Quark type `resource`; its kind is runtime-only. The only kind is `file` (`std/io`). The registry's slot vectors use `q_allocator`, so payloads may be GC memory and are kept alive by the registry. Handles themselves are allocated atomic (they can't reference other objects), and nothing registers finalizers yet. P3 extends this for library objects.
+`runtime/include/quark/types/resource.hpp`: a generational slot registry. Every handle has the single Quark type `resource`; its kind is runtime-only. Built-in kinds keep ids below 16. `file` (`std/io`) is 1. An extension registers further kinds:
+
+```cpp
+static void close_db(void* payload);    // frees the native pointer; must not allocate GC memory
+static void close_con(void* payload);
+static const uint16_t KIND_DB  = qext::define_handle_kind("duckdb.database",   close_db);
+static const uint16_t KIND_CON = qext::define_handle_kind("duckdb.connection", close_con);
+
+QValue h = qext::new_handle(KIND_CON, con_ptr, /*parent=*/db_handle);
+duckdb_connection* con = qext::handle_get<duckdb_connection>(value, KIND_CON);  // QK-FFI-004 on the wrong kind, a closed handle, or a non-resource
+qext::handle_close(value);   // runs close_con once; a second close does nothing
+```
+
+On the Quark side the annotation stays `resource`: `extern fn duck_query(con: resource, sql: str) result as 'qduck_query'`. `print` shows the kind name (`<resource duckdb.connection>`).
+
+- **Parents.** The handle holds a `QValue parent` and is scanned GC memory, so a connection keeps its database reachable. The parent is not stored in the registry slot. Boehm finalizes an unreachable object before the objects it points at, on a later collection: after one collection the connection is closed and the database is still open; the next collection closes the database.
+- **Finalizers.** A kind with a close function is created finalizable. When the handle becomes unreachable while open, the finalizer runs the close function once. Explicit `handle_close` is still the documented way to know the close happened. A close function must not allocate GC memory and must not store the handle. Defining the same kind name twice is a runtime error.
+- **Payloads.** A library object's payload is a native pointer the close function frees. A payload that is GC memory (a file's) stays reachable from the slot vector, which uses `q_allocator`. The free list is ordinary memory so a finalizer can recycle a slot.
+- **Files.** `io::open` registers a close function for `file` and sets the finalizable flag, so a file handle the program has dropped is closed when the collector runs. `io::close` still closes the descriptor itself and reports a failure as `err`; that path does not go through `QK-FFI-004`.
+- **Messages.** `handle_get` reports `QK-FFI-004`: `expected duckdb.connection, got file`, `expected duckdb.connection, got null`, `duckdb.connection is closed`. `handle_close` of a non-resource is the same code; closing a closed handle does nothing.
 
 ## 3. Key Decision: One Mechanism
 
@@ -159,46 +185,15 @@ An earlier draft (2026-03-15) proposed `ffi lib 'name' as m:` blocks that bind C
 
 ### P2. Separately compiled glue sources
 
-```quark
-extern source 'duckdb_glue.cpp'
-```
-
-- Compiled as its own translation unit with the program's flags (including the PCH) and linked into the binary. The glue header then holds only declarations, so programs don't reparse the implementation on every build.
-- Objects cached under `~/.cache/quark/obj/`, keyed by the source, every header it includes, the compile flags and the runtime header state. The header dependency tracking is why P2 was left out of Phase 1.
-- Today `extern source` is `QK-PARSE-001` (`extern source is not supported yet`). P2 adds `ExternCppSourceNode`, a `Sources` field in `NativeDeps` and `toolchain.Options`, and `QK-FFI-001` for a missing source.
-- Optional for small extensions; header-only glue keeps working.
+Implemented (2026-11-14). See §2.1 and §2.6.
 
 ### P3. Extension handles
 
-Extensions register their own resource kinds:
-
-```cpp
-static const uint16_t KIND_DB  = qext::define_handle_kind("duckdb.database",   close_db);
-static const uint16_t KIND_CON = qext::define_handle_kind("duckdb.connection", close_con);
-
-QValue h = qext::new_handle(KIND_CON, con_ptr, /*parent=*/db_handle);
-duckdb_connection* con = qext::handle_get<duckdb_connection>(value, KIND_CON);  // QK-FFI-004 on wrong kind or closed handle
-qext::handle_close(value);   // runs close_con once; later use is a runtime error
-```
-
-On the Quark side, handles keep the `resource` annotation: `extern fn duck_query(con: resource, sql: str) result as 'qduck_query'`.
-
-Runtime changes in `resource.hpp`:
-
-1. **Dynamic kinds.** A kind table maps id → `{name, close_fn}`, replacing the fixed `QResourceKind` enum. Built-in kinds keep ids below 16. Messages use the kind name: `expected duckdb.connection, got file`.
-2. **Parent references.** `QResourceHandle` gains a `QValue parent` and is allocated with `q_malloc` (scanned), so a connection keeps its database reachable.
-3. **Finalizers.** For handles with `QRES_FLAG_FINALIZABLE` (defined, unused today), `new_handle` registers a Boehm finalizer that calls `close_fn` if the handle becomes unreachable while open. Boehm finalizes in reachability order, so a connection is closed before its database. Explicit `close` stays the documented API.
-4. **Payloads of library objects** are native pointers owned by the library (`malloc` or the library's allocator). A payload that points to GC memory must be kept alive through the registry, as file payloads are.
-5. New code `QK-FFI-004` (runtime): wrong handle kind, or use of a closed handle.
+Implemented (2026-11-14). See §2.8.
 
 ### P4. Results from native code
 
-```cpp
-return qext::ok(qext::box(rows));
-return qext::err("duckdb: " + std::string(duckdb_result_error(&res)));   // also qext::errf(fmt, ...)
-```
-
-An `extern fn` declared to return `result` already works: it returns a `QValue` built with `qv_ok`/`qv_err`. P4 adds the `qext` helpers and the convention for providers: anything that can fail because of input or the environment (bad SQL, a missing file, a failed connection) returns `result`; `qext::panic` is for bugs, such as a wrong handle kind or a broken invariant.
+Implemented (2026-11-14). See §2.4. A provider returns `result` for a failure caused by input or the environment, and uses `qext::panic` for a bug.
 
 ### P5. Arrow C Data Interface bridge
 
@@ -296,7 +291,7 @@ Tests: `smoke_blas.qrk`, and `TestStdBlas`, which also runs one program per erro
 
 ### 5.4 SQLite: std/sqlite (planned)
 
-A rehearsal for DuckDB with the same API shape (`open`, `exec`, `query`, `close`), handles with parents and finalizers, and `err` results. It uses the system library (`libsqlite3-dev`); vendoring the amalgamation through `extern source` becomes possible with P2. The detailed design is written before Phase 2 starts. The main question: SQLite types each value, not each column, so `query` needs a rule for building a typed column (declared column type, first non-null value, or `err` on mixed types).
+A rehearsal for DuckDB with the same API shape (`open`, `exec`, `query`, `close`), handles with parents and finalizers, and `err` results. It uses the system library (`libsqlite3-dev`); the amalgamation can be compiled with `extern source`. The detailed design is written before this provider starts. The main question: SQLite types each value, not each column, so `query` needs a rule for building a typed column (declared column type, first non-null value, or `err` on mixed types).
 
 ## 6. DuckDB (planned)
 
@@ -330,8 +325,8 @@ cols = unwrap(duck::query(con, "select i, f from t where i % 2 = 0"))
 print(len(cols.i))        // 500000
 
 when duck::query(con, "select * from missing"):
-    ok(c) -> print(c)
-    err(msg) -> print(msg)   // "duckdb: Catalog Error: Table with name missing does not exist!..."
+    ok c -> print(c)
+    err msg -> print(msg)   // "duckdb: Catalog Error: Table with name missing does not exist!..."
 
 duck::close(con)
 duck::close(db)
@@ -379,7 +374,7 @@ Results and data chunks never become handles: they are converted and destroyed i
 | Phase | Contents | Done when |
 |---|---|---|
 | 1. Linking | Directives, CLI, widening, `QK-FFI-001`–`003` | **Done 2026-11-04** (§5.2, §5.3) |
-| 2. Handles and results | P2, P3, P4, `QK-FFI-004` | `std/sqlite` `open`/`exec`/`query`/`close` pass a smoke test, including a finalizer test |
+| 2. Handles and results | P2, P3, P4, `QK-FFI-004` (**done 2026-11-14**). `std/sqlite` is not started: §5.4's column-type rule is still open | `std/sqlite` `open`/`exec`/`query`/`close` pass a smoke test, including a finalizer test |
 | 3. DuckDB | `std/duckdb` | `open`/`connect`/`exec`/`query`/`close` pass `smoke_duckdb.qrk` |
 | 4. Tables and parameters | P6, `query_params`, `insert` | `query` returns a `tbl`; parameterized queries; bulk insert |
 | 5. Arrow | P5 | `register` queries a Quark table from DuckDB without copying; `import_vector` serves Arrow-producing providers |

@@ -2,7 +2,7 @@
 
 A benchmark suite that compares Quark with Python (pure Python, NumPy, pandas, Polars) and R (loops, base vectors, data.frame, data.table) on common data processing and number crunching. The point is to see where Quark actually stands, so that design decisions are made on measurements. It is not meant to make Quark look good: each tool gets the code an experienced user of it would write, and the same work.
 
-The latest measurements and what they show are in [RESULTS.md](RESULTS.md).
+The figures in the repository [README](../../README.md#measured-against-python-and-r) are the one-thread run of 2026-11-14. [RESULTS.md](RESULTS.md) is an earlier write-up, from a different machine, and its tables are not that run.
 
 ## Contents
 

@@ -989,10 +989,11 @@ func (p *Parser) parseModule() *ast.TreeNode {
 //	extern 'path/to/glue.hpp'
 //	extern link 'name'
 //	extern include_path 'dir'
+//	extern source 'file.cpp'
 //	extern fn name(params) ReturnType as 'symbol'
 //	extern fn type.name(params) ReturnType as 'symbol'
 //
-// `link` and `include_path` are contextual words, not keywords.
+// `link`, `include_path` and `source` are contextual words, not keywords.
 func (p *Parser) parseExtern() *ast.TreeNode {
 	tok := p.curToken
 	p.nextToken() // skip 'extern'
@@ -1010,15 +1011,15 @@ func (p *Parser) parseExtern() *ast.TreeNode {
 		case "include_path":
 			p.nextToken()
 			return p.parseExternDirective(&tok, ast.ExternIncludePathNode, "include_path")
+		case "source":
+			p.nextToken()
+			return p.parseExternDirective(&tok, ast.ExternSourceNode, "source")
 		case "include":
 			p.addError("unknown extern directive 'include'; use extern include_path 'dir' to add an include search path, or extern 'file.hpp' to include a header")
 			return nil
-		case "source":
-			p.addError("extern source is not supported yet (planned: specs/ffi_v0_1_spec.md P2); use a header-only glue file with extern 'file.hpp'")
-			return nil
 		}
 	}
-	p.addError("expected string path, 'fn', 'link' or 'include_path' after 'extern', got %s", p.curToken.Type)
+	p.addError("expected string path, 'fn', 'link', 'include_path' or 'source' after 'extern', got %s", p.curToken.Type)
 	return nil
 }
 

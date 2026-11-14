@@ -485,14 +485,16 @@ A file links a native library and adds a C++ include search path with one-line d
 extern include_path 'include'   // -I, relative to this file
 extern link 'openblas'          // -lopenblas
 extern 'blas_glue.hpp'          // the glue header, #included
+extern source 'blas_glue.cpp'   // the glue implementation, compiled on its own
 ```
 
-- `link` and `include_path` are contextual words after `extern`, not reserved keywords.
-- `extern link` and `extern include_path` must be at the top level of a file (`QK-LOAD-001` inside a module or block). They apply to the whole program, including directives in imported files and the stdlib. Duplicates are removed.
+- `link`, `include_path` and `source` are contextual words after `extern`, not reserved keywords.
+- `extern link`, `extern include_path` and `extern source` must be at the top level of a file (`QK-LOAD-001` inside a module or block). They apply to the whole program, including directives in imported files and the stdlib. Duplicates are removed.
 - Paths are relative to the declaring file and should point at files shipped with the module. Where a library is installed on a given machine is passed on the command line (`--lib-path`, `--include-path`) or through `QUARK_LIB_PATH` / `QUARK_INCLUDE_PATH`.
-- Link order: a file's libraries come before those of the files it imports; a library requested more than once keeps its last position.
+- Link order: a file's libraries come before those of the files it imports; a library requested more than once keeps its last position. A glue source is compiled once no matter how many files name it.
 - Nothing may follow the directive's string; words there are reserved for future per-library options.
-- A library that can't be found is reported before linking (`QK-FFI-002`), naming the requesting file and the directories searched. A missing `include_path` directory is `QK-FFI-001`, and a C++ error inside a glue header is `QK-FFI-003`.
+- A library that can't be found is reported before linking (`QK-FFI-002`), naming the requesting file and the directories searched. A missing `include_path` directory or a missing `extern source` file is `QK-FFI-001`. A C++ error inside a glue header or a glue source is `QK-FFI-003`.
+- A `resource` created by native code has a kind the extension registered. Using the wrong kind, or a closed handle, is `QK-FFI-004`. A file handle that the program no longer holds is closed by the collector; `io::close` still reports whether the close succeeded.
 
 ---
 

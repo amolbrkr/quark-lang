@@ -183,12 +183,13 @@ An unexpected dispatch mode, runtime symbol or missing analyzer output stops low
 
 ### 1.7 C++ Compiler → Binary
 
-`toolchain.Find()` locates clang++, the runtime headers and the GC once. The build has two steps, so native objects and libraries can join the link:
+`toolchain.Find()` locates clang++, the runtime headers and the GC once. The build has three steps, so native objects and libraries can join the link:
 
-1. **Compile** (`Toolchain.Compile`): C++ → object file with clang++ (g++ is not supported because of `gc_allocator` / `std::hash` incompatibilities): `-std=c++17 -O3`, `-march=x86-64-v3` on amd64, `-DQUARK_USE_GC` and the GC include flags, `-Wno-deprecated-declarations` on Windows, and `-include-pch <cached quark.hpp PCH>` unless `--no-pch`.
-2. **Link** (`Toolchain.Link`): objects + native libraries from `extern link` + static `libgc` (`-pthread`, and `-ldl` on Linux) + `-lm` on non-Windows. With `--lto`, links with `lld` when `ld.lld` is on PATH, since the system linker needs LLVM's gold plugin for LTO.
+1. **Glue sources** (`Toolchain.CompileExternSources`): each `extern source` file is compiled with the same flags and precompiled header as the program. The object is cached at `~/.cache/quark/obj/<key>.o`. The key hashes the compiler, the flags, the include directories, the precompiled-header key, the source bytes, and the path, size and mtime of every header `clang++ -M` reports (spaces in those paths are escaped, which is how clang prints them on Windows). An unchanged source is not compiled again.
+2. **Compile** (`Toolchain.Compile`): the generated C++ → object file with clang++ (g++ is not supported because of `gc_allocator` / `std::hash` incompatibilities): `-std=c++17 -O3`, `-march=x86-64-v3` on amd64, `-DQUARK_USE_GC` and the GC include flags, `-Wno-deprecated-declarations` on Windows, and `-include-pch <cached quark.hpp PCH>` unless `--no-pch`.
+3. **Link** (`Toolchain.Link`): the program object, the glue objects, native libraries from `extern link`, and static `libgc` (`-pthread`, and `-ldl` on Linux) + `-lm` on non-Windows. With `--lto`, links with `lld` when `ld.lld` is on PATH, since the system linker needs LLVM's gold plugin for LTO.
 
-**Native dependencies** (`toolchain/native.go`). `main.go` combines `driver.Unit.Native` (include directories, libraries in import-graph link order, the extern glue headers) with `--lib-path` / `--include-path` / `--link-arg` and `QUARK_LIB_PATH` / `QUARK_INCLUDE_PATH` into `toolchain.Options`. Before linking, `Link` looks for every library in the user directories, then `LIBRARY_PATH`, then clang's own search path (`clang++ -print-search-dirs`), and reports each missing one as `QK-FFI-002`. The link line gets `-L` for each user directory, `-Wl,-rpath,<dir>` for user directories that provide a shared library, then `-l<name>` in link order, then `--link-arg` values. Extra include directories are added to the compile but not to the precompiled header, which stays shared between programs. When clang reports an error located in an extern glue header (or a file it includes), `Compile` returns a `QK-FFI-003` diagnostic.
+**Native dependencies** (`toolchain/native.go`, `toolchain/sources.go`). `main.go` combines `driver.Unit.Native` (include directories, libraries in import-graph link order, the extern glue headers and sources) with `--lib-path` / `--include-path` / `--link-arg` and `QUARK_LIB_PATH` / `QUARK_INCLUDE_PATH` into `toolchain.Options`. Before linking, `Link` looks for every library in the user directories, then `LIBRARY_PATH`, then clang's own search path (`clang++ -print-search-dirs`), and reports each missing one as `QK-FFI-002`. The link line gets `-L` for each user directory, `-Wl,-rpath,<dir>` for user directories that provide a shared library, then `-l<name>` in link order, then `--link-arg` values. Extra include directories are added to the compile but not to the precompiled header, which stays shared between programs. When clang reports an error located in an extern glue header or source (or a file it includes), the build returns a `QK-FFI-003` diagnostic.
 
 Intermediate files go in a fresh `os.MkdirTemp` directory per build, so concurrent builds never collide.
 
@@ -394,6 +395,8 @@ Functionality that isn't needed in the prelude belongs in a stdlib module (`src/
 | Lists | `new_list()` (holds any value), `list_push` (checks the element type) |
 | Dicts | `dict_get`, `dict_set` (checks the value type), `dict_size`, `dict_has` |
 | Calls | `call(fn, ...)` with 0-3 `QValue` arguments; arity-checked and default-filling like `q_callN` |
+| Results | `ok(v)`, `err(msg)`, `errf(fmt, ...)` |
+| Handles | `define_handle_kind(name, close)`, `new_handle(kind, payload, parent)`, `handle_get<T>(value, kind)`, `handle_close(value)`. A wrong or closed handle is `QK-FFI-004` |
 
 Native code that appends to a list with `push_back`, or writes `d->entries` directly, skips the element-type check; use `list_push` / `dict_set`.
 
@@ -401,17 +404,18 @@ Native code that appends to a list with `push_back`, or writes `d->entries` dire
 
 ## 8) Resource System
 
-Opaque handles for external state (file handles today; `types/resource.hpp`). Every handle has the single Quark type `resource`; its kind (`file`) is runtime-only.
+Opaque handles for external state (`types/resource.hpp`). Every handle has the single Quark type `resource`. Built-in kinds keep ids below 16 (`file` is 1); an extension registers its own with `qext::define_handle_kind`, which returns an id of 16 or more. The kind's name is what `print` shows (`<resource file>`, `<resource qffi.item>`).
 
 **Design**: a generational slot registry.
-- `QResourceHandle`: an opaque token `{slot, generation, kind}` in the value's union, allocated with `q_malloc_atomic`.
-- `QResourceSlot`: `{generation, kind, flags, payload, occupied}`; `payload` is an opaque `void*` (`FILE*` for files).
-- `QResourceRegistry`: a global singleton with a `slots` vector and a `free_list`, both on `q_allocator` so the GC sees the payloads.
+- `QResourceHandle`: `{slot, generation, kind, flags, parent}` in the value's union, allocated with `q_malloc` so the collector scans `parent`.
+- `QResourceSlot`: `{generation, kind, flags, payload, occupied}`; `payload` is an opaque `void*` (a GC object for a file, a native pointer for a library object).
+- `QResourceRegistry`: a global singleton. `slots` uses `q_allocator` so the GC sees payloads that are GC memory. `free_list` is an ordinary `std::vector`, because a finalizer may push a slot and must not call the collector.
+- A kind with a close function is created with `QRES_FLAG_FINALIZABLE`. The handle gets a Boehm finalizer that runs the close function once if the handle becomes unreachable while open. The parent value is inside the handle, so the collector finalizes the handle before the parent. Explicit `q_resource_invalidate` drops the slot without calling close; `q_resource_release` calls close and then drops the slot. A second release does nothing.
 
 **Lifecycle:**
-1. `q_resource_create(kind, payload, flags)` allocates a slot (reusing the free list), bumps its generation, and returns a handle.
+1. `q_resource_create(kind, payload, flags, parent)` allocates a slot (reusing the free list), bumps its generation, and returns a handle.
 2. `q_resource_resolve(value, expectedKind, &slot, &handle, &err)` validates the handle: slot in range, occupied, generation and kind match.
-3. `q_resource_invalidate(handle)` frees the slot and pushes it to the free list; the generation stops stale handles from aliasing a reused slot.
+3. `q_resource_invalidate(handle)` frees the slot and pushes it to the free list; the generation stops stale handles from aliasing a reused slot. `q_resource_release` does that after the kind's close function.
 
 | Condition | Error |
 |---|---|

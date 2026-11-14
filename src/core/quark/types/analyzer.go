@@ -329,7 +329,7 @@ func (a *Analyzer) analyze(node *ast.TreeNode) Type {
 		return TypeVoid
 	case ast.LambdaNode:
 		return a.analyzeLambda(node)
-	case ast.ExternHeaderNode, ast.ExternLinkNode, ast.ExternIncludePathNode:
+	case ast.ExternHeaderNode, ast.ExternLinkNode, ast.ExternIncludePathNode, ast.ExternSourceNode:
 		return TypeVoid // Recorded by the loader; nothing to analyze
 	case ast.ExternFnNode:
 		return a.analyzeExternFn(node)

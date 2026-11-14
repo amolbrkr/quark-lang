@@ -48,6 +48,7 @@ const (
 	StructLiteralNode     // Name { field: expr, ... }
 	ExternLinkNode        // extern link 'name' (link a native library)
 	ExternIncludePathNode // extern include_path 'dir' (C++ include search path)
+	ExternSourceNode      // extern source 'file.cpp' (separately compiled glue)
 	// QualifiedNameNode is `a::b` or `a::b::c` in expression position.
 	// Token.Literal holds the whole path ("io::exists"); the loader resolves
 	// it and turns the node into an IdentifierNode with the internal name.
@@ -113,6 +114,7 @@ var nodeTypeNames = map[NodeType]string{
 	StructLiteralNode:     "StructLiteral",
 	ExternLinkNode:        "ExternLink",
 	ExternIncludePathNode: "ExternIncludePath",
+	ExternSourceNode:      "ExternSource",
 	QualifiedNameNode:     "QualifiedName",
 	QueryNode:             "Query",
 	QueryStepNode:         "QueryStep",

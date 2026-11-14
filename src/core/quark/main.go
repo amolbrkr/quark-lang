@@ -145,7 +145,7 @@ func (f *buildFlags) options(u *driver.Unit) toolchain.Options {
 		opts.Libs = append(opts.Libs, toolchain.Lib{Name: lib.Name, Origin: lib.Origin()})
 	}
 	opts.LinkArgs = append([]string{}, f.linkArgs...)
-	opts.GlueFiles = append([]string{}, u.Native.Headers...)
+	opts.GlueFiles = append(append([]string{}, u.Native.Headers...), u.Native.Sources...)
 	return opts
 }
 
@@ -400,9 +400,13 @@ func compileProgram(tc *toolchain.Toolchain, u *driver.Unit, cppFile, workDir, e
 	}
 
 	opts := flags.options(u)
+	srcObjs, err := tc.CompileExternSources(u.Native.Sources, opts)
+	if err != nil {
+		return err
+	}
 	objFile := filepath.Join(workDir, "main.o")
 	if err := tc.Compile(cppFile, objFile, opts); err != nil {
 		return err
 	}
-	return tc.Link([]string{objFile}, exe, opts)
+	return tc.Link(append([]string{objFile}, srcObjs...), exe, opts)
 }

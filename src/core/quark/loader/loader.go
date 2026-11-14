@@ -29,8 +29,9 @@ type ModuleLoader struct {
 	mainNames map[string]bool
 	errors    []diagnostics.Diagnostic
 
-	// Native dependencies from extern link / extern include_path, recorded
-	// per file so NativeDeps can order libraries by the import graph.
+	// Native dependencies from extern link / extern include_path / extern
+	// source, recorded per file so NativeDeps can order libraries by the
+	// import graph.
 	root         string // absolute path of the root file
 	fileLibs     map[string][]NativeLib
 	fileImports  map[string][]string // file -> files it imports, in source order
@@ -38,6 +39,8 @@ type ModuleLoader struct {
 	seenIncludes map[string]bool
 	headers      []string // absolute extern header paths, first-seen order
 	seenHeaders  map[string]bool
+	sources      []string // absolute extern source paths, first-seen order
+	seenSources  map[string]bool
 }
 
 // NativeLib is one `extern link 'name'` request.
@@ -59,6 +62,7 @@ type NativeDeps struct {
 	IncludeDirs []string    // absolute directories, deduplicated, first-seen order
 	Libs        []NativeLib // deduplicated, in link order
 	Headers     []string    // absolute paths of extern glue headers
+	Sources     []string    // absolute paths of extern glue sources, first-seen order
 }
 
 // NewModuleLoader creates a new module loader.
@@ -73,6 +77,7 @@ func NewModuleLoader() *ModuleLoader {
 		fileImports:  make(map[string][]string),
 		seenIncludes: make(map[string]bool),
 		seenHeaders:  make(map[string]bool),
+		seenSources:  make(map[string]bool),
 	}
 }
 
@@ -119,6 +124,7 @@ func (ml *ModuleLoader) NativeDeps() NativeDeps {
 		IncludeDirs: append([]string(nil), ml.includeDirs...),
 		Libs:        libs,
 		Headers:     append([]string(nil), ml.headers...),
+		Sources:     append([]string(nil), ml.sources...),
 	}
 }
 
@@ -137,8 +143,30 @@ func (ml *ModuleLoader) addFFIError(code, file string, tok *token.Token, format 
 	})
 }
 
+// isBuildDirective reports an extern directive that describes the build
+// (a library, an include directory, or a glue source) rather than a header
+// included into the generated program.
+func isBuildDirective(t ast.NodeType) bool {
+	switch t {
+	case ast.ExternLinkNode, ast.ExternIncludePathNode, ast.ExternSourceNode:
+		return true
+	}
+	return false
+}
+
+func directiveWord(t ast.NodeType) string {
+	switch t {
+	case ast.ExternIncludePathNode:
+		return "include_path"
+	case ast.ExternSourceNode:
+		return "source"
+	default:
+		return "link"
+	}
+}
+
 // recordExternDirective handles a top-level extern link / extern
-// include_path node from currentFilePath.
+// include_path / extern source node from currentFilePath.
 func (ml *ModuleLoader) recordExternDirective(node *ast.TreeNode, currentFilePath string) {
 	if len(node.Children) == 0 || node.Children[0].Token == nil {
 		return
@@ -178,23 +206,57 @@ func (ml *ModuleLoader) recordExternDirective(node *ast.TreeNode, currentFilePat
 			ml.seenIncludes[abs] = true
 			ml.includeDirs = append(ml.includeDirs, abs)
 		}
+	case ast.ExternSourceNode:
+		abs, ok := ml.resolveExternSource(node, currentFilePath, arg)
+		if !ok {
+			return
+		}
+		id := realPath(abs)
+		if !ml.seenSources[id] {
+			ml.seenSources[id] = true
+			ml.sources = append(ml.sources, id)
+		}
 	}
 }
 
-// checkNestedDirectives reports extern link / include_path directives that
-// are not at the top level of a file; they would otherwise be ignored.
+// resolveExternSource resolves an `extern source` path the way a header path
+// is resolved, and requires the file to exist. A missing file is QK-FFI-001.
+func (ml *ModuleLoader) resolveExternSource(node *ast.TreeNode, currentFilePath, arg string) (string, bool) {
+	var path string
+	if isStdlibImportPath(arg) {
+		root, err := findStdlibRoot()
+		if err != nil {
+			ml.addFFIError("QK-FFI-001", currentFilePath, node.Token, "cannot resolve extern source '%s': %v", arg, err)
+			return "", false
+		}
+		path = filepath.Join(root, strings.TrimPrefix(arg, "std/"))
+	} else {
+		path = normalizeExternPath(filepath.Dir(currentFilePath), arg)
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		ml.addFFIError("QK-FFI-001", currentFilePath, node.Token, "cannot resolve extern source '%s': %v", arg, err)
+		return "", false
+	}
+	st, err := os.Stat(abs)
+	if err != nil || st.IsDir() {
+		ml.addFFIError("QK-FFI-001", currentFilePath, node.Token, "extern source file '%s' not found (resolved to %s)", arg, abs)
+		return "", false
+	}
+	return abs, true
+}
+
+// checkNestedDirectives reports extern link / include_path / source
+// directives that are not at the top level of a file; they would otherwise
+// be ignored.
 func (ml *ModuleLoader) checkNestedDirectives(node *ast.TreeNode, currentFilePath string) {
 	var walk func(*ast.TreeNode)
 	walk = func(n *ast.TreeNode) {
 		if n == nil {
 			return
 		}
-		if n.NodeType == ast.ExternLinkNode || n.NodeType == ast.ExternIncludePathNode {
-			word := "link"
-			if n.NodeType == ast.ExternIncludePathNode {
-				word = "include_path"
-			}
-			ml.addFFIError("QK-LOAD-001", currentFilePath, n.Token, "extern %s must be at the top level of a file, not inside a block or module", word)
+		if isBuildDirective(n.NodeType) {
+			ml.addFFIError("QK-LOAD-001", currentFilePath, n.Token, "extern %s must be at the top level of a file, not inside a block or module", directiveWord(n.NodeType))
 			return
 		}
 		for _, c := range n.Children {
@@ -202,7 +264,7 @@ func (ml *ModuleLoader) checkNestedDirectives(node *ast.TreeNode, currentFilePat
 		}
 	}
 	for _, c := range node.Children {
-		if c.NodeType == ast.ExternLinkNode || c.NodeType == ast.ExternIncludePathNode {
+		if isBuildDirective(c.NodeType) {
 			continue // top level: allowed
 		}
 		walk(c)

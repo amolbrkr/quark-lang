@@ -10,6 +10,7 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 
 ## Contents
 
+- [2026-11-14: FFI phase 2 (glue sources, handles, results)](#2026-11-14-ffi-phase-2-glue-sources-handles-results)
 - [2026-11-14: Tables v0.2](#2026-11-14-tables-v02)
 - [2026-11-14: Standard library: sys, time and random](#2026-11-14-standard-library-sys-time-and-random)
 - [2026-11-14: Checked mode](#2026-11-14-checked-mode)
@@ -42,6 +43,33 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 - [2026-04-03: Table runtime scaffolding; struct fixes](#2026-04-03-table-runtime-scaffolding-struct-fixes)
 - [2026-04-02: Structs v0.1](#2026-04-02-structs-v01)
 - [2026-03-28: Vector soundness, `std/fmt` on `extern`, build output](#2026-03-28-vector-soundness-stdfmt-on-extern-build-output)
+
+## 2026-11-14: FFI phase 2 (glue sources, handles, results)
+
+The runtime half of FFI phase 2 (`specs/ffi_v0_1_spec.md` P2, P3, P4). `std/sqlite` is not part of this: its column-type rule is still an open question in that spec.
+
+### Added
+
+- **`extern source 'file.cpp'`** compiles a glue file on its own and links it into the program. The header included with `extern 'file.hpp'` stays declarations. A missing source file is `QK-FFI-001`, at the line that names it. A C++ error in the source is `QK-FFI-003`, the same as an error in a glue header. The same source named from two modules is compiled once. The object is cached under `~/.cache/quark/obj/`, keyed by the source, the headers it includes, the compile flags and the runtime headers, so the next build of an unchanged source only links the object.
+
+```quark
+extern 'fast.hpp'
+extern source 'fast.cpp'
+extern fn double_it(x: int) int as 'q_double'
+print(double_it(21))   // 42
+```
+
+- **Extension handles.** Native code registers a kind and a close function, builds a `resource`, and reads it back. The wrong kind, a closed handle, or a value that is not a resource is `QK-FFI-004` (`expected qffi.item, got file`, `qffi.item is closed`). `handle_close` runs the close function once; closing an already closed handle does nothing. A handle can name a parent value, which stays reachable until the handle itself is collected, so a connection is closed before its database. A kind with a close function is finalized when the handle becomes unreachable.
+
+- **`qext::ok`, `qext::err` and `qext::errf`** build a `result` from native code. `err` and `errf` take the message text.
+
+- **An open file is closed when its handle becomes unreachable.** `io::close` is unchanged, and it is still how a program knows the close succeeded. A handle the program is still holding stays open.
+
+### Internal
+
+- A handle is scanned GC memory, because it can hold a parent value. The registry's free list is ordinary memory, so a finalizer can recycle a slot without calling the collector. A close function must not allocate GC memory.
+
+---
 
 ## 2026-11-14: Tables v0.2
 

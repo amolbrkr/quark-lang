@@ -32,12 +32,7 @@ When a change fixes an issue, delete its entry here and describe the fix under F
 - A misspelled `print` alignment is ignored: `print('x', '|\n', 5, 'rigth', '.')` prints `x....|` (left-aligned) with no error.
 
 **Runtime numbers and edge cases.**
-- List indexes in methods are cut to 32 bits: `list [10, 20, 30].get(4294967296)` returns `10`, and `xs.set(4294967297, 99)` writes element 1 (the same for `insert` and `remove`). `xs[i]` and `s[i]` take the whole index.
-- `abs(-9223372036854775807 - 1)` returns `0`.
-- `to_int('99999999999999999999')` returns `9223372036854775807`. `to_int(1e19)`, `floor(1e30)`, `round(-1e300)` and `fillna(1e30)` on an int vec give arbitrary values; `fillna(2.7)` on an int vec stores `2`.
-- `range(0.5, 3.0)` is `[0, 1, 2]`. `range(9223372036854775800, 9223372036854775807, 5)` never ends, and a lowered `for` loop over it wraps to negative numbers.
 - `d.set(1, 'a')` and `d.set('1', 'b')` write the same key: `d` prints `{'1': 'b'}`.
-- `sys::exit(256)` exits with status 0.
 - `io::read` stops at a NUL byte: on a file containing `ab\0cd`, the first read returns `ab` and the next returns `''`.
 - Two-argument `min`/`max` with NaN depend on the order: `min(n, 1.0)` with `n = to_float('nan')` is `1.0`, but `min(1.0, n)` is `nan` (vec reductions skip NaN). Sorting a list that contains NaN is undefined behavior in the C++ sort.
 

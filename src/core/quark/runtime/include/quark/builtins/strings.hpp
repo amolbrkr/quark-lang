@@ -5,6 +5,7 @@
 #include "../core/value.hpp"
 #include "../core/constructors.hpp"
 #include "../core/gc.hpp"
+#include "../core/checked.hpp"
 #include "../builtins/conversion.hpp"
 
 #include <string>
@@ -25,12 +26,9 @@ inline QValue q_str_slice(QValue str, QValue start, QValue end) {
         q_runtime_reportf("runtime error: sslice() start and end must be int\n");
         std::exit(1);
     }
-    int len = static_cast<int>(strlen(str.data.string_val));
-    int s = static_cast<int>(start.data.int_val);
-    int e = static_cast<int>(end.data.int_val);
-
-    if (s < 0) s = len + s;
-    if (e < 0) e = len + e;
+    const long long len = static_cast<long long>(strlen(str.data.string_val));
+    long long s = q_resolve_index(start.data.int_val, len);
+    long long e = q_resolve_index(end.data.int_val, len);
     if (s < 0) s = 0;
     if (e > len) e = len;
     if (s >= e) return qv_string("");

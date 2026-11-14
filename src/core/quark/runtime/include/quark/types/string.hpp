@@ -5,6 +5,7 @@
 #include "../core/value.hpp"
 #include "../core/constructors.hpp"
 #include "../core/gc.hpp"
+#include "../core/checked.hpp"
 #include <cstring>
 #include <cctype>
 #include <cstdlib>
@@ -165,9 +166,8 @@ inline QValue q_str_get(QValue str, QValue index) {
     if (index.type != QValue::VAL_INT) {
         return qv_null();
     }
-    int len = static_cast<int>(strlen(str.data.string_val));
-    int idx = static_cast<int>(index.data.int_val);
-    if (idx < 0) idx = len + idx;
+    const long long len = static_cast<long long>(strlen(str.data.string_val));
+    const long long idx = q_resolve_index(index.data.int_val, len);
     if (idx < 0 || idx >= len) {
         return qv_null();
     }

@@ -365,8 +365,11 @@ type While struct {
 	Body *Block
 }
 
-// ForRange is `for (long long v = Start; Step > 0 ? v < End : v > End; v += Step)`
-// for a range() loop; Start, End and Step are temporaries or constants.
+// ForRange is a range() loop: v takes the values Start, Start + Step, ...
+// up to, not including, End. It is emitted as a count of iterations
+// (q_range_count) with v computed from the count each time (q_range_at), so
+// it can't overflow and the body can't change the iteration by assigning v.
+// Start, End and Step are temporaries or constants.
 type ForRange struct {
 	Var              *types.Symbol
 	Start, End, Step Expr

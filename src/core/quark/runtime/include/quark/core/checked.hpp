@@ -4,6 +4,7 @@
 #define QUARK_CORE_CHECKED_HPP
 
 #include "diagnostics.hpp"
+#include "format.hpp"
 #include <climits>
 #include <cstdlib>
 
@@ -18,6 +19,13 @@
 [[noreturn]] inline void q_int_overflow(const char* op) {
     q_runtime_reportf("runtime error: integer overflow in '%s'\n", op);
     std::exit(1);
+}
+
+// q_resolve_index is a list or string index as written (negative counts from
+// the end) resolved against len, in 64 bits: the caller checks the bounds.
+// len + given can't overflow, since len >= 0 > given.
+inline long long q_resolve_index(long long given, long long len) {
+    return given < 0 ? len + given : given;
 }
 
 inline long long q_checked_add(long long a, long long b) {
@@ -51,6 +59,25 @@ inline long long q_checked_mod(long long a, long long b) {
     // LLONG_MIN % -1 is undefined in C++; the mathematical result is 0.
     if (b == -1) return 0;
     return a % b;
+}
+
+// q_checked_abs is |a|; the smallest int64 has no positive counterpart.
+inline long long q_checked_abs(long long a) {
+    if (a == LLONG_MIN) q_int_overflow("abs");
+    return a < 0 ? -a : a;
+}
+
+// q_checked_f2i converts a float to an int for `what` ("to_int()", "floor()"):
+// it truncates toward zero, and NaN or a value outside the int64 range is a
+// runtime error (casting one is undefined behavior in C++).
+inline long long q_checked_f2i(double x, const char* what) {
+    if (!(x >= -9223372036854775808.0 && x < 9223372036854775808.0)) {
+        char fbuf[32];
+        q_runtime_reportf("runtime error: %s can't convert %s to an int: %s\n", what, q_format_float(x, fbuf, sizeof(fbuf)),
+                          x != x ? "it is not a number" : "it is outside the int range");
+        std::exit(1);
+    }
+    return static_cast<long long>(x);
 }
 
 inline double q_checked_fdiv(double a, double b) {

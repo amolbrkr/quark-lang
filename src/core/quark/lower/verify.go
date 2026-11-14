@@ -235,7 +235,7 @@ func (v *verifier) stmt(s Stmt) {
 			v.expr(e)
 			v.wantRep(e, RepInt, "range bound")
 		}
-		if !loopStable(s.End) || !loopStable(s.Step) {
+		if !loopStable(s.Start) || !loopStable(s.End) || !loopStable(s.Step) {
 			v.fail("INV-IR-LOOP", "range bounds of %s must be temporaries or constants", symName(s.Var))
 		}
 		if s.Var.Storage != ir.StorageInt {

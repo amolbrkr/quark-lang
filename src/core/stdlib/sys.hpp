@@ -20,8 +20,14 @@ inline QValue q_sys_env(const char* name) {
     return value ? qv_string(value) : qv_null();
 }
 
-// Exit the program with the given status after flushing output.
+// Exit the program with the given status after flushing output. Only the
+// low 8 bits of a status reach the parent process, so a code outside 0-255
+// (256 would read as success) is an error rather than silently wrapped.
 [[noreturn]] inline QValue q_sys_exit(int64_t code) {
+    if (code < 0 || code > 255) {
+        q_runtime_reportf("runtime error: sys::exit() status must be between 0 and 255, got %lld\n", static_cast<long long>(code));
+        std::exit(1);
+    }
     std::fflush(stdout);
     std::fflush(stderr);
     std::exit(static_cast<int>(code));

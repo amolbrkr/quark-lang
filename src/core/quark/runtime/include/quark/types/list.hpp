@@ -7,6 +7,7 @@
 #include "string.hpp"
 #include "dict.hpp"
 #include "elemtype.hpp"
+#include "../core/checked.hpp"
 
 // Push item to end of list
 inline QValue q_push(QValue list, QValue item) {
@@ -57,15 +58,14 @@ inline QValue q_get(QValue list, QValue index) {
         q_runtime_reportf("runtime error: get() index must be int\n");
         std::exit(1);
     }
-    int idx = static_cast<int>(index.data.int_val);
-    int len = static_cast<int>(list.data.list_val->size());
-    if (idx < 0) idx = len + idx;
+    const long long len = static_cast<long long>(list.data.list_val->size());
+    const long long idx = q_resolve_index(index.data.int_val, len);
     // Policy: get() returns null on OOB (documented safe-read API).
     // Write operations (set/insert/remove) crash on invalid indices.
     if (idx < 0 || idx >= len) {
         return qv_null();
     }
-    return (*list.data.list_val)[idx];
+    return (*list.data.list_val)[static_cast<size_t>(idx)];
 }
 
 // q_index is `target[index]`, the typed read (semantics.md §9): an index out
@@ -112,15 +112,14 @@ inline QValue q_set(QValue list, QValue index, QValue value) {
         q_runtime_reportf("runtime error: set() index must be int\n");
         std::exit(1);
     }
-    int idx = static_cast<int>(index.data.int_val);
-    int len = static_cast<int>(list.data.list_val->size());
-    if (idx < 0) idx = len + idx;
+    const long long len = static_cast<long long>(list.data.list_val->size());
+    const long long idx = q_resolve_index(index.data.int_val, len);
     if (idx < 0 || idx >= len) {
-        q_runtime_reportf("runtime error: set() index %d out of range (list length %d)\n", idx, len);
+        q_runtime_reportf("runtime error: set() index %lld out of range (list length %lld)\n", index.data.int_val, len);
         std::exit(1);
     }
     value = q_elem_store(list.data.list_val->elem, value, "set()");
-    (*list.data.list_val)[idx] = value;
+    (*list.data.list_val)[static_cast<size_t>(idx)] = value;
     return value;
 }
 
@@ -134,9 +133,8 @@ inline QValue q_insert(QValue list, QValue index, QValue item) {
         q_runtime_reportf("runtime error: insert() index must be int\n");
         std::exit(1);
     }
-    int idx = static_cast<int>(index.data.int_val);
-    int len = static_cast<int>(list.data.list_val->size());
-    if (idx < 0) idx = len + idx;
+    const long long len = static_cast<long long>(list.data.list_val->size());
+    long long idx = q_resolve_index(index.data.int_val, len);
     if (idx < 0) idx = 0;
     if (idx > len) idx = len;
     item = q_elem_store(list.data.list_val->elem, item, "insert()");
@@ -154,14 +152,13 @@ inline QValue q_remove(QValue list, QValue index) {
         q_runtime_reportf("runtime error: remove() index must be int\n");
         std::exit(1);
     }
-    int idx = static_cast<int>(index.data.int_val);
-    int len = static_cast<int>(list.data.list_val->size());
-    if (idx < 0) idx = len + idx;
+    const long long len = static_cast<long long>(list.data.list_val->size());
+    const long long idx = q_resolve_index(index.data.int_val, len);
     if (idx < 0 || idx >= len) {
-        q_runtime_reportf("runtime error: remove() index %d out of range (list length %d)\n", idx, len);
+        q_runtime_reportf("runtime error: remove() index %lld out of range (list length %lld)\n", index.data.int_val, len);
         std::exit(1);
     }
-    QValue item = (*list.data.list_val)[idx];
+    QValue item = (*list.data.list_val)[static_cast<size_t>(idx)];
     list.data.list_val->erase(list.data.list_val->begin() + idx);
     return item;
 }
@@ -195,22 +192,18 @@ inline QValue q_slice(QValue list, QValue start, QValue end) {
         q_runtime_reportf("runtime error: slice() start and end indices must be int\n");
         std::exit(1);
     }
-    int len = static_cast<int>(list.data.list_val->size());
-    int s = static_cast<int>(start.data.int_val);
-    int e = static_cast<int>(end.data.int_val);
-
-    // Handle negative indices
-    if (s < 0) s = len + s;
-    if (e < 0) e = len + e;
+    const long long len = static_cast<long long>(list.data.list_val->size());
+    long long s = q_resolve_index(start.data.int_val, len);
+    long long e = q_resolve_index(end.data.int_val, len);
 
     // Clamp to bounds
     if (s < 0) s = 0;
     if (e > len) e = len;
     if (s >= e) return qv_list(0, list.data.list_val->elem);
 
-    QValue result = qv_list(e - s, list.data.list_val->elem);
-    for (int i = s; i < e; i++) {
-        result.data.list_val->push_back((*list.data.list_val)[i]);
+    QValue result = qv_list(static_cast<int>(e - s), list.data.list_val->elem);
+    for (long long i = s; i < e; i++) {
+        result.data.list_val->push_back((*list.data.list_val)[static_cast<size_t>(i)]);
     }
     return result;
 }
@@ -251,22 +244,23 @@ inline QValue q_enumerate(QValue seq) {
 }
 
 
-// q_range_arg converts one argument of a lowered `for i in range(...)` loop to an
-// integer, with the same rules and messages as the q_range builtins: ints as is,
-// floats truncated, anything else a runtime error. `sig` is the call form, e.g.
-// "range(start, end)", and `what` the argument name, e.g. "end".
+// q_range_arg converts one argument of range() to an integer: `sig` is the
+// call form, e.g. "range(start, end)", and `what` the argument name, e.g.
+// "end". Arguments are ints; a float is an error rather than truncated, since
+// range(0.5, 3.0) would otherwise silently start at 0.
 inline long long q_range_arg(QValue v, const char* sig, const char* what) {
     if (v.type == QValue::VAL_INT) {
         return v.data.int_val;
     }
     if (v.type == QValue::VAL_FLOAT) {
-        return static_cast<long long>(v.data.float_val);
+        q_runtime_reportf("runtime error: %s takes ints, got a float for %s; convert it with floor(), ceil(), round() or to_int()\n", sig, what);
+        std::exit(1);
     }
-    q_runtime_reportf("runtime error: %s expects numeric %s value\n", sig, what);
+    q_runtime_reportf("runtime error: %s takes ints, got %s for %s\n", sig, q_type_name(v.type), what);
     std::exit(1);
 }
 
-// q_range_step validates the step of a lowered `for i in range(start, end, step)`.
+// q_range_step validates the step of range(start, end, step).
 inline long long q_range_step(long long step) {
     if (step == 0) {
         q_runtime_reportf("runtime error: range() step must not be zero\n");
@@ -275,108 +269,58 @@ inline long long q_range_step(long long step) {
     return step;
 }
 
-// Range functions - generate lists of integers
-// range(end) - generates [0, 1, 2, ..., end-1]
+// q_range_count is how many values range(start, end, step) has (step != 0),
+// computed in unsigned arithmetic so that ranges near the int64 limits
+// neither overflow nor run forever.
+inline unsigned long long q_range_count(long long start, long long end, long long step) {
+    if (step > 0) {
+        if (start >= end) return 0;
+        const unsigned long long span = static_cast<unsigned long long>(end) - static_cast<unsigned long long>(start);
+        return (span - 1) / static_cast<unsigned long long>(step) + 1;
+    }
+    if (start <= end) return 0;
+    const unsigned long long span = static_cast<unsigned long long>(start) - static_cast<unsigned long long>(end);
+    const unsigned long long magnitude = 0ULL - static_cast<unsigned long long>(step);
+    return (span - 1) / magnitude + 1;
+}
+
+// q_range_at is value k of range(start, _, step), start + k * step. For
+// k < q_range_count it lies between start and end, so it fits in an int64;
+// the unsigned arithmetic only avoids a signed-overflow intermediate.
+inline long long q_range_at(long long start, long long step, unsigned long long k) {
+    return static_cast<long long>(static_cast<unsigned long long>(start) + k * static_cast<unsigned long long>(step));
+}
+
+// q_range_list builds the list of range(start, end, step).
+inline QValue q_range_list(long long start, long long end, long long step) {
+    const unsigned long long n = q_range_count(start, end, step);
+    QValue result = qv_list(n < 1024 ? static_cast<int>(n) : 1024, &q_elem_int);
+    for (unsigned long long k = 0; k < n; k++) {
+        result.data.list_val->push_back(qv_int(q_range_at(start, step, k)));
+    }
+    return result;
+}
+
+// range(end) - [0, 1, ..., end-1]
 inline QValue q_range(QValue end) {
-    long long e = 0;
-    if (end.type == QValue::VAL_INT) {
-        e = end.data.int_val;
-    } else if (end.type == QValue::VAL_FLOAT) {
-        e = static_cast<long long>(end.data.float_val);
-    } else {
-        q_runtime_reportf("runtime error: range(end) expects numeric end value\n");
-        std::exit(1);
-    }
-
-    QValue result = qv_list(0, &q_elem_int);
-    for (long long i = 0; i < e; i++) {
-        result.data.list_val->push_back(qv_int(i));
-    }
-    return result;
+    return q_range_list(0, q_range_arg(end, "range(end)", "end"), 1);
 }
 
-// range(start, end) - generates [start, start+1, ..., end-1]
+// range(start, end) - [start, start+1, ..., end-1], counting down to end+1
+// when start > end.
 inline QValue q_range(QValue start, QValue end) {
-    long long s = 0, e = 0;
-
-    if (start.type == QValue::VAL_INT) {
-        s = start.data.int_val;
-    } else if (start.type == QValue::VAL_FLOAT) {
-        s = static_cast<long long>(start.data.float_val);
-    } else {
-        q_runtime_reportf("runtime error: range(start, end) expects numeric start value\n");
-        std::exit(1);
-    }
-
-    if (end.type == QValue::VAL_INT) {
-        e = end.data.int_val;
-    } else if (end.type == QValue::VAL_FLOAT) {
-        e = static_cast<long long>(end.data.float_val);
-    } else {
-        q_runtime_reportf("runtime error: range(start, end) expects numeric end value\n");
-        std::exit(1);
-    }
-
-    QValue result = qv_list(0, &q_elem_int);
-    if (s < e) {
-        for (long long i = s; i < e; i++) {
-            result.data.list_val->push_back(qv_int(i));
-        }
-    } else {
-        for (long long i = s; i > e; i--) {
-            result.data.list_val->push_back(qv_int(i));
-        }
-    }
-    return result;
+    const long long s = q_range_arg(start, "range(start, end)", "start");
+    const long long e = q_range_arg(end, "range(start, end)", "end");
+    return q_range_list(s, e, s <= e ? 1 : -1);
 }
 
-// range(start, end, step) - generates [start, start+step, start+2*step, ...]
+// range(start, end, step) - [start, start+step, ...] up to, not including, end.
 inline QValue q_range(QValue start, QValue end, QValue step) {
-    long long s = 0, e = 0, st = 1;
-
-    if (start.type == QValue::VAL_INT) {
-        s = start.data.int_val;
-    } else if (start.type == QValue::VAL_FLOAT) {
-        s = static_cast<long long>(start.data.float_val);
-    } else {
-        q_runtime_reportf("runtime error: range(start, end, step) expects numeric start value\n");
-        std::exit(1);
-    }
-
-    if (end.type == QValue::VAL_INT) {
-        e = end.data.int_val;
-    } else if (end.type == QValue::VAL_FLOAT) {
-        e = static_cast<long long>(end.data.float_val);
-    } else {
-        q_runtime_reportf("runtime error: range(start, end, step) expects numeric end value\n");
-        std::exit(1);
-    }
-
-    if (step.type == QValue::VAL_INT) {
-        st = step.data.int_val;
-    } else if (step.type == QValue::VAL_FLOAT) {
-        st = static_cast<long long>(step.data.float_val);
-    } else {
-        q_runtime_reportf("runtime error: range(start, end, step) expects numeric step value\n");
-        std::exit(1);
-    }
-
-    if (st == 0) {
-        q_runtime_reportf("runtime error: range() step must not be zero\n");
-        std::exit(1);
-    }
-
-    QValue result = qv_list(0, &q_elem_int);
-    if (st > 0) {
-        for (long long i = s; i < e; i += st) {
-            result.data.list_val->push_back(qv_int(i));
-        }
-    } else {
-        for (long long i = s; i > e; i += st) {
-            result.data.list_val->push_back(qv_int(i));
-        }
-    }
-    return result;
+    const char* sig = "range(start, end, step)";
+    const long long s = q_range_arg(start, sig, "start");
+    const long long e = q_range_arg(end, sig, "end");
+    const long long st = q_range_step(q_range_arg(step, sig, "step"));
+    return q_range_list(s, e, st);
 }
 
 #endif // QUARK_TYPES_LIST_HPP

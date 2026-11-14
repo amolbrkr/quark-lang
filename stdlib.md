@@ -146,7 +146,7 @@ type(42) | print()          // int
 len('hello') | print()      // 5
 ```
 
-Some edge cases of `to_int` and `to_float` give wrong values instead of errors (`to_int('99999999999999999999')`, `to_int(1e19)`); see known_issues.md.
+A value that doesn't fit an int is a runtime error, never wrapped: `to_int('99999999999999999999')`, `to_int(1e19)` and `to_int` of NaN or an infinity (`to_int() can't convert 1e+19 to an int: it is outside the int range`).
 
 ### Results
 
@@ -193,7 +193,7 @@ range(5, 2).join(', ') | print()       // 5, 4, 3
 range(10, 0, -2).join(', ') | print()  // 10, 8, 6, 4, 2
 ```
 
-A float argument is truncated instead of rejected (`range(0.5, 3.0)` is `[0, 1, 2]`), and ranges near the int64 limit misbehave; see known_issues.md.
+A float argument is an error, not truncated: a compile-time error when the type is known (`range(n / 2)`; use `floor(n / 2)`), otherwise a runtime error (`range(end) takes ints, got a float for end`). Ranges near the int64 limits end without wrapping around.
 
 ### Math
 
@@ -206,7 +206,7 @@ A float argument is truncated instead of rejected (`range(0.5, 3.0)` is `[0, 1, 
 | `floor`, `ceil` | `float -> int` | Round down / up |
 | `round` | `float -> int` | Round to nearest, halves away from zero (`round(2.5)` is `3`, `round(-2.5)` is `-3`) |
 
-An int passed to `floor`, `ceil` or `round` is returned unchanged. A non-number is a compile-time error when the type is known (`sqrt('hello')`: `argument 1 of 'sqrt' expects float, got str`), otherwise a runtime error.
+An int passed to `floor`, `ceil` or `round` is returned unchanged; a float result outside the int range, or NaN, is a runtime error (`floor() can't convert 1e+30 to an int: it is outside the int range`), and so is `abs` of the smallest int (`integer overflow in 'abs'`). A non-number is a compile-time error when the type is known (`sqrt('hello')`: `argument 1 of 'sqrt' expects float, got str`), otherwise a runtime error.
 
 ```quark
 abs(0 - 5) | print()       // 5
@@ -216,7 +216,7 @@ sqrt(16) | print()         // 4.0
 floor(3.7) | print()       // 3
 ```
 
-`abs` of the smallest int64, `floor`/`ceil`/`round` of floats outside the int64 range, and two-argument `min`/`max` with NaN give wrong values; see known_issues.md.
+Two-argument `min`/`max` with NaN give wrong values; see known_issues.md.
 
 ---
 
@@ -297,7 +297,7 @@ list [1, 2, 3].join('+') | print()            // 1+2+3
 print(type(list [1, 2, 3].to_vec()))          // vec[i64]
 ```
 
-Known issues (known_issues.md): indexes above 32 bits wrap in `.get`, `.set`, `.insert` and `.remove` (`xs[i]` takes the whole 64-bit index); sorting a list that contains NaN is undefined.
+Known issues (known_issues.md): sorting a list that contains NaN is undefined.
 
 ---
 
@@ -373,13 +373,12 @@ for x in v:                  // runtime error: vec element 1 is missing; use fil
 | Method | Signature | Description |
 |---|---|---|
 | `.get(idx)` | `int -> any` | Element at `idx` (negative counts from the end); `null` for a missing entry, so the result has type `any` (`v[idx]` is the typed read, and errors on a missing entry). Out of range is a runtime error (unlike list `.get`) |
-| `.fillna(val)` | `any -> vec` | Missing entries replaced by `val`, which must fit the dtype (a number for numeric vectors, a bool or int for `vec[bool]`, a string for `vec[str]`) |
+| `.fillna(val)` | `any -> vec` | Missing entries replaced by `val`, which must have the element type, as a write into a typed list must: an int or float for `vec[float]`, an int for `vec[int]`, a bool for `vec[bool]`, a str for `vec[str]`. Anything else is an error even when nothing is missing: at compile time when both types are known (`fillna() can't fill vec[int] with float`), otherwise at runtime |
 | `.drop_na()` | `-> vec` | The present entries, in order, with the same element type (the vector itself when nothing is missing) |
 | `.astype(dtype)` | `str -> vec` | Cast between `'f64'`, `'i64'` and `'bool'`. f64 → i64 truncates; a value outside the int64 range is a runtime error. `vec[str]` can't be cast |
 | `.to_list()` | `-> list` | List of the elements, typed by the dtype. A vector with missing entries is a runtime error (`to_list() of a vec with 2 missing entries; use fillna or drop_na first`) |
 | `.enumerate()` | `-> list` | List of `{index, value}` dicts, as for lists; a missing entry is a runtime error |
 
-Known issues (known_issues.md): `fillna(2.7)` on an int vector stores `2`.
 
 ### Reductions
 
@@ -540,7 +539,7 @@ Program arguments, environment variables and exit status. Import with `incl 'std
 |---|---|---|
 | `args` | `-> list` | Command-line arguments after the program name, as strings. With `quark run`, arguments after `--` are passed: `quark run tool.qrk -- in.csv -v` |
 | `env` | `name: str -> str or null` | Value of the environment variable `name`, or `null` when it isn't set |
-| `exit` | `code: int = 0` | Flush output and exit with status `code`; `0` means success. Only the low 8 bits reach the OS (`sys::exit(256)` exits with 0; known_issues.md) |
+| `exit` | `code: int = 0` | Flush output and exit with status `code`, between 0 and 255; `0` means success. A code outside that range is a runtime error, since the OS keeps only the low 8 bits (256 would read as success) |
 
 ```quark
 incl 'std/sys' as sys

@@ -387,7 +387,7 @@ func inferAstypeReturnType(receiverType Type, argNodes []*ast.TreeNode) Type {
 // result (which has the receiver's element type).
 func (a *Analyzer) checkMutation(receiverType Type, methodName string, argTypes []Type, argNodes []*ast.TreeNode) {
 	valueArg := -1
-	switch receiverType.(type) {
+	switch rt := receiverType.(type) {
 	case *ListType:
 		switch methodName {
 		case "push":
@@ -406,6 +406,11 @@ func (a *Analyzer) checkMutation(receiverType Type, methodName string, argTypes 
 		if methodName == "set" {
 			valueArg = 1
 		}
+	case *VectorType:
+		if methodName == "fillna" && len(argTypes) == 1 {
+			a.checkFillValue(rt, argTypes[0], argNodes[0])
+		}
+		return
 	}
 	if valueArg < 0 || valueArg >= len(argTypes) {
 		return
@@ -415,6 +420,20 @@ func (a *Analyzer) checkMutation(receiverType Type, methodName string, argTypes 
 		key = argNodes[0].Token.Literal
 	}
 	a.checkElemWrite(receiverType, argTypes[valueArg], argNodes[valueArg], key)
+}
+
+// checkFillValue checks the value of v.fillna(value) against the vec's
+// element type, like a write into a typed list: an int fills a float vec,
+// anything else must match (fillna(2.7) on a vec[int] would store 2). An
+// unknown type on either side is checked at runtime (q_fillna).
+func (a *Analyzer) checkFillValue(vt *VectorType, valueType Type, at *ast.TreeNode) {
+	elem := vt.ElementType
+	if IsErrorType(valueType) || isUnknownType(elem) || isUnknownType(valueType) {
+		return
+	}
+	if !CanAssign(elem, valueType) {
+		a.errorAt(at, "fillna() can't fill %s with %s: the fill value must have the element type (an int may fill a vec of float)", vt.String(), valueType.String())
+	}
 }
 
 // settleArgs relates the arguments of a call to a user function or extern fn

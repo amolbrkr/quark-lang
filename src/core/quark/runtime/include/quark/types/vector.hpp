@@ -912,16 +912,29 @@ inline QValue q_fillna(QValue vec, QValue value) {
         std::exit(1);
     }
     const QVector& src = *vec.data.vector_val;
+    // The fill value must have the vec's element type, as a write into a
+    // typed list must (an int widens to a float): fillna(2.7) on a vec[i64]
+    // would otherwise store 2. It is checked whether or not anything is
+    // missing, so a wrong fill fails on every input.
+    bool fits = false;
+    const char* dtype = "?";
+    switch (src.type) {
+        case QVector::Type::F64: fits = q_is_numeric_scalar(value); dtype = "f64"; break;
+        case QVector::Type::I64: fits = value.type == QValue::VAL_INT; dtype = "i64"; break;
+        case QVector::Type::BOOL: fits = value.type == QValue::VAL_BOOL; dtype = "bool"; break;
+        case QVector::Type::STR: fits = value.type == QValue::VAL_STRING && value.data.string_val != nullptr; dtype = "str"; break;
+        default: break;
+    }
+    if (!fits) {
+        q_runtime_reportf("runtime error: fillna() can't fill vec[%s] with %s: the fill value must have the element type (an int may fill a vec of float)\n", dtype, q_type_name(value.type));
+        std::exit(1);
+    }
     if (src.null_count == 0) {
         return vec;  // immutable: sharing the same vector is safe
     }
 
     switch (src.type) {
         case QVector::Type::F64: {
-            if (!q_is_numeric_scalar(value)) {
-                q_runtime_reportf("runtime error: fillna() value is incompatible with vec[f64]\n");
-                std::exit(1);
-            }
             QValue out = q_vec_clone(vec);
             double* d = q_vec_f64_data_mut(*out.data.vector_val);
             const double fill = q_to_double_scalar(value);
@@ -931,25 +944,17 @@ inline QValue q_fillna(QValue vec, QValue value) {
             return out;
         }
         case QVector::Type::I64: {
-            if (!(value.type == QValue::VAL_INT || value.type == QValue::VAL_FLOAT || value.type == QValue::VAL_BOOL)) {
-                q_runtime_reportf("runtime error: fillna() value is incompatible with vec[i64]\n");
-                std::exit(1);
-            }
             QValue out = q_vec_clone(vec);
             int64_t* d = q_vec_i64_data_mut(*out.data.vector_val);
-            const int64_t fill = q_to_i64_scalar(value);
+            const int64_t fill = value.data.int_val;
             for (size_t i = 0; i < src.count; i++) if (q_vec_is_null_at(src, i)) d[i] = fill;
             out.data.vector_val->validity = nullptr;
             out.data.vector_val->null_count = 0;
             return out;
         }
         case QVector::Type::BOOL: {
-            if (!q_is_boolish_scalar(value)) {
-                q_runtime_reportf("runtime error: fillna() value is incompatible with vec[bool]\n");
-                std::exit(1);
-            }
             QValue out = q_vec_clone(vec);
-            const bool fill = q_boolish_value(value);
+            const bool fill = value.data.bool_val;
             for (size_t i = 0; i < src.count; i++) {
                 if (q_vec_is_null_at(src, i)) q_vec_bool_put(*out.data.vector_val, i, fill);
             }
@@ -958,10 +963,6 @@ inline QValue q_fillna(QValue vec, QValue value) {
             return out;
         }
         case QVector::Type::STR: {
-            if (value.type != QValue::VAL_STRING || value.data.string_val == nullptr) {
-                q_runtime_reportf("runtime error: fillna() value is incompatible with vec[str]\n");
-                std::exit(1);
-            }
             const std::string_view fill(value.data.string_val);
             QValue out = qv_vector_str(static_cast<int>(src.count), 0);
             QVector& ov = *out.data.vector_val;

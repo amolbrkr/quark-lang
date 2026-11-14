@@ -59,7 +59,7 @@ var catalog = []Spec{
 	{Name: "unwrap", Runtime: "q_unwrap", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeAny},
 
 	// Range (free function)
-	{Name: "range", Runtime: "q_range", MinArgs: 1, MaxArgs: 3, ParamTypes: []TypeKey{TypeFloat, TypeFloat, TypeFloat}, ReturnType: TypeListInt},
+	{Name: "range", Runtime: "q_range", MinArgs: 1, MaxArgs: 3, ParamTypes: []TypeKey{TypeInt, TypeInt, TypeInt}, ReturnType: TypeListInt},
 
 	// Math (free functions)
 	{Name: "abs", Runtime: "q_abs", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeAny},

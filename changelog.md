@@ -54,14 +54,26 @@ Fixes from the "Wrong results with no error" section of `known_issues.md`: each 
   print(lib::shout('a'))   // 'a'.shout() here: type 'str' has no method 'shout'
   ```
   An extern method named like a prelude method of any type is a load error (`extern fn list.contains(x)`: `'contains' is a prelude method (str.contains), so it can't be the name of an extern method of any type`), and so is a method declared twice for one receiver in a file.
+- **`range` takes ints.** A float argument was truncated (`range(0.5, 3.0)` was `[0, 1, 2]`); now it is a compile-time error when the type is known and a runtime error otherwise. Since `/` always gives a float, convert explicitly:
+  ```quark
+  for i in range(n / 2):          // argument 1 of 'range' expects int, got float
+  for i in range(floor(n / 2)):   // ok
+  ```
+- **`fillna`'s value must have the vec's element type**, like a write into a typed list: an int or float for a float vec, an int for an int vec (`vec [1, 2].fillna(2.7)` stored `2`), a bool for a bool vec (an int was accepted), a str for a str vec. It is checked at compile time when both types are known (`fillna() can't fill vec[int] with float`), and at runtime even when nothing is missing, so a wrong fill fails on every input.
+- **`sys::exit` takes a status between 0 and 255.** The OS keeps only the low 8 bits, so `sys::exit(256)` exited with 0 (success); a code outside the range is now a runtime error.
 - **The standard library is never taken from near the program.** `std/` imports come from `QUARK_STDLIB_ROOT` or from the stdlib next to the compiler. A directory named `stdlib` in the program's directory or above it is no longer used, and a `QUARK_STDLIB_ROOT` that isn't a directory is an error (`QUARK_STDLIB_ROOT is '/x', which is not a directory`) instead of being skipped.
 
 ### Fixed
 - Two files that declare the same extern method (`extern fn str.shout()` in `e1.qrk` and `e2.qrk`) no longer replace each other: each file's calls get its own declaration. Before, the later declaration won for every caller analyzed after it, and the main script could call either one unqualified.
 - A directory named `stdlib` above a program (`/tmp/x/stdlib/io.qrk` for `/tmp/x/a/main.qrk`) silently replaced the standard library.
+- List and str methods use the whole 64-bit index: `list [10, 20, 30].get(4294967296)` returned `10` and `xs.set(4294967297, 99)` wrote element 1; now they are `null` and an out-of-range error, as for `xs[i]`. The same for `insert`, `remove`, `slice` and `str.slice`.
+- Numbers that don't fit an int are runtime errors instead of wrong values: `abs` of the smallest int (was `0`), `to_int('99999999999999999999')` (was the largest int), and `to_int`, `floor`, `ceil` and `round` of NaN, an infinity or a float outside the int range (`floor(1e30)`: `floor() can't convert 1e+30 to an int: it is outside the int range`).
+- A range near the int64 limits ends: `range(9223372036854775800, 9223372036854775807, 5)` never ended, and a `for` loop over it wrapped around to negative numbers.
+- Assigning the variable of `for i in range(...)` in the loop body changed the iteration (`i = i + 2` made the loop skip values); the loop now visits every value of the range, as a loop over a list does.
 
 ### Internal
 - The loader gives each extern method its file's internal name, `q<N>__<name>__m` (`names.Method`), and renames the method calls of that file to it (`collectMethods`, `renameMethodCall`); the duplicate and prelude-name checks moved there from the analyzer. `findStdlibRoot` takes no path and returns an error naming where it looked. `internal/testutil` sets `QUARK_STDLIB_ROOT` to the repository's stdlib, since a test binary isn't next to it.
+- `core/checked.hpp` gains `q_resolve_index` (64-bit index resolution for lists and strings), `q_checked_abs` and `q_checked_f2i` (the one checked float-to-int conversion). A lowered `range` loop counts its iterations (`q_range_count`, computed in unsigned arithmetic) and computes the variable from the count (`q_range_at`), and the `range` builtins build their lists the same way; the verifier requires the start to be a temporary or constant too. `fillna` gets a compile-time check next to the typed-list writes (`checkMutation`).
 
 ---
 

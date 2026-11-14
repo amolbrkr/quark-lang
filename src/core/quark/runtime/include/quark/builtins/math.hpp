@@ -5,6 +5,7 @@
 #include "../core/value.hpp"
 #include "../core/constructors.hpp"
 #include "../core/format.hpp"
+#include "../core/checked.hpp"
 #include <cstdlib>
 #include <cstdio>
 #include <cmath>
@@ -26,7 +27,7 @@ inline QValue q_abs(QValue v) {
     if (v.type == QValue::VAL_FLOAT) {
         return qv_float(fabs(v.data.float_val));
     }
-    return qv_int(llabs(v.data.int_val));
+    return qv_int(q_checked_abs(v.data.int_val));
 }
 
 // Minimum of two values
@@ -130,7 +131,7 @@ inline QValue q_floor(QValue v) {
         std::exit(1);
     }
     if (v.type == QValue::VAL_INT) return v;
-    return qv_int(static_cast<long long>(floor(v.data.float_val)));
+    return qv_int(q_checked_f2i(floor(v.data.float_val), "floor()"));
 }
 
 // Ceiling (returns int)
@@ -140,7 +141,7 @@ inline QValue q_ceil(QValue v) {
         std::exit(1);
     }
     if (v.type == QValue::VAL_INT) return v;
-    return qv_int(static_cast<long long>(ceil(v.data.float_val)));
+    return qv_int(q_checked_f2i(ceil(v.data.float_val), "ceil()"));
 }
 
 // Round to nearest integer (returns int)
@@ -150,7 +151,7 @@ inline QValue q_round(QValue v) {
         std::exit(1);
     }
     if (v.type == QValue::VAL_INT) return v;
-    return qv_int(static_cast<long long>(round(v.data.float_val)));
+    return qv_int(q_checked_f2i(round(v.data.float_val), "round()"));
 }
 
 #endif // QUARK_BUILTINS_MATH_HPP

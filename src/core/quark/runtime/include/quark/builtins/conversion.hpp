@@ -6,10 +6,12 @@
 #include "../core/constructors.hpp"
 #include "../core/truthy.hpp"
 #include "../core/format.hpp"
+#include "../core/checked.hpp"
 #include "repr.hpp"
 #include "../types/dict.hpp"
 #include "../types/resource.hpp"
 #include "../types/table.hpp"
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -148,7 +150,7 @@ inline QValue q_int(QValue v) {
         case QValue::VAL_INT:
             return v;
         case QValue::VAL_FLOAT:
-            return qv_int(static_cast<long long>(v.data.float_val));
+            return qv_int(q_checked_f2i(v.data.float_val, "to_int()"));
         case QValue::VAL_BOOL:
             return qv_int(v.data.bool_val ? 1 : 0);
         case QValue::VAL_STRING: {
@@ -157,9 +159,14 @@ inline QValue q_int(QValue v) {
                 std::exit(1);
             }
             char* end = nullptr;
+            errno = 0;
             long long result = strtoll(v.data.string_val, &end, 10);
             if (end == v.data.string_val || *end != '\0') {
                 q_runtime_reportf("runtime error: to_int() cannot parse '%s' as integer\n", v.data.string_val);
+                std::exit(1);
+            }
+            if (errno == ERANGE) {
+                q_runtime_reportf("runtime error: to_int() can't convert '%s' to an int: it is outside the int range\n", v.data.string_val);
                 std::exit(1);
             }
             return qv_int(result);

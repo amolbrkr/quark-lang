@@ -86,7 +86,7 @@ func TestEmit_BangIsRawNot(t *testing.T) {
 
 func TestEmit_RangeLoop(t *testing.T) {
 	out := cpp(t, "for i in range(1, 10):\n    print(i)\n")
-	mustContain(t, out, "for (long long quark_i = ", " ? 1LL : -1LL")
+	mustContain(t, out, "q_range_count(", "long long quark_i = q_range_at(", " ? 1LL : -1LL")
 	mustNotContain(t, out, "q_range(")
 }
 

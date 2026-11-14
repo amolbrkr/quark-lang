@@ -593,6 +593,13 @@ func TestSmokePrograms_Run(t *testing.T) {
 				"6",
 				"2",
 				"321",
+				"1234",
+				"9223372036854775800",
+				"9223372036854775805",
+				"-9223372036854775800",
+				"-9223372036854775803",
+				"-9223372036854775806",
+				"[9223372036854775800, 9223372036854775805]",
 			),
 		},
 		{
@@ -943,6 +950,38 @@ func TestSemanticsSafety_Rejected(t *testing.T) {
 		{"overflow_mul_boxed", "fn f(a, b) -> a * b\nprint(f(4611686018427387904, 2))\n", "integer overflow in '*'"},
 		{"overflow_pow", "print(2 ** 63)\n", "integer overflow in '**'"},
 		{"overflow_vector", "v = vec [9223372036854775807]\nprint(sum(v + 1))\n", "integer overflow in '+'"},
+		// Numbers that don't fit an int are errors, never wrapped or cut
+		// (hardening, 2026-11-14).
+		{"abs_int_min", "x = -9223372036854775807 - 1\nprint(abs(x))\n", "integer overflow in 'abs'"},
+		{"abs_int_min_any", "fn id(v) -> v\nprint(abs(id(-9223372036854775807 - 1)))\n", "integer overflow in 'abs'"},
+		{"to_int_str_overflow", "print(to_int('99999999999999999999'))\n", "to_int() can't convert '99999999999999999999' to an int: it is outside the int range"},
+		{"to_int_str_underflow", "print(to_int('-9223372036854775809'))\n", "it is outside the int range"},
+		{"to_int_float_overflow", "print(to_int(1e19))\n", "to_int() can't convert 1e+19 to an int: it is outside the int range"},
+		{"to_int_nan", "print(to_int(to_float('nan')))\n", "to_int() can't convert nan to an int: it is not a number"},
+		{"to_int_inf_any", "fn id(v) -> v\nprint(to_int(id(to_float('-inf'))))\n", "it is outside the int range"},
+		{"floor_overflow", "print(floor(1e30))\n", "floor() can't convert 1e+30 to an int"},
+		{"ceil_overflow", "print(ceil(9223372036854775808.0))\n", "ceil() can't convert"},
+		{"round_overflow", "print(round(-1e300))\n", "round() can't convert -1e+300 to an int"},
+		{"round_nan", "print(round(to_float('nan')))\n", "it is not a number"},
+		// range takes ints: a float is an error, not truncated.
+		{"range_float_static", "print(range(0.5, 3.0))\n", "argument 1 of 'range' expects int, got float"},
+		{"range_float_division", "n = 7\nfor i in range(n / 2):\n    print(i)\n", "argument 1 of 'range' expects int, got float"},
+		{"range_float_any", "fn id(v) -> v\nprint(range(id(2.5)))\n", "range(end) takes ints, got a float for end"},
+		{"range_float_any_loop", "fn id(v) -> v\nfor i in range(0, id(2.5)):\n    print(i)\n", "range(start, end) takes ints, got a float for end"},
+		{"range_str_any_step", "fn id(v) -> v\nfor i in range(0, 5, id('a')):\n    print(i)\n", "range(start, end, step) takes ints, got str for step"},
+		{"range_null_any", "fn id(v) -> v\nprint(range(id(null)))\n", "range(end) takes ints, got null for end"},
+		// List and str method indexes use all 64 bits.
+		{"list_set_index_64", "xs = list [1, 2, 3]\nxs.set(4294967297, 99)\n", "set() index 4294967297 out of range (list length 3)"},
+		{"list_remove_index_64", "xs = list [1, 2, 3]\nxs.remove(-4294967295)\n", "remove() index -4294967295 out of range (list length 3)"},
+		// fillna's value has the vec's element type (an int widens to float).
+		{"fillna_float_into_int", "print(vec [1, 2].fillna(2.7))\n", "fillna() can't fill vec[int] with float"},
+		{"fillna_int_into_bool", "print(vec [true].fillna(1))\n", "fillna() can't fill vec[bool] with int"},
+		{"fillna_float_into_int_any", "fn id(v) -> v\nprint(vec [1, 2].fillna(id(2.7)))\n", "fillna() can't fill vec[i64] with float"},
+		{"fillna_on_any_vec", "fn id(v) -> v\nprint(id(vec ['a']).fillna(1))\n", "fillna() can't fill vec[str] with int"},
+		{"fillna_null_any", "fn id(v) -> v\nprint(vec [1.5].fillna(id(null)))\n", "fillna() can't fill vec[f64] with null"},
+		// Exit statuses outside 0-255 would wrap (256 reads as success).
+		{"sys_exit_256", "incl 'std/sys'\nsys::exit(256)\n", "sys::exit() status must be between 0 and 255, got 256"},
+		{"sys_exit_negative", "incl 'std/sys'\nsys::exit(-1)\n", "sys::exit() status must be between 0 and 255, got -1"},
 		// Scalar-lowered division and modulo match the boxed operators.
 		{"mod_zero_scalar", "x = 7\ny = 0\nprint(x % y)\n", "modulo by zero"},
 		{"fdiv_zero_scalar", "x = 1.0\ny = 0.0\nprint(x / y)\n", "division by zero"},
@@ -1095,7 +1134,7 @@ func TestSemanticsSafety_Rejected(t *testing.T) {
 		// The lowered for-range loop checks its arguments like range().
 		{"range_loop_step_zero", "for i in range(0, 5, 0):\n    print(i)\n", "range() step must not be zero"},
 		{"range_loop_step_zero_dynamic", "fn id(x) -> x\nfor i in range(0, 5, id(0)):\n    print(i)\n", "range() step must not be zero"},
-		{"range_loop_non_numeric", "fn id(x) -> x\nfor i in range(id('x')):\n    print(i)\n", "range(end) expects numeric end value"},
+		{"range_loop_non_numeric", "fn id(x) -> x\nfor i in range(id('x')):\n    print(i)\n", "range(end) takes ints, got str for end"},
 		// `fn` annotations: checked at compile time when the argument's type is
 		// known, on entry otherwise; a native function's result is checked too.
 		{"fn_param_static", "fn apply(f: fn) -> f(1)\napply(5)\n", "argument 1 of 'apply' expects fn, got int"},
@@ -1269,6 +1308,33 @@ func TestSemanticsSafety_Rejected(t *testing.T) {
 			combined := out.String() + errBuf.String()
 			if !strings.Contains(combined, tc.errSubstr) {
 				t.Fatalf("expected error containing %q, got:\nstdout: %s\nstderr: %s", tc.errSubstr, out.String(), errBuf.String())
+			}
+		})
+	}
+}
+
+// TestEdgeValues_Accepted runs programs at the edges the hardening fixes of
+// 2026-11-14 guard, which must keep working: 64-bit list and str indexes,
+// the int64 limits, and fills that fit the vec.
+func TestEdgeValues_Accepted(t *testing.T) {
+	cases := []struct{ name, source, want string }{
+		{"list_get_index_64", "print(list [10, 20, 30].get(4294967296))\nprint(list [10, 20, 30].get(-4294967295))\n", "null\nnull"},
+		{"list_slice_index_64", "xs = list [1, 2, 3]\nprint(xs.slice(4294967296, 4294967298))\nprint(xs.slice(-4294967296, 2))\n", "[]\n[1, 2]"},
+		{"list_insert_index_64", "xs = list [1, 2, 3]\nxs.insert(4294967297, 9)\nprint(xs)\n", "[1, 2, 3, 9]"},
+		{"str_slice_index_64", "print('abcdef'.slice(4294967296, 4294967299) == '')\nprint('abcdef'.slice(2, 4294967299))\n", "true\ncdef"},
+		{"int_limits", "print(to_int('-9223372036854775808'))\nprint(floor(-9223372036854775808.0))\nprint(abs(-9223372036854775807))\nprint(to_int(-3.9))\n",
+			"-9223372036854775808\n-9223372036854775808\n9223372036854775807\n-3"},
+		{"fillna_widens", "v = vec [1.5, 2.0]\nprint(v.fillna(2))\nprint(vec [1, 2].fillna(0))\n", "[1.5, 2.0]\n[1, 2]"},
+	}
+	tmp := t.TempDir()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.WriteFile(filepath.Join(tmp, tc.name+".qrk"), []byte(tc.source), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			got := strings.TrimSpace(normalizeNewlines(runQuarkIn(t, tmp, "run", tc.name+".qrk")))
+			if got != tc.want {
+				t.Fatalf("output:\n%s\nwant:\n%s", got, tc.want)
 			}
 		})
 	}

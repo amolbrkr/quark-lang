@@ -737,8 +737,9 @@ func (l *lowerer) lowerFor(node *ast.TreeNode) {
 }
 
 // forRange lowers `for i in range(...)`. Scalar int arguments are used as
-// they are and scalar floats truncated, like the q_range builtins; any other
-// value goes through q_range_arg, which checks its type at runtime.
+// they are; any other value goes through q_range_arg, which rejects a
+// non-int at runtime like the q_range builtins (a float the compiler knows
+// about is already a compile-time error).
 func (l *lowerer) forRange(sym *types.Symbol, args []*ast.TreeNode, bodyNode *ast.TreeNode) {
 	sig := map[int]string{1: "range(end)", 2: "range(start, end)"}[len(args)]
 	if sig == "" {
@@ -754,8 +755,6 @@ func (l *lowerer) forRange(sym *types.Symbol, args []*ast.TreeNode, bodyNode *as
 		switch v.Rep() {
 		case RepInt:
 			ints[i] = v
-		case RepFloat:
-			ints[i] = &Cast{X: v, To: RepInt}
 		default:
 			ints[i] = &Call{Fn: "q_range_arg", Args: []Expr{boxed(v), &Const{R: RepStr, Text: cstr(sig)}, &Const{R: RepStr, Text: cstr(whats[i])}}, R: RepInt}
 		}

@@ -352,7 +352,7 @@ The methods are listed in stdlib.md.
 
 ### 9.3 Ranges
 
-`range(end)`, `range(start, end)` and `range(start, end, step)` return a `list[int]`, from `start` (default 0) up to but not including `end`; a negative `step` counts down. `step = 0` is a runtime error. Pass ints: float arguments are accepted and truncated, which is a known issue (known_issues.md).
+`range(end)`, `range(start, end)` and `range(start, end, step)` return a `list[int]`, from `start` (default 0) up to but not including `end`; a negative `step` counts down. `step = 0` is a runtime error. The arguments are ints: a float is a compile-time error when the compiler knows the type (`range(n / 2)`: `argument 1 of 'range' expects int, got float`; convert with `floor`, `ceil`, `round` or `to_int`), otherwise a runtime error. Ranges near the int64 limits end without wrapping around. In `for i in range(...)`, assigning `i` in the body doesn't change which values the loop visits.
 
 ### 9.4 Vectors
 
@@ -522,7 +522,8 @@ A runtime error prints its message and source location to stderr and exits with 
 |-----------|-----------------|
 | Wrong operand types where the compiler couldn't know them | `operator '<' expects two numbers or two strings` |
 | Division or modulo by zero | `division by zero` |
-| Integer overflow in `+`, `-`, `*`, `**`, unary `-` | `integer overflow in '+'` |
+| Integer overflow in `+`, `-`, `*`, `**`, unary `-`, `abs` | `integer overflow in '+'` |
+| A float or string that doesn't fit an int, or NaN, converted with `to_int`, `floor`, `ceil` or `round` | `floor() can't convert 1e+30 to an int: it is outside the int range` |
 | A value of the wrong type reaching an annotated parameter, variable, field or return | `argument 'x' of 'foo' expects int, got str` |
 | A wrong-typed write into a list or dict from untyped code | `push() can't add a str to a list of int` |
 | `d.key` on a missing key | `dict has no key 'b'; use .get('b') if the key may be missing` |

@@ -212,10 +212,16 @@ func (w *printer) stmt(s lower.Stmt) {
 		w.ind--
 		w.line("}")
 	case *lower.ForRange:
+		// The loop counts iterations and computes the variable from the
+		// count each time: it can't overflow near the int64 limits, and an
+		// assignment to the variable in the body doesn't change which
+		// values the loop visits.
 		v := s.Var.CName
 		st, en, sp := w.expr(s.Start), w.expr(s.End), w.expr(s.Step)
-		w.line("for (long long %s = %s; %s > 0 ? (%s < %s) : (%s > %s); %s += %s) {", v, st, sp, v, en, v, en, v, sp)
+		k, n := "quark___k_"+v, "quark___n_"+v
+		w.line("for (unsigned long long %s = 0, %s = q_range_count(%s, %s, %s); %s < %s; %s++) {", k, n, st, en, sp, k, n, k)
 		w.ind++
+		w.line("long long %s = q_range_at(%s, %s, %s);", v, st, sp, k)
 		w.block(s.Body)
 		w.ind--
 		w.line("}")

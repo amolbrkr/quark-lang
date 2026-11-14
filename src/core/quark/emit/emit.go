@@ -355,16 +355,17 @@ func (w *printer) cond(e lower.Expr) string {
 }
 
 var boxFns = map[lower.Rep]string{
-	lower.RepInt:    "qv_int",
-	lower.RepFloat:  "qv_float",
-	lower.RepBool:   "qv_bool",
-	lower.RepStr:    "q_box_native_str",
-	lower.RepVector: "qv_vector_ptr",
-	lower.RepList:   "qv_list_ptr",
-	lower.RepDict:   "qv_dict_ptr",
-	lower.RepFunc:   "qv_closure_ptr",
-	lower.RepStruct: "qv_struct",
-	lower.RepTable:  "qv_table_ptr",
+	lower.RepInt:     "qv_int",
+	lower.RepFloat:   "qv_float",
+	lower.RepBool:    "qv_bool",
+	lower.RepStr:     "q_box_native_str",
+	lower.RepStrView: "q_str_view_box",
+	lower.RepVector:  "qv_vector_ptr",
+	lower.RepList:    "qv_list_ptr",
+	lower.RepDict:    "qv_dict_ptr",
+	lower.RepFunc:    "qv_closure_ptr",
+	lower.RepStruct:  "qv_struct",
+	lower.RepTable:   "qv_table_ptr",
 }
 
 var adaptFns = map[lower.Rep]string{

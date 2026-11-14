@@ -10,6 +10,7 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 
 ## Contents
 
+- [2026-11-14: Tables v0.2](#2026-11-14-tables-v02)
 - [2026-11-14: VS Code extension 0.2.0 — check diagnostics](#2026-11-14-vs-code-extension-020--check-diagnostics)
 - [2026-11-14: Exact int/float comparison, stack overflow, runtime and GC lookup](#2026-11-14-exact-intfloat-comparison-stack-overflow-runtime-and-gc-lookup)
 - [2026-11-14: Specs move to `specs/`](#2026-11-14-specs-move-to-specs)
@@ -39,6 +40,30 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 - [2026-04-03: Table runtime scaffolding; struct fixes](#2026-04-03-table-runtime-scaffolding-struct-fixes)
 - [2026-04-02: Structs v0.1](#2026-04-02-structs-v01)
 - [2026-03-28: Vector soundness, `std/fmt` on `extern`, build output](#2026-03-28-vector-soundness-stdfmt-on-extern-build-output)
+
+## 2026-11-14: Tables v0.2
+
+### Added
+
+- **`select`, `deselect`, `rename` and `distinct` are query steps, and `n_distinct` is a summarize aggregate** (`specs/tables_v0_2_spec.md`). `select(e.name, e.salary)` keeps those columns in that order. `deselect(e.id, e.dept)` drops those and keeps the rest in their current order, so dropping a few columns does not mean naming the ones that stay. `rename(a = e.b, b = e.a)` swaps the names in one step. `distinct(e.dept)` keeps the first row of each key, in the order the keys first appear, and does not sort; a missing value is its own key, and so is NaN. `n_distinct(e.dept)` counts those keys (0 on an empty table). `select(-e.id)` is an error that names `deselect`.
+
+```quark
+rest = staff | e -> deselect(e.id, e.dept)
+eng = staff | e -> filter(e.dept == 'eng') | select(e.name, e.salary) | distinct(e.name)
+print(staff | e -> summarize(depts = n_distinct(e.dept)))
+```
+
+### Changed
+
+- **`min` and `max` in `summarize` compare raw values**, one loop per column type. A float loop skips NaN. A group with no present value is still missing, and a tie still keeps the first value.
+- **`filter` and `mutate` skip the missing-value tests when every column the expression reads has none.** `and`, `or` and `!` are ordinary bool operations on that input. A column that has a missing value keeps the three-valued loop. `filter` on a dense input gathers the selected row indexes without a branch on the predicate.
+- **Sort stays stable, including when a key has a missing value or a NaN.** One int, float or bool key sorts the present numbers and then appends NaN and the missing rows. A string key is sorted by the rank of its bytes among the distinct values. Equal keys keep their order, missing keys stay last, and NaN stays after every number and before missing keys, in either direction.
+- **Comparing or hashing a string cell in a query uses the bytes in the column.** A Quark string is allocated when the cell is stored into a new column (`mutate(s = e.name)`) or passed to a function or method (`e.name.upper()`).
+- **The CSV reader scans unquoted fields for the separator and line endings 16 bytes at a time** on x86-64. Quoted fields are unchanged, including a quoted field that contains a newline. The values, the missing cells and the errors are unchanged.
+
+### Internal
+
+- The benchmark times in `architecture.md` §15 and `src/benchmarks/RESULTS.md` are still the v0.1 measurement. The slow-path entries those paths closed are removed from `known_issues.md`.
 
 ---
 

@@ -25,7 +25,8 @@ type QueryStep struct {
 
 	Pred  *ast.TreeNode   // filter: the condition
 	Cols  []*MutateColumn // mutate: the columns, in the order written
-	Keys  []SortKey       // sort; group_by (Desc unused)
+	Keys  []SortKey       // sort; group_by (Desc unused); distinct (Desc unused)
+	Keep  []int           // select, deselect: columns of In kept, in output order
 	Aggs  []*AggregateCol // summarize
 	Group []int           // summarize: the group_by key columns of In; nil for the whole table
 	Count *ast.TreeNode   // head, tail: the row count; nil for the default (6)
@@ -59,7 +60,7 @@ type AggregateCol struct {
 }
 
 // queryVerbs are the steps a query may have, for messages.
-const queryVerbs = "filter, mutate, sort, group_by, summarize, head, tail"
+const queryVerbs = "filter, mutate, select, deselect, rename, distinct, sort, group_by, summarize, head, tail"
 
 // rowContext is the row a verb expression reads: the row name's symbol, the
 // row type, and the function nesting where it is bound (a function written
@@ -106,6 +107,14 @@ func (a *Analyzer) analyzeQuery(node *ast.TreeNode) Type {
 			ok = a.queryFilter(step, rowName)
 		case "mutate":
 			ok = a.queryMutate(step, rowName)
+		case "select":
+			ok = a.querySelect(step, rowName)
+		case "deselect":
+			ok = a.queryDeselect(step, rowName)
+		case "rename":
+			ok = a.queryRename(step, rowName)
+		case "distinct":
+			ok = a.queryDistinct(step, rowName)
 		case "sort":
 			ok = a.querySort(step, rowName)
 		case "group_by":
@@ -357,6 +366,162 @@ func (a *Analyzer) keyColumns(step *QueryStep, rowName string, sorting bool) boo
 	return true
 }
 
+// columnArgs checks a verb whose arguments are columns, e.col, and records
+// them on step.Keep. bad is the error for an argument that isn't a column.
+func (a *Analyzer) columnArgs(step *QueryStep, rowName, bad string) bool {
+	if !a.noNamedArgs(step) {
+		return false
+	}
+	if len(step.Node.Children) == 0 {
+		a.errorAt(step.Node, "%s needs at least one column: %s(%s.col)", step.Verb, step.Verb, rowName)
+		return false
+	}
+	seen := map[int]bool{}
+	for _, arg := range step.Node.Children {
+		t := a.rowExpr(arg, rowName, step.Verb, step.In)
+		if IsErrorType(t) {
+			return false
+		}
+		col, ok := a.isColumnRef(arg)
+		if !ok {
+			a.errorAt(arg, "%s", bad)
+			return false
+		}
+		if seen[col] {
+			a.errorAt(arg, "%s names column '%s' twice", step.Verb, step.In.Fields[col].Name)
+			return false
+		}
+		seen[col] = true
+		step.Keep = append(step.Keep, col)
+	}
+	return true
+}
+
+func (a *Analyzer) querySelect(step *QueryStep, rowName string) bool {
+	if !a.columnArgs(step, rowName, "select keeps columns ("+rowName+".col); drop columns with deselect, compute a column with mutate, or rename it with rename") {
+		return false
+	}
+	fields := make([]StructField, len(step.Keep))
+	for i, c := range step.Keep {
+		f := step.In.Fields[c]
+		fields[i] = StructField{Name: f.Name, Type: f.Type}
+	}
+	step.Out = a.anonRow(fields)
+	return true
+}
+
+func (a *Analyzer) queryDeselect(step *QueryStep, rowName string) bool {
+	if !a.columnArgs(step, rowName, "deselect drops columns ("+rowName+".col)") {
+		return false
+	}
+	if len(step.Keep) == len(step.In.Fields) {
+		a.errorAt(step.Node, "deselect would remove every column")
+		return false
+	}
+	drop := map[int]bool{}
+	for _, c := range step.Keep {
+		drop[c] = true
+	}
+	step.Keep = nil
+	var fields []StructField
+	for i, f := range step.In.Fields {
+		if drop[i] {
+			continue
+		}
+		step.Keep = append(step.Keep, i)
+		fields = append(fields, StructField{Name: f.Name, Type: f.Type})
+	}
+	step.Out = a.anonRow(fields)
+	return true
+}
+
+func (a *Analyzer) queryRename(step *QueryStep, rowName string) bool {
+	if len(step.Node.Children) == 0 {
+		a.errorAt(step.Node, "rename needs at least one column: rename(name = %s.col)", rowName)
+		return false
+	}
+	names := make([]string, len(step.In.Fields))
+	for i, f := range step.In.Fields {
+		names[i] = f.Name
+	}
+	renamed := map[int]bool{}
+	taken := map[string]bool{}
+	for _, arg := range step.Node.Children {
+		if arg.NodeType != ast.ColumnDefNode || len(arg.Children) != 1 {
+			a.errorAt(arg, "rename's columns are written name = %s.col", rowName)
+			return false
+		}
+		newName := arg.TokenLiteral()
+		if taken[newName] {
+			a.errorAt(arg, "rename would give two columns named '%s'", newName)
+			return false
+		}
+		val := arg.Children[0]
+		t := a.rowExpr(val, rowName, "rename", step.In)
+		if IsErrorType(t) {
+			return false
+		}
+		col, ok := a.isColumnRef(val)
+		if !ok {
+			a.errorAt(val, "rename takes a column (pay = %s.salary)", rowName)
+			return false
+		}
+		if renamed[col] {
+			a.errorAt(val, "rename names column '%s' twice", step.In.Fields[col].Name)
+			return false
+		}
+		renamed[col] = true
+		taken[newName] = true
+		names[col] = newName
+	}
+	for i, n := range names {
+		if renamed[i] {
+			continue
+		}
+		if taken[n] {
+			a.errorAt(step.Node, "rename would give two columns named '%s'", n)
+			return false
+		}
+	}
+	fields := make([]StructField, len(step.In.Fields))
+	for i, f := range step.In.Fields {
+		fields[i] = StructField{Name: names[i], Type: f.Type}
+	}
+	step.Out = a.anonRow(fields)
+	return true
+}
+
+func (a *Analyzer) queryDistinct(step *QueryStep, rowName string) bool {
+	if !a.noNamedArgs(step) {
+		return false
+	}
+	if len(step.Node.Children) == 0 {
+		for i := range step.In.Fields {
+			step.Keys = append(step.Keys, SortKey{Col: i})
+		}
+		return true
+	}
+	seen := map[int]bool{}
+	for _, arg := range step.Node.Children {
+		t := a.rowExpr(arg, rowName, "distinct", step.In)
+		if IsErrorType(t) {
+			return false
+		}
+		col, ok := a.isColumnRef(arg)
+		if !ok {
+			a.errorAt(arg, "distinct takes columns (%s.col); compute the value with mutate first", rowName)
+			return false
+		}
+		if seen[col] {
+			a.errorAt(arg, "distinct names column '%s' twice", step.In.Fields[col].Name)
+			return false
+		}
+		seen[col] = true
+		step.Keys = append(step.Keys, SortKey{Col: col})
+	}
+	return true
+}
+
 func (a *Analyzer) querySort(step *QueryStep, rowName string) bool {
 	return a.keyColumns(step, rowName, true)
 }
@@ -410,15 +575,15 @@ func (a *Analyzer) querySummarize(step *QueryStep, rowName string, groupBy *Quer
 	return true
 }
 
-// aggregates are the summarize aggregates (D24), for messages.
-const aggregates = "count, sum, mean, min, max"
+// aggregates are the summarize aggregates (D24, and n_distinct from tables v0.2).
+const aggregates = "count, sum, mean, min, max, n_distinct"
 
 // aggregate checks one aggregate: count() or agg(e.col) (D6, §4).
 func (a *Analyzer) aggregate(node *ast.TreeNode, name, rowName string, row *StructType) *AggregateCol {
 	fn := node.TokenLiteral()
 	args := node.Children
 	switch fn {
-	case "count", "sum", "mean", "min", "max":
+	case "count", "sum", "mean", "min", "max", "n_distinct":
 	default:
 		a.errorAt(node, "'%s' is not an aggregate (aggregates: %s); to summarize a computed value, add it with mutate first", fn, aggregates)
 		return nil
@@ -442,7 +607,7 @@ func (a *Analyzer) aggregate(node *ast.TreeNode, name, rowName string, row *Stru
 	ct := row.Fields[col].Type
 	agg := &AggregateCol{Name: name, Fn: fn, Col: col}
 	switch fn {
-	case "count":
+	case "count", "n_distinct":
 		agg.Type = TypeInt
 	case "sum":
 		switch {

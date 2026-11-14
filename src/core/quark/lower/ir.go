@@ -17,19 +17,20 @@ import "quark/types"
 type Rep string
 
 const (
-	RepValue  Rep = "QValue"
-	RepInt    Rep = "long long"
-	RepFloat  Rep = "double"
-	RepBool   Rep = "bool"
-	RepStr    Rep = "const char*"
-	RepList   Rep = "QList*"
-	RepDict   Rep = "QDict*"
-	RepVector Rep = "QVector*"
-	RepFunc   Rep = "QClosure*"
-	RepStruct Rep = "QStruct*"
-	RepTable  Rep = "QTable*"
-	RepVecRef Rep = "const QVector&"
-	RepLoc    Rep = "const QSourceLoc*"
+	RepValue   Rep = "QValue"
+	RepInt     Rep = "long long"
+	RepFloat   Rep = "double"
+	RepBool    Rep = "bool"
+	RepStr     Rep = "const char*"
+	RepStrView Rep = "std::string_view"
+	RepList    Rep = "QList*"
+	RepDict    Rep = "QDict*"
+	RepVector  Rep = "QVector*"
+	RepFunc    Rep = "QClosure*"
+	RepStruct  Rep = "QStruct*"
+	RepTable   Rep = "QTable*"
+	RepVecRef  Rep = "const QVector&"
+	RepLoc     Rep = "const QSourceLoc*"
 )
 
 // IsScalar reports whether r is a raw C++ scalar.

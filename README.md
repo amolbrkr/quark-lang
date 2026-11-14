@@ -835,8 +835,10 @@ stats = staff | e ->
 print(stats)
 ```
 
-The verbs are `filter`, `mutate`, `sort`, `group_by` + `summarize`, `head`
-and `tail`. A query's result has an anonymous row (`{dept: str, avg: float, top: float, n: int}`), which matches a struct with exactly those fields where
+The verbs are `filter`, `mutate`, `select`, `deselect`, `rename`, `distinct`,
+`sort`, `group_by` + `summarize`, `head` and `tail`. `summarize` also has
+`n_distinct`. The rules are in
+[specs/tables_v0_2_spec.md](specs/tables_v0_2_spec.md). A query's result has an anonymous row (`{dept: str, avg: float, top: float, n: int}`), which matches a struct with exactly those fields where
 it is stored (`s: tbl[DeptStats] = ...`). Missing values (empty or `NA` cells)
 are skipped by aggregates and make an expression missing, and `and`/`or`
 follow SQL (`true or <missing>` is true). `t.describe()` prints each column's
@@ -1066,9 +1068,10 @@ and don't. An `INV-*` diagnostic is a compiler bug.
 
 **Planned:**
 
-- Tables after v0.1: table literals, joins, `select`/`rename`, `distinct`,
-`summary(t)`, date columns, and compile-time schema inference for CSV files
-([specs/tables_v0_1_spec.md](specs/tables_v0_1_spec.md) §9-10).
+- Tables still later: the column-wise table literal, joins, `summary(t)`,
+date columns, and compile-time schema inference for CSV files
+([specs/tables_v0_1_spec.md](specs/tables_v0_1_spec.md) §9-10,
+[specs/tables_v0_2_spec.md](specs/tables_v0_2_spec.md) §6).
 - Element types in annotations: `list[T]`.
 - Struct methods and whole-struct equality.
 - Result helpers such as `unwrap_or` and `map_ok`.
@@ -1138,8 +1141,9 @@ measured.
 ([modules v0.2](specs/implemented/modules_v0_2_spec.md),
 [structs v0.1](specs/implemented/structs_v0_1_spec.md)), and those with work
 still planned or proposed in `specs/` ([tables v0.1](specs/tables_v0_1_spec.md),
+[tables v0.2](specs/tables_v0_2_spec.md),
 [FFI v0.1](specs/ffi_v0_1_spec.md), [REPL v0.1](specs/repl_v0_1_spec.md) and
-[stdlib expansion v0.1](specs/stdlib_expansion_v0_1_spec.md), both proposals).
+[stdlib expansion v0.1](specs/stdlib_expansion_v0_1_spec.md); the last two are proposals).
 
 If a doc disagrees with the compiler, the compiler is right; please report
 the difference.

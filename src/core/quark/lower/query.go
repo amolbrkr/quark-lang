@@ -55,6 +55,16 @@ func (l *lowerer) query(node *ast.TreeNode) Expr {
 			cur = l.queryFilter(cur, st)
 		case "mutate":
 			cur = l.queryMutate(cur, st)
+		case "select", "deselect":
+			cur = l.queryProject(cur, st, st.Keep)
+		case "rename":
+			cols := make([]int, len(st.In.Fields))
+			for i := range cols {
+				cols[i] = i
+			}
+			cur = l.queryProject(cur, st, cols)
+		case "distinct":
+			cur = l.queryDistinct(cur, st)
 		case "sort":
 			keys := make([]Expr, 0, 2*len(st.Keys))
 			for _, k := range st.Keys {
@@ -92,11 +102,14 @@ func (l *lowerer) include(header string) {
 	l.prog.Includes = append(l.prog.Includes, header)
 }
 
-// forRows binds the columns the expressions read of table cur (rows of type
-// row) and lowers body in a loop over its rows.
-func (l *lowerer) forRows(cur Expr, row *types.StructType, exprs []*ast.TreeNode, body func()) {
+// openRow binds the columns the expressions read of table cur. dense is true
+// when every one of those columns has no missing values (nil when the
+// expressions read no column, which is dense too). The caller runs one loop
+// or both.
+func (l *lowerer) openRow(cur Expr, row *types.StructType, exprs []*ast.TreeNode) (*rowLoop, Expr, Expr) {
 	n := l.let(&Call{Fn: "q_tbl_rows", Args: []Expr{cur}, R: RepInt})
 	rl := &rowLoop{row: row, cols: map[int]*Temp{}}
+	var checks []Expr
 	for _, e := range exprs {
 		for _, c := range l.columnReads(e, nil) {
 			if rl.cols[c] != nil {
@@ -105,14 +118,37 @@ func (l *lowerer) forRows(cur Expr, row *types.StructType, exprs []*ast.TreeNode
 			t := l.newTemp(RepVecRef)
 			l.add(&Let{T: t, Value: &Call{Fn: "q_tbl_col", Args: []Expr{cur, intConst(c)}, R: RepVecRef}})
 			rl.cols[c] = t
+			checks = append(checks, &Call{Fn: "q_vec_dense", Args: []Expr{&TempRef{T: t}}, R: RepBool})
 		}
 	}
 	rl.idx = l.newTemp(RepInt)
+	if len(checks) == 0 {
+		return rl, n, nil
+	}
+	all := checks[0]
+	for _, c := range checks[1:] {
+		all = &AndAlso{L: all, X: c}
+	}
+	return rl, n, l.let(all)
+}
+
+// rowFor lowers body as a loop over the rows openRow bound.
+func (l *lowerer) rowFor(rl *rowLoop, n Expr, body func()) {
 	saved := l.row
 	l.row = rl
 	loop := l.sub(body)
 	l.row = saved
 	l.add(&ForIndex{Idx: rl.idx, Len: n, Body: loop})
+}
+
+// denseOrSlow runs fast when dense is true and slow otherwise. dense nil
+// means the expressions read no column, so only fast runs.
+func (l *lowerer) denseOrSlow(dense Expr, fast, slow func()) {
+	if dense == nil {
+		fast()
+		return
+	}
+	l.add(&If{Cond: dense, Then: l.sub(fast), Else: l.sub(slow)})
 }
 
 // columnReads lists, in order and once each, the columns node reads,
@@ -369,20 +405,32 @@ func (l *lowerer) columnRead(node *ast.TreeNode, col int) Expr {
 	if r := ScalarRepOf(t); r != "" {
 		return &VecElem{V: ref, Idx: idx, R: r}
 	}
-	return &Call{Fn: "q_tbl_str", Args: []Expr{ref, idx}, R: RepValue}
+	// A str cell is a view of the column buffer. It becomes a Quark string
+	// only when something boxes it (a new column, or a call).
+	return &Call{Fn: "q_tbl_str_view", Args: []Expr{ref, idx}, R: RepStrView}
 }
 
 func (l *lowerer) queryFilter(cur Expr, st *types.QueryStep) Expr {
 	rows := l.newTemp(repRowSet)
 	l.add(&Let{T: rows, Value: &Call{Fn: "q_rows_new", Args: []Expr{&Call{Fn: "q_tbl_rows", Args: []Expr{cur}, R: RepInt}}, R: repRowSet}})
-	l.forRows(cur, st.In, []*ast.TreeNode{st.Pred}, func() {
-		v, p := l.rowValue(st.Pred)
-		var keep Expr = l.asRowRep(st.Pred, v, RepBool)
-		if p != nil {
-			keep = &AndAlso{L: p, X: keep}
-		}
-		push := &Do{X: &Call{Fn: "q_rows_push", Args: []Expr{&TempRef{T: rows}, &TempRef{T: l.row.idx}}, R: Rep("void")}}
-		l.add(&If{Cond: keep, Then: &Block{Stmts: []Stmt{push}}})
+	rl, n, dense := l.openRow(cur, st.In, []*ast.TreeNode{st.Pred})
+	l.denseOrSlow(dense, func() {
+		// No missing values: the predicate is an ordinary bool, and the
+		// selected indexes are gathered without a branch on it.
+		l.rowFor(rl, n, func() {
+			keep := l.asRowRep(st.Pred, l.expr(st.Pred), RepBool)
+			l.add(&Do{X: &Call{Fn: "q_rows_keep", Args: []Expr{&TempRef{T: rows}, &TempRef{T: rl.idx}, keep}, R: Rep("void")}})
+		})
+	}, func() {
+		l.rowFor(rl, n, func() {
+			v, p := l.rowValue(st.Pred)
+			var keep Expr = l.asRowRep(st.Pred, v, RepBool)
+			if p != nil {
+				keep = &AndAlso{L: p, X: keep}
+			}
+			push := &Do{X: &Call{Fn: "q_rows_push", Args: []Expr{&TempRef{T: rows}, &TempRef{T: l.row.idx}}, R: Rep("void")}}
+			l.add(&If{Cond: keep, Then: &Block{Stmts: []Stmt{push}}})
+		})
 	})
 	return l.let(&Call{Fn: "q_tbl_take", Args: []Expr{cur, &TempRef{T: rows}}, R: RepTable})
 }
@@ -394,23 +442,53 @@ func (l *lowerer) queryMutate(cur Expr, st *types.QueryStep) Expr {
 	for _, c := range st.Cols {
 		r := rowRep(c.Type)
 		b := l.newTemp(repColOut)
-		n := &Call{Fn: "q_tbl_rows", Args: []Expr{cur}, R: RepInt}
-		l.add(&Let{T: b, Value: &Call{Fn: "q_col_new", Args: []Expr{intConst(ColumnDtype(c.Type)), n}, R: repColOut}})
-		l.forRows(cur, c.Reads, []*ast.TreeNode{c.Value}, func() {
-			v, p := l.rowValue(c.Value)
-			push := &Do{X: &Call{Fn: pushFns[r], Args: []Expr{&TempRef{T: b}, l.asRowRep(c.Value, v, r)}, R: Rep("void")}}
-			if p == nil {
-				l.add(push)
-				return
-			}
-			null := &Do{X: &Call{Fn: "q_col_push_null", Args: []Expr{&TempRef{T: b}}, R: Rep("void")}}
-			l.add(&If{Cond: p, Then: &Block{Stmts: []Stmt{push}}, Else: &Block{Stmts: []Stmt{null}}})
+		rows := &Call{Fn: "q_tbl_rows", Args: []Expr{cur}, R: RepInt}
+		l.add(&Let{T: b, Value: &Call{Fn: "q_col_new", Args: []Expr{intConst(ColumnDtype(c.Type)), rows}, R: repColOut}})
+		rl, n, dense := l.openRow(cur, c.Reads, []*ast.TreeNode{c.Value})
+		pushOf := func(v Expr) *Do {
+			return &Do{X: &Call{Fn: pushFns[r], Args: []Expr{&TempRef{T: b}, l.asRowRep(c.Value, v, r)}, R: Rep("void")}}
+		}
+		l.denseOrSlow(dense, func() {
+			l.rowFor(rl, n, func() {
+				l.add(pushOf(l.expr(c.Value)))
+			})
+		}, func() {
+			l.rowFor(rl, n, func() {
+				v, p := l.rowValue(c.Value)
+				push := pushOf(v)
+				if p == nil {
+					l.add(push)
+					return
+				}
+				null := &Do{X: &Call{Fn: "q_col_push_null", Args: []Expr{&TempRef{T: b}}, R: Rep("void")}}
+				l.add(&If{Cond: p, Then: &Block{Stmts: []Stmt{push}}, Else: &Block{Stmts: []Stmt{null}}})
+			})
 		})
 		vec := l.let(&Call{Fn: "q_col_finish", Args: []Expr{&TempRef{T: b}}, R: RepVector})
 		def := &Const{R: Rep("const QStructDef*"), Text: "&_sdef_" + structCName(c.After.Name)}
 		cur = l.let(&Call{Fn: "q_tbl_put", Args: []Expr{cur, def, intConst(c.Index), vec}, R: RepTable})
 	}
 	return cur
+}
+
+// queryProject is select, deselect and rename: a new row type over columns
+// of the input, shared, not copied. cols are indexes of st.In, in the
+// output's order.
+func (l *lowerer) queryProject(cur Expr, st *types.QueryStep, cols []int) Expr {
+	elems := make([]Expr, len(cols))
+	for i, c := range cols {
+		elems[i] = intConst(c)
+	}
+	def := &Const{R: Rep("const QStructDef*"), Text: "&_sdef_" + structCName(st.Out.Name)}
+	return l.let(&Call{Fn: "q_tbl_project", Args: []Expr{cur, def, &InitList{Type: "std::initializer_list<int>", Elems: elems}}, R: RepTable})
+}
+
+func (l *lowerer) queryDistinct(cur Expr, st *types.QueryStep) Expr {
+	elems := make([]Expr, len(st.Keys))
+	for i, k := range st.Keys {
+		elems[i] = intConst(k.Col)
+	}
+	return l.let(&Call{Fn: "q_tbl_distinct", Args: []Expr{cur, &InitList{Type: "std::initializer_list<int>", Elems: elems}}, R: RepTable})
 }
 
 func (l *lowerer) querySummarize(cur Expr, st *types.QueryStep) Expr {

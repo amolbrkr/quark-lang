@@ -624,7 +624,7 @@ func (p *Parser) parseQuery(source *ast.TreeNode, pipeTok token.Token) *ast.Tree
 // and sort arguments sort keys, so neither is resolved as a function call.
 func (p *Parser) parseQueryStep() *ast.TreeNode {
 	if p.curToken.Type != token.ID || p.peek(1).Type != token.LPAR {
-		p.addError("expected a query step, verb(...) (filter, mutate, sort, group_by, summarize, head or tail), but got %s; to pipe a query's result into a function, put the query in parentheses", sourceText(p.curToken))
+		p.addError("expected a query step, verb(...) (filter, mutate, select, deselect, rename, distinct, sort, group_by, summarize, head or tail), but got %s; to pipe a query's result into a function, put the query in parentheses", sourceText(p.curToken))
 		return nil
 	}
 	verbTok := p.curToken
@@ -700,7 +700,7 @@ func (p *Parser) parseStepArg(verb string) *ast.TreeNode {
 // (tables D24: one aggregate of a column per summarize column).
 func (p *Parser) parseAggregate() *ast.TreeNode {
 	if p.curToken.Type != token.ID || p.peek(1).Type != token.LPAR {
-		p.addError("a summarize column is one aggregate, name = agg(e.col): count(), count(e.col), sum, mean, min or max; got %s", sourceText(p.curToken))
+		p.addError("a summarize column is one aggregate, name = agg(e.col): count(), count(e.col), sum, mean, min, max or n_distinct; got %s", sourceText(p.curToken))
 		return nil
 	}
 	tok := p.curToken

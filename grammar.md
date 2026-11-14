@@ -429,7 +429,7 @@ top = staff | e -> sort(desc(e.salary)) | head(3)
 
 - The steps continue on lines that start with `|`, as for pipes (§10.4), or form an indented block after `e ->` at the end of a line.
 - Every `| step` after `e ->` belongs to the query, so a query's result can't be piped into a function directly: `(t | e -> head(3)) | f()`. A second `| x ->` is a parse error (`a query names its row once`).
-- The verb (`filter`, `mutate`, `sort`, `group_by`, `summarize`, `head`, `tail`), the aggregate names, `desc` and the `name =` column names are part of the query, never functions or variables, so a user function named `filter` or `mean` doesn't affect them. Which verbs exist and what their arguments may be is checked by the compiler.
+- The verb (`filter`, `mutate`, `select`, `deselect`, `rename`, `distinct`, `sort`, `group_by`, `summarize`, `head`, `tail`), the aggregate names (`count`, `sum`, `mean`, `min`, `max`, `n_distinct`), `desc` and the `name =` column names are part of the query, never functions or variables, so a user function named `filter` or `mean` doesn't affect them. Which verbs exist and what their arguments may be is checked by the compiler (`specs/tables_v0_2_spec.md`).
 - A summarize column is exactly one aggregate: `r = max(e.x) - min(e.x)` is a parse error (`a summarize column is exactly one aggregate of a column`).
 
 ## 11) Not in the Language
@@ -438,7 +438,7 @@ These are not part of Quark, by decision or because they are planned in a spec:
 
 | Feature | Status |
 |---|---|
-| Table literals (`tbl[Employee] { id: vec [...], ... }`) | Planned: `specs/tables_v0_1_spec.md` D19 |
+| Table literals (`tbl[Employee] { id: vec [...], ... }`) | Deferred: `specs/tables_v0_2_spec.md` §6.1 |
 | Written element types (`list[int]`) | Planned: `specs/tables_v0_1_spec.md` D16 |
 | `extern source` | Planned: `specs/ffi_v0_1_spec.md` P2 |
 | `struct` inside a function body | Not supported; currently an internal error (known_issues.md) |
@@ -454,6 +454,6 @@ These are not part of Quark, by decision or because they are planned in a spec:
 - `semantics.md`: runtime behaviour, types, scoping, the error model and design decisions.
 - `stdlib.md`: builtin functions, methods and stdlib modules. The code-level source of truth for builtin names, arity and types is `src/core/quark/builtins/catalog.go`.
 - `architecture.md`: compiler pipeline, runtime structures and the back end.
-- `specs/implemented/modules_v0_2_spec.md`, `specs/implemented/structs_v0_1_spec.md`, `specs/ffi_v0_1_spec.md`, `specs/tables_v0_1_spec.md`: the full rules of each area.
+- `specs/implemented/modules_v0_2_spec.md`, `specs/implemented/structs_v0_1_spec.md`, `specs/ffi_v0_1_spec.md`, `specs/tables_v0_1_spec.md`, `specs/tables_v0_2_spec.md`: the full rules of each area. The table literal in `tables_v0_2_spec.md` §6.1 is not implemented.
 
 A change to the language updates these docs in the same change. A conflict between a doc and the implementation is a bug to fix before adding features.

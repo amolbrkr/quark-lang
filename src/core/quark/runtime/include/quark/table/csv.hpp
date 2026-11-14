@@ -41,6 +41,9 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#if defined(__SSE2__)
+#include <emmintrin.h>
+#endif
 
 namespace quark {
 namespace csv {
@@ -63,6 +66,27 @@ struct Column {
     QVector::Type type;
     std::string header;
 };
+
+// find_unquoted is the next separator or line ending at or after p. The
+// scan compares 16 bytes at a time where the machine has SSE2. A quote is
+// decided one byte at a time at the start of a field; a quoted field is
+// scanned on its own, because it may contain a newline.
+inline const char* find_unquoted(const char* p, const char* end, char sep) {
+#if defined(__SSE2__)
+    const __m128i vs = _mm_set1_epi8(sep);
+    const __m128i vn = _mm_set1_epi8('\n');
+    const __m128i vr = _mm_set1_epi8('\r');
+    while (p + 16 <= end) {
+        const __m128i c = _mm_loadu_si128(reinterpret_cast<const __m128i*>(p));
+        const __m128i m = _mm_or_si128(_mm_or_si128(_mm_cmpeq_epi8(c, vs), _mm_cmpeq_epi8(c, vn)), _mm_cmpeq_epi8(c, vr));
+        const int bits = _mm_movemask_epi8(m);
+        if (bits != 0) return p + __builtin_ctz(bits);
+        p += 16;
+    }
+#endif
+    while (p < end && *p != sep && *p != '\n' && *p != '\r') p++;
+    return p;
+}
 
 // ------------------------------------------------------------
 // Tokenizer
@@ -157,7 +181,7 @@ private:
             } else {
                 p_ = start;
                 const char* f = p_;
-                while (p_ < end_ && *p_ != sep_ && *p_ != '\n' && *p_ != '\r') p_++;
+                p_ = find_unquoted(p_, end_, sep_);
                 Span s;
                 s.ptr = f;
                 s.len = static_cast<size_t>(p_ - f);

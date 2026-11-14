@@ -13,6 +13,7 @@ process only loads what it measures.
 """
 
 import array
+import csv
 import math
 from collections import Counter, defaultdict
 
@@ -721,6 +722,185 @@ def strings_pl(p, measure):
     expr = pl.col("s").str.strip_chars().str.to_lowercase().str.replace_all("_", "-", literal=True)
     out = measure(lambda: df.select(expr))["s"]
     return int(out.str.starts_with("item-").sum()) + int(out.str.len_bytes().sum())
+
+
+# ----------------------------------------------------------------- query
+# Rows of rows.csv with v >= 10, x = v * w, grouped by (k, g): n, sum(x),
+# mean(w), max(v), sorted by sum(x) descending; checksum query_check.
+
+ROWS_DTYPES = {"id": "int64", "k": "str", "g": "int64", "v": "float64", "w": "float64"}
+
+
+def read_rows_lists(file):
+    """A CSV file of rows.csv's columns as five lists (id, k, g, v, w)."""
+    ids, ks, gs, vs, ws = [], [], [], [], []
+    with open(file, newline="", encoding="utf-8") as f:
+        r = csv.reader(f)
+        next(r)
+        for i, k, g, v, w in r:
+            ids.append(int(i))
+            ks.append(k)
+            gs.append(int(g))
+            vs.append(float(v))
+            ws.append(float(w))
+    return ids, ks, gs, vs, ws
+
+
+def read_rows_pd(p):
+    import pandas as pd
+
+    return pd.read_csv(path(p, "rows.csv"), dtype=ROWS_DTYPES)
+
+
+def read_rows_pl(p):
+    import polars as pl
+
+    schema = {"id": pl.Int64, "k": pl.String, "g": pl.Int64, "v": pl.Float64, "w": pl.Float64}
+    return pl.read_csv(path(p, "rows.csv"), schema=schema)
+
+
+def query_check(n, s, m, hi):
+    """groups + sum(n) + sum(s) / 1000 + sum(m) + sum(hi) / 100, plus the
+    s-weighted mean position sum(s[i] * i) / sum(s), which a wrong order
+    changes."""
+    total_s = sum(s)
+    weighted = sum(x * i for i, x in enumerate(s))
+    return len(n) + sum(n) + total_s / 1000 + sum(m) + sum(hi) / 100 + weighted / total_s
+
+
+@impl("query", "py_list")
+def query_py(p, measure):
+    _, ks, gs, vs, ws = read_rows_lists(path(p, "rows.csv"))
+
+    def run():
+        acc = {}
+        for k, g, v, w in zip(ks, gs, vs, ws):
+            if v >= 10.0:
+                a = acc.get((k, g))
+                if a is None:
+                    acc[(k, g)] = [1, v * w, w, v]
+                else:
+                    a[0] += 1
+                    a[1] += v * w
+                    a[2] += w
+                    if v > a[3]:
+                        a[3] = v
+        groups = sorted(acc.items(), key=lambda kv: -kv[1][1])
+        return [(k, g, a[0], a[1], a[2] / a[0], a[3]) for (k, g), a in groups]
+
+    out = measure(run)
+    return query_check([r[2] for r in out], [r[3] for r in out], [r[4] for r in out], [r[5] for r in out])
+
+
+@impl("query", "pandas")
+def query_pd(p, measure):
+    df = read_rows_pd(p)
+
+    def run():
+        d = df[df["v"] >= 10.0]
+        d = d.assign(x=d["v"] * d["w"])
+        out = d.groupby(["k", "g"], as_index=False).agg(
+            n=("v", "size"), s=("x", "sum"), m=("w", "mean"), hi=("v", "max")
+        )
+        return out.sort_values("s", ascending=False)
+
+    out = measure(run)
+    return query_check(*(out[c].tolist() for c in ("n", "s", "m", "hi")))
+
+
+@impl("query", "polars")
+def query_pl(p, measure):
+    import polars as pl
+
+    df = read_rows_pl(p)
+    v, w = pl.col("v"), pl.col("w")
+
+    def run():
+        return (
+            df.filter(v >= 10.0)
+            .with_columns(x=v * w)
+            .group_by("k", "g")
+            .agg(n=pl.len(), s=pl.col("x").sum(), m=w.mean(), hi=v.max())
+            .sort("s", descending=True)
+        )
+
+    out = measure(run)
+    return query_check(*(out[c].to_list() for c in ("n", "s", "m", "hi")))
+
+
+# -------------------------------------------------------------- sortkeys
+# Sort the rows of rows.csv by k ascending, then v descending; checksum
+# sum(v[i] * i) / n over the sorted rows.
+
+
+@impl("sortkeys", "py_list")
+def sortkeys_py(p, measure):
+    _, ks, _, vs, _ = read_rows_lists(path(p, "rows.csv"))
+
+    def run():
+        order = sorted(range(len(ks)), key=lambda i: (ks[i], -vs[i]))
+        return [ks[i] for i in order], [vs[i] for i in order]
+
+    return sort_check_list(measure(run)[1])
+
+
+@impl("sortkeys", "numpy")
+def sortkeys_np(p, measure):
+    import numpy as np
+
+    _, ks, _, vs, _ = read_rows_lists(path(p, "rows.csv"))
+    k, v = np.array(ks), np.array(vs)
+
+    def run():
+        o = np.lexsort((-v, k))  # the last key is the primary one
+        return k[o], v[o]
+
+    return sort_check_np(measure(run)[1])
+
+
+@impl("sortkeys", "pandas")
+def sortkeys_pd(p, measure):
+    df = read_rows_pd(p)[["k", "v"]]
+    out = measure(lambda: df.sort_values(["k", "v"], ascending=[True, False]))
+    return sort_check_np(out["v"].to_numpy())
+
+
+@impl("sortkeys", "polars")
+def sortkeys_pl(p, measure):
+    df = read_rows_pl(p).select("k", "v")
+    out = measure(lambda: df.sort(["k", "v"], descending=[False, True]))
+    return sort_check_np(out["v"].to_numpy())
+
+
+# --------------------------------------------------------------- readcsv
+# Read rows.csv (id int, k str, g int, v float, w float) with its column
+# types; checksum rows + sum(id) / rows + sum(g) + sum(v) + sum(w) + the total
+# length of k.
+
+
+def readcsv_check(rows, ids, ks, gs, vs, ws):
+    return rows + ids / rows + gs + vs + ws + ks
+
+
+@impl("readcsv", "py_list")
+def readcsv_py(p, measure):
+    file = path(p, "rows.csv")
+    ids, ks, gs, vs, ws = measure(lambda: read_rows_lists(file))
+    return readcsv_check(len(ids), sum(ids), sum(len(k) for k in ks), sum(gs), sum(vs), sum(ws))
+
+
+@impl("readcsv", "pandas")
+def readcsv_pd(p, measure):
+    df = measure(lambda: read_rows_pd(p))
+    return readcsv_check(len(df), df["id"].sum(), df["k"].str.len().sum(), df["g"].sum(), df["v"].sum(),
+                         df["w"].sum())
+
+
+@impl("readcsv", "polars")
+def readcsv_pl(p, measure):
+    df = measure(lambda: read_rows_pl(p))
+    return readcsv_check(len(df), df["id"].sum(), df["k"].str.len_bytes().sum(), df["g"].sum(), df["v"].sum(),
+                         df["w"].sum())
 
 
 # ------------------------------------------------------------------ gemv

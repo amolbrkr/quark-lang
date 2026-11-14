@@ -1,0 +1,43 @@
+// sortkeys.qrk - sort a table of 1M rows by a string key, ascending, then by
+// a float, descending (README.md#sortkeys).
+incl './lib/harness'
+incl './lib/tables'
+
+fn sortkeys_tbl(t: tbl[tables::KV]) tbl[tables::KV] -> t | e -> sort(e.k, desc(e.v))
+
+// A list sorts by one key at a time, and .sort_by is stable: sort the row
+// positions by v descending, then by k. Returns [keys, values] in that order.
+fn sortkeys_list(k: list, v: list) list ->
+    order = range(len(k))
+    order.sort_by(fn(i) -> -v[i])
+    order.sort_by(fn(i) -> k[i])
+    sk = list []
+    sv = list []
+    for i in order:
+        ki: str = k[i]
+        vi: float = v[i]
+        sk.push(ki)
+        sv.push(vi)
+    list [sk, sv]
+
+// The checksum: sum(v[i] * i) / n over the sorted rows (0-based i).
+fn sortkeys_check(v: list) float ->
+    s = 0.0
+    for i in range(len(v)):
+        x: float = v[i]
+        s = s + x * i
+    s / len(v)
+
+p = harness::params()
+impl: str = p.impl
+t = tables::kv(p)
+if impl == 'quark_tbl':
+    out: tbl[tables::KV] = harness::measure(p, 'sortkeys', fn() -> sortkeys_tbl(t))
+    harness::check(p, 'sortkeys', sortkeys_check(out.v.to_list()))
+elseif impl == 'quark_list':
+    k = t.k.to_list()
+    v = t.v.to_list()
+    out: list = harness::measure(p, 'sortkeys', fn() -> sortkeys_list(k, v))
+    harness::check(p, 'sortkeys', sortkeys_check(out[1]))
+else:
+    harness::unknown_impl(p, 'sortkeys')

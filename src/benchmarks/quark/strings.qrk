@@ -2,6 +2,7 @@
 // (README.md#strings). vec[str] has no string operations, so there is no
 // quark_vec.
 incl './lib/harness'
+incl './lib/tables'
 
 fn strings_list(xs: list) list ->
     out = list []
@@ -9,6 +10,9 @@ fn strings_list(xs: list) list ->
         s: str = x
         out.push(s.trim().lower().replace('_', '-'))
     out
+
+fn strings_tbl(t: tbl[tables::Label]) tbl[tables::Label] ->
+    t | e -> mutate(s = e.s.trim().lower().replace('_', '-'))
 
 // The checksum: count(starts with 'item-') + total length.
 fn strings_check(xs: list) float ->
@@ -23,9 +27,13 @@ fn strings_check(xs: list) float ->
 
 p = harness::params()
 impl: str = p.impl
-xs = harness::read_lines(p, 'strings.txt')
 if impl == 'quark_list':
+    xs = harness::read_lines(p, 'strings.txt')
     out = harness::measure(p, 'strings', fn() -> strings_list(xs))
     harness::check(p, 'strings', strings_check(out))
+elseif impl == 'quark_tbl':
+    t = tables::labels(p)
+    out: tbl[tables::Label] = harness::measure(p, 'strings', fn() -> strings_tbl(t))
+    harness::check(p, 'strings', strings_check(out.s.to_list()))
 else:
     harness::unknown_impl(p, 'strings')

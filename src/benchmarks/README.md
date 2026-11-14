@@ -15,6 +15,7 @@ The latest measurements and what they show are in [RESULTS.md](RESULTS.md).
   - [Plain code: fib, mandelbrot, sieve, ewma](#plain-code)
   - [Columns: reduce, arith, expr, dot, zscore, filter, sort](#columns)
   - [Hashing and strings: groupby, join, wordcount, strings](#hashing-and-strings)
+  - [Tables: query, sortkeys, readcsv](#tables)
   - [Linear algebra: gemv, gemm, ols](#linear-algebra)
 - [How a run works](#how-a-run-works)
 - [Reading the report](#reading-the-report)
@@ -30,7 +31,7 @@ From a fresh clone, on a machine with the prerequisites below:
 cd src/benchmarks
 python3 bench.py setup                    # .venv with the pinned Python libraries; installs data.table if missing (~1 min)
 python3 bench.py run --preset small       # every implementation once on small inputs (~2-4 min); checks they agree
-python3 bench.py run                      # default sizes, one thread per library (~15 min, 300 MB of data)
+python3 bench.py run                      # default sizes, one thread per library (~20 min, 740 MB of data)
 ```
 
 Checked on Linux on 2026-11-13: a fresh clone ran `setup` and the `small` preset with every implementation agreeing. `setup` and `run` print what is available; anything missing is skipped and listed in the report (no OpenBLAS: only `quark_blas`; no R: the R implementations; no data.table: `r_dt`), so a partial setup still runs.
@@ -79,17 +80,17 @@ Implementations are grouped in tiers, from plain code to data frames:
 | list: element-at-a-time code with the core types | `quark_list`: `list`, `dict`, loops | `py_list`: `list`, `dict`, loops, builtins | `r_loop`: `for`/`while` over vectors |
 | vector: whole-column operations | `quark_vec`: `vec` | `numpy` | `r_vec`: base vectors and matrices |
 | vector + BLAS | `quark_blas`: `vec` + `std/blas` | (NumPy calls BLAS itself) | (R calls BLAS itself) |
-| table | `quark_tbl` (planned) | `pandas`, `polars` | `r_df`: `data.frame`, `r_dt`: `data.table` |
+| table | `quark_tbl`: `tbl` and its query verbs | `pandas`, `polars` | `r_df`: `data.frame`, `r_dt`: `data.table` |
 
 The list tier is named after Quark's `list`, but it is the tier of plain code in general: `fib` and `mandelbrot` use no lists. R has no separate list-of-scalars type, so its plain-code tier is loops over vectors (`r_loop`), and it is included only where loops are the natural or the only way to write the benchmark.
 
 A tool is left out of a benchmark (`n/a` in the report) when it has no natural way to do it, for example `quark_vec` in `sieve` (vectors are immutable) or `numpy` in `fib`. The table tiers appear where the frame API is different code from plain vectors (filter, sort, group, join, adding a column); `sum(df$a)` would only repeat `r_vec`.
 
-`quark_tbl` is listed as `planned` in every benchmark where a table implementation is expected (the tables v0.1 verbs `filter`, `mutate`, `sort`, `group_by`, `summarize`), so its row is in the report from the start. See [Adding an implementation](#adding-a-benchmark-or-an-implementation).
+`quark_tbl` uses tables v0.1 (`tables_v0_1_spec.md`): a `tbl[Row]` read with `std/csv`, and the query verbs `filter`, `mutate`, `sort`, `group_by` and `summarize`. A table can only be made by reading CSV in v0.1, so its input is a CSV copy of the same data (`datagen.py` writes both; the floats read back to the same doubles), read before timing like every other input. It is `planned` in `join` (there is no join verb yet) and `wordcount` (a table can't be built from a list of words yet).
 
 ## Rules every implementation follows
 
-1. **Same data.** `datagen.py` writes every input once per preset (seeded: same files on every machine), and every implementation reads those files. Loading is not timed.
+1. **Same data.** `datagen.py` writes every input once per preset (seeded: same files on every machine), and every implementation reads those files. Loading is not timed, except in `readcsv`, where it is the work.
 2. **Same result.** Every implementation computes the same result and prints a checksum of it (computed outside the timed region). `bench.py` compares each checksum with a reference implementation (NumPy when it exists, else pure Python, R, Quark) within a relative tolerance: 1e-9 by default (sums of floats in a different order), 1e-6 for `mandelbrot` (Quark's compiler may fuse `a*b + c` into one FMA instruction, which can flip a point at the escape boundary), exact for `fib` and `sieve`. A mismatch is reported as `wrong` and the time is not used.
 3. **Same algorithm, idiomatic code.** Each implementation does the same work with the same algorithm (no implementation skips work another does), written the way an experienced user of that tool would: Python uses `sum()`, `Counter`, comprehensions; NumPy uses `np.sort`, boolean masks, `@`; R uses `tapply`, `match`, `%*%`. Where a tool has no way to do something, the implementation says so in a comment and does what a user of that tool would do instead (NumPy's `ewma` loops over the array; Quark's vec `sort` goes through a list).
 4. **No accelerators.** No numba, Cython, numexpr, Rcpp, JIT decorators or hand-written native code. `std/blas` is part of Quark's standard library, so `quark_blas` is in.
@@ -135,7 +136,7 @@ Exponentially weighted moving average of 10M values, a sequential recurrence tha
 
 ### Columns
 
-Two columns `a` and `b` of 10M uniform `[0, 1)` doubles (`sort` uses 1M standard normals).
+Two columns `a` and `b` of 10M uniform `[0, 1)` doubles (`sort` uses 1M standard normals). `quark_tbl` reads them as a `tbl` of the two columns from `cols.csv` (`reduce` reads only `a`), and `sort`'s from `sort.csv`.
 
 #### reduce
 
@@ -143,7 +144,8 @@ Sum, minimum, maximum and mean of `a`. Checksum: their sum.
 
 - `quark_list`: one loop computing all four (Quark lists have no reductions). `py_list`: `sum`, `min`, `max`, and `sum / len`.
 - `quark_vec`: `sum(a)`, `min(a)`, `max(a)`, `s / len(a)`. `numpy`: `.sum()`, `.min()`, `.max()`, `.mean()`.
-- `pandas`: the Series methods (which skip NaN, like Quark's planned table aggregates); `polars`: one `select` of the four expressions.
+- `quark_tbl`: one `summarize(s = sum(e.a), lo = min(e.a), hi = max(e.a), m = mean(e.a))`, a table of one row.
+- `pandas`: the Series methods (which skip NaN, like Quark's table aggregates); `polars`: one `select` of the four expressions.
 - `r_vec`: `sum`, `min`, `max`, `mean`. R's `sum` accumulates in long double and `mean` makes a second pass for accuracy, which costs time. `r_dt`: the same in `dt[, .(...)]`.
 
 #### arith
@@ -152,13 +154,13 @@ Sum, minimum, maximum and mean of `a`. Checksum: their sum.
 
 - `quark_list`: a loop pushing to a list. `py_list`: `[2.5 * x + y for x, y in zip(a, b)]`.
 - `quark_vec`, `numpy`, `r_vec`: `2.5 * a + b` (two passes, one temporary). `quark_blas`: `blas::axpy(2.5, a, b)` (one pass).
-- Tables add the column: `df.assign(z=...)`, `df.with_columns(z=...)`, `df$z <- ...`, `dt[, z := ...]` (in place).
+- Tables add the column: `mutate(z = 2.5 * e.a + e.b)`, `df.assign(z=...)`, `df.with_columns(z=...)`, `df$z <- ...`, `dt[, z := ...]` (in place).
 
 #### expr
 
 `z = (a·a − b)·0.5 + (a − b) / (b·b + 1)`: eight operations, so vectorized code makes seven temporaries. Checksum: `sum(z)`.
 
-This separates compiled loops (one fused pass) from vector libraries that materialize every intermediate (Quark `vec`, NumPy, pandas, R) and from Polars, which evaluates the expression without full temporaries. Quark's `vec` also checks every divisor for zero.
+This separates compiled loops (one fused pass) from vector libraries that materialize every intermediate (Quark `vec`, NumPy, pandas, R) and from Polars, which evaluates the expression without full temporaries. Quark's `vec` also checks every divisor for zero. `quark_tbl`'s `mutate(z = ...)` compiles the whole expression into one loop over the two column buffers, so it is a fused pass too.
 
 #### dot
 
@@ -174,6 +176,7 @@ Standardize a column: `z = (a − mean(a)) / sd(a)` with the `n − 1` standard 
 - `quark_list`, `py_list`: three passes (mean, squared deviations, result).
 - `quark_vec`: `d = a - m`, `sqrt(sum(d * d) / (n - 1))`, `d / sd`. `quark_blas`: the same with `blas::dot(d, d)` and `blas::scal(1 / sd, d)`.
 - `numpy`: `(a - a.mean()) / a.std(ddof=1)`; `r_vec`: `(a - mean(a)) / sd(a)`; tables add `z` as a column.
+- `quark_tbl`: the mean and sd from the column as a vec (`stats::mean(t.a)`, then `sum(d * d)`, as in `quark_vec`: there is no sd aggregate), then `mutate(z = (e.a - m) / sd)`. pandas also takes the mean and sd of the column (`a.mean()`, `a.std()`) before `assign`.
 
 #### filter
 
@@ -181,7 +184,7 @@ The rows of `(a, b)` where `a > 0.5` (about half, in random order, so branches d
 
 - `quark_list`: one loop pushing to two lists. `py_list`: two comprehensions.
 - `quark_vec`: `m = a > 0.5`, then `a[m]`, `b[m]`. `numpy`, `r_vec`: the same with boolean indexing.
-- `pandas`: `df[df['a'] > 0.5]`; `polars`: `df.filter(...)`; `r_df`: `df[df$a > 0.5, ]`; `r_dt`: `dt[a > 0.5]`.
+- `quark_tbl`: `filter(e.a > 0.5)`; `pandas`: `df[df['a'] > 0.5]`; `polars`: `df.filter(...)`; `r_df`: `df[df$a > 0.5, ]`; `r_dt`: `dt[a > 0.5]`.
 
 #### sort
 
@@ -189,7 +192,7 @@ Sort 1M standard normal doubles ascending, into a new column (each run sorts the
 
 - `quark_list`: `xs.slice(0, n).sort()` (a copy, then Quark's stable sort). `quark_vec`: `v.to_list().sort().to_vec()`, because vectors have no sort.
 - `py_list`: `sorted(xs)` (Timsort). `numpy`: `np.sort` (introsort with SIMD kernels). `r_vec`: `sort(x)` (radix sort for doubles).
-- Tables sort a one-column table: `sort_values`, `df.sort('x')`, `df[order(df$x), , drop = FALSE]`, `dt[order(x)]` (data.table's radix order).
+- Tables sort a one-column table: `sort(e.x)` (the engine's fast path for one numeric key without missing values), `sort_values`, `df.sort('x')`, `df[order(df$x), , drop = FALSE]`, `dt[order(x)]` (data.table's radix order).
 
 ### Hashing and strings
 
@@ -199,6 +202,7 @@ Sum and count of a value per string key: 1M rows, 1,000 distinct keys (`id000`-`
 
 - `quark_list`: two `dict`s and `get`/`set` per row. `py_list`: two `defaultdict`s.
 - `numpy`: `np.unique(keys, return_inverse=True)` (sorts the keys) and `np.bincount` with weights: NumPy's way to group.
+- `quark_tbl`: `group_by(e.k) | summarize(s = sum(e.v), n = count())`, on the `k` and `v` columns of `rows.csv` (the same values as `grp_k.txt` and `grp_v.f64`).
 - `pandas`: `groupby('k')['v'].agg(['sum', 'count'])`; `polars`: `group_by('k').agg(sum, len)`.
 - `r_vec`: `tapply(v, k, sum)` and `tapply(v, k, length)`; `r_df`: `aggregate(v ~ k, ...)`; `r_dt`: `dt[, .(s = sum(v), n = .N), by = k]`.
 - No `quark_vec`: vectors have no grouping.
@@ -207,7 +211,7 @@ Sum and count of a value per string key: 1M rows, 1,000 distinct keys (`id000`-`
 
 Left join of 1M `(k, v)` rows to a 100,000-row `(k, w)` table on a string key, giving the joined `w` column (every key is found). Checksum: `sum(v · w)`.
 
-The pandas, Polars, data.frame and data.table implementations are real data frame joins. Quark has no data frame yet, so its only implementation is the one a Quark user can write today, a `dict` and lists, like the pure Python one. `quark_tbl` comes with the join verb, which is planned after tables v0.1 (`tables_v0_1_spec.md` §9), later than the other table verbs.
+The pandas, Polars, data.frame and data.table implementations are real data frame joins. Quark's tables have no join verb yet, so its only implementation is the one a Quark user can write today, a `dict` and lists, like the pure Python one. `quark_tbl` comes with the join verb, which is planned after tables v0.1 (`tables_v0_1_spec.md` §9).
 
 - `quark_list`: a `dict` from the second table, then a lookup per row. Its time is all runtime code (about 70% the hash lookups, 25% building the result list, 10% building the dict), so it doesn't change with the back end. A key missing from the dict is a runtime error (`w: float = lookup.get(k)` is checked), like Python's `KeyError`; the data has none. `py_list`: `dict(zip(...))` and a comprehension.
 - `numpy`: no hash join: sort the dimension keys, `np.searchsorted`, and mark keys that don't match (NaN), so it is a real left join.
@@ -220,6 +224,7 @@ Split a 1M-word text (words separated by single spaces, a Zipf-distributed vocab
 - `quark_list`: `text.split(' ')` and a `dict`. `py_list`: `Counter(text.split(' '))`.
 - `numpy`: `np.unique(np.array(text.split(' ')), return_counts=True)`; `pandas`: `pd.Series(text.split(' ')).value_counts()`; `polars`: the split, `explode` and `value_counts` all in Polars.
 - `r_vec`: `table(strsplit(text, ' ', fixed = TRUE)[[1]])`; `r_dt`: the words in a data.table, `[, .N, by = w]`.
+- `quark_tbl` is planned: a table can't be built from the list `split` returns until table literals come (`tables_v0_1_spec.md` D19).
 
 #### strings
 
@@ -228,7 +233,47 @@ Clean 1M labels such as `"  ITEM_4821_Lorem "`: trim, lowercase, replace `_` wit
 - `quark_list`: `s.trim().lower().replace('_', '-')` per string. `py_list`: `s.strip().lower().replace('_', '-')`.
 - `numpy`: `np.strings.strip`, `lower`, `replace` over a `StringDType` array (NumPy 2's string ufuncs). `pandas`: the `.str` methods (pyarrow strings, pandas 3's default). `polars`: `str.strip_chars`, `to_lowercase`, `replace_all(literal=True)`.
 - `r_vec`: `gsub('_', '-', tolower(trimws(s)), fixed = TRUE)`.
+- `quark_tbl`: `mutate(s = e.s.trim().lower().replace('_', '-'))`, the same methods called once per row, on the labels of `strings.csv` (quoted, so the reader keeps their padding).
 - No `quark_vec`: `vec[str]` has no string operations.
+
+### Tables
+
+Work on a table of 1M rows, `rows.csv`: `id` (int, 0 to n − 1), `k` (str, the 1,000 keys of `groupby`), `g` (int, uniform 0-9), `v` (float, the values of `groupby`, uniform `[0, 100)`) and `w` (float, uniform `[0, 1)`). The Python and R table implementations load it with their CSV readers (`read_csv`, `read.csv`, `fread`), the list implementations into one list per column; only `readcsv` times the read.
+
+#### query
+
+One query of five steps: keep the rows with `v >= 10` (about 90%), add `x = v · w`, group by the two keys `(k, g)` (10,000 groups), compute the row count, `sum(x)`, `mean(w)` and `max(v)` per group, and sort the groups by `sum(x)`, descending. Checksum: groups + `Σ n` + `Σ s / 1000` + `Σ m` + `Σ hi / 100`, plus the `s`-weighted mean position `Σ s_i · i / Σ s` (0-based `i`), which a wrong order changes.
+
+- `quark_tbl`: the query as written in one chain:
+  ```quark
+  t | e ->
+      filter(e.v >= 10.0)
+      | mutate(x = e.v * e.w)
+      | group_by(e.k, e.g)
+      | summarize(n = count(), s = sum(e.x), m = mean(e.w), hi = max(e.v))
+      | sort(desc(e.s))
+  ```
+- `quark_list`: one loop over the rows with a `dict` from the key pair to the group's position (the two keys joined into one string, since dict keys are strings) and one list per aggregate, then `sort_by` on the positions. `py_list`: a `dict` keyed by the `(k, g)` tuple, then `sorted`.
+- `pandas`: boolean indexing, `assign`, `groupby(['k', 'g']).agg(n=..., s=..., m=..., hi=...)`, `sort_values`; `polars`: `filter`, `with_columns`, `group_by('k', 'g').agg(...)`, `sort`; `r_dt`: `dt[v >= 10]`, `[, x := v * w]`, `[, .(...), by = .(k, g)][order(-s)]`.
+- No base R `data.frame` implementation: `aggregate` with a different function per column is not how anyone writes this in base R.
+
+#### sortkeys
+
+Sort the `(k, v)` columns of the table by `k` ascending, then `v` descending: a two-key sort with a string key, where the second key decides within each of the 1,000 groups of equal keys. Checksum: `Σ v_i · i / n` over the sorted rows (0-based `i`).
+
+- `quark_tbl`: `sort(e.k, desc(e.v))` (stable, the engine's general multi-key sort).
+- `quark_list`: lists sort by one key, so `sort_by` the row positions by `-v`, then stably by `k`, and gather both columns. `py_list`: `sorted(range(n), key=lambda i: (k[i], -v[i]))` and the same gather.
+- `numpy`: `np.lexsort((-v, k))` and fancy indexing. `pandas`: `sort_values(['k', 'v'], ascending=[True, False])`; `polars`: `sort(['k', 'v'], descending=[False, True])`.
+- `r_df`: `df[order(df$k, -df$v), ]` (base R's `order` compares strings with the locale's collation, which orders these keys like byte order); `r_dt`: `dt[order(k, -v)]` (data.table's radix order, byte order).
+
+#### readcsv
+
+Read `rows.csv` (1M rows, 52 MB) into a table with the column types given: int, str, int, float, float. The file is in the OS page cache after the warmup run, so this measures parsing and building the columns, not the disk. Checksum: rows + `Σ id / rows` + `Σ g` + `Σ v` + `Σ w` + the total length of the `k` strings.
+
+- `quark_tbl`: `t: tbl[Row] = unwrap(csv::read_file(path))`, typed by the row struct (`std/csv`'s in-house reader, which also checks every str cell is valid UTF-8).
+- `py_list`: `csv.reader`, converting each field with `int` or `float` into one list per column.
+- `pandas`: `read_csv` with `dtype` (its C parser); `polars`: `read_csv` with `schema`; `r_df`: `read.csv` with `colClasses`; `r_dt`: `fread` with `colClasses`.
+- No `quark_list` (lists have no CSV reader since `std/csv` returns tables) and no `numpy` (no reader for mixed column types).
 
 ### Linear algebra
 
@@ -304,7 +349,7 @@ Compare tiers as well as languages: `quark_list` against `py_list` and `r_loop` 
 - **Peak memory includes the runtime and the input.** Measured baselines: 15 MB for a Quark program or a Python process without NumPy, about 25 MB with NumPy, 70-80 MB with Polars, 110-130 MB with pandas, 70 MB for R. Compare memory within a benchmark, not across benchmarks.
 - **BLAS builds differ.** Quark's `std/blas` and R link the system OpenBLAS; NumPy wheels bundle their own, usually newer, OpenBLAS (both versions are in the report). With one thread this matters only for `gemm`, `gemv` and `ols`.
 - **Virtual machines and shared hosts are noisy.** Check the load average in the report; rerun a benchmark with `--bench` when a number looks off. The min column is the least noisy estimate; the median is what a typical run costs, including garbage collection.
-- **Default sizes fit in memory with room to spare.** Data larger than RAM, files and CSV parsing are not measured yet (they arrive with `tbl` and its CSV reader).
+- **Default sizes fit in memory with room to spare.** Data larger than RAM and reading from disk are not measured: `readcsv` reads a file the OS has cached, so it measures parsing.
 - **Python's version matters for `py_list`**: CPython 3.11+ is much faster than 3.10 on plain loops. The report records the version.
 
 ## Adding a benchmark or an implementation
@@ -316,7 +361,7 @@ A benchmark:
 4. Document it in [Benchmarks](#benchmarks): what it computes, the checksum, and what each implementation does differently.
 5. `python3 bench.py run --preset small --bench <name>` must show every implementation agreeing.
 
-The `quark_tbl` implementations: once tables compile, for each benchmark that lists `quark_tbl` in `planned`, move it to `impls` in `bench.py` and add an `elseif impl == 'quark_tbl':` branch to `quark/<name>.qrk`. The table data can come from the same files (for example `harness::read_f64` columns into a table), or from CSV files written by `datagen.py` once the CSV reader is the thing being measured.
+A `quark_tbl` implementation is an `elseif impl == 'quark_tbl':` branch in `quark/<name>.qrk` that reads its table with a loader of `quark/lib/tables.qrk` (a typed `csv::read_file` of a CSV file `datagen.py` writes; add the row struct and the file there if they are new). The two still `planned`, `join` and `wordcount`, wait for a join verb and table literals.
 
 ## Files
 
@@ -324,12 +369,13 @@ The `quark_tbl` implementations: once tables compile, for each benchmark that li
 |---|---|
 | `RESULTS.md` | The latest measured results, with what limits Quark and where |
 | `bench.py` | The driver: presets, the list of benchmarks and implementations, data generation, builds, runs, checks, report (Python standard library only) |
-| `datagen.py` | Writes the input files (needs NumPy; run in `.venv`) |
+| `datagen.py` | Writes the input files, binary and CSV (needs NumPy; run in `.venv`) |
 | `requirements.txt` | Pinned Python libraries |
 | `quark/<bench>.qrk` | The Quark implementations of one benchmark, except `quark_blas` |
 | `quark/<bench>_blas.qrk` | The `quark_blas` implementation (`std/blas` needs OpenBLAS at build time) |
 | `quark/lib/harness.qrk` | Arguments, timing loop, TIME/CHECK output, data loading |
 | `quark/lib/bench_io.hpp` | Native loaders for the data files (`extern fn`) |
 | `quark/lib/matrix.qrk` | Matrix setup helpers and the small linear solver |
+| `quark/lib/tables.qrk` | The row structs and typed CSV loaders of the `quark_tbl` implementations |
 | `python/run.py`, `python/impls.py` | Python harness and implementations |
 | `r/run.R`, `r/impls.R` | R harness and implementations |

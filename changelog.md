@@ -11,6 +11,7 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 ## Contents
 
 - [2026-11-14: Hardening: silent wrong results](#2026-11-14-hardening-silent-wrong-results)
+- [2026-11-14: Table benchmarks; README language goals](#2026-11-14-table-benchmarks-readme-language-goals)
 - [2026-11-14: Table queries, table printing and table methods (tables v0.1)](#2026-11-14-table-queries-table-printing-and-table-methods-tables-v01)
 - [2026-11-13: The `tbl` type, `std/csv` on the table reader, digit separators (tables v0.1)](#2026-11-13-the-tbl-type-stdcsv-on-the-table-reader-digit-separators-tables-v01)
 - [2026-11-13: A statement ends at the end of its line; indented pipe lines](#2026-11-13-a-statement-ends-at-the-end-of-its-line-indented-pipe-lines)
@@ -74,6 +75,23 @@ Fixes from the "Wrong results with no error" section of `known_issues.md`: each 
 ### Internal
 - The loader gives each extern method its file's internal name, `q<N>__<name>__m` (`names.Method`), and renames the method calls of that file to it (`collectMethods`, `renameMethodCall`); the duplicate and prelude-name checks moved there from the analyzer. `findStdlibRoot` takes no path and returns an error naming where it looked. `internal/testutil` sets `QUARK_STDLIB_ROOT` to the repository's stdlib, since a test binary isn't next to it.
 - `core/checked.hpp` gains `q_resolve_index` (64-bit index resolution for lists and strings), `q_checked_abs` and `q_checked_f2i` (the one checked float-to-int conversion). A lowered `range` loop counts its iterations (`q_range_count`, computed in unsigned arithmetic) and computes the variable from the count (`q_range_at`), and the `range` builtins build their lists the same way; the verifier requires the start to be a temporary or constant too. `fillna` gets a compile-time check next to the typed-list writes (`checkMutation`).
+
+---
+
+## 2026-11-14: Table benchmarks; README language goals
+
+### Added
+- **Table implementations in the benchmark suite** (`src/benchmarks/`, `quark_tbl`): `reduce`, `arith`, `expr`, `zscore`, `filter`, `sort`, `groupby` and `strings` now have a `tbl` implementation written with the query verbs, for example `t | e -> group_by(e.k) | summarize(s = sum(e.v), n = count())`. A table can only be read from CSV in tables v0.1, so `datagen.py` also writes the inputs as CSV files (`cols.csv`, `sort.csv`, `rows.csv`, `strings.csv`; floats in shortest round-trip form, so they read back to the same doubles) and `quark/lib/tables.qrk` reads them typed by a row struct. `join` and `wordcount` keep `quark_tbl` as planned (no join verb, no table built from a list yet).
+- **Three table benchmarks**, each against pandas, Polars and data.table (and pure Python, NumPy or base R where they apply): `query` (filter, mutate, group by two keys, four aggregates, sort, on 1M rows), `sortkeys` (sort 1M rows by a string key, then a float descending) and `readcsv` (read a 52 MB, 5-column CSV file into a typed table). The default preset's data grows from about 290 MB to 740 MB.
+- `src/benchmarks/RESULTS.md` is measured again at this commit, with a section comparing `quark_tbl` with the data frame libraries. One thread: the query takes 134 ms (data.table 142 ms, Polars 167 ms, pandas 198 ms), `groupby` 52 ms (Polars 55 ms), the eight-operation `expr` 59 ms, the fastest of every tool; sorting by a string and a float (1.13 s, data.table 255 ms), `filter` (99 ms, Polars 24 ms), whole-table `min`/`max` and CSV reading (513 ms, pandas 226 ms) are behind, with the causes and directions in RESULTS.md and `architecture.md` §15.
+
+### Changed
+- README: a shorter introduction, and a new **Language goals** section after the contents replaces "What Quark is". It states the goals (quick to write, fast, trustworthy, with a link to the benchmark results) and shows them with tested examples: compile-time checks with no annotations, a CSV file read into a `tbl[Sale]` and queried (with the compile errors a mistyped column and a `mean` of a str column give), vec columns, a least-squares fit with `std/blas`, and a table of benchmark results, wins and losses both. The paragraph on how typed code becomes C++ moves to "How a program is built".
+- `src/benchmarks/README.md` documents the table tier, the three new benchmarks and the CSV inputs; each tier's Quark program loads only its own input, so peak memory counts only what that implementation holds.
+
+### Internal
+- `known_issues.md`, Slow paths, gains two entries found with these benchmarks: `min`/`max` in `summarize` compare every row through the generic comparator (76 ms on 10M floats against 6.1 ms for `min` of the vec), and a table sort with a str key or several keys does too (1.13 s for `sortkeys`).
+- `architecture.md` §15 gains the table findings (min/max aggregates, multi-key and str sorts, validity tests that keep `filter` and `mutate` from vectorizing, the CSV reader's speed), and its `fib` and `vec` `gemm` items are updated to the current measurements.
 
 ---
 

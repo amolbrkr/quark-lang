@@ -1,0 +1,107 @@
+// query.qrk - a query over a table of 1M rows: keep the rows with v >= 10,
+// add x = v * w, group by the two keys (k, g), aggregate four columns and
+// sort the groups by one of them, descending (README.md#query).
+incl './lib/harness'
+incl './lib/tables'
+
+struct Group:
+    k: str
+    g: int
+    n: int
+    s: float
+    m: float
+    hi: float
+
+fn query_tbl(t: tbl[tables::Row]) tbl[Group] ->
+    t | e ->
+        filter(e.v >= 10.0)
+        | mutate(x = e.v * e.w)
+        | group_by(e.k, e.g)
+        | summarize(n = count(), s = sum(e.x), m = mean(e.w), hi = max(e.v))
+        | sort(desc(e.s))
+
+// Plain code: a dict from the key pair (joined into one string, since dict
+// keys are strings) to the group's position, and one list per aggregate.
+// Returns [n, s, m, hi], each a list in the order of descending s.
+fn query_list(k: list, g: list, v: list, w: list) list ->
+    pos = dict {}
+    ns = list []
+    ss = list []
+    ws = list []
+    his = list []
+    for i in range(len(k)):
+        vi: float = v[i]
+        if vi >= 10.0:
+            wi: float = w[i]
+            ki: str = k[i]
+            gi: int = g[i]
+            key = ki + '|' + to_str(gi)
+            at = pos.get(key)
+            if at == null:
+                pos.set(key, len(ns))
+                ns.push(1)
+                ss.push(vi * wi)
+                ws.push(wi)
+                his.push(vi)
+            else:
+                j: int = at
+                c: int = ns[j]
+                sj: float = ss[j]
+                wj: float = ws[j]
+                hj: float = his[j]
+                ns[j] = c + 1
+                ss[j] = sj + vi * wi
+                ws[j] = wj + wi
+                if vi > hj:
+                    his[j] = vi
+    order = range(len(ns))
+    order.sort_by(fn(j) -> -ss[j])
+    on = list []
+    os = list []
+    om = list []
+    oh = list []
+    for j in order:
+        c: int = ns[j]
+        wj: float = ws[j]
+        on.push(c)
+        os.push(ss[j])
+        om.push(wj / c)
+        oh.push(his[j])
+    list [on, os, om, oh]
+
+// The checksum: groups + sum(n) + sum(s) / 1000 + sum(m) + sum(hi) / 100,
+// plus the s-weighted mean position, sum(s[i] * i) / sum(s) (0-based i),
+// which a wrong order changes.
+fn query_check(n: list, s: list, m: list, hi: list) float ->
+    total_n = 0
+    total_s = 0.0
+    weighted = 0.0
+    total_m = 0.0
+    total_hi = 0.0
+    for i in range(len(n)):
+        c: int = n[i]
+        si: float = s[i]
+        mi: float = m[i]
+        hj: float = hi[i]
+        total_n = total_n + c
+        total_s = total_s + si
+        weighted = weighted + si * i
+        total_m = total_m + mi
+        total_hi = total_hi + hj
+    len(n) + total_n + total_s / 1000.0 + total_m + total_hi / 100.0 + weighted / total_s
+
+p = harness::params()
+impl: str = p.impl
+t = tables::rows(p)
+if impl == 'quark_tbl':
+    out: tbl[Group] = harness::measure(p, 'query', fn() -> query_tbl(t))
+    harness::check(p, 'query', query_check(out.n.to_list(), out.s.to_list(), out.m.to_list(), out.hi.to_list()))
+elseif impl == 'quark_list':
+    k = t.k.to_list()
+    g = t.g.to_list()
+    v = t.v.to_list()
+    w = t.w.to_list()
+    out: list = harness::measure(p, 'query', fn() -> query_list(k, g, v, w))
+    harness::check(p, 'query', query_check(out[0], out[1], out[2], out[3]))
+else:
+    harness::unknown_impl(p, 'query')

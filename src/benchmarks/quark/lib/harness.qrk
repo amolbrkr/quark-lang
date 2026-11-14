@@ -30,6 +30,11 @@ fn params() dict ->
 // An int parameter.
 fn int_param(p: dict, name: str) int -> to_int(p.get(name))
 
+// The path of a data file.
+fn data_path(p: dict, file: str) str ->
+    dir: str = p.data
+    dir + '/' + file
+
 // The first n values of a data file of doubles (all of them when n < 0).
 fn read_f64(p: dict, file: str, n: int) vec ->
     dir: str = p.data

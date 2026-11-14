@@ -3,6 +3,13 @@
 // The std/blas implementation is in zscore_blas.qrk, so that a machine without
 // OpenBLAS skips only that one.
 incl './lib/harness'
+incl './lib/tables'
+incl 'std/stats'
+
+struct Z:
+    a: float
+    b: float
+    z: float
 
 fn zscore_list(a: list) list ->
     n = len(a)
@@ -28,6 +35,15 @@ fn zscore_vec(a: vec) vec ->
     sd = sqrt(sum(d * d) / (len(a) - 1))
     d / sd
 
+// The mean and sd come from the column as a vec (there is no sd aggregate),
+// and z is added with mutate.
+fn zscore_tbl(t: tbl[tables::Cols]) tbl[Z] ->
+    a = t.a
+    m = stats::mean(a)
+    d = a - m
+    sd = sqrt(sum(d * d) / (len(a) - 1))
+    t | e -> mutate(z = (e.a - m) / sd)
+
 // The checksum: sum(z * b).
 fn weighted_list(z: list, b: list) float ->
     s = 0.0
@@ -40,14 +56,18 @@ fn weighted_list(z: list, b: list) float ->
 p = harness::params()
 impl: str = p.impl
 n = harness::int_param(p, 'n')
-a = harness::read_f64(p, 'a.f64', n)
-b = harness::read_f64(p, 'b.f64', n)
 if impl == 'quark_list':
-    al = a.to_list()
+    al = harness::read_f64(p, 'a.f64', n).to_list()
     out = harness::measure(p, 'zscore', fn() -> zscore_list(al))
-    harness::check(p, 'zscore', weighted_list(out, b.to_list()))
+    harness::check(p, 'zscore', weighted_list(out, harness::read_f64(p, 'b.f64', n).to_list()))
 elseif impl == 'quark_vec':
+    a = harness::read_f64(p, 'a.f64', n)
+    b = harness::read_f64(p, 'b.f64', n)
     out: vec = harness::measure(p, 'zscore', fn() -> zscore_vec(a))
     harness::check(p, 'zscore', sum(out * b))
+elseif impl == 'quark_tbl':
+    t = tables::cols(p)
+    out: tbl[Z] = harness::measure(p, 'zscore', fn() -> zscore_tbl(t))
+    harness::check(p, 'zscore', sum(out.z * out.b))
 else:
     harness::unknown_impl(p, 'zscore')

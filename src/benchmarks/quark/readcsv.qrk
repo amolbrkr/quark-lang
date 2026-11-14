@@ -1,0 +1,23 @@
+// readcsv.qrk - read a CSV file of 1M rows and 5 columns (int, str, int,
+// float, float) into a table typed by its row struct (README.md#readcsv).
+// Lists have no CSV reader, so there is no quark_list.
+incl './lib/harness'
+incl './lib/tables'
+
+// The checksum: rows + sum(id) / rows + sum(g) + sum(v) + sum(w) + the
+// total length of the k strings.
+fn readcsv_check(t: tbl[tables::Row]) float ->
+    rows = len(t.id)
+    chars = 0
+    for s in t.k:
+        chars = chars + len(s)
+    rows + sum(t.id) / rows + sum(t.g) + sum(t.v) + sum(t.w) + chars
+
+p = harness::params()
+impl: str = p.impl
+path = harness::data_path(p, 'rows.csv')
+if impl == 'quark_tbl':
+    out: tbl[tables::Row] = harness::measure(p, 'readcsv', fn() -> tables::read_rows(path))
+    harness::check(p, 'readcsv', readcsv_check(out))
+else:
+    harness::unknown_impl(p, 'readcsv')

@@ -98,6 +98,7 @@ class Bench:
 
 
 ALL_VEC = ["quark_list", "quark_vec", "py_list", "numpy", "pandas", "polars", "r_vec"]
+TABLE = ["quark_tbl", "pandas", "polars"]
 
 BENCHMARKS = [
     # Plain code: loops, calls, scalar arithmetic.
@@ -113,24 +114,23 @@ BENCHMARKS = [
           ["quark_list", "quark_vec", "py_list", "numpy", "pandas", "polars", "r_loop", "r_vec"]),
     # Whole-column numeric work.
     Bench("reduce", "vector", "sum, min, max, mean of a column",
-          lambda z: {"n": z["vec_n"]}, ALL_VEC + ["r_dt"], planned=["quark_tbl"]),
+          lambda z: {"n": z["vec_n"]}, ALL_VEC + ["quark_tbl", "r_dt"]),
     Bench("arith", "vector", "z = 2.5*a + b",
-          lambda z: {"n": z["vec_n"]}, ALL_VEC + ["quark_blas", "r_df", "r_dt"], planned=["quark_tbl"]),
+          lambda z: {"n": z["vec_n"]}, ALL_VEC + ["quark_blas", "quark_tbl", "r_df", "r_dt"]),
     Bench("expr", "vector", "z = (a*a - b)*0.5 + (a - b)/(b*b + 1)",
-          lambda z: {"n": z["vec_n"]}, ALL_VEC + ["r_dt"], planned=["quark_tbl"]),
+          lambda z: {"n": z["vec_n"]}, ALL_VEC + ["quark_tbl", "r_dt"]),
     Bench("dot", "vector", "dot product of two columns",
           lambda z: {"n": z["vec_n"]}, ALL_VEC + ["quark_blas"]),
     Bench("zscore", "vector", "standardize a column: (a - mean) / sd",
-          lambda z: {"n": z["vec_n"]}, ALL_VEC + ["quark_blas", "r_df", "r_dt"], planned=["quark_tbl"]),
+          lambda z: {"n": z["vec_n"]}, ALL_VEC + ["quark_blas", "quark_tbl", "r_df", "r_dt"]),
     Bench("filter", "vector", "rows of (a, b) where a > 0.5",
-          lambda z: {"n": z["vec_n"]}, ALL_VEC + ["r_df", "r_dt"], planned=["quark_tbl"]),
+          lambda z: {"n": z["vec_n"]}, ALL_VEC + ["quark_tbl", "r_df", "r_dt"]),
     Bench("sort", "vector", "sort a column of normal floats",
-          lambda z: {"n": z["sort_n"]}, ALL_VEC + ["r_df", "r_dt"], planned=["quark_tbl"]),
+          lambda z: {"n": z["sort_n"]}, ALL_VEC + ["quark_tbl", "r_df", "r_dt"]),
     # Hashing: grouping, joins, strings.
     Bench("groupby", "table", "sum and count per string key",
           lambda z: {"n": z["grp_n"], "k": z["grp_k"]},
-          ["quark_list", "py_list", "numpy", "pandas", "polars", "r_vec", "r_df", "r_dt"],
-          planned=["quark_tbl"]),
+          ["quark_list", "quark_tbl", "py_list", "numpy", "pandas", "polars", "r_vec", "r_df", "r_dt"]),
     Bench("join", "table", "left join on a string key, then sum(v * w)",
           lambda z: {"n": z["join_n"], "k": z["join_k"]},
           ["quark_list", "py_list", "numpy", "pandas", "polars", "r_vec", "r_df", "r_dt"],
@@ -139,8 +139,15 @@ BENCHMARKS = [
           lambda z: {"n": z["words_n"], "vocab": z["vocab"]},
           ["quark_list", "py_list", "numpy", "pandas", "polars", "r_vec", "r_dt"], planned=["quark_tbl"]),
     Bench("strings", "table", "trim, lowercase and replace in string labels",
-          lambda z: {"n": z["str_n"]}, ["quark_list", "py_list", "numpy", "pandas", "polars", "r_vec"],
-          planned=["quark_tbl"]),
+          lambda z: {"n": z["str_n"]},
+          ["quark_list", "quark_tbl", "py_list", "numpy", "pandas", "polars", "r_vec"]),
+    # Table work: a query chain, a sort by two keys, reading a CSV file.
+    Bench("query", "table", "filter, mutate, group by two keys, four aggregates, sort",
+          lambda z: {"n": z["grp_n"]}, ["quark_list", "py_list"] + TABLE + ["r_dt"]),
+    Bench("sortkeys", "table", "sort rows by a string key, then a float descending",
+          lambda z: {"n": z["grp_n"]}, ["quark_list", "py_list", "numpy"] + TABLE + ["r_df", "r_dt"]),
+    Bench("readcsv", "table", "read a CSV file of 5 typed columns into a table",
+          lambda z: {"n": z["grp_n"]}, ["py_list"] + TABLE + ["r_df", "r_dt"]),
     # Linear algebra.
     Bench("gemv", "matrix", "matrix-vector product",
           lambda z: {"n": z["gemv_n"]}, ["quark_list", "quark_vec", "quark_blas", "py_list", "numpy", "r_vec"]),

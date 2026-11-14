@@ -395,6 +395,67 @@ impl("strings", "r_vec", function(p, measure) {
   sum(startsWith(out, "item-")) + sum(nchar(out, type = "bytes"))
 })
 
+# -------------------------------------------------------------------- query
+# Rows of rows.csv with v >= 10, x = v * w, grouped by (k, g): n, sum(x),
+# mean(w), max(v), sorted by sum(x) descending; checksum query_check.
+
+rows_classes <- c(id = "integer", k = "character", g = "integer", v = "numeric", w = "numeric")
+read_rows_df <- function(p) read.csv(file.path(p$data, "rows.csv"), colClasses = rows_classes)
+read_rows_dt <- function(p) fread(file.path(p$data, "rows.csv"), colClasses = rows_classes)
+
+# groups + sum(n) + sum(s) / 1000 + sum(m) + sum(hi) / 100, plus the
+# s-weighted mean position sum(s[i] * i) / sum(s) (0-based i).
+query_check <- function(n, s, m, hi) {
+  length(n) + sum(as.numeric(n)) + sum(s) / 1000 + sum(m) + sum(hi) / 100 +
+    sum(s * (seq_along(s) - 1)) / sum(s)
+}
+
+impl("query", "r_dt", function(p, measure) {
+  use_data_table()
+  dt <- read_rows_dt(p)
+  run <- function() {
+    d <- dt[v >= 10]
+    d[, x := v * w]
+    d[, .(n = .N, s = sum(x), m = mean(w), hi = max(v)), by = .(k, g)][order(-s)]
+  }
+  out <- measure(run)
+  query_check(out$n, out$s, out$m, out$hi)
+})
+
+# ----------------------------------------------------------------- sortkeys
+# Sort the rows of rows.csv by k ascending, then v descending; checksum
+# sum(v[i] * i) / n over the sorted rows, i 0-based.
+
+impl("sortkeys", "r_df", function(p, measure) {
+  df <- read_rows_df(p)[, c("k", "v")]
+  sort_check(measure(function() df[order(df$k, -df$v), ])$v)
+})
+
+impl("sortkeys", "r_dt", function(p, measure) {
+  use_data_table()
+  dt <- read_rows_dt(p)[, .(k, v)]
+  sort_check(measure(function() dt[order(k, -v)])$v)
+})
+
+# ------------------------------------------------------------------ readcsv
+# Read rows.csv (id int, k str, g int, v float, w float) with its column
+# types; checksum rows + sum(id) / rows + sum(g) + sum(v) + sum(w) + the total
+# length of k.
+
+readcsv_check <- function(d) {
+  rows <- nrow(d)
+  rows + sum(as.numeric(d$id)) / rows + sum(d$g) + sum(d$v) + sum(d$w) + sum(nchar(d$k, type = "bytes"))
+}
+
+impl("readcsv", "r_df", function(p, measure) {
+  readcsv_check(measure(function() read_rows_df(p)))
+})
+
+impl("readcsv", "r_dt", function(p, measure) {
+  use_data_table()
+  readcsv_check(measure(function() read_rows_dt(p)))
+})
+
 # --------------------------------------------------------------------- gemv
 # y = A x for an n x n matrix; checksum sum(y).
 

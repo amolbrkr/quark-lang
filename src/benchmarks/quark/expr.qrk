@@ -1,6 +1,12 @@
 // expr.qrk - z = (a*a - b) * 0.5 + (a - b) / (b*b + 1), an expression with
 // several intermediate results (README.md#expr).
 incl './lib/harness'
+incl './lib/tables'
+
+struct Z:
+    a: float
+    b: float
+    z: float
 
 fn expr_list(a: list, b: list) list ->
     z = list []
@@ -12,18 +18,25 @@ fn expr_list(a: list, b: list) list ->
 
 fn expr_vec(a: vec, b: vec) vec -> (a * a - b) * 0.5 + (a - b) / (b * b + 1.0)
 
+fn expr_tbl(t: tbl[tables::Cols]) tbl[Z] ->
+    t | e -> mutate(z = (e.a * e.a - e.b) * 0.5 + (e.a - e.b) / (e.b * e.b + 1.0))
+
 p = harness::params()
 impl: str = p.impl
 n = harness::int_param(p, 'n')
-a = harness::read_f64(p, 'a.f64', n)
-b = harness::read_f64(p, 'b.f64', n)
 if impl == 'quark_list':
-    al = a.to_list()
-    bl = b.to_list()
+    al = harness::read_f64(p, 'a.f64', n).to_list()
+    bl = harness::read_f64(p, 'b.f64', n).to_list()
     out = harness::measure(p, 'expr', fn() -> expr_list(al, bl))
     harness::check(p, 'expr', harness::sum_list(out))
 elseif impl == 'quark_vec':
+    a = harness::read_f64(p, 'a.f64', n)
+    b = harness::read_f64(p, 'b.f64', n)
     out = harness::measure(p, 'expr', fn() -> expr_vec(a, b))
     harness::check(p, 'expr', sum(out))
+elseif impl == 'quark_tbl':
+    t = tables::cols(p)
+    out: tbl[Z] = harness::measure(p, 'expr', fn() -> expr_tbl(t))
+    harness::check(p, 'expr', sum(out.z))
 else:
     harness::unknown_impl(p, 'expr')

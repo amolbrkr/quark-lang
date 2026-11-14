@@ -1,5 +1,6 @@
 // filter.qrk - keep the rows of (a, b) where a > 0.5 (README.md#filter).
 incl './lib/harness'
+incl './lib/tables'
 
 fn filter_list(a: list, b: list) list ->
     fa = list []
@@ -16,25 +17,28 @@ fn filter_vec(a: vec, b: vec) list ->
     m = a > 0.5
     list [a[m], b[m]]
 
+fn filter_tbl(t: tbl[tables::Cols]) tbl[tables::Cols] -> t | e -> filter(e.a > 0.5)
+
 p = harness::params()
 impl: str = p.impl
 n = harness::int_param(p, 'n')
-a = harness::read_f64(p, 'a.f64', n)
-b = harness::read_f64(p, 'b.f64', n)
 if impl == 'quark_list':
-    al = a.to_list()
-    bl = b.to_list()
+    al = harness::read_f64(p, 'a.f64', n).to_list()
+    bl = harness::read_f64(p, 'b.f64', n).to_list()
     out: list = harness::measure(p, 'filter', fn() -> filter_list(al, bl))
     fa: list = out[0]
     fb: list = out[1]
     harness::check(p, 'filter', len(fa) + harness::sum_list(fa) + harness::sum_list(fb))
 elseif impl == 'quark_vec':
+    a = harness::read_f64(p, 'a.f64', n)
+    b = harness::read_f64(p, 'b.f64', n)
     out: list = harness::measure(p, 'filter', fn() -> filter_vec(a, b))
     fa: vec = out[0]
     fb: vec = out[1]
-    // sum() of a vec has type any (it is null when every entry is missing).
-    sa: float = sum(fa)
-    sb: float = sum(fb)
-    harness::check(p, 'filter', len(fa) + sa + sb)
+    harness::check(p, 'filter', len(fa) + sum(fa) + sum(fb))
+elseif impl == 'quark_tbl':
+    t = tables::cols(p)
+    out: tbl[tables::Cols] = harness::measure(p, 'filter', fn() -> filter_tbl(t))
+    harness::check(p, 'filter', len(out.a) + sum(out.a) + sum(out.b))
 else:
     harness::unknown_impl(p, 'filter')

@@ -2,6 +2,12 @@
 // The std/blas implementation is in arith_blas.qrk, so that a machine without
 // OpenBLAS skips only that one.
 incl './lib/harness'
+incl './lib/tables'
+
+struct Z:
+    a: float
+    b: float
+    z: float
 
 fn arith_list(a: list, b: list) list ->
     z = list []
@@ -11,18 +17,24 @@ fn arith_list(a: list, b: list) list ->
         z.push(2.5 * x + y)
     z
 
+fn arith_tbl(t: tbl[tables::Cols]) tbl[Z] -> t | e -> mutate(z = 2.5 * e.a + e.b)
+
 p = harness::params()
 impl: str = p.impl
 n = harness::int_param(p, 'n')
-a = harness::read_f64(p, 'a.f64', n)
-b = harness::read_f64(p, 'b.f64', n)
 if impl == 'quark_list':
-    al = a.to_list()
-    bl = b.to_list()
+    al = harness::read_f64(p, 'a.f64', n).to_list()
+    bl = harness::read_f64(p, 'b.f64', n).to_list()
     out = harness::measure(p, 'arith', fn() -> arith_list(al, bl))
     harness::check(p, 'arith', harness::sum_list(out))
 elseif impl == 'quark_vec':
+    a = harness::read_f64(p, 'a.f64', n)
+    b = harness::read_f64(p, 'b.f64', n)
     out = harness::measure(p, 'arith', fn() -> 2.5 * a + b)
     harness::check(p, 'arith', sum(out))
+elseif impl == 'quark_tbl':
+    t = tables::cols(p)
+    out: tbl[Z] = harness::measure(p, 'arith', fn() -> arith_tbl(t))
+    harness::check(p, 'arith', sum(out.z))
 else:
     harness::unknown_impl(p, 'arith')

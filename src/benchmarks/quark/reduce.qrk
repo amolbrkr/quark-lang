@@ -1,5 +1,6 @@
 // reduce.qrk - sum, min, max and mean of one f64 column (README.md#reduce).
 incl './lib/harness'
+incl './lib/tables'
 
 fn reduce_list(xs: list) list ->
     first: float = xs[0]
@@ -19,15 +20,24 @@ fn reduce_vec(a: vec) list ->
     s = sum(a)
     list [s, min(a), max(a), s / len(a)]
 
+fn reduce_tbl(t: tbl[tables::A]) list ->
+    r = t | e -> summarize(s = sum(e.a), lo = min(e.a), hi = max(e.a), m = mean(e.a))
+    list [r.s[0], r.lo[0], r.hi[0], r.m[0]]
+
 p = harness::params()
 impl: str = p.impl
-a = harness::read_f64(p, 'a.f64', harness::int_param(p, 'n'))
+n = harness::int_param(p, 'n')
 if impl == 'quark_list':
-    al = a.to_list()
+    al = harness::read_f64(p, 'a.f64', n).to_list()
     out = harness::measure(p, 'reduce', fn() -> reduce_list(al))
     harness::check(p, 'reduce', harness::sum_list(out))
 elseif impl == 'quark_vec':
+    a = harness::read_f64(p, 'a.f64', n)
     out = harness::measure(p, 'reduce', fn() -> reduce_vec(a))
+    harness::check(p, 'reduce', harness::sum_list(out))
+elseif impl == 'quark_tbl':
+    t = tables::col_a(p)
+    out = harness::measure(p, 'reduce', fn() -> reduce_tbl(t))
     harness::check(p, 'reduce', harness::sum_list(out))
 else:
     harness::unknown_impl(p, 'reduce')

@@ -1,5 +1,6 @@
 // sort.qrk - sort one f64 column ascending (README.md#sort).
 incl './lib/harness'
+incl './lib/tables'
 
 // The checksum: sum(sorted[i] * i) / n.
 fn sort_check(xs: list) float ->
@@ -9,17 +10,24 @@ fn sort_check(xs: list) float ->
         s = s + x * i
     s / len(xs)
 
+fn sort_tbl(t: tbl[tables::X]) tbl[tables::X] -> t | e -> sort(e.x)
+
 p = harness::params()
 impl: str = p.impl
-v = harness::read_f64(p, 'sort.f64', harness::int_param(p, 'n'))
+n = harness::int_param(p, 'n')
 if impl == 'quark_list':
-    xs = v.to_list()
+    xs = harness::read_f64(p, 'sort.f64', n).to_list()
     // .sort() sorts in place, so each run sorts a fresh copy.
     out: list = harness::measure(p, 'sort', fn() -> xs.slice(0, len(xs)).sort())
     harness::check(p, 'sort', sort_check(out))
 elseif impl == 'quark_vec':
+    v = harness::read_f64(p, 'sort.f64', n)
     // Vectors have no sort: go through a list.
     out: vec = harness::measure(p, 'sort', fn() -> v.to_list().sort().to_vec())
     harness::check(p, 'sort', sort_check(out.to_list()))
+elseif impl == 'quark_tbl':
+    t = tables::sort_x(p)
+    out: tbl[tables::X] = harness::measure(p, 'sort', fn() -> sort_tbl(t))
+    harness::check(p, 'sort', sort_check(out.x.to_list()))
 else:
     harness::unknown_impl(p, 'sort')

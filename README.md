@@ -1,12 +1,17 @@
 # Quark
 
-Quark is a language for working with data. It aims to be as quick to write as
-a scripting language and to run like compiled code: the compiler is written in
-Go, translates each program to C++17 and builds a standalone native binary.
+Quark is a fast, gradually typed, compiled language for data work. It
+compiles to C++17, and its compiler helps you write safe code that runs fast
+by default, with built-in types for data such as vectors and tables.
 
 ## Contents
 
-- [What Quark is](#what-quark-is)
+- [Language goals](#language-goals)
+  - [Checked before it runs](#checked-before-it-runs)
+  - [Tables with typed queries](#tables-with-typed-queries)
+  - [Vectors for whole columns](#vectors-for-whole-columns)
+  - [Linear algebra with BLAS](#linear-algebra-with-blas)
+  - [Measured against Python and R](#measured-against-python-and-r)
 - [Quickstart](#quickstart)
 - [How a program is built](#how-a-program-is-built)
 - [Language tour](#language-tour)
@@ -38,17 +43,33 @@ Go, translates each program to C++17 and builds a standalone native binary.
 - [Further reading](#further-reading)
 - [License](#license)
 
-## What Quark is
+## Language goals
 
-Developer productivity and execution speed are equal goals. You write short,
-untyped code; the compiler works out the types and checks as much as it can
-before the program runs.
+Working with data needs code that is quick to write, runs fast on large
+inputs, and gives the right answer: a plausible wrong result is worse than an
+error. Quark treats these as equal goals.
 
-**Types are inferred, annotations are optional.** The compiler infers the type
-of every variable, list, dict and function result it can. It checks argument
-types, the element type of every list and dict, return types, how a function
-calls the functions passed to it, and every name across files. None of these
-mistakes needs an annotation to be caught (saved as `ov.qrk`, `quark check ov.qrk` reports):
+- **Quick to write.** A small, familiar language core with a sensible
+  syntax. Types are inferred, so you can iterate quickly and add type
+  annotations before the code goes to production.
+- **Fast.**  Queries on Quark's tables (`tbl`) run as fast as the best data frame 
+  libraries on one thread, and a recursive `fib` runs 25 times faster than CPython 3.11
+  and 150 times faster than R. See the [benchmark results](src/benchmarks/RESULTS.md).
+  The compiler, written in Go, translates each program to C++17 and builds 
+  it with clang into a standalone native binary.
+- **Trustworthy.** The compiler checks as much as it can before the program
+  runs. What it can't know (data read at runtime, values typed `any`, native
+  code) is checked where it is used, and a mismatch stops the program with a
+  message and a source location.
+
+### Checked before it runs
+
+The compiler infers the type of every variable, list, dict, table and
+function result it can. It checks argument types, the element type of every
+list and dict, return types, how a function calls the functions passed to it,
+every name across files, and every column a query reads. None of these
+mistakes needs an annotation to be caught (saved as `ov.qrk`,
+`quark check ov.qrk` reports):
 
 ```quark
 prices = list [12.5, 3.0]          // inferred: a list of float
@@ -69,11 +90,8 @@ error[QK-CHECK-001] (check): argument 1 of 'apply' is called with 1 argument (li
 error[QK-CHECK-001] (check): function 'mean' declares return type 'float' but can end without a value (an if without else, or a when with no matching arm, returns null); give every branch a value at ov.qrk:8:1
 ```
 
-**Runtime checks are the backstop.** Some values have no type the compiler can
-know: an unannotated parameter, a value typed `any`, a value from native code
-or from data read at runtime. Those are checked when they are used, and a
-mismatch stops the program with a message and a source location. The same
-`push` through an unannotated function fails at the write:
+Values the compiler can't know are checked when they are used. The same
+`push` through an unannotated function fails at the write, with its location:
 
 ```quark
 fn add_row(rows, r) -> rows.push(r)
@@ -82,25 +100,142 @@ add_row(prices, 'n/a')
 // runtime error: push() can't add a str to a list of float: a list keeps the element type it was created with ...
 ```
 
-The goal is that a program that compiles runs as intended, and a wrong
-program fails loudly instead of giving a wrong answer. The compiler doesn't
-reach that everywhere yet: the known cases are listed in [known_issues.md](known_issues.md).
+The aim is that a program that compiles runs as intended. The compiler
+doesn't reach that everywhere yet: the known cases are listed in
+[known_issues.md](known_issues.md).
 
-**Typed code compiles to plain C++.** Variables the compiler has typed `int`,
-`float` or `bool`, and that no closure captures, are C++ `long long`, `double`
-and `bool`, and arithmetic on
-them is native (int arithmetic is overflow-checked: overflow is a runtime
-error, never a wrap). A `fn` declaration that captures no variables is a plain
-C++ function called directly; one whose parameters and return type are all
-annotated also gets a native C++ signature. A `vec` is a typed column in the
-Apache Arrow memory layout, and arithmetic on it runs over the whole column.
-Memory is managed by the Boehm garbage collector. There is no interpreter or VM.
+### Tables with typed queries
 
-**Tables.** A typed, columnar table type (`tbl[Employee]`) with a query
-syntax (`staff | e -> filter(e.salary > 100.0) | group_by(e.dept) | ...`) is
-the centrepiece for data wrangling: every column a query reads is checked at
-compile time, and each step runs as a typed loop over the column buffers
-([Tables](#tables), [tables_v0_1_spec.md](tables_v0_1_spec.md)).
+A `tbl[Row]` is a columnar table whose rows are a struct, so the compiler
+knows every column's name and type. Reading a CSV file into one checks every
+cell against the struct. A query names the row once (`s ->`) and chains
+verbs:
+
+```quark
+incl 'std/csv'
+
+struct Sale:
+    region: str
+    product: str
+    units: int
+    price: float
+
+sales: tbl[Sale] = unwrap(csv::read_file('sales.csv'))
+
+by_region = sales | s ->
+    mutate(revenue = s.units * s.price)
+    | group_by(s.region)
+    | summarize(revenue = sum(s.revenue), orders = count())
+    | sort(desc(s.revenue))
+print(by_region)
+```
+
+With this `sales.csv`:
+
+```text
+region,product,units,price
+north,tea,12,3.5
+south,coffee,7,4.25
+north,coffee,3,4.25
+east,tea,,3.5
+south,tea,20,3.5
+east,coffee,5,4.25
+```
+
+it prints:
+
+```text
+tbl: 3 rows
+region  revenue  orders
+str       float     int
+south     99.75       2
+north     54.75       2
+east      21.25       2
+```
+
+The empty `units` cell is a missing value, so that row's revenue is missing
+too, and `sum` skips it. Every column a query reads, and its type, is checked
+at compile time:
+
+```quark
+big = sales | s -> filter(s.unit > 10)
+// error: Sale has no column 'unit' (columns: region, product, units, price)
+avg = sales | s -> group_by(s.region) | summarize(m = mean(s.product))
+// error: mean needs a number or bool column; column 'product' is str
+```
+
+Each verb compiles to a typed loop over the column buffers, with no
+expression interpreter and no temporary columns. On 1M rows and one thread, a
+five-step query (filter, mutate, group by two keys, four aggregates, sort)
+takes 134 ms with Quark, against 142 ms for R's data.table, 167 ms for Polars
+and 198 ms for pandas. More in [Tables](#tables).
+
+### Vectors for whole columns
+
+A `vec` is one typed column in the Apache Arrow memory layout, and a table's
+column is a `vec`, shared rather than copied. Arithmetic, comparisons, masks
+and reductions work on the whole column, and missing values are skipped:
+
+```quark
+incl 'std/stats'
+
+price = sales.price                       // vec[f64]
+print(stats::mean(price))                 // 3.875
+print(price[price > 4.0] * 0.9)           // [3.825, 3.825, 3.825]
+print(sum(sales.units))                   // 47: the missing entry is skipped
+```
+
+More in [Vectors](#vectors).
+
+### Linear algebra with BLAS
+
+`std/blas` hands vector buffers to OpenBLAS without copying them, so its
+routines run at NumPy's speed or within about 20% of it. A least-squares fit
+by the normal equations:
+
+```quark
+incl 'std/blas'
+
+// y = 1 + 2x: a column of ones and the x values, row-major (4 rows, 2 columns)
+x = vec [1.0, 1.0, 1.0, 2.0, 1.0, 3.0, 1.0, 4.0]
+y = vec [3.0, 5.0, 7.0, 9.0]
+g = blas::syrk(x, 4, 2)                   // XᵀX: [4.0, 10.0, 10.0, 30.0]
+r = blas::gemv(x, 4, 2, y, true)          // Xᵀy: [24.0, 70.0]
+det = g[0] * g[3] - g[1] * g[2]
+print((g[3] * r[0] - g[1] * r[1]) / det)  // intercept: 1.0
+print((g[0] * r[1] - g[2] * r[0]) / det)  // slope: 2.0
+```
+
+It needs OpenBLAS (`sudo apt install libopenblas-dev` or `brew install
+openblas`); the routines are listed in [stdlib.md](stdlib.md).
+
+### Measured against Python and R
+
+The benchmark suite in `src/benchmarks` runs the same work on the same data
+in Quark, Python (pure, NumPy, pandas, Polars) and R (base, data.table), with
+each tool written the way its users write it. Some results, one thread each,
+the fastest Python and R implementation shown:
+
+| Work | Quark | Python | R |
+|---|---|---|---|
+| Recursive `fib(30)` | 10.7 ms | 264 ms | 1.59 s |
+| Mandelbrot on a 400 × 400 grid | 13.8 ms (loops) | 102 ms (NumPy) | 274 ms |
+| Query on 1M rows: filter, mutate, group by two keys, sort | 134 ms (`tbl`) | 167 ms (Polars) | 142 ms (data.table) |
+| Sum and count per key, 1M rows | 52 ms (`tbl`) | 55 ms (Polars) | 60 ms (data.table) |
+| An 8-operation expression on 10M rows | 59 ms (`tbl`) | 93 ms (Polars) | 326 ms |
+| Matrix product, 300 × 300 | 4.1 ms (`std/blas`) | 3.5 ms (NumPy) | 3.8 ms |
+| Keep the rows where `a > 0.5`, 10M rows | 99 ms (`tbl`) | 24 ms (Polars) | 261 ms (data.table) |
+| Sort 1M rows by a string, then a float | 1.13 s (`tbl`) | 364 ms (pandas) | 255 ms (data.table) |
+| Read a 52 MB CSV file | 513 ms (`tbl`) | 226 ms (pandas) | 301 ms (data.table) |
+| Trim, lowercase and replace in 1M strings | 491 ms (`tbl`) | 192 ms (pandas) | 3.17 s |
+
+Loops and recursion are many times faster than Python and R. Queries,
+grouping and fused column expressions are as fast as the best data frame
+libraries or faster, and simple column arithmetic is within 1.3 times of
+them. Filtering, sorting, string work and CSV reading are behind
+them today, each for a cause in the runtime that is written down with a
+direction. All the numbers, the machine, and those causes are in
+[src/benchmarks/RESULTS.md](src/benchmarks/RESULTS.md).
 
 > **Maturity.** Quark is early and changes often. Large parts of the compiler
 > were written with AI assistance; use it at your own risk, and please file
@@ -181,6 +316,15 @@ unit. Errors from
 any stage carry a stable code (`QK-PARSE-001`, `QK-LOAD-001`, `QK-CHECK-001`,
 `QK-RUNTIME-001`, ...; see [error_codes.md](error_codes.md)). Each stage can be
 inspected with `quark lex`, `parse`, `check` and `emit`.
+
+Variables the compiler has typed `int`, `float` or `bool`, and that no
+closure captures, are C++ `long long`, `double` and `bool`, and arithmetic on
+them is native (int arithmetic is overflow-checked: overflow is a runtime
+error, never a wrap). A `fn` declaration that captures no variables is a
+plain C++ function called directly; one whose parameters and return type are
+all annotated also gets a native C++ signature. A `vec` or table column is a
+typed buffer, and a query step is a loop over those buffers. Memory is
+managed by the Boehm garbage collector.
 
 ## Language tour
 
@@ -405,7 +549,7 @@ fn greet(name: str) str -> 'Hello, ' + name
 ```
 
 A body that can end without a value under a return annotation is a compile
-error (see the example in [What Quark is](#what-quark-is)). An unannotated
+error (see the example in [Checked before it runs](#checked-before-it-runs)). An unannotated
 parameter accepts any value; misuse inside the body (`x.upper()` on an int)
 is a runtime error.
 

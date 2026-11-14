@@ -1,0 +1,54 @@
+// tables.qrk - the inputs of the quark_tbl implementations.
+//
+// A table can only be made by std/csv in tables v0.1, so these read the CSV
+// files datagen.py writes next to the binary ones (the same values; floats in
+// shortest round-trip form). Each read is typed by its row struct, and reads
+// only the columns the struct names.
+
+incl 'std/csv'
+incl './harness'
+
+// cols.csv: the two uniform columns of a.f64 and b.f64.
+struct Cols:
+    a: float
+    b: float
+
+// The column a of cols.csv only.
+struct A:
+    a: float
+
+// sort.csv: the values of sort.f64.
+struct X:
+    x: float
+
+// rows.csv: the key and value of grp_k.txt and grp_v.f64, with an id, a small
+// int g in 0..9 and a uniform weight w.
+struct Row:
+    id: int
+    k: str
+    g: int
+    v: float
+    w: float
+
+// The key and value columns of rows.csv only.
+struct KV:
+    k: str
+    v: float
+
+// strings.csv: the labels of strings.txt.
+struct Label:
+    s: str
+
+fn read_cols(path: str) tbl[Cols] -> unwrap(csv::read_file(path))
+fn read_a(path: str) tbl[A] -> unwrap(csv::read_file(path))
+fn read_x(path: str) tbl[X] -> unwrap(csv::read_file(path))
+fn read_rows(path: str) tbl[Row] -> unwrap(csv::read_file(path))
+fn read_kv(path: str) tbl[KV] -> unwrap(csv::read_file(path))
+fn read_labels(path: str) tbl[Label] -> unwrap(csv::read_file(path))
+
+fn cols(p: dict) tbl[Cols] -> read_cols(harness::data_path(p, 'cols.csv'))
+fn col_a(p: dict) tbl[A] -> read_a(harness::data_path(p, 'cols.csv'))
+fn sort_x(p: dict) tbl[X] -> read_x(harness::data_path(p, 'sort.csv'))
+fn rows(p: dict) tbl[Row] -> read_rows(harness::data_path(p, 'rows.csv'))
+fn kv(p: dict) tbl[KV] -> read_kv(harness::data_path(p, 'rows.csv'))
+fn labels(p: dict) tbl[Label] -> read_labels(harness::data_path(p, 'strings.csv'))

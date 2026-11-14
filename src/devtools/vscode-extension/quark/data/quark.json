@@ -122,11 +122,11 @@
     "dict": [
       {
         "name": "get",
-        "signature": "get() any"
+        "signature": "get(str) any"
       },
       {
         "name": "set",
-        "signature": "set(any) dict"
+        "signature": "set(str, any) dict"
       },
       {
         "name": "keys",
@@ -144,11 +144,11 @@
     "list": [
       {
         "name": "concat",
-        "signature": "concat() list"
+        "signature": "concat(list) list"
       },
       {
         "name": "push",
-        "signature": "push() list"
+        "signature": "push(any) list"
       },
       {
         "name": "pop",
@@ -156,23 +156,23 @@
       },
       {
         "name": "get",
-        "signature": "get() any"
+        "signature": "get(int) any"
       },
       {
         "name": "set",
-        "signature": "set(any) any"
+        "signature": "set(int, any) any"
       },
       {
         "name": "insert",
-        "signature": "insert(any) list"
+        "signature": "insert(int, any) list"
       },
       {
         "name": "remove",
-        "signature": "remove() any"
+        "signature": "remove(int) any"
       },
       {
         "name": "slice",
-        "signature": "slice(int) list"
+        "signature": "slice(int, int) list"
       },
       {
         "name": "reverse",
@@ -184,7 +184,7 @@
       },
       {
         "name": "sort_by",
-        "signature": "sort_by() list"
+        "signature": "sort_by(any) list"
       },
       {
         "name": "enumerate",
@@ -192,7 +192,7 @@
       },
       {
         "name": "join",
-        "signature": "join() str"
+        "signature": "join(str) str"
       },
       {
         "name": "to_vec",
@@ -214,51 +214,51 @@
       },
       {
         "name": "contains",
-        "signature": "contains() bool"
+        "signature": "contains(str) bool"
       },
       {
         "name": "startswith",
-        "signature": "startswith() bool"
+        "signature": "startswith(str) bool"
       },
       {
         "name": "endswith",
-        "signature": "endswith() bool"
+        "signature": "endswith(str) bool"
       },
       {
         "name": "replace",
-        "signature": "replace(str) str"
+        "signature": "replace(str, str) str"
       },
       {
         "name": "split",
-        "signature": "split() list"
+        "signature": "split(str) list"
       },
       {
         "name": "slice",
-        "signature": "slice(int) str"
+        "signature": "slice(int, int) str"
       }
     ],
     "tbl": [
       {
         "name": "head",
-        "signature": "head() tbl"
+        "signature": "head(int?) tbl"
       },
       {
         "name": "tail",
-        "signature": "tail() tbl"
+        "signature": "tail(int?) tbl"
       },
       {
         "name": "describe",
-        "signature": "describe()"
+        "signature": "describe(int?)"
       }
     ],
     "vec": [
       {
         "name": "get",
-        "signature": "get() any"
+        "signature": "get(int) any"
       },
       {
         "name": "fillna",
-        "signature": "fillna() vec"
+        "signature": "fillna(any) vec"
       },
       {
         "name": "drop_na",
@@ -266,7 +266,7 @@
       },
       {
         "name": "astype",
-        "signature": "astype() vec"
+        "signature": "astype(str) vec"
       },
       {
         "name": "to_list",

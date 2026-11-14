@@ -12,7 +12,15 @@
   "Function (typed)": {
     "prefix": "fnt",
     "body": ["fn ${1:name}(${2:x}: ${3:int}) ${4:int} ->", "\t${0:x}"],
-    "description": "Function with parameter and return type annotations (int, float, str, bool, list, dict, vec, result, any)"
+    "description": "Function with parameter and return type annotations (int, float, str, bool, list, dict, vec, tbl, tbl[Row], result, any)"
+  },
+  "Table query": {
+    "prefix": "query",
+    "body": [
+      "${1:t} | ${2:e} -> filter(${2:e}.${3:col} ${4:> 0})",
+      "\t| summarize(n = count(), s = sum(${2:e}.${3:col}))"
+    ],
+    "description": "Table query: filter / mutate / group_by / summarize / sort / head over a row binding"
   },
   "Function (default parameter)": {
     "prefix": "fnd",
@@ -106,7 +114,7 @@
   },
   "Incl (stdlib)": {
     "prefix": "incl",
-    "body": ["incl '${1|std/io,std/fmt,std/csv,std/sys,std/time,std/random,std/blas|}' as ${0:io}"],
+    "body": ["incl '${1|std/io,std/fmt,std/csv,std/sys,std/time,std/random,std/blas,std/stats|}' as ${0:io}"],
     "description": "Import a stdlib module under an alias, then call alias::fn(...)"
   },
   "Incl (file)": {

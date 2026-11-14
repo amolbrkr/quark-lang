@@ -1,10 +1,11 @@
-// Quark language support: run command, completion and hover.
+// Quark language support: run command, check diagnostics, completion and hover.
 //
 // Keywords, builtins, methods and stdlib modules come from data/quark.json,
 // which is generated from the compiler (see src/core/quark/internal/editordata).
-// Everything else is read from the open document with simple text scans; a
-// language server would replace those.
+// Errors come from `quark check`. Everything else is read from the open
+// document with simple text scans; a language server would replace those.
 
+const { execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const vscode = require('vscode');
@@ -61,6 +62,10 @@ function quoteShellArg(value) {
 	return `"${String(value).replace(/(["\\$`])/g, '\\$1')}"`;
 }
 
+function isQuarkDocument(document) {
+	return document && (document.languageId === 'quark' || document.fileName.toLowerCase().endsWith('.qrk'));
+}
+
 async function runCurrentFile() {
 	const editor = vscode.window.activeTextEditor;
 	if (!editor) {
@@ -68,7 +73,7 @@ async function runCurrentFile() {
 		return;
 	}
 	const document = editor.document;
-	if (document.languageId !== 'quark' && !document.fileName.toLowerCase().endsWith('.qrk')) {
+	if (!isQuarkDocument(document)) {
 		vscode.window.showErrorMessage('Active file is not a Quark file (.qrk).');
 		return;
 	}
@@ -91,6 +96,244 @@ async function runCurrentFile() {
 	terminal.show(true);
 	// PowerShell needs & to run a quoted path.
 	terminal.sendText(process.platform === 'win32' ? `& ${command}` : command, true);
+}
+
+// ---------------------------------------------------------------------------
+// Check diagnostics (`quark check`)
+
+const CHECK_HEAD_RE = /^(error|warning)(?:\[([^\]]+)\])?(?:\s*\(([^)]+)\))?:\s*(.*)$/;
+// Prefer file:line:col; requiring both line and column avoids eating a Windows
+ // drive letter's colon (C:\path\file.qrk:1:7).
+const CHECK_LOC_COL_RE = /^(.*)\s+at\s+(.+):(\d+):(\d+)\s*$/;
+const CHECK_LOC_LINE_RE = /^(.*)\s+at\s+(.+):(\d+)\s*$/;
+
+// parseCheckOutput turns `quark check` stderr into vscode.Diagnostic values
+// keyed by absolute file path. Lines that aren't diagnostics are ignored.
+function parseCheckOutput(text, fallbackFile) {
+	const byFile = new Map();
+	for (const line of String(text || '').split(/\r?\n/)) {
+		const head = line.match(CHECK_HEAD_RE);
+		if (!head) {
+			continue;
+		}
+		const severityName = head[1];
+		const code = head[2] || undefined;
+		let message = head[4];
+		let file = path.resolve(fallbackFile);
+		let lineNo = 0;
+		let colNo = 0;
+		const withCol = message.match(CHECK_LOC_COL_RE);
+		const withLine = !withCol && message.match(CHECK_LOC_LINE_RE);
+		const loc = withCol || withLine;
+		if (loc) {
+			message = loc[1];
+			file = path.resolve(loc[2]);
+			lineNo = Math.max(0, parseInt(loc[3], 10) - 1);
+			colNo = withCol ? Math.max(0, parseInt(loc[4], 10) - 1) : 0;
+		}
+		const severity = severityName === 'warning'
+			? vscode.DiagnosticSeverity.Warning
+			: vscode.DiagnosticSeverity.Error;
+		const start = new vscode.Position(lineNo, colNo);
+		const end = new vscode.Position(lineNo, colNo + 1);
+		const diag = new vscode.Diagnostic(new vscode.Range(start, end), message, severity);
+		if (code) {
+			diag.code = code;
+		}
+		diag.source = 'quark';
+		if (!byFile.has(file)) {
+			byFile.set(file, []);
+		}
+		byFile.get(file).push(diag);
+	}
+	return byFile;
+}
+
+// widenDiagnosticRanges stretches each single-column range over the word at
+// that position when the document is open, so squiggles cover the token.
+function widenDiagnosticRanges(uri, diags) {
+	const doc = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === uri.fsPath);
+	if (!doc) {
+		return diags;
+	}
+	return diags.map((d) => {
+		const pos = d.range.start;
+		if (pos.line >= doc.lineCount) {
+			return d;
+		}
+		const line = doc.lineAt(pos.line).text;
+		if (pos.character >= line.length) {
+			const end = Math.max(line.length, pos.character + 1);
+			d.range = new vscode.Range(pos.line, Math.min(pos.character, line.length), pos.line, end);
+			return d;
+		}
+		let start = pos.character;
+		let end = pos.character + 1;
+		if (/[A-Za-z0-9_]/.test(line[start])) {
+			while (start > 0 && /[A-Za-z0-9_]/.test(line[start - 1])) start -= 1;
+			while (end < line.length && /[A-Za-z0-9_]/.test(line[end])) end += 1;
+		} else {
+			end = Math.min(line.length, start + 1);
+		}
+		d.range = new vscode.Range(pos.line, start, pos.line, Math.max(end, start + 1));
+		return d;
+	});
+}
+
+function createChecker(context) {
+	const collection = vscode.languages.createDiagnosticCollection('quark');
+	context.subscriptions.push(collection);
+	const timers = new Map();
+	const reported = new Map(); // docUri -> absolute paths we last set from that check
+	const seqByDoc = new Map();
+
+	function clearReported(docKey) {
+		for (const file of reported.get(docKey) || []) {
+			collection.delete(vscode.Uri.file(file));
+		}
+		reported.delete(docKey);
+	}
+
+	function applyResults(document, byFile) {
+		const docKey = document.uri.toString();
+		clearReported(docKey);
+		const files = [];
+		for (const [file, diags] of byFile) {
+			const uri = vscode.Uri.file(file);
+			collection.set(uri, widenDiagnosticRanges(uri, diags));
+			files.push(file);
+		}
+		if (!byFile.has(path.resolve(document.fileName))) {
+			collection.delete(document.uri);
+		}
+		reported.set(docKey, files);
+	}
+
+	function runCheck(document) {
+		if (!isQuarkDocument(document) || document.isUntitled) {
+			return;
+		}
+		const exe = resolveExecutable(document.uri);
+		const realFile = document.fileName;
+		const docKey = document.uri.toString();
+		const mySeq = (seqByDoc.get(docKey) || 0) + 1;
+		seqByDoc.set(docKey, mySeq);
+
+		// Dirty buffers are written next to the file so relative incl paths still
+		// resolve; diagnostics for the temp path are remapped to the real file.
+		let checkFile = realFile;
+		let cleanup = () => {};
+		if (document.isDirty) {
+			checkFile = path.join(path.dirname(realFile), `.__quark_check_${process.pid}_${path.basename(realFile)}`);
+			try {
+				fs.writeFileSync(checkFile, document.getText(), 'utf8');
+			} catch (e) {
+				checkFile = realFile;
+			}
+			const tmp = checkFile;
+			cleanup = () => {
+				if (tmp !== realFile) {
+					try { fs.unlinkSync(tmp); } catch (_) { /* ignore */ }
+				}
+			};
+		}
+
+		execFile(exe, ['check', checkFile], { timeout: 30000, maxBuffer: 2 * 1024 * 1024 }, (err, _stdout, stderr) => {
+			cleanup();
+			if (seqByDoc.get(docKey) !== mySeq) {
+				return;
+			}
+			const text = String(stderr || '') + (err && err.message && !stderr ? `\n${err.message}` : '');
+			if (err && err.code === 'ENOENT') {
+				applyResults(document, new Map([[path.resolve(realFile), [
+					new vscode.Diagnostic(
+						new vscode.Range(0, 0, 0, 1),
+						`Quark compiler not found (${exe}). Set quark.executablePath or build src/core/quark/quark.exe.`,
+						vscode.DiagnosticSeverity.Error,
+					),
+				]]]));
+				return;
+			}
+			const byFile = parseCheckOutput(text, checkFile);
+			if (checkFile !== realFile) {
+				const tmpResolved = path.resolve(checkFile);
+				const realResolved = path.resolve(realFile);
+				const remapped = new Map();
+				for (const [file, diags] of byFile) {
+					remapped.set(file === tmpResolved ? realResolved : file, diags);
+				}
+				applyResults(document, remapped);
+				return;
+			}
+			applyResults(document, byFile);
+		});
+	}
+
+	function scheduleCheck(document) {
+		if (!isQuarkDocument(document) || document.isUntitled) {
+			return;
+		}
+		const config = vscode.workspace.getConfiguration('quark', document.uri);
+		if (config.get('checkOnType') === false) {
+			return;
+		}
+		const key = document.uri.toString();
+		clearTimeout(timers.get(key));
+		timers.set(key, setTimeout(() => {
+			timers.delete(key);
+			runCheck(document);
+		}, 400));
+	}
+
+	async function checkCurrentFile() {
+		const editor = vscode.window.activeTextEditor;
+		if (!editor || !isQuarkDocument(editor.document)) {
+			vscode.window.showErrorMessage('Open a .qrk file to check.');
+			return;
+		}
+		const document = editor.document;
+		if (document.isUntitled) {
+			vscode.window.showErrorMessage('Save the file before checking it.');
+			return;
+		}
+		if (document.isDirty && !(await document.save())) {
+			vscode.window.showErrorMessage('Could not save the file before checking it.');
+			return;
+		}
+		runCheck(document);
+	}
+
+	context.subscriptions.push(
+		vscode.workspace.onDidOpenTextDocument((doc) => {
+			if (isQuarkDocument(doc) && !doc.isUntitled) {
+				runCheck(doc);
+			}
+		}),
+		vscode.workspace.onDidSaveTextDocument((doc) => {
+			if (isQuarkDocument(doc)) {
+				runCheck(doc);
+			}
+		}),
+		vscode.workspace.onDidChangeTextDocument((e) => {
+			scheduleCheck(e.document);
+		}),
+		vscode.workspace.onDidCloseTextDocument((doc) => {
+			const key = doc.uri.toString();
+			clearTimeout(timers.get(key));
+			timers.delete(key);
+			clearReported(key);
+			collection.delete(doc.uri);
+		}),
+		vscode.commands.registerCommand('quark.checkCurrentFile', checkCurrentFile),
+	);
+
+	for (const doc of vscode.workspace.textDocuments) {
+		if (isQuarkDocument(doc) && !doc.isUntitled) {
+			runCheck(doc);
+		}
+	}
+
+	return { runCheck, parseCheckOutput, checkCurrentFile };
 }
 
 // ---------------------------------------------------------------------------
@@ -290,7 +533,8 @@ function typeOfExpression(expr, known, structs) {
 
 function annotationType(annotation, structs) {
 	const t = annotation.trim();
-	if (['str', 'list', 'dict', 'vec'].includes(t)) return t;
+	if (['str', 'list', 'dict', 'vec', 'tbl'].includes(t)) return t;
+	if (new RegExp(`^tbl\\s*\\[\\s*${IDENT}\\s*\\]$`).test(t)) return 'tbl';
 	if (structs.has(t)) return `struct:${t}`;
 	return undefined;
 }
@@ -299,7 +543,7 @@ function annotationType(annotation, structs) {
 // (parameters, typed declarations) and `x = <expr>` assignments.
 function knownTypes(lines, structs) {
 	const known = {};
-	const annotated = new RegExp(`(${IDENT})\\s*:\\s*(${IDENT})`, 'g');
+	const annotated = new RegExp(`(${IDENT})\\s*:\\s*(${IDENT}(?:\\s*\\[\\s*${IDENT}\\s*\\])?)`, 'g');
 	for (const line of lines) {
 		if (/^\s*struct\b/.test(line)) {
 			continue;
@@ -309,7 +553,7 @@ function knownTypes(lines, structs) {
 			const t = annotationType(m[2], structs);
 			if (t) known[m[1]] = t;
 		}
-		const assign = line.match(new RegExp(`^\\s*(${IDENT})\\s*(?::\\s*${IDENT}\\s*)?=(?!=)\\s*(.+)$`));
+		const assign = line.match(new RegExp(`^\\s*(${IDENT})\\s*(?::\\s*(?:${IDENT}(?:\\s*\\[\\s*${IDENT}\\s*\\])?)\\s*)?=(?!=)\\s*(.+)$`));
 		if (assign) {
 			const t = typeOfExpression(assign[2], known, structs);
 			if (t) known[assign[1]] = t;
@@ -527,6 +771,7 @@ const hoverProvider = {
 // ---------------------------------------------------------------------------
 
 function activate(context) {
+	createChecker(context);
 	context.subscriptions.push(
 		vscode.commands.registerCommand('quark.runCurrentFile', runCurrentFile),
 		vscode.languages.registerCompletionItemProvider('quark', completionProvider, '.', ':', "'", '"', '/'),
@@ -540,5 +785,13 @@ module.exports = {
 	activate,
 	deactivate,
 	// For tests.
-	_internal: { inCommentOrString, moduleFunctionsFromText, structFields, knownTypes, receiverType },
+	_internal: {
+		inCommentOrString,
+		moduleFunctionsFromText,
+		structFields,
+		knownTypes,
+		receiverType,
+		parseCheckOutput,
+		annotationType,
+	},
 };

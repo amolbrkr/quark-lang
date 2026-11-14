@@ -150,6 +150,17 @@
     "types": {
       "patterns": [
         {
+          "comment": "Table annotation: x: tbl[Emp] or x: tbl (row type in brackets is a struct name).",
+          "match": "(:)\\s*(tbl)\\b(?:\\s*(\\[)\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*(\\]))?",
+          "captures": {
+            "1": { "name": "punctuation.separator.annotation.quark" },
+            "2": { "name": "support.type.quark" },
+            "3": { "name": "punctuation.section.brackets.begin.quark" },
+            "4": { "name": "entity.name.type.quark" },
+            "5": { "name": "punctuation.section.brackets.end.quark" }
+          }
+        },
+        {
           "comment": "Annotation after a colon: x: int, field: str. Not when the word starts a literal (list [...], dict {...}).",
           "match": "(:)\\s*(int|float|str|bool|any|fn|list|dict|vec|result|resource)\\b(?!\\s*[\\[{])",
           "captures": {
@@ -163,6 +174,17 @@
           "captures": {
             "1": { "name": "punctuation.separator.annotation.quark" },
             "2": { "name": "entity.name.type.quark" }
+          }
+        },
+        {
+          "comment": "Return type tbl[Emp] or bare tbl after the parameter list",
+          "match": "(\\))\\s*(tbl)\\b(?:\\s*(\\[)\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*(\\]))?(?=\\s*(?:->|as\\b|$))",
+          "captures": {
+            "1": { "name": "punctuation.section.parens.end.quark" },
+            "2": { "name": "support.type.quark" },
+            "3": { "name": "punctuation.section.brackets.begin.quark" },
+            "4": { "name": "entity.name.type.quark" },
+            "5": { "name": "punctuation.section.brackets.end.quark" }
           }
         },
         {

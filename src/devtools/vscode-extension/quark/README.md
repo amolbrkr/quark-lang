@@ -1,6 +1,6 @@
 # Quark for VS Code and Positron
 
-Editor support for [Quark](https://github.com/amolbrkr/quark-lang) `.qrk` files: highlighting, snippets, completion, hover and a run command. Version 0.1.1, plus the unreleased modules v0.2 changes in `CHANGELOG.md`.
+Editor support for [Quark](https://github.com/amolbrkr/quark-lang) `.qrk` files: highlighting, snippets, completion, hover, check diagnostics and a run command. Version 0.2.0.
 
 ## Contents
 
@@ -11,7 +11,7 @@ Editor support for [Quark](https://github.com/amolbrkr/quark-lang) `.qrk` files:
 
 ## Features
 
-- **Highlighting** for the current language: `fn`, `struct`, `module`, `incl ... as`, `when`, `extern`, `extern link` / `extern include_path`, `::` paths (`io::exists`, `geo::shapes::Sq`), type annotations and return types, struct literals, and `list [...]` / `dict {...}` / `vec [...]`.
+- **Highlighting** for the current language: `fn`, `struct`, `module`, `incl ... as`, `when`, `extern`, `extern link` / `extern include_path`, `::` paths (`io::exists`, `geo::shapes::Sq`), type annotations and return types (including `tbl` / `tbl[Row]`), struct literals, and `list [...]` / `dict {...}` / `vec [...]`.
 - **Python and R habits are flagged.** `def`, `elif`, `return`, `True` / `False` / `None`, `TRUE` / `FALSE` / `NULL`, `function(`, `&&`, `||` and `#` comments are shown as errors. Hover one to see what Quark uses instead.
 - **Snippets** that show the Quark form of each construct. Type the prefix and press Tab:
 
@@ -25,19 +25,19 @@ Editor support for [Quark](https://github.com/amolbrkr/quark-lang) `.qrk` files:
   | `list`, `dict`, `vec` | collection literals |
   | `struct`, `new` | struct type, struct value |
   | `module`, `incl`, `inclf` | module block, stdlib import, file import |
+  | `query` | table query (`filter` / `summarize` pipeline) |
   | `okerr`, `pipe` | function returning `ok` / `err`, pipe chain |
   | `extern`, `externlib` | call C++, link a native library |
 
 - **Completion**:
   - keywords, builtins with their signatures, import bindings, and names used in the file;
-  - methods for the receiver's type (`str`, `list`, `dict`, `vec`), from annotations like `s: str`, literals, and assignments;
+  - methods for the receiver's type (`str`, `list`, `dict`, `vec`, `tbl`), from annotations like `s: str` or `t: tbl[Emp]`, literals, and assignments;
   - `name::` lists the functions of an imported file (stdlib or another file: its top-level functions and those of its primary module), of a module of an imported file (`file::module::`), or of a module in the same file;
   - `point.` lists a struct's fields;
   - `incl '` lists stdlib modules and `.qrk` files, as paths relative to the current file.
 - **Hover** shows the signatures of builtins, methods and imported functions (`io::exists`), and explains flagged Python and R habits.
+- **Check diagnostics:** `quark check` runs on open, save and (debounced) as you type. Errors and warnings appear as squiggles with their `QK-*` codes. **Quark: Check Current File** (`Ctrl+Shift+B` / `Cmd+Shift+B`) or the check button in the editor title forces a run. There is still no language server, so there is no go-to-definition.
 - **Run** the current file with `Ctrl+F5` (`Cmd+F5` on macOS), the ▶ button in the editor title, or **Quark: Run Current File** in the Command Palette. It saves the file and runs `quark run <file>` in a terminal named Quark.
-
-There is no language server, so there are no live error squiggles or go-to-definition. Completion reads the open file (and the files it imports) as text; it doesn't run the compiler.
 
 ## Install
 
@@ -56,11 +56,14 @@ Then install it:
 
 Reload the window afterwards. To update, rebuild and install again; to remove it, uninstall "Quark Language Support" from the Extensions view.
 
+With this Quark checkout open, the extension finds `src/core/quark/quark.exe` automatically for Check and Run. Otherwise set `quark.executablePath` or put `quark` on PATH.
+
 ## Settings
 
 | Setting | Default | Description |
 |---|---|---|
-| `quark.executablePath` | `quark` | Compiler used by **Quark: Run Current File**. Left at `quark`, the extension uses `src/core/quark/quark.exe` (or `src/core/quark/quark`) from an open Quark checkout if it exists, then `quark` from PATH. |
+| `quark.executablePath` | `quark` | Compiler used by Run, Check and live diagnostics. Left at `quark`, the extension uses `src/core/quark/quark.exe` (or `src/core/quark/quark`) from an open Quark checkout if it exists, then `quark` from PATH. |
+| `quark.checkOnType` | `true` | Run `quark check` while typing (debounced). Open and save always check. |
 
 ## Development
 

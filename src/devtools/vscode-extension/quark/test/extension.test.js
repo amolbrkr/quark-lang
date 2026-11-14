@@ -43,10 +43,49 @@ const vscode = {
 	},
 	workspace: {
 		findFiles: async () => [],
-		getConfiguration: () => ({ inspect: () => ({}) }),
+		getConfiguration: () => ({
+			inspect: () => ({}),
+			get: () => true,
+		}),
 		workspaceFolders: [],
+		textDocuments: [],
+		onDidOpenTextDocument: () => ({ dispose() {} }),
+		onDidSaveTextDocument: () => ({ dispose() {} }),
+		onDidChangeTextDocument: () => ({ dispose() {} }),
+		onDidCloseTextDocument: () => ({ dispose() {} }),
 	},
+	Diagnostic: class {
+		constructor(range, message, severity) {
+			this.range = range;
+			this.message = message;
+			this.severity = severity;
+		}
+	},
+	DiagnosticSeverity: { Error: 0, Warning: 1 },
+	Position: class {
+		constructor(line, character) {
+			this.line = line;
+			this.character = character;
+		}
+	},
+	Range: class {
+		constructor(a, b, c, d) {
+			if (typeof a === 'number') {
+				this.start = { line: a, character: b };
+				this.end = { line: c, character: d };
+			} else {
+				this.start = a;
+				this.end = b;
+			}
+		}
+	},
+	Uri: { file: (p) => ({ fsPath: p }) },
 	languages: {
+		createDiagnosticCollection: () => ({
+			set() {},
+			delete() {},
+			dispose() {},
+		}),
 		registerCompletionItemProvider: (lang, provider) => {
 			captured.completion = provider;
 			return { dispose() {} };
@@ -219,6 +258,35 @@ test('hover shows builtin and module signatures', () => {
 	assert(/len\(any\) int/.test(hover('n = le|n(x)')));
 	assert(/Dot product/.test(hover("incl 'std/blas' as blas\nblas::d|ot(x, y)")));
 	assert(/blas::dot/.test(hover("incl 'std/blas' as blas\nblas::d|ot(x, y)")));
+});
+
+test('table methods after a tbl annotation', async () => {
+	const l = labels(await complete('struct Emp:\n    id: int\nt: tbl[Emp] = xs\nt.|', '.'));
+	assert(l.includes('head') && l.includes('tail') && l.includes('describe'), l.join(','));
+	assert(!l.includes('push'), 'list method offered for tbl');
+});
+
+test('method signatures keep all parameters (no receiver in catalog)', async () => {
+	const items = await complete("x = 'hi'\nx.|", '.');
+	const slice = items.find((i) => i.label === 'slice');
+	assert(slice && /slice\(int, int\)/.test(slice.detail), slice && slice.detail);
+	const headItems = await complete('t: tbl = xs\nt.|', '.');
+	const head = headItems.find((i) => i.label === 'head');
+	assert(head && /head\(int\?\)/.test(head.detail), head && head.detail);
+});
+
+test('parseCheckOutput reads quark check stderr', () => {
+	const file = path.join(os.tmpdir(), 'quark-ext-test', 'bad.qrk');
+	const text = `error[QK-CHECK-001] (check): operator 'PLUS' requires numeric operands, got int and str at ${file}:1:7\nwarning[QK-CHECK-002] (check): unused at ${file}:2:1\nnot a diagnostic\n`;
+	const byFile = extension._internal.parseCheckOutput(text, file);
+	assert.strictEqual(byFile.size, 1);
+	const diags = byFile.get(path.resolve(file));
+	assert.strictEqual(diags.length, 2);
+	assert.strictEqual(diags[0].severity, 0);
+	assert.strictEqual(diags[0].code, 'QK-CHECK-001');
+	assert.strictEqual(diags[0].range.start.line, 0);
+	assert.strictEqual(diags[0].range.start.character, 6);
+	assert.strictEqual(diags[1].severity, 1);
 });
 
 (async () => {

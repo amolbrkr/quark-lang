@@ -368,6 +368,37 @@ var compareOps = map[token.TokenType]string{
 	token.LT: "<", token.LTE: "<=", token.GT: ">", token.GTE: ">=", token.DEQ: "==", token.NE: "!=",
 }
 
+// strViewCmp compares a string-view cell with another view or a Quark
+// string, without allocating the cell.
+func (l *lowerer) strViewCmp(op string, a, b Expr) Expr {
+	opArg := &Const{R: RepStr, Text: cstr(op)}
+	switch {
+	case a.Rep() == RepStrView && b.Rep() == RepStrView:
+		return &Call{Fn: "q_sv_cmp", Args: []Expr{a, b, opArg}, R: RepBool}
+	case a.Rep() == RepStrView && b.Rep() == RepValue:
+		return &Call{Fn: "q_sv_cmp_val", Args: []Expr{a, b, opArg}, R: RepBool}
+	case a.Rep() == RepValue && b.Rep() == RepStrView:
+		return &Call{Fn: "q_sv_cmp_val", Args: []Expr{b, a, &Const{R: RepStr, Text: cstr(flipViewOp(op))}}, R: RepBool}
+	default:
+		return &Call{Fn: "q_sv_cmp_val", Args: []Expr{a, boxed(b), opArg}, R: RepBool}
+	}
+}
+
+func flipViewOp(op string) string {
+	switch op {
+	case "<":
+		return ">"
+	case "<=":
+		return ">="
+	case ">":
+		return "<"
+	case ">=":
+		return "<="
+	default:
+		return op
+	}
+}
+
 // promotedRep is the result of raw arithmetic op on reps a and b: "" when it
 // can't be done on raw scalars. Division always gives a double.
 func promotedRep(a, b Rep, op token.TokenType) Rep {
@@ -405,6 +436,9 @@ func (l *lowerer) binary(node *ast.TreeNode) Expr {
 	// Raw comparisons are for two numbers or two bools. A bool and a number
 	// are different types, so `==` is false (semantics.md §4.2): the boxed
 	// q_eq says so, where C++ would compare true with 1.
+	if cop, ok := compareOps[op]; ok && (a.Rep() == RepStrView || b.Rep() == RepStrView) {
+		return l.strViewCmp(cop, a, b)
+	}
 	if cop, ok := compareOps[op]; ok && a.Rep().IsScalar() && b.Rep().IsScalar() {
 		ordered := op == token.LT || op == token.LTE || op == token.GT || op == token.GTE
 		numeric := a.Rep() != RepBool && b.Rep() != RepBool

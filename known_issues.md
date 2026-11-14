@@ -9,7 +9,6 @@ This file lists bugs only. Deliberate gaps (features that don't exist yet) are i
 - [Adding an issue](#adding-an-issue)
 - [Wrong results with no error](#wrong-results-with-no-error)
 - [Fails loudly, but with a C++ error, a wrong location or a misleading message](#fails-loudly-but-with-a-c-error-a-wrong-location-or-a-misleading-message)
-- [Slow paths](#slow-paths)
 
 ## Adding an issue
 
@@ -44,9 +43,3 @@ None.
 - Stdlib runtime errors use the old `.` spelling: `io::read` on a closed file says `io.read() expects an open file (resource is closed)`; `random.randint` and `blas.dot` likewise.
 - `qext::box(int)` in native code doesn't compile (ambiguous between the `int64_t`, `double` and `bool` overloads); pass an `int64_t`.
 - A program that imports `std/blas` starts OpenBLAS's thread pool (one thread per CPU), and then allocating large vecs makes the GC print `GC Warning: Repeated allocation of very large block (appr. size 78128 KiB): May lead to memory leak and poor performance` to stderr, and vec allocation gets erratic (`2.5 * a + b` on 10M-element vecs with `blas::axpy` measured 30 ms with `OPENBLAS_NUM_THREADS=1`, 135 ms without). The same program without `incl 'std/blas'`, or with `OPENBLAS_NUM_THREADS=1`, prints nothing (`src/benchmarks/RESULTS.md`).
-
-## Slow paths
-
-- Sorting a table by a column with missing values takes the generic comparator: 500K rows by one float key with 1% of it missing sort in 239 ms, against 97 ms for a key with no missing values (`sort_perm`, `table/engine.hpp`, takes its fast path only when `null_count == 0`). The fast path could sort the present values and put the missing rows last. Found 2026-11-14 measuring the tables v0.1 queries. Reach: `sort(...)` in a query reaches it for every nullable key, which CSV columns with gaps are.
-- Sorting a table by a str key, or by more than one key, also takes the generic comparator, which compares rows through the permutation with a type switch per key and per comparison: `t | e -> sort(e.k, desc(e.v))` on 1M rows (1,000 distinct `k`) takes 1.13 s, against 255 ms for data.table's `dt[order(k, -v)]` and 364 ms for pandas (`sortkeys` benchmark, `src/benchmarks/RESULTS.md`). A str key could be replaced by the rank of its value among the distinct values first, so the sort compares ints. Found 2026-11-14 adding the table benchmarks.
-- `min` and `max` in `summarize` compare every row through the generic `compare_rows` (null and NaN tests and a type switch per row) and have no path for the whole table: `t | e -> summarize(lo = min(e.a))` on 10M floats takes 76 ms, against 6.1 ms for `min(t.a)` and 12 ms for `summarize(s = sum(e.a), m = mean(e.a))`, which use the vec reductions (`agg_extremum`, `table/engine.hpp`; `agg_sum` and `agg_mean` have the fast paths). Typed loops, and the vec reductions for the whole table, would close the gap. Found 2026-11-14 adding the table benchmarks (`reduce` with `quark_tbl`: 175 ms, `quark_vec`: 18 ms).

@@ -56,15 +56,57 @@ inline const QVector& q_tbl_col(const QTable* t, int c) { return *quark::tbl::co
 // here, as in arithmetic; aggregates skip it).
 inline bool q_tbl_present(const QVector& v, long long i) { return !quark::tbl::is_null(v, static_cast<int32_t>(i)); }
 
-// A str cell as a Quark string (one copy; str cells hold no NUL byte, which
-// the reader rejects).
-inline QValue q_tbl_str(const QVector& v, long long i) {
-    const std::string_view s = q_vec_str_at(v, static_cast<size_t>(i));
+// A str cell as a view of the column buffer. No Quark string is allocated.
+inline std::string_view q_tbl_str_view(const QVector& v, long long i) {
+    return q_vec_str_at(v, static_cast<size_t>(i));
+}
+
+// q_str_view_box allocates a Quark string for a cell that is stored or passed
+// to a function. Str cells hold no NUL byte, which the reader rejects.
+inline QValue q_str_view_box(std::string_view s) {
     char* out = static_cast<char*>(q_malloc_atomic(s.size() + 1));
     if (!s.empty()) std::memcpy(out, s.data(), s.size());
     out[s.size()] = '\0';
     return qv_string_own(out);
 }
+
+inline QValue q_tbl_str(const QVector& v, long long i) { return q_str_view_box(q_tbl_str_view(v, i)); }
+
+// q_sv_holds reports whether the order of two views matches op ("==", "<", ...).
+inline bool q_sv_holds(int c, const char* op) {
+    switch (op[0]) {
+        case '=': return c == 0;
+        case '!': return c != 0;
+        case '<': return op[1] == '=' ? c <= 0 : c < 0;
+        case '>': return op[1] == '=' ? c >= 0 : c > 0;
+        default: return false;
+    }
+}
+
+inline int q_sv_ord(std::string_view a, std::string_view b) {
+    if (a < b) return -1;
+    if (b < a) return 1;
+    return 0;
+}
+
+inline bool q_sv_cmp(std::string_view a, std::string_view b, const char* op) {
+    return q_sv_holds(q_sv_ord(a, b), op);
+}
+
+// q_sv_cmp_val compares a cell view with a Quark value. == and != are false
+// and true when the value is not a string; an ordered comparison of a
+// non-string is the same error as q_lt.
+inline bool q_sv_cmp_val(std::string_view a, QValue b, const char* op) {
+    const bool ordered = op[0] == '<' || op[0] == '>';
+    if (b.type != QValue::VAL_STRING || b.data.string_val == nullptr) {
+        if (!ordered) return op[0] == '!';
+        q_runtime_reportf("runtime error: operator '%s' expects two numbers or two strings\n", op);
+        std::exit(1);
+    }
+    return q_sv_holds(q_sv_ord(a, std::string_view(b.data.string_val)), op);
+}
+
+inline bool q_vec_dense(const QVector& v) { return v.null_count == 0; }
 
 // ------------------------------------------------------------
 // filter
@@ -76,6 +118,12 @@ inline quark::tbl::RowSet q_rows_new(long long n) {
 }
 
 inline void q_rows_push(quark::tbl::RowSet& s, long long i) { s.idx[s.n++] = static_cast<int32_t>(i); }
+
+// q_rows_keep records row i when keep is true, without a branch on keep.
+inline void q_rows_keep(quark::tbl::RowSet& s, long long i, bool keep) {
+    s.idx[s.n] = static_cast<int32_t>(i);
+    s.n += static_cast<int32_t>(keep);
+}
 
 inline QTable* q_tbl_take(QTable* t, const quark::tbl::RowSet& s) { return quark::tbl::take_table(t, s.idx, s.n); }
 
@@ -182,6 +230,21 @@ inline QVector* q_tbl_agg_sum(QTable* t, int c, const quark::tbl::Grouping& g) {
 inline QVector* q_tbl_agg_mean(QTable* t, int c, const quark::tbl::Grouping& g) { return quark::tbl::agg_mean(*quark::tbl::column(t, c), g); }
 inline QVector* q_tbl_agg_min(QTable* t, int c, const quark::tbl::Grouping& g) { return quark::tbl::agg_min(*quark::tbl::column(t, c), g); }
 inline QVector* q_tbl_agg_max(QTable* t, int c, const quark::tbl::Grouping& g) { return quark::tbl::agg_max(*quark::tbl::column(t, c), g); }
+inline QVector* q_tbl_agg_n_distinct(QTable* t, int c, const quark::tbl::Grouping& g) {
+    return quark::tbl::agg_n_distinct(*quark::tbl::column(t, c), g);
+}
+
+// q_tbl_project builds a table of def from columns of t (shared, not copied).
+inline QTable* q_tbl_project(QTable* t, const QStructDef* def, std::initializer_list<int> cols) {
+    std::vector<int> c(cols);
+    return quark::tbl::project_table(t, def, c.data(), static_cast<int>(c.size()));
+}
+
+// q_tbl_distinct keeps the first row of each key, in first-seen order.
+inline QTable* q_tbl_distinct(QTable* t, std::initializer_list<int> keys) {
+    std::vector<int> k(keys);
+    return quark::tbl::distinct_rows(t, k.data(), static_cast<int>(k.size()));
+}
 
 inline QTable* q_tbl_make(const QStructDef* def, std::initializer_list<QVector*> cols) {
     std::vector<QVector*> cs(cols);

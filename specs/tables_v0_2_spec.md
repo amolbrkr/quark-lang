@@ -1,8 +1,8 @@
 # Quark Tables v0.2 Spec
 
-Status: Draft, 2026-11-14. Nothing here is implemented. Tables v0.1 is the language as it runs today (`specs/tables_v0_1_spec.md`); this spec adds to it. A program that compiles under v0.1 compiles under v0.2 and gives the same results, apart from the new syntax.
+Status: Implemented 2026-11-14, except the table literal (§6.1), which is deferred. Tables v0.1 is the language this adds to (`specs/tables_v0_1_spec.md`). A program that compiles under v0.1 compiles under v0.2 and gives the same results, apart from the new syntax.
 Last Updated: 2026-11-14
-Related: `specs/tables_v0_1_spec.md` (the implemented language and decisions D1–D25), `architecture.md` §15 (the measurements), `src/benchmarks/RESULTS.md`, `known_issues.md` (Slow paths).
+Related: `specs/tables_v0_1_spec.md` (the implemented language and decisions D1–D25), `architecture.md` §15 (the measurements), `src/benchmarks/RESULTS.md`.
 
 ## Contents
 
@@ -93,7 +93,7 @@ staff | e -> deselect(e.id, e.dept)
 - The renames happen together. Each right-hand side is the input column, and each left-hand side is the name it will have in the output. `rename(a = e.b, b = e.a)` exchanges the two names.
 - The output row is anonymous, with the new names in the input's column order.
 - A right-hand side that is not a bare `e.col` is a compile-time error (`rename takes a column (pay = e.salary)`).
-- Two renames to one new name, or a new name equal to a column this step does not rename, is a compile-time error (`rename would give two columns named 'pay'`). Renaming a column to the name it already has is allowed.
+- Two renames to one new name, or a new name equal to a column this step does not rename, is a compile-time error (`rename would give two columns named 'pay'`). Renaming a column to the name it already has is allowed. Renaming one column twice is a compile-time error (`rename names column 'id' twice`).
 - Zero arguments is a compile-time error. An unknown column is a compile-time error that lists the columns.
 
 ### 3.4 distinct

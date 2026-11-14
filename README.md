@@ -835,8 +835,10 @@ stats = staff | e ->
 print(stats)
 ```
 
-The verbs are `filter`, `mutate`, `sort`, `group_by` + `summarize`, `head`
-and `tail`. A query's result has an anonymous row (`{dept: str, avg: float, top: float, n: int}`), which matches a struct with exactly those fields where
+The verbs are `filter`, `mutate`, `select`, `deselect`, `rename`, `distinct`,
+`sort`, `group_by` + `summarize`, `head` and `tail`. `summarize` also has
+`n_distinct`. The rules are in
+[specs/tables_v0_2_spec.md](specs/tables_v0_2_spec.md). A query's result has an anonymous row (`{dept: str, avg: float, top: float, n: int}`), which matches a struct with exactly those fields where
 it is stored (`s: tbl[DeptStats] = ...`). Missing values (empty or `NA` cells)
 are skipped by aggregates and make an expression missing, and `and`/`or`
 follow SQL (`true or <missing>` is true). `t.describe()` prints each column's
@@ -1067,10 +1069,6 @@ and don't. An `INV-*` diagnostic is a compiler bug.
 
 **Planned:**
 
-- Tables v0.2, specified and not implemented: `select`, `deselect`, `rename`,
-`distinct`, `n_distinct`, and faster `min`/`max`, `filter`, `mutate`, sort
-and CSV reading
-([specs/tables_v0_2_spec.md](specs/tables_v0_2_spec.md)).
 - Tables still later: the column-wise table literal, joins, `summary(t)`,
 date columns, and compile-time schema inference for CSV files
 ([specs/tables_v0_1_spec.md](specs/tables_v0_1_spec.md) §9-10,
@@ -1095,7 +1093,7 @@ a runtime error, not a compile error.
 - Tables: a query needs a row struct the compiler knows (a table read
 without one can be printed and written, or given one with `t: tbl[Row] = ...`); summarize columns aggregate one column each (`mutate` first to
 aggregate a computed value); there are no row reads (`t[i]`), table
-literals, `select`, `deselect`, `rename`, `distinct` or joins yet.
+literals or joins yet.
 
 **Known issues.** Bugs, including the cases where the compiler still gives a
 wrong result without an error, are listed with reproductions in [known_issues.md](known_issues.md).

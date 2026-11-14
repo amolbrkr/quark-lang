@@ -228,47 +228,195 @@ struct SortKey {
     bool desc;
 };
 
-// sort_perm returns the row order of t sorted by keys (stable: rows with
-// equal keys keep their order).
-inline int32_t* sort_perm(QTable* t, const SortKey* keys, int nkeys) {
+// sort_one_numeric orders one int, float or bool key. Missing rows stay last,
+// in their original order, and NaN stays after every number and before the
+// missing rows, in either direction. The numbers are a stable sort of
+// (value, row) pairs.
+inline int32_t* sort_one_numeric(QTable* t, SortKey key) {
+    const QVector& col = *column(t, key.col);
     const int32_t n = t->nrows;
     int32_t* perm = alloc_i32(static_cast<size_t>(n));
-    for (int32_t i = 0; i < n; i++) perm[i] = i;
-    if (n < 2 || nkeys == 0) return perm;
-
-    std::vector<const QVector*> cols(static_cast<size_t>(nkeys));
-    for (int k = 0; k < nkeys; k++) cols[static_cast<size_t>(k)] = column(t, keys[k].col);
-
-    // Fast path: one dense numeric key. Sorting (value, row) pairs keeps the
-    // comparison free of type dispatch and indirection.
-    const QVector& k0 = *cols[0];
-    if (nkeys == 1 && k0.null_count == 0 && (k0.type == Type::I64 || k0.type == Type::F64)) {
-        bool has_nan = false;
-        if (k0.type == Type::F64) {
-            for (int32_t i = 0; i < n && !has_nan; i++) has_nan = std::isnan(q_vec_f64_data(k0)[i]);
+    std::vector<int32_t> nums, nans, missing;
+    nums.reserve(static_cast<size_t>(n));
+    const double* fd = col.type == Type::F64 ? q_vec_f64_data(col) : nullptr;
+    for (int32_t i = 0; i < n; i++) {
+        if (is_null(col, i)) {
+            missing.push_back(i);
+            continue;
         }
-        if (!has_nan) {
-            const bool desc = keys[0].desc;
-            auto run = [&](auto data) {
-                using V = std::remove_cv_t<std::remove_pointer_t<decltype(data)>>;
-                std::vector<std::pair<V, int32_t>> pairs(static_cast<size_t>(n));
-                for (int32_t i = 0; i < n; i++) pairs[static_cast<size_t>(i)] = {data[i], i};
-                if (desc) {
-                    std::stable_sort(pairs.begin(), pairs.end(), [](const auto& x, const auto& y) { return x.first > y.first; });
-                } else {
-                    std::stable_sort(pairs.begin(), pairs.end(), [](const auto& x, const auto& y) { return x.first < y.first; });
-                }
-                for (int32_t i = 0; i < n; i++) perm[i] = pairs[static_cast<size_t>(i)].second;
-            };
-            if (k0.type == Type::I64) run(q_vec_i64_data(k0));
-            else run(q_vec_f64_data(k0));
-            return perm;
+        if (fd != nullptr && std::isnan(fd[i])) {
+            nans.push_back(i);
+            continue;
+        }
+        nums.push_back(i);
+    }
+    auto write = [&](auto pairs) {
+        if (key.desc) {
+            std::stable_sort(pairs.begin(), pairs.end(), [](const auto& x, const auto& y) { return x.first > y.first; });
+        } else {
+            std::stable_sort(pairs.begin(), pairs.end(), [](const auto& x, const auto& y) { return x.first < y.first; });
+        }
+        int32_t w = 0;
+        for (const auto& p : pairs) perm[w++] = p.second;
+        for (int32_t i : nans) perm[w++] = i;
+        for (int32_t i : missing) perm[w++] = i;
+    };
+    switch (col.type) {
+        case Type::I64: {
+            const int64_t* x = q_vec_i64_data(col);
+            std::vector<std::pair<int64_t, int32_t>> pairs;
+            pairs.reserve(nums.size());
+            for (int32_t i : nums) pairs.push_back({x[i], i});
+            write(std::move(pairs));
+            break;
+        }
+        case Type::F64: {
+            std::vector<std::pair<double, int32_t>> pairs;
+            pairs.reserve(nums.size());
+            for (int32_t i : nums) pairs.push_back({fd[i], i});
+            write(std::move(pairs));
+            break;
+        }
+        case Type::BOOL: {
+            std::vector<std::pair<int, int32_t>> pairs;
+            pairs.reserve(nums.size());
+            for (int32_t i : nums) pairs.push_back({q_vec_bool_at(col, static_cast<size_t>(i)) ? 1 : 0, i});
+            write(std::move(pairs));
+            break;
+        }
+        case Type::STR:
+            fail("internal: numeric sort of a str key");
+    }
+    return perm;
+}
+
+inline uint64_t hash_value(const QVector& v, int32_t i);
+
+// str_ranks is, for each row, the rank of its bytes among the distinct
+// present values (0 is the first in byte order). A missing cell ranks after
+// every present value. Equal strings share a rank.
+inline std::vector<int32_t> str_ranks(const QVector& v) {
+    const int32_t n = static_cast<int32_t>(v.count);
+    std::vector<int32_t> rank(static_cast<size_t>(n), 0);
+    if (n == 0) return rank;
+    size_t cap = 16;
+    while (cap < static_cast<size_t>(n) * 2) cap <<= 1;
+    std::vector<int32_t> slots(cap, 0);
+    std::vector<int32_t> first;
+    std::vector<uint64_t> hashes;
+    const size_t mask = cap - 1;
+    for (int32_t r = 0; r < n; r++) {
+        if (is_null(v, r)) continue;
+        const uint64_t h = hash_value(v, r);
+        size_t s = static_cast<size_t>(h) & mask;
+        while (true) {
+            const int32_t slot = slots[s];
+            if (slot == 0) {
+                slots[s] = static_cast<int32_t>(first.size()) + 1;
+                first.push_back(r);
+                hashes.push_back(h);
+                break;
+            }
+            const int32_t g = slot - 1;
+            if (hashes[static_cast<size_t>(g)] == h && rows_equal(v, r, first[static_cast<size_t>(g)])) break;
+            s = (s + 1) & mask;
         }
     }
+    std::vector<int32_t> order(first.size());
+    for (size_t i = 0; i < first.size(); i++) order[i] = static_cast<int32_t>(i);
+    std::sort(order.begin(), order.end(), [&](int32_t a, int32_t b) {
+        return q_vec_str_at(v, static_cast<size_t>(first[static_cast<size_t>(a)])) <
+               q_vec_str_at(v, static_cast<size_t>(first[static_cast<size_t>(b)]));
+    });
+    std::vector<int32_t> id_rank(first.size());
+    for (size_t i = 0; i < order.size(); i++) id_rank[static_cast<size_t>(order[i])] = static_cast<int32_t>(i);
+    const int32_t missing_rank = static_cast<int32_t>(first.size());
+    for (int32_t r = 0; r < n; r++) {
+        if (is_null(v, r)) {
+            rank[static_cast<size_t>(r)] = missing_rank;
+            continue;
+        }
+        const uint64_t h = hash_value(v, r);
+        size_t s = static_cast<size_t>(h) & mask;
+        while (true) {
+            const int32_t g = slots[s] - 1;
+            if (hashes[static_cast<size_t>(g)] == h && rows_equal(v, r, first[static_cast<size_t>(g)])) {
+                rank[static_cast<size_t>(r)] = id_rank[static_cast<size_t>(g)];
+                break;
+            }
+            s = (s + 1) & mask;
+        }
+    }
+    return rank;
+}
 
+// cmp_key orders two rows of one key of a known type. A string key compares
+// the ranks from str_ranks (null when the key is not a string). Missing
+// values and NaN stay in place in either direction: only present numbers,
+// bools and string ranks follow desc.
+inline int cmp_key(const QVector& v, int32_t a, int32_t b, bool desc, const int32_t* ranks) {
+    const bool an = is_null(v, a), bn = is_null(v, b);
+    if (an || bn) return an == bn ? 0 : (an ? 1 : -1);
+    int c = 0;
+    switch (v.type) {
+        case Type::I64: {
+            const int64_t x = q_vec_i64_data(v)[a], y = q_vec_i64_data(v)[b];
+            c = x < y ? -1 : (x > y ? 1 : 0);
+            break;
+        }
+        case Type::F64: {
+            const double x = q_vec_f64_data(v)[a], y = q_vec_f64_data(v)[b];
+            const bool xn = std::isnan(x), yn = std::isnan(y);
+            if (xn || yn) return xn == yn ? 0 : (xn ? 1 : -1);
+            c = x < y ? -1 : (x > y ? 1 : 0);
+            break;
+        }
+        case Type::BOOL: {
+            const int x = q_vec_bool_at(v, static_cast<size_t>(a)) ? 1 : 0;
+            const int y = q_vec_bool_at(v, static_cast<size_t>(b)) ? 1 : 0;
+            c = x - y;
+            break;
+        }
+        case Type::STR: {
+            const int32_t x = ranks[a], y = ranks[b];
+            c = x < y ? -1 : (x > y ? 1 : 0);
+            break;
+        }
+    }
+    return desc ? -c : c;
+}
+
+// sort_perm returns the row order of t sorted by keys (stable: rows with
+// equal keys keep their order). One numeric key is sort_one_numeric. A
+// string key, or more than one key, ranks each string and then stable-sorts
+// integers and raw numbers.
+inline int32_t* sort_perm(QTable* t, const SortKey* keys, int nkeys) {
+    const int32_t n = t->nrows;
+    if (n < 2 || nkeys == 0) {
+        int32_t* perm = alloc_i32(static_cast<size_t>(n));
+        for (int32_t i = 0; i < n; i++) perm[i] = i;
+        return perm;
+    }
+    const QVector& k0 = *column(t, keys[0].col);
+    if (nkeys == 1 && (k0.type == Type::I64 || k0.type == Type::F64 || k0.type == Type::BOOL)) {
+        return sort_one_numeric(t, keys[0]);
+    }
+
+    std::vector<const QVector*> cols(static_cast<size_t>(nkeys));
+    std::vector<std::vector<int32_t>> rank_store(static_cast<size_t>(nkeys));
+    std::vector<const int32_t*> ranks(static_cast<size_t>(nkeys), nullptr);
+    for (int k = 0; k < nkeys; k++) {
+        cols[static_cast<size_t>(k)] = column(t, keys[k].col);
+        if (cols[static_cast<size_t>(k)]->type == Type::STR) {
+            rank_store[static_cast<size_t>(k)] = str_ranks(*cols[static_cast<size_t>(k)]);
+            ranks[static_cast<size_t>(k)] = rank_store[static_cast<size_t>(k)].data();
+        }
+    }
+    int32_t* perm = alloc_i32(static_cast<size_t>(n));
+    for (int32_t i = 0; i < n; i++) perm[i] = i;
     std::stable_sort(perm, perm + n, [&](int32_t a, int32_t b) {
         for (int k = 0; k < nkeys; k++) {
-            const int c = compare_rows(*cols[static_cast<size_t>(k)], a, b, keys[k].desc);
+            const int c = cmp_key(*cols[static_cast<size_t>(k)], a, b, keys[k].desc, ranks[static_cast<size_t>(k)]);
             if (c != 0) return c < 0;
         }
         return false;
@@ -569,23 +717,10 @@ inline QVector* agg_mean(const QVector& col, const Grouping& g) {
     return out;
 }
 
-// agg_extremum (min / max): the column's type per group (strings in byte
-// order); null for a group with no values.
-inline QVector* agg_extremum(const QVector& col, const Grouping& g, bool want_max) {
-    const size_t ng = static_cast<size_t>(g.ngroups);
-    std::vector<int32_t> best(ng, -1); // row holding each group's current extremum
-    for (int32_t r = 0; r < g.nrows; r++) {
-        const bool missing = col.type == Type::F64 ? is_missing_f64(col, r) : is_null(col, r);
-        if (missing) continue;
-        int32_t& b = best[static_cast<size_t>(group_of(g, r))];
-        if (b < 0) {
-            b = r;
-            continue;
-        }
-        const int c = compare_rows(col, r, b, false);
-        if (want_max ? c > 0 : c < 0) b = r;
-    }
-    // Gather the winning rows; empty groups point at row 0 and are nulled.
+// finish_extremum gathers the winning row of each group. A group with no
+// present value is missing.
+inline QVector* finish_extremum(const QVector& col, const Grouping& g, const std::vector<int32_t>& best) {
+    const size_t ng = best.size();
     std::vector<int32_t> rows(ng);
     for (size_t i = 0; i < ng; i++) rows[i] = best[i] < 0 ? 0 : best[i];
     QVector* out;
@@ -596,6 +731,152 @@ inline QVector* agg_extremum(const QVector& col, const Grouping& g, bool want_ma
     }
     for (size_t i = 0; i < ng; i++) {
         if (best[i] < 0 && !is_null(*out, static_cast<int32_t>(i))) set_null(*out, static_cast<int32_t>(i));
+    }
+    return out;
+}
+
+// agg_extremum (min / max): one typed loop per column type. A float loop
+// skips NaN, so the comparisons that remain are raw doubles. Null for a
+// group with no present value. Ties keep the first value.
+inline QVector* agg_extremum(const QVector& col, const Grouping& g, bool want_max) {
+    const size_t ng = static_cast<size_t>(g.ngroups);
+    std::vector<int32_t> best(ng, -1);
+    switch (col.type) {
+        case Type::I64: {
+            const int64_t* x = q_vec_i64_data(col);
+            for (int32_t r = 0; r < g.nrows; r++) {
+                if (is_null(col, r)) continue;
+                int32_t& b = best[static_cast<size_t>(group_of(g, r))];
+                if (b < 0 || (want_max ? x[r] > x[b] : x[r] < x[b])) b = r;
+            }
+            break;
+        }
+        case Type::F64: {
+            const double* x = q_vec_f64_data(col);
+            for (int32_t r = 0; r < g.nrows; r++) {
+                if (is_null(col, r) || std::isnan(x[r])) continue;
+                int32_t& b = best[static_cast<size_t>(group_of(g, r))];
+                if (b < 0 || (want_max ? x[r] > x[b] : x[r] < x[b])) b = r;
+            }
+            break;
+        }
+        case Type::BOOL: {
+            for (int32_t r = 0; r < g.nrows; r++) {
+                if (is_null(col, r)) continue;
+                int32_t& b = best[static_cast<size_t>(group_of(g, r))];
+                const int x = q_vec_bool_at(col, static_cast<size_t>(r)) ? 1 : 0;
+                const int y = b < 0 ? 0 : (q_vec_bool_at(col, static_cast<size_t>(b)) ? 1 : 0);
+                if (b < 0 || (want_max ? x > y : x < y)) b = r;
+            }
+            break;
+        }
+        case Type::STR: {
+            for (int32_t r = 0; r < g.nrows; r++) {
+                if (is_null(col, r)) continue;
+                int32_t& b = best[static_cast<size_t>(group_of(g, r))];
+                if (b < 0) {
+                    b = r;
+                    continue;
+                }
+                const std::string_view xs = q_vec_str_at(col, static_cast<size_t>(r));
+                const std::string_view ys = q_vec_str_at(col, static_cast<size_t>(b));
+                if (want_max ? ys < xs : xs < ys) b = r;
+            }
+            break;
+        }
+    }
+    return finish_extremum(col, g, best);
+}
+
+// project_table is a table of def whose columns are columns of t, shared
+// (tables are immutable). cols has def->field_count indexes.
+inline QTable* project_table(QTable* t, const QStructDef* def, const int* cols, int n) {
+    if (def == nullptr || n != def->field_count) fail("internal: project column count");
+    QTable* out = q_table_create(def, t->nrows);
+    for (int i = 0; i < n; i++) {
+        if (cols[i] < 0 || cols[i] >= t->ncols) fail("internal: project index");
+        out->cols[i] = t->cols[cols[i]];
+    }
+    return out;
+}
+
+// distinct_rows keeps the first row of each key, in the order the keys
+// first appear. key_cols has nkeys columns; equality is rows_equal.
+inline QTable* distinct_rows(QTable* t, const int* key_cols, int nkeys) {
+    const int32_t n = t->nrows;
+    if (n == 0) return take_table(t, nullptr, 0);
+    std::vector<const QVector*> keys(static_cast<size_t>(nkeys));
+    for (int k = 0; k < nkeys; k++) keys[static_cast<size_t>(k)] = column(t, key_cols[k]);
+    size_t cap = 16;
+    while (cap < static_cast<size_t>(n) * 2) cap <<= 1;
+    std::vector<int32_t> slots(cap, 0);
+    std::vector<uint64_t> group_hash;
+    std::vector<int32_t> first;
+    const size_t mask = cap - 1;
+    for (int32_t r = 0; r < n; r++) {
+        uint64_t h = 0;
+        for (const QVector* k : keys) h = mix64(h * 31 + hash_value(*k, r));
+        size_t s = static_cast<size_t>(h) & mask;
+        while (true) {
+            const int32_t slot = slots[s];
+            if (slot == 0) {
+                slots[s] = static_cast<int32_t>(first.size()) + 1;
+                first.push_back(r);
+                group_hash.push_back(h);
+                break;
+            }
+            const int32_t g = slot - 1;
+            if (group_hash[static_cast<size_t>(g)] == h) {
+                bool same = true;
+                for (const QVector* k : keys) {
+                    if (!rows_equal(*k, r, first[static_cast<size_t>(g)])) {
+                        same = false;
+                        break;
+                    }
+                }
+                if (same) break;
+            }
+            s = (s + 1) & mask;
+        }
+    }
+    return take_table(t, first.data(), static_cast<int32_t>(first.size()));
+}
+
+// agg_n_distinct counts keys per group: present values, plus one if any
+// value is missing, plus one if any float is NaN. An empty group counts 0.
+// The result is never missing. Equality is rows_equal, so 0.0 and -0.0
+// are one key and two NaNs are one key.
+inline QVector* agg_n_distinct(const QVector& col, const Grouping& g) {
+    const size_t ng = static_cast<size_t>(g.ngroups);
+    QVector* out = q_vec_alloc(Type::I64, ng);
+    if (g.nrows == 0) return out;
+    int64_t* d = q_vec_i64_data_mut(*out);
+    size_t cap = 16;
+    while (cap < static_cast<size_t>(g.nrows) * 2) cap <<= 1;
+    std::vector<int32_t> slots(cap, 0);
+    std::vector<uint64_t> hashes;
+    std::vector<int32_t> rep;
+    const size_t mask = cap - 1;
+    for (int32_t r = 0; r < g.nrows; r++) {
+        const int32_t gi = group_of(g, r);
+        const uint64_t h = mix64(hash_value(col, r) ^ (static_cast<uint64_t>(gi) * 0x9e3779b97f4a7c15ULL));
+        size_t s = static_cast<size_t>(h) & mask;
+        while (true) {
+            const int32_t slot = slots[s];
+            if (slot == 0) {
+                slots[s] = static_cast<int32_t>(rep.size()) + 1;
+                rep.push_back(r);
+                hashes.push_back(h);
+                d[gi]++;
+                break;
+            }
+            const int32_t k = slot - 1;
+            if (hashes[static_cast<size_t>(k)] == h && group_of(g, rep[static_cast<size_t>(k)]) == gi &&
+                rows_equal(col, r, rep[static_cast<size_t>(k)])) {
+                break;
+            }
+            s = (s + 1) & mask;
+        }
     }
     return out;
 }

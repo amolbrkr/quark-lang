@@ -97,22 +97,16 @@ var receiverNames = map[builtins.TypeKey]string{
 
 // catalogSignature renders a builtin as name(a: T, ...) R. The catalog has
 // no parameter names, so parameters are named by type; optional ones get '?'.
+// Method ParamTypes are the arguments after the receiver (the receiver is not
+// listed), so they are shown as-is.
 func catalogSignature(s builtins.Spec) string {
-	params := s.ParamTypes
-	if s.ReceiverType != "" && len(params) > 0 {
-		params = params[1:] // the receiver is written before the dot
-	}
-	min := s.MinArgs
-	if s.ReceiverType != "" && min > 0 {
-		min--
-	}
-	parts := make([]string, len(params))
-	for i, p := range params {
+	parts := make([]string, len(s.ParamTypes))
+	for i, p := range s.ParamTypes {
 		name := displayType(p)
 		if name == "" {
 			name = "any"
 		}
-		if i >= min {
+		if i >= s.MinArgs {
 			name += "?"
 		}
 		parts[i] = name

@@ -20,12 +20,12 @@ by default, with built-in types for data such as vectors and tables.
   - [Operators](#operators)
   - [Strings](#strings)
   - [Conditions and truthiness](#conditions-and-truthiness)
-  - [`if`, the ternary and `when`](#if-the-ternary-and-when)
+  - `if`[, the ternary and](#if-the-ternary-and-when) `when`
   - [Loops](#loops)
   - [Functions](#functions)
   - [Function values and closures](#function-values-and-closures)
   - [Pipes](#pipes)
-  - [Results: `ok` and `err`](#results-ok-and-err)
+  - [Results:](#results-ok-and-err) `ok` [and](#results-ok-and-err) `err`
   - [Lists](#lists)
   - [Dicts](#dicts)
   - [Vectors](#vectors)
@@ -50,17 +50,17 @@ inputs, and gives the right answer: a plausible wrong result is worse than an
 error. Quark treats these as equal goals.
 
 - **Quick to write.** A small, familiar language core with a sensible
-  syntax. Types are inferred, so you can iterate quickly and add type
-  annotations before the code goes to production.
+syntax. Types are inferred, so you can iterate quickly and add type
+annotations before the code goes to production.
 - **Fast.**  Queries on Quark's tables (`tbl`) run as fast as the best data frame 
-  libraries on one thread, and a recursive `fib` runs 25 times faster than CPython 3.11
-  and 150 times faster than R. See the [benchmark results](src/benchmarks/RESULTS.md).
-  The compiler, written in Go, translates each program to C++17 and builds 
-  it with clang into a standalone native binary.
+libraries on one thread, and a recursive `fib` runs 25 times faster than CPython 3.11
+and 150 times faster than R. See the [benchmark results](src/benchmarks/RESULTS.md).
+The compiler, written in Go, translates each program to C++17 and builds 
+it with clang into a standalone native binary.
 - **Trustworthy.** The compiler checks as much as it can before the program
-  runs. What it can't know (data read at runtime, values typed `any`, native
-  code) is checked where it is used, and a mismatch stops the program with a
-  message and a source location.
+runs. What it can't know (data read at runtime, values typed `any`, native
+code) is checked where it is used, and a mismatch stops the program with a
+message and a source location.
 
 ### Checked before it runs
 
@@ -206,8 +206,7 @@ print((g[3] * r[0] - g[1] * r[1]) / det)  // intercept: 1.0
 print((g[0] * r[1] - g[2] * r[0]) / det)  // slope: 2.0
 ```
 
-It needs OpenBLAS (`sudo apt install libopenblas-dev` or `brew install
-openblas`); the routines are listed in [stdlib.md](stdlib.md).
+It needs OpenBLAS (`sudo apt install libopenblas-dev` or `brew install openblas`); the routines are listed in [stdlib.md](stdlib.md).
 
 ### Measured against Python and R
 
@@ -318,9 +317,9 @@ any stage carry a stable code (`QK-PARSE-001`, `QK-LOAD-001`, `QK-CHECK-001`,
 inspected with `quark lex`, `parse`, `check` and `emit`.
 
 Variables the compiler has typed `int`, `float` or `bool`, and that no
-closure captures, are C++ `long long`, `double` and `bool`, and arithmetic on
+closure captures, are C`long long`++,++ `double` ++and++ `bool`++, and arithmetic on
 them is native (int arithmetic is overflow-checked: overflow is a runtime
-error, never a wrap). A `fn` declaration that captures no variables is a
+error, never a wrap). A++ `fn` ++declaration that captures no variables is a
 plain C++ function called directly; one whose parameters and return type are
 all annotated also gets a native C++ signature. A `vec` or table column is a
 typed buffer, and a query step is a loop over those buffers. Memory is
@@ -734,8 +733,7 @@ print(user.get('age'))            // null: .get returns null for a missing key
 print(user)                       // {city: 'london', lang: 'en', name: 'ada'}
 ```
 
-`d.key` on a missing key is a runtime error (`dict has no key 'age'; use
-.get('age') if the key may be missing`), since it is usually a typo.
+`d.key` on a missing key is a runtime error (`dict has no key 'age'; use .get('age') if the key may be missing`), since it is usually a typo.
 `d['key']` is not supported; use `d.key`, `.get` and `.set`. A `for` loop
 can't iterate a dict directly; use `.keys()`, `.values()` or `.items()`.
 
@@ -799,8 +797,7 @@ print(older.age)    // 1
 
 A literal may also span lines, one field per line. Missing, unknown and
 duplicate fields and wrong field types are compile errors; a value of unknown
-type is checked when the struct is built (`field 'id' of Customer expects int,
-got str`), and an int going into a `float` field becomes a float. Structs are
+type is checked when the struct is built (`field 'id' of Customer expects int, got str`), and an int going into a `float` field becomes a float. Structs are
 immutable (`c.age = 2` is an error; build a new one) and have no methods or
 `==` (compare fields). A struct-typed field may be `null`.
 
@@ -839,8 +836,7 @@ print(stats)
 ```
 
 The verbs are `filter`, `mutate`, `sort`, `group_by` + `summarize`, `head`
-and `tail`. A query's result has an anonymous row (`{dept: str, avg: float,
-top: float, n: int}`), which matches a struct with exactly those fields where
+and `tail`. A query's result has an anonymous row (`{dept: str, avg: float, top: float, n: int}`), which matches a struct with exactly those fields where
 it is stored (`s: tbl[DeptStats] = ...`). Missing values (empty or `NA` cells)
 are skipped by aggregates and make an expression missing, and `and`/`or`
 follow SQL (`true or <missing>` is true). `t.describe()` prints each column's
@@ -890,18 +886,18 @@ print(type(p))                  // geo::Point
 The rules:
 
 - Two files may define the same name; `geo::Point` and `other::Point` are
-  different types. Within one file, a name defined twice, a module member
-  named like a top-level name, or an import named like a definition is a
-  compile error.
+different types. Within one file, a name defined twice, a module member
+named like a top-level name, or an import named like a definition is a
+compile error.
 - An imported file may contain only definitions: `fn`, `struct`, `module`,
-  `incl`, `extern` declarations and constants (`PI = 3.14159`: scalar
-  literals and arithmetic on them). Any statement is a load error, so
-  importing never runs code. An importer can use every name of the file
-  (there are no access modifiers) but can't assign to it.
+`incl`, `extern` declarations and constants (`PI = 3.14159`: scalar
+literals and arithmetic on them). Any statement is a load error, so
+importing never runs code. An importer can use every name of the file
+(there are no access modifiers) but can't assign to it.
 - `.` is for values: `io.exists` is an error that suggests `io::exists`.
 - Names can't contain `__` (reserved for generated names). Imported file
-  names and directories in import paths are lowercase letters, digits and
-  `_`, starting with a letter.
+names and directories in import paths are lowercase letters, digits and
+`_`, starting with a letter.
 
 Standard library modules are imported with the `std/` prefix:
 
@@ -1013,9 +1009,10 @@ adds a header directory; both apply to the whole program. Glue code uses the
 ## Editor support
 
 `src/devtools/vscode-extension/quark` is an extension for VS Code and
-Positron: highlighting, snippets, completion, hover and a run command. It also
-flags Python and R habits (`def`, `elif`, `True`, `NULL`, `&&`, `#` comments)
-and says what Quark uses instead. Build it with Go only:
+Positron: highlighting, snippets, completion, hover, `quark check` squiggles
+and a run command. It also flags Python and R habits (`def`, `elif`, `True`,
+`NULL`, `&&`, `#` comments) and says what Quark uses instead. Build it with Go
+only:
 
 ```bash
 cd src/core/quark && go run ./cmd/quark-vsix
@@ -1070,8 +1067,8 @@ and don't. An `INV-*` diagnostic is a compiler bug.
 **Planned:**
 
 - Tables after v0.1: table literals, joins, `select`/`rename`, `distinct`,
-  `summary(t)`, date columns, and compile-time schema inference for CSV files
-  ([specs/tables_v0_1_spec.md](specs/tables_v0_1_spec.md) §9-10).
+`summary(t)`, date columns, and compile-time schema inference for CSV files
+([specs/tables_v0_1_spec.md](specs/tables_v0_1_spec.md) §9-10).
 - Element types in annotations: `list[T]`.
 - Struct methods and whole-struct equality.
 - Result helpers such as `unwrap_or` and `map_ok`.
@@ -1080,34 +1077,31 @@ and don't. An `INV-*` diagnostic is a compiler bug.
 **Known limitations** (deliberate gaps, not bugs):
 
 - No regex, JSON, HTTP, subprocesses or dates. Vectors have no sort
-  (`v.to_list().sort()` works).
+(`v.to_list().sort()` works).
 - No annotation for "any struct" (`fn f(x: struct)` is a parse error; use
-  `any`), and no nullable types.
+`any`), and no nullable types.
 - A struct field holding a function can't be called directly: with `run: fn`,
-  `h.run(4)` is a compile error; bind it first (`r = h.run`, then `r(4)`).
+`h.run(4)` is a compile error; bind it first (`r = h.run`, then `r(4)`).
 - An unannotated parameter's type isn't inferred from how the body uses it
-  (only from how it calls it), so `fn f(x) -> x.upper()` called with an int is
-  a runtime error, not a compile error.
+(only from how it calls it), so `fn f(x) -> x.upper()` called with an int is
+a runtime error, not a compile error.
 - A `vec` literal can't contain `null`.
 - Tables: a query needs a row struct the compiler knows (a table read
-  without one can be printed and written, or given one with `t: tbl[Row] =
-  ...`); summarize columns aggregate one column each (`mutate` first to
-  aggregate a computed value); there are no row reads (`t[i]`), table
-  literals or joins yet.
+without one can be printed and written, or given one with `t: tbl[Row] = ...`); summarize columns aggregate one column each (`mutate` first to
+aggregate a computed value); there are no row reads (`t[i]`), table
+literals or joins yet.
 
 **Known issues.** Bugs, including the cases where the compiler still gives a
 wrong result without an error, are listed with reproductions in [known_issues.md](known_issues.md).
 
 ## Troubleshooting
 
-**`Error: clang++ not found in PATH`**: install clang (`sudo apt install
-clang`, or `brew install llvm`). `g++` is not supported.
+`Error: clang++ not found in PATH`: install clang (`sudo apt install clang`, or `brew install llvm`). `g++` is not supported.
 
-**`no prebuilt Boehm GC library for <os>/<arch> ... and no GC source to build
-one`**: your platform has no prebuilt GC. Fetch the GC source as described in
+`no prebuilt Boehm GC library for <os>/<arch> ... and no GC source to build one`: your platform has no prebuilt GC. Fetch the GC source as described in
 `deps/bdwgc/VENDORED.md` and install CMake; the next build compiles it once.
 
-**`Boehm GC is not built and cmake is not available`**: install CMake.
+`Boehm GC is not built and cmake is not available`: install CMake.
 
 **Imports, runtime headers or the GC not found**: keep the binary in
 `src/core/quark`. Otherwise:
@@ -1115,17 +1109,17 @@ one`**: your platform has no prebuilt GC. Fetch the GC source as described in
 - Standard library: `QUARK_STDLIB_ROOT` if set (it must be a directory),
   else `stdlib/`, `../stdlib` or `../../stdlib` next to the binary:
   `export QUARK_STDLIB_ROOT=/abs/path/to/src/core/stdlib`.
-- Runtime headers: `runtime/include` next to the binary, else in the current
-  directory.
-- GC (`could not locate deps/bdwgc`): `../../../deps/bdwgc` or `deps/bdwgc`
-  next to the binary, else `deps/bdwgc` in the current directory or a parent.
+- Runtime headers: `QUARK_RUNTIME` if set (the directory that contains
+  `quark/quark.hpp`), else `runtime/include` next to the binary.
+- GC: `QUARK_GC` if set (the `deps/bdwgc` directory), else
+  `../../../deps/bdwgc` or `deps/bdwgc` next to the binary.
 
-**`QK-FFI-002`: native library not found**: a module asked for a library with
+`QK-FFI-002`**: native library not found**: a module asked for a library with
 `extern link` (`std/blas` needs OpenBLAS). Install it, or pass its directory
 with `--lib-path` or `QUARK_LIB_PATH`. The error lists the directories
 searched.
 
-**`QK-FFI-003`: C++ error in extern glue code**: clang's message above it
+`QK-FFI-003`**: C++ error in extern glue code**: clang's message above it
 shows the problem. `'foo.h' file not found` usually needs `--include-path`.
 
 ## Further reading
@@ -1138,14 +1132,14 @@ shows the problem. `'foo.h' file not found` usually needs `--include-path`.
 - [changelog.md](changelog.md): what changed.
 - [known_issues.md](known_issues.md): bugs not fixed yet, with reproductions.
 - [src/benchmarks/README.md](src/benchmarks/README.md): performance against
-  Python (NumPy, pandas, Polars) and R (base, data.table), and how it is
-  measured.
+Python (NumPy, pandas, Polars) and R (base, data.table), and how it is
+measured.
 - Design specs, in [specs/](specs): implemented ones in `specs/implemented/`
-  ([modules v0.2](specs/implemented/modules_v0_2_spec.md),
-  [structs v0.1](specs/implemented/structs_v0_1_spec.md)), and those with work
-  still planned or proposed in `specs/` ([tables v0.1](specs/tables_v0_1_spec.md),
-  [FFI v0.1](specs/ffi_v0_1_spec.md), [REPL v0.1](specs/repl_v0_1_spec.md) and
-  [stdlib expansion v0.1](specs/stdlib_expansion_v0_1_spec.md), both proposals).
+([modules v0.2](specs/implemented/modules_v0_2_spec.md),
+[structs v0.1](specs/implemented/structs_v0_1_spec.md)), and those with work
+still planned or proposed in `specs/` ([tables v0.1](specs/tables_v0_1_spec.md),
+[FFI v0.1](specs/ffi_v0_1_spec.md), [REPL v0.1](specs/repl_v0_1_spec.md) and
+[stdlib expansion v0.1](specs/stdlib_expansion_v0_1_spec.md), both proposals).
 
 If a doc disagrees with the compiler, the compiler is right; please report
 the difference.

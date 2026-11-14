@@ -3,6 +3,7 @@
 #define QUARK_BUILTINS_SORT_HPP
 
 #include "../core/value.hpp"
+#include "../core/numcmp.hpp"
 #include "../builtins/conversion.hpp"
 #include "../types/function.hpp"
 #include <algorithm>
@@ -21,13 +22,20 @@ inline bool q_sort_less(const QValue& a, const QValue& b, const char* method) {
         if (a.type == QValue::VAL_INT && b.type == QValue::VAL_INT) {
             return a.data.int_val < b.data.int_val;
         }
-        const double x = a.type == QValue::VAL_INT ? static_cast<double>(a.data.int_val) : a.data.float_val;
-        const double y = b.type == QValue::VAL_INT ? static_cast<double>(b.data.int_val) : b.data.float_val;
-        const bool xNaN = x != x, yNaN = y != y;
-        if (xNaN || yNaN) {
-            return !xNaN && yNaN;  // a number before NaN; two NaNs are equal
+        const bool aNaN = a.type == QValue::VAL_FLOAT && a.data.float_val != a.data.float_val;
+        const bool bNaN = b.type == QValue::VAL_FLOAT && b.data.float_val != b.data.float_val;
+        if (aNaN || bNaN) {
+            return !aNaN && bNaN;  // a number before NaN; two NaNs are equal
         }
-        return x < y;
+        if (a.type == QValue::VAL_FLOAT && b.type == QValue::VAL_FLOAT) {
+            return a.data.float_val < b.data.float_val;
+        }
+        // Mixed int and float: the same exact order as `<`.
+        const bool a_int = a.type == QValue::VAL_INT;
+        const long long i = a_int ? a.data.int_val : b.data.int_val;
+        const double f = a_int ? b.data.float_val : a.data.float_val;
+        const int c = q_cmp_int_float(i, f);
+        return a_int ? c < 0 : c > 0;
     }
     if (a.type == QValue::VAL_STRING && b.type == QValue::VAL_STRING) {
         return std::strcmp(a.data.string_val ? a.data.string_val : "", b.data.string_val ? b.data.string_val : "") < 0;

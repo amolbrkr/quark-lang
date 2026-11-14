@@ -10,6 +10,8 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 
 ## Contents
 
+- [2026-11-14: VS Code extension 0.2.0 — check diagnostics](#2026-11-14-vs-code-extension-020--check-diagnostics)
+- [2026-11-14: Exact int/float comparison, stack overflow, runtime and GC lookup](#2026-11-14-exact-intfloat-comparison-stack-overflow-runtime-and-gc-lookup)
 - [2026-11-14: Specs move to `specs/`](#2026-11-14-specs-move-to-specs)
 - [2026-11-14: Hardening: silent wrong results](#2026-11-14-hardening-silent-wrong-results)
 - [2026-11-14: Table benchmarks; README language goals](#2026-11-14-table-benchmarks-readme-language-goals)
@@ -37,6 +39,35 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 - [2026-04-03: Table runtime scaffolding; struct fixes](#2026-04-03-table-runtime-scaffolding-struct-fixes)
 - [2026-04-02: Structs v0.1](#2026-04-02-structs-v01)
 - [2026-03-28: Vector soundness, `std/fmt` on `extern`, build output](#2026-03-28-vector-soundness-stdfmt-on-extern-build-output)
+
+---
+
+## 2026-11-14: VS Code extension 0.2.0 — check diagnostics
+
+### Added
+- The editor extension runs `quark check` on open, save and (debounced) as you type, and shows errors and warnings as squiggles. **Quark: Check Current File** (`Ctrl+Shift+B`) forces a check; `quark.checkOnType` turns off the while-typing pass.
+- Snippet `query` inserts a table filter/summarize pipeline; `incl` offers `std/stats`.
+
+### Fixed
+- Method signatures in completion and hover no longer drop the first argument (`slice` was shown as one `int`, `head` as `head()`). `tbl` / `tbl[Row]` annotations are highlighted and drive table method completion.
+
+### Internal
+- Extension version 0.2.0; `data/quark.json` regenerated. Package with `go run ./cmd/quark-vsix` from `src/core/quark`.
+
+---
+
+## 2026-11-14: Exact int/float comparison, stack overflow, runtime and GC lookup
+
+### Breaking
+- **An int and a float compare exactly.** `<`, `<=`, `>`, `>=`, `==` and `!=` compare the mathematical values, including in a list or dict, in `list.sort`, and between a `vec[i64]` and a float. An int past 2^53 is no longer rounded to a float first, so `9007199254740993 == 9007199254740992.0` is false and `9007199254740993 > 9007199254740992.0` is true. Values a float can hold exactly are unchanged (`1 == 1.0`, `2 < 2.5`). NaN still compares as in IEEE 754. Arithmetic is unchanged: `9007199254740993 + 0.0` is still the float `9007199254740992.0`.
+- **`min` and `max` of an int and a float use that order and return the winning value.** `min(1, 2.5)` is still `1.0`. An int that wins and does not fit in a float is returned as that int, not as a nearby float: `min(9007199254740993, 9007199254740994.0)` is `9007199254740993`.
+- **The runtime headers and the Boehm GC are never taken from the working directory.** A compiler with no `runtime/include` beside it, and no `QUARK_RUNTIME`, is an error that names where it looked (`can't find the runtime headers next to the compiler ...; set QUARK_RUNTIME to the directory that contains quark/quark.hpp`). The same for the GC, with `QUARK_GC` set to the `deps/bdwgc` directory. A `QUARK_RUNTIME` or `QUARK_GC` that isn't that directory is an error.
+
+### Fixed
+- Unbounded recursion is a runtime error with a source location, and output printed before it still appears. `print('before')` then `fn f(n) -> 1 + f(n)` then `f(0)` prints `before` and `error[QK-RUNTIME-001] (runtime): stack overflow at ...`, and exits with status 1. Previously the process died with a segmentation fault and the buffered `before` was lost.
+
+### Internal
+- Mixed int/float comparisons lower to `q_int_float_*` (`core/numcmp.hpp`) instead of a raw C++ operator. Generated `main` runs the program through `q_protect_and_run` (`core/stack.hpp`): a Windows stack-overflow exception, or a `SIGSEGV`/`SIGBUS` on the thread's stack (alternate signal stack), flushes stdout and reports the current source location. `RuntimeIncludePath` and `findGCSourceDir` no longer walk the working directory.
 
 ---
 

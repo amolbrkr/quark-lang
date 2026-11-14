@@ -23,6 +23,10 @@ func TestTableEngine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnsureGC: %v", err)
 	}
+	runtimeInclude, err := toolchain.RuntimeIncludePath()
+	if err != nil {
+		t.Fatalf("runtime headers: %v", err)
+	}
 	dir := filepath.Join(repoRootFromThisFile(t), "src", "testfiles", "table")
 	sources, err := filepath.Glob(filepath.Join(dir, "*_test.cpp"))
 	if err != nil || len(sources) == 0 {
@@ -41,13 +45,15 @@ func TestTableEngine(t *testing.T) {
 			args := []string{
 				"-std=c++17", "-O2", "-Wall", "-Wextra", "-Werror",
 				"-DQUARK_USE_GC",
-				"-I" + toolchain.RuntimeIncludePath(),
+				"-I" + runtimeInclude,
 				"-I" + gcInclude,
 				"-I" + dir,
 				"-o", bin, src,
 			}
 			args = append(args, toolchain.GCLinkArgs(gcLib)...)
-			if runtime.GOOS != "windows" {
+			if runtime.GOOS == "windows" {
+				args = append(args, "-fms-extensions")
+			} else {
 				args = append(args, "-lm")
 			}
 			var compileOut bytes.Buffer
@@ -117,6 +123,10 @@ func compileAndRunExpectingExit(t *testing.T, cppFile, source string) (string, i
 	if err != nil {
 		t.Fatalf("EnsureGC: %v", err)
 	}
+	runtimeInclude, err := toolchain.RuntimeIncludePath()
+	if err != nil {
+		t.Fatalf("runtime headers: %v", err)
+	}
 	if err := os.WriteFile(cppFile, []byte(source), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -124,9 +134,11 @@ func compileAndRunExpectingExit(t *testing.T, cppFile, source string) (string, i
 	if runtime.GOOS == "windows" {
 		bin += ".exe"
 	}
-	args := []string{"-std=c++17", "-O0", "-DQUARK_USE_GC", "-I" + toolchain.RuntimeIncludePath(), "-I" + gcInclude, "-o", bin, cppFile}
+	args := []string{"-std=c++17", "-O0", "-DQUARK_USE_GC", "-I" + runtimeInclude, "-I" + gcInclude, "-o", bin, cppFile}
 	args = append(args, toolchain.GCLinkArgs(gcLib)...)
-	if runtime.GOOS != "windows" {
+	if runtime.GOOS == "windows" {
+		args = append(args, "-fms-extensions")
+	} else {
 		args = append(args, "-lm")
 	}
 	if out, err := exec.Command("clang++", args...).CombinedOutput(); err != nil {

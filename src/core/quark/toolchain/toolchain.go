@@ -55,13 +55,17 @@ func Find() (*Toolchain, error) {
 	if err != nil {
 		return nil, ErrNoClang
 	}
+	runtimeInclude, err := RuntimeIncludePath()
+	if err != nil {
+		return nil, err
+	}
 	gcInclude, gcLib, err := EnsureGC()
 	if err != nil {
 		return nil, fmt.Errorf("preparing Boehm GC: %w", err)
 	}
 	return &Toolchain{
 		Compiler:       compiler,
-		RuntimeInclude: RuntimeIncludePath(),
+		RuntimeInclude: runtimeInclude,
 		GCInclude:      gcInclude,
 		GCLib:          gcLib,
 	}, nil
@@ -96,7 +100,7 @@ func (tc *Toolchain) CompileFlags(opts Options) []string {
 		"-I"+tc.GCInclude,
 	)
 	if runtime.GOOS == "windows" {
-		args = append(args, "-Wno-deprecated-declarations")
+		args = append(args, "-Wno-deprecated-declarations", "-fms-extensions")
 	}
 	if opts.LTO {
 		args = append(args, "-flto")
@@ -206,50 +210,88 @@ func (tc *Toolchain) runCaptured(opts Options, args []string) (string, error) {
 	return string(out), err
 }
 
-// RuntimeIncludePath returns the runtime include directory next to the quark
-// executable (src/core/quark/runtime/include), falling back to a path
-// relative to the working directory.
-func RuntimeIncludePath() string {
+// runtimeHeader is the file that shows a directory is the runtime include
+// root (-I that directory makes #include "quark/quark.hpp" work).
+func runtimeHeader(dir string) string {
+	return filepath.Join(dir, "quark", "quark.hpp")
+}
+
+// RuntimeIncludePath is the runtime include directory. QUARK_RUNTIME, when
+// set, must be that directory. Otherwise it is runtime/include next to the
+// compiler. The working directory is not searched: a binary copied elsewhere
+// must not compile against whatever headers happen to be there.
+func RuntimeIncludePath() (string, error) {
+	if env := os.Getenv("QUARK_RUNTIME"); env != "" {
+		st, err := os.Stat(env)
+		if err != nil || !st.IsDir() {
+			return "", fmt.Errorf("QUARK_RUNTIME is '%s', which is not a directory", env)
+		}
+		if _, err := os.Stat(runtimeHeader(env)); err != nil {
+			return "", fmt.Errorf("QUARK_RUNTIME is '%s', which does not contain quark/quark.hpp", env)
+		}
+		abs, err := filepath.Abs(env)
+		if err != nil {
+			return env, nil
+		}
+		return abs, nil
+	}
+	var looked []string
 	if exePath, err := os.Executable(); err == nil {
-		runtimePath := filepath.Join(filepath.Dir(exePath), "runtime", "include")
-		if _, err := os.Stat(runtimePath); err == nil {
-			return runtimePath
+		if resolved, err := filepath.EvalSymlinks(exePath); err == nil {
+			exePath = resolved
+		}
+		candidate := filepath.Join(filepath.Dir(exePath), "runtime", "include")
+		if abs, err := filepath.Abs(candidate); err == nil {
+			candidate = abs
+		}
+		looked = append(looked, candidate)
+		if st, err := os.Stat(candidate); err == nil && st.IsDir() {
+			if _, err := os.Stat(runtimeHeader(candidate)); err == nil {
+				return candidate, nil
+			}
 		}
 	}
-	if abs, err := filepath.Abs(filepath.Join("runtime", "include")); err == nil {
-		return abs
+	where := strings.Join(looked, ", ")
+	if where == "" {
+		where = "next to the compiler"
 	}
-	return filepath.Join("runtime", "include")
+	return "", fmt.Errorf("can't find the runtime headers next to the compiler (looked in %s); set QUARK_RUNTIME to the directory that contains quark/quark.hpp", where)
+}
+
+// gcHeader is the vendored Boehm header that identifies a GC directory.
+func gcHeader(dir string) string {
+	return filepath.Join(dir, "include", "gc", "gc.h")
 }
 
 func findGCSourceDir() (string, error) {
-	candidates := []string{}
-
+	if env := os.Getenv("QUARK_GC"); env != "" {
+		st, err := os.Stat(env)
+		if err != nil || !st.IsDir() {
+			return "", fmt.Errorf("QUARK_GC is '%s', which is not a directory", env)
+		}
+		if _, err := os.Stat(gcHeader(env)); err != nil {
+			return "", fmt.Errorf("QUARK_GC is '%s', which does not contain include/gc/gc.h", env)
+		}
+		abs, err := filepath.Abs(env)
+		if err != nil {
+			return env, nil
+		}
+		return abs, nil
+	}
+	var looked []string
 	if exePath, err := os.Executable(); err == nil {
+		if resolved, err := filepath.EvalSymlinks(exePath); err == nil {
+			exePath = resolved
+		}
 		exeDir := filepath.Dir(exePath)
-		candidates = append(candidates,
+		looked = append(looked,
 			filepath.Join(exeDir, "..", "..", "..", "deps", "bdwgc"),
 			filepath.Join(exeDir, "deps", "bdwgc"),
 		)
 	}
-
-	if wd, err := os.Getwd(); err == nil {
-		candidates = append(candidates, filepath.Join(wd, "deps", "bdwgc"))
-		for cur := wd; ; {
-			parent := filepath.Dir(cur)
-			if parent == cur {
-				break
-			}
-			candidates = append(candidates, filepath.Join(parent, "deps", "bdwgc"))
-			cur = parent
-		}
-	}
-
 	seen := map[string]struct{}{}
-	for _, candidate := range candidates {
-		if candidate == "" {
-			continue
-		}
+	shown := make([]string, 0, len(looked))
+	for _, candidate := range looked {
 		abs, err := filepath.Abs(candidate)
 		if err != nil {
 			continue
@@ -258,15 +300,19 @@ func findGCSourceDir() (string, error) {
 			continue
 		}
 		seen[abs] = struct{}{}
+		shown = append(shown, abs)
 		// The repository commits only the GC headers and prebuilt library
 		// (see deps/bdwgc/VENDORED.md), so look for the headers, not the
 		// CMake project.
-		if _, err := os.Stat(filepath.Join(abs, "include", "gc", "gc.h")); err == nil {
+		if _, err := os.Stat(gcHeader(abs)); err == nil {
 			return abs, nil
 		}
 	}
-
-	return "", errors.New("could not locate deps/bdwgc (expected the vendored Boehm GC headers in the repository)")
+	where := strings.Join(shown, ", ")
+	if where == "" {
+		where = "next to the compiler"
+	}
+	return "", fmt.Errorf("can't find the Boehm GC next to the compiler (looked in %s); set QUARK_GC to the deps/bdwgc directory", where)
 }
 
 // gcBuildDirName is the CMake build directory used for the vendored Boehm GC.

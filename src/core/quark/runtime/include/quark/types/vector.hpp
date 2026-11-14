@@ -29,6 +29,7 @@
 #define QUARK_TYPES_VECTOR_HPP
 
 #include "../core/checked.hpp"
+#include "../core/numcmp.hpp"
 #include "../core/value.hpp"
 #include "../core/constructors.hpp"
 #include "../core/format.hpp"
@@ -1215,19 +1216,44 @@ inline QValue cmp_finish(QValue a, QValue b, size_t n, ReaderA ra, ReaderB rb, O
     return qv_vector_from(out);
 }
 
+// cmp_exact_int_float is an element-wise compare of an int operand with a
+// float operand. Casting the int to double would collapse ints past 2^53.
+inline QValue cmp_exact_int_float(QValue a, QValue b, size_t n, bool a_is_int, const char* name) {
+    const QValue int_side = a_is_int ? a : b;
+    const QValue float_side = a_is_int ? b : a;
+    QVector* out = q_vec_alloc(QVector::Type::BOOL, n);
+    q_vec_and_validity(*out, as_vec(a), as_vec(b));
+    const QVector* iv = as_vec(int_side);
+    const QVector* fv = as_vec(float_side);
+    const long long iscalar = iv ? 0 : int_side.data.int_val;
+    const double fscalar = fv ? 0.0 : float_side.data.float_val;
+    const int64_t* idata = iv ? q_vec_i64_data(*iv) : nullptr;
+    const double* fdata = fv ? q_vec_f64_data(*fv) : nullptr;
+    fill_bits(out->values, n, [&](size_t i) {
+        const long long ivv = idata ? static_cast<long long>(idata[i]) : iscalar;
+        const double fvv = fdata ? fdata[i] : fscalar;
+        return q_cmp_holds(q_cmp_int_float(ivv, fvv), name);
+    });
+    return qv_vector_from(out);
+}
+
 template <typename Op>
-inline QValue cmp_numeric(QValue a, QValue b, Op op) {
+inline QValue cmp_numeric(QValue a, QValue b, Op op, const char* name) {
     const size_t n = binary_len(a, b, "comparison");
-    QValue result = qv_null();
-    if (is_int_operand(a) && is_int_operand(b)) {
+    const bool a_int = is_int_operand(a);
+    const bool b_int = is_int_operand(b);
+    if (a_int && b_int) {
+        QValue result = qv_null();
         with_i64_reader(a, [&](auto ra) {
             with_i64_reader(b, [&](auto rb) { result = cmp_finish(a, b, n, ra, rb, op); });
         });
-    } else {
-        with_f64_reader(a, [&](auto ra) {
-            with_f64_reader(b, [&](auto rb) { result = cmp_finish(a, b, n, ra, rb, op); });
-        });
+        return result;
     }
+    if (a_int || b_int) return cmp_exact_int_float(a, b, n, a_int, name);
+    QValue result = qv_null();
+    with_f64_reader(a, [&](auto ra) {
+        with_f64_reader(b, [&](auto rb) { result = cmp_finish(a, b, n, ra, rb, op); });
+    });
     return result;
 }
 
@@ -1258,13 +1284,13 @@ inline QValue cmp_str(QValue a, QValue b, Op op) {
 
 template <typename Op>
 inline QValue cmp_ordered(QValue a, QValue b, Op op, const char* name) {
-    if (is_numeric_operand(a) && is_numeric_operand(b)) return cmp_numeric(a, b, op);
+    if (is_numeric_operand(a) && is_numeric_operand(b)) return cmp_numeric(a, b, op, name);
     cmp_unsupported(name);
 }
 
 template <typename Op>
 inline QValue cmp_equality(QValue a, QValue b, Op op, const char* name) {
-    if (is_numeric_operand(a) && is_numeric_operand(b)) return cmp_numeric(a, b, op);
+    if (is_numeric_operand(a) && is_numeric_operand(b)) return cmp_numeric(a, b, op, name);
     if (is_bool_operand(a) && is_bool_operand(b)) return cmp_bool(a, b, op);
     if (is_str_operand(a) && is_str_operand(b)) return cmp_str(a, b, op);
     cmp_unsupported(name);

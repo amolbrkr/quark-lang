@@ -25,6 +25,8 @@
 #include "core/gc.hpp"
 #include "core/value.hpp"
 #include "core/diagnostics.hpp"
+#include "core/numcmp.hpp"
+#include "core/stack.hpp"
 #include "core/process.hpp"
 #include "core/format.hpp"
 #include "core/checked.hpp"

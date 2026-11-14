@@ -200,7 +200,7 @@ A float argument is an error, not truncated: a compile-time error when the type 
 | Function | Signature | Description |
 |---|---|---|
 | `abs` | `int\|float -> int\|float` | Absolute value, same type as the argument |
-| `min`, `max` | `number, number -> number` | The smaller/larger of two numbers: an `int` when both are ints, otherwise a `float` (`min(1, 2.5)` is `1.0`). If either is NaN the result is NaN, in either order, as in arithmetic (the vector reductions skip NaN instead). With one argument they reduce a vector ([Reductions](#reductions)) |
+| `min`, `max` | `number, number -> number` | The smaller/larger of two numbers, ordered exactly (§2 of semantics.md). Both ints give an int. An int and a float give a float when the float wins, when they are equal, or when the int wins and fits in a float (`min(1, 2.5)` is `1.0`); an int that wins and does not fit is returned as that int (`min(9007199254740993, 9007199254740994.0)` is `9007199254740993`). If either is NaN the result is NaN, in either order, as in arithmetic (the vector reductions skip NaN instead). With one argument they reduce a vector ([Reductions](#reductions)) |
 | `sum`, `all`, `any` | `vec -> ...` | Vector reductions ([Reductions](#reductions)); the mean is `stats::mean` (`std/stats`) |
 | `sqrt` | `float -> float` | Square root; an int argument is widened. A negative argument is a runtime error |
 | `floor`, `ceil` | `float -> int` | Round down / up |

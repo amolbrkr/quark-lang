@@ -928,3 +928,19 @@ func TestEmit_FunctionValueCallsByArity(t *testing.T) {
 		}
 	}
 }
+
+func TestEmit_IntFloatCompareAndStackGuard(t *testing.T) {
+	res := testutil.GenerateCPP("n: int = 9007199254740993\nprint(n == 9007199254740992.0)\nprint(9007199254740992.0 < n)\nprint(n == 1)\n")
+	if len(res.ParserErrors) > 0 || len(res.TypeErrors) > 0 {
+		t.Fatalf("unexpected errors: %v %v", res.ParserErrors, res.TypeErrors)
+	}
+	for _, want := range []string{"q_int_float_eq(", "q_int_float_gt(", "q_protect_and_run(quark__entry)"} {
+		if !strings.Contains(res.CPP, want) {
+			t.Fatalf("expected %q in:\n%s", want, res.CPP)
+		}
+	}
+	// Two ints stay a raw compare.
+	if strings.Contains(res.CPP, "q_int_float_eq(quark_n, 1)") {
+		t.Fatalf("an int compared with an int should stay raw:\n%s", res.CPP)
+	}
+}

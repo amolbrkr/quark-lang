@@ -73,7 +73,7 @@ A resource is a handle to native state, such as an open file. The runtime keeps 
 Quark converts types implicitly in three cases only:
 
 1. **int → float in mixed arithmetic.** When one operand is `int` and the other `float`, the int is promoted and the result is `float`.
-2. **int → float in mixed comparison.** `<`, `<=`, `>`, `>=`, `==` and `!=` promote the int operand.
+2. **An int and a float compare exactly.** `<`, `<=`, `>`, `>=`, `==` and `!=` compare the two mathematical values. An int that a float can hold exactly compares as that float (`1 == 1.0`, `2 < 2.5`). A larger int is not rounded first, so `9007199254740993 == 9007199254740992.0` is false and `9007199254740993 > 9007199254740992.0` is true. NaN compares as in IEEE 754. Arithmetic still promotes (rule 1): `9007199254740993 + 0.0` is the float `9007199254740992.0`.
 3. **int → float where a `float` is stored.** An `int` passed to a `float` parameter (of a Quark function or an `extern fn`), stored in a `float` variable, struct field, list element or dict value, or returned by a function annotated `float` becomes a `float`: `x: float = 3` holds `3.0`. A `float` is never converted to `int`; passing one to an `int` parameter is an error (§13.2).
 
 Nothing is converted below the top level: a `list[int]` is not a `list[float]` (§9.1). There is no string coercion: `'n = ' + 5` is an error; write `'n = ' + to_str(5)`.
@@ -134,14 +134,14 @@ Any other combination is an error (`operator '%' requires integer operands, got 
 
 | Operator | Accepted types | Result |
 |----------|---------------|--------|
-| `<` `<=` `>` `>=` | numeric×numeric | bool, with int→float promotion |
+| `<` `<=` `>` `>=` | numeric×numeric | bool; an int and a float compare exactly (§2) |
 | `<` `<=` `>` `>=` | str×str | bool, by byte order (`'Zebra' < 'apple'`), the order `list.sort()` uses |
 | `<` `<=` `>` `>=` | vec×vec, vec×scalar | `vec[bool]`, element-wise |
 | `==` `!=` | any×any | bool (`vec[bool]` for vectors) |
 
 Ordering any other pair, such as `'a' < 1` or `true < false`, is a runtime error (`operator '<' expects two numbers or two strings`).
 
-**Equality.** Values of the same type compare by the rules below; an int and a float compare as floats; any other pair of different types is `false`, not an error (`1 == 'a'` is `false`).
+**Equality.** Values of the same type compare by the rules below; an int and a float compare exactly (§2); any other pair of different types is `false`, not an error (`1 == 'a'` is `false`).
 
 | Type | `==` means |
 |------|---------------|
@@ -359,7 +359,7 @@ The methods are listed in stdlib.md.
 - Created with `vec [a, b, c]`, `xs.to_vec()`, or by vector operations. A literal's elements must all be ints, all floats, all bools or all strings (`vec [1, 2.5]` is an error), with no `null`.
 - **Vectors are immutable.** Every vector operation, including `fillna` and `astype`, returns a new vector.
 - `v[i]` and `v.get(i)` out of range are runtime errors. `v[mask]`, with a `vec[bool]` mask of the same length, selects elements.
-- Comparisons between `vec[i64]` and floats, or `vec[i64]` and `vec[f64]`, promote to float. `astype('i64')` of a NaN or out-of-range float is a runtime error.
+- Comparisons between `vec[i64]` and floats, or `vec[i64]` and `vec[f64]`, use the same exact int/float rule (§2). `astype('i64')` of a NaN or out-of-range float is a runtime error.
 - A vector can hold missing entries (for example from `to_vec()` of a list with `null` in it). Operations on the whole vector keep them (arithmetic, comparisons) or skip them (reductions); `fillna` replaces them and `drop_na` removes them. Taking one out as a single value (`v[i]`, `for x in v`, `to_list()`, `enumerate()`) is a runtime error naming `fillna` and `drop_na`, so a missing entry never reads as a number. `v.get(i)` returns `null` for one and has type `any`.
 - Storage follows the Apache Arrow columnar layout, so buffers can be shared with Arrow-compatible libraries without copying (architecture.md, `QVector`).
 
@@ -516,13 +516,14 @@ A warning (`warning[QK-CHECK-002]`) is printed but doesn't stop compilation. The
 
 ### 11.3 Runtime errors
 
-A runtime error prints its message and source location to stderr and exits with status 1. There are no exceptions and no recovery; expected failures are `result` values (§12).
+A runtime error prints its message and source location to stderr and exits with status 1. There are no exceptions and no recovery; expected failures are `result` values (§12). A stack overflow is a runtime error too (`stack overflow`, at the current source location), and output printed before it is flushed.
 
 | Condition | Example message |
 |-----------|-----------------|
 | Wrong operand types where the compiler couldn't know them | `operator '<' expects two numbers or two strings` |
 | Division or modulo by zero | `division by zero` |
 | Integer overflow in `+`, `-`, `*`, `**`, unary `-`, `abs` | `integer overflow in '+'` |
+| The call stack overflows | `stack overflow` |
 | A float or string that doesn't fit an int, or NaN, converted with `to_int`, `floor`, `ceil` or `round` | `floor() can't convert 1e+30 to an int: it is outside the int range` |
 | A value of the wrong type reaching an annotated parameter, variable, field or return | `argument 'x' of 'foo' expects int, got str` |
 | A wrong-typed write into a list or dict from untyped code | `push() can't add a str to a list of int` |

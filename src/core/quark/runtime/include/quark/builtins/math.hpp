@@ -6,6 +6,7 @@
 #include "../core/constructors.hpp"
 #include "../core/format.hpp"
 #include "../core/checked.hpp"
+#include "../core/numcmp.hpp"
 #include <cstdlib>
 #include <cstdio>
 #include <cmath>
@@ -30,6 +31,36 @@ inline QValue q_abs(QValue v) {
     return qv_int(q_checked_abs(v.data.int_val));
 }
 
+// q_minmax returns the smaller (want_min) or larger of two numbers. An int
+// and a float are ordered exactly. The result is a float when either
+// argument is a float and the winning int fits in a float (min(1, 2.5) is
+// 1.0); an int that wins and does not fit is returned as that int, so the
+// result is not a nearby float. NaN wins, in either order.
+inline QValue q_minmax(QValue a, QValue b, bool want_min) {
+    const bool a_nan = a.type == QValue::VAL_FLOAT && a.data.float_val != a.data.float_val;
+    const bool b_nan = b.type == QValue::VAL_FLOAT && b.data.float_val != b.data.float_val;
+    if (a_nan) return a;
+    if (b_nan) return b;
+    if (a.type == QValue::VAL_INT && b.type == QValue::VAL_INT) {
+        const long long x = a.data.int_val, y = b.data.int_val;
+        const bool a_wins = want_min ? x < y : x > y;
+        return qv_int(a_wins ? x : y);
+    }
+    if (a.type == QValue::VAL_FLOAT && b.type == QValue::VAL_FLOAT) {
+        const double x = a.data.float_val, y = b.data.float_val;
+        const bool a_wins = want_min ? x < y : x > y;
+        return qv_float(a_wins ? x : y);
+    }
+    const bool a_int = a.type == QValue::VAL_INT;
+    const long long i = a_int ? a.data.int_val : b.data.int_val;
+    const double f = a_int ? b.data.float_val : a.data.float_val;
+    const int c = q_cmp_int_float(i, f);
+    const bool int_wins = want_min ? c < 0 : c > 0;
+    if (!int_wins) return a_int ? b : a;
+    if (q_int_fits_float(i)) return qv_float(static_cast<double>(i));
+    return a_int ? a : b;
+}
+
 // Minimum of two values
 inline QValue q_min(QValue a, QValue b) {
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
@@ -37,16 +68,7 @@ inline QValue q_min(QValue a, QValue b) {
         q_runtime_reportf("runtime error: min() expects numeric arguments, got %s and %s\n", q_type_name_math(a.type), q_type_name_math(b.type));
         std::exit(1);
     }
-    if (quark::detail::either_float(a, b)) {
-        double av = quark::detail::to_double(a);
-        double bv = quark::detail::to_double(b);
-        // NaN wins, whatever the order, as in arithmetic (vec reductions
-        // skip NaN instead, treating it as missing).
-        if (av != av) return qv_float(av);
-        if (bv != bv) return qv_float(bv);
-        return qv_float(av < bv ? av : bv);
-    }
-    return qv_int(a.data.int_val < b.data.int_val ? a.data.int_val : b.data.int_val);
+    return q_minmax(a, b, true);
 }
 
 // Minimum of vector values
@@ -65,16 +87,7 @@ inline QValue q_max(QValue a, QValue b) {
         q_runtime_reportf("runtime error: max() expects numeric arguments, got %s and %s\n", q_type_name_math(a.type), q_type_name_math(b.type));
         std::exit(1);
     }
-    if (quark::detail::either_float(a, b)) {
-        double av = quark::detail::to_double(a);
-        double bv = quark::detail::to_double(b);
-        // NaN wins, whatever the order, as in arithmetic (vec reductions
-        // skip NaN instead, treating it as missing).
-        if (av != av) return qv_float(av);
-        if (bv != bv) return qv_float(bv);
-        return qv_float(av > bv ? av : bv);
-    }
-    return qv_int(a.data.int_val > b.data.int_val ? a.data.int_val : b.data.int_val);
+    return q_minmax(a, b, false);
 }
 
 // Maximum of vector values

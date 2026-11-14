@@ -4,12 +4,34 @@
 
 #include "../core/value.hpp"
 #include "../core/constructors.hpp"
+#include "../core/numcmp.hpp"
 #include "../types/resource.hpp"
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
 
-// Helper functions to_double() and either_float() are defined in arithmetic.hpp.
+// q_values_ordered compares two numbers. An int and a float compare exactly
+// (core/numcmp.hpp); two floats follow IEEE 754, so a NaN makes every
+// ordered comparison false and == false.
+inline bool q_values_ordered(QValue a, QValue b, const char* op) {
+    if (a.type == QValue::VAL_INT && b.type == QValue::VAL_INT) {
+        const long long x = a.data.int_val, y = b.data.int_val;
+        const int c = x < y ? -1 : (x > y ? 1 : 0);
+        return q_cmp_holds(c, op);
+    }
+    if (a.type == QValue::VAL_FLOAT && b.type == QValue::VAL_FLOAT) {
+        const double x = a.data.float_val, y = b.data.float_val;
+        int c = 2;
+        if (x == x && y == y) c = x < y ? -1 : (x > y ? 1 : 0);
+        return q_cmp_holds(c, op);
+    }
+    const bool a_int = a.type == QValue::VAL_INT;
+    const long long i = a_int ? a.data.int_val : b.data.int_val;
+    const double f = a_int ? b.data.float_val : a.data.float_val;
+    int c = q_cmp_int_float(i, f);
+    if (!a_int && (c == -1 || c == 1)) c = -c;
+    return q_cmp_holds(c, op);
+}
 
 // Less than
 // q_str_compare orders two string values by byte order (strcmp).
@@ -31,10 +53,7 @@ inline QValue q_lt(QValue a, QValue b) {
         q_runtime_reportf("runtime error: operator '<' expects two numbers or two strings\n");
         std::exit(1);
     }
-    if (quark::detail::either_float(a, b)) {
-        return qv_bool(quark::detail::to_double(a) < quark::detail::to_double(b));
-    }
-    return qv_bool(a.data.int_val < b.data.int_val);
+    return qv_bool(q_values_ordered(a, b, "<"));
 }
 
 // Less than or equal
@@ -52,10 +71,7 @@ inline QValue q_lte(QValue a, QValue b) {
         q_runtime_reportf("runtime error: operator '<=' expects two numbers or two strings\n");
         std::exit(1);
     }
-    if (quark::detail::either_float(a, b)) {
-        return qv_bool(quark::detail::to_double(a) <= quark::detail::to_double(b));
-    }
-    return qv_bool(a.data.int_val <= b.data.int_val);
+    return qv_bool(q_values_ordered(a, b, "<="));
 }
 
 // Greater than
@@ -73,10 +89,7 @@ inline QValue q_gt(QValue a, QValue b) {
         q_runtime_reportf("runtime error: operator '>' expects two numbers or two strings\n");
         std::exit(1);
     }
-    if (quark::detail::either_float(a, b)) {
-        return qv_bool(quark::detail::to_double(a) > quark::detail::to_double(b));
-    }
-    return qv_bool(a.data.int_val > b.data.int_val);
+    return qv_bool(q_values_ordered(a, b, ">"));
 }
 
 // Greater than or equal
@@ -94,10 +107,7 @@ inline QValue q_gte(QValue a, QValue b) {
         q_runtime_reportf("runtime error: operator '>=' expects two numbers or two strings\n");
         std::exit(1);
     }
-    if (quark::detail::either_float(a, b)) {
-        return qv_bool(quark::detail::to_double(a) >= quark::detail::to_double(b));
-    }
-    return qv_bool(a.data.int_val >= b.data.int_val);
+    return qv_bool(q_values_ordered(a, b, ">="));
 }
 
 namespace quark { namespace detail {
@@ -145,7 +155,7 @@ inline bool values_equal(const QValue& a, const QValue& b, int depth) {
     if (a.type != b.type) {
         if ((a.type == QValue::VAL_INT || a.type == QValue::VAL_FLOAT) &&
             (b.type == QValue::VAL_INT || b.type == QValue::VAL_FLOAT)) {
-            return to_double(a) == to_double(b);
+            return q_values_ordered(a, b, "==");
         }
         return false;
     }

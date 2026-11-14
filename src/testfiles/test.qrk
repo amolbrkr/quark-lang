@@ -1,6 +1,6 @@
 incl "std/random"
 
-fn pick1(max: int = 10) int -> randint(0, max)
+fn pick1(max: int = 10) int -> random::randint(0, max)
 
 print(pick1())
 

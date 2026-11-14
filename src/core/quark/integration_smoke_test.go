@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"os/exec"
@@ -9,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"quark/toolchain"
 )
@@ -24,6 +26,14 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	pkgDir := filepath.Dir(thisFile)
+	// The test binary is not the compiler, so it does not sit next to the
+	// runtime or the GC. Point the lookups at the repository copies.
+	if os.Getenv("QUARK_RUNTIME") == "" {
+		_ = os.Setenv("QUARK_RUNTIME", filepath.Join(pkgDir, "runtime", "include"))
+	}
+	if os.Getenv("QUARK_GC") == "" {
+		_ = os.Setenv("QUARK_GC", filepath.Join(pkgDir, "..", "..", "..", "deps", "bdwgc"))
+	}
 	exeName := "quark_test"
 	if runtime.GOOS == "windows" {
 		exeName += ".exe"
@@ -1566,6 +1576,10 @@ func compileAndRunRuntimeCheck(t *testing.T, cppFile, source string) string {
 	if err != nil {
 		t.Fatalf("EnsureGC: %v", err)
 	}
+	runtimeInclude, err := toolchain.RuntimeIncludePath()
+	if err != nil {
+		t.Fatalf("runtime headers: %v", err)
+	}
 	if err := os.WriteFile(cppFile, []byte(source), 0o644); err != nil {
 		t.Fatalf("write %s: %v", cppFile, err)
 	}
@@ -1576,13 +1590,15 @@ func compileAndRunRuntimeCheck(t *testing.T, cppFile, source string) string {
 	args := []string{
 		"-std=c++17", "-O0", "-Wall", "-Wextra",
 		"-DQUARK_USE_GC",
-		"-I" + toolchain.RuntimeIncludePath(),
+		"-I" + runtimeInclude,
 		"-I" + gcInclude,
 		"-o", outBin,
 		cppFile,
 	}
 	args = append(args, toolchain.GCLinkArgs(gcLib)...)
-	if runtime.GOOS != "windows" {
+	if runtime.GOOS == "windows" {
+		args = append(args, "-fms-extensions")
+	} else {
 		args = append(args, "-lm")
 	}
 	compileCmd := exec.Command(compiler, args...)
@@ -2219,5 +2235,132 @@ func TestParamAnnotationsEnforced(t *testing.T) {
 		if err == nil || !strings.Contains(string(out), wants[name]) {
 			t.Fatalf("%s: expected %q, got (err=%v):\n%s", name, wants[name], err, out)
 		}
+	}
+}
+
+func TestIntFloatCompare_Exact(t *testing.T) {
+	tmp := t.TempDir()
+	program := filepath.Join(tmp, "cmp.qrk")
+	source := strings.Join([]string{
+		"n: int = 9007199254740993",
+		"print(n == 9007199254740992.0)",
+		"print(n > 9007199254740992.0)",
+		"print(9007199254740992.0 < n)",
+		"print(1 == 1.0)",
+		"print(2 < 2.5)",
+		"print(min(1, 2.5))",
+		"print(max(1, 2.5))",
+		"print(min(9007199254740993, 9007199254740994.0))",
+		"print(type(min(9007199254740993, 9007199254740994.0)))",
+		"print(min(9007199254740993, 9007199254740992.0))",
+		"fn id(v) -> v",
+		"print(id(9007199254740993) == 9007199254740992.0)",
+		"print(list [9007199254740993] == list [9007199254740992.0])",
+		"xs = list [9007199254740993, 9007199254740992.0, 9007199254740992]",
+		"xs.sort()",
+		"print(xs[2] == 9007199254740993)",
+		"print(xs[0] == 9007199254740992.0)",
+		"print(all(vec [9007199254740993] == 9007199254740992.0))",
+		"print(all(vec [9007199254740993] > 9007199254740992.0))",
+		"print(all(vec [1] == 1.0))",
+		"nan = to_float('nan')",
+		"print(1 == nan)",
+		"print(1 < nan)",
+		"print(1 != nan)",
+		"",
+	}, "\n")
+	if err := os.WriteFile(program, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := strings.TrimSpace(normalizeNewlines(runQuark(t, "run", program)))
+	want := strings.Join([]string{
+		"false",
+		"true",
+		"true",
+		"true",
+		"true",
+		"1.0",
+		"2.5",
+		"9007199254740993",
+		"int",
+		"9007199254740992.0",
+		"false",
+		"false",
+		"true",
+		"true",
+		"false",
+		"true",
+		"true",
+		"false",
+		"false",
+		"true",
+	}, "\n")
+	if got != want {
+		t.Fatalf("output:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestStackOverflow_Reports(t *testing.T) {
+	tmp := t.TempDir()
+	program := filepath.Join(tmp, "overflow.qrk")
+	source := "print('before')\nfn f(n) -> 1 + f(n)\nf(0)\n"
+	if err := os.WriteFile(program, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, quarkExePath, "run", program)
+	var out, errBuf bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errBuf
+	err := cmd.Run()
+	if err == nil {
+		t.Fatalf("expected a runtime error\nstdout: %s\nstderr: %s", out.String(), errBuf.String())
+	}
+	if ctx.Err() != nil {
+		t.Fatalf("stack overflow did not finish: %v\nstdout: %s\nstderr: %s", ctx.Err(), out.String(), errBuf.String())
+	}
+	stdout := normalizeNewlines(out.String())
+	stderr := normalizeNewlines(errBuf.String())
+	if !strings.Contains(stdout, "before") {
+		t.Fatalf("stdout lost the line printed before the overflow:\n%s\nstderr:\n%s", stdout, stderr)
+	}
+	if !strings.Contains(stderr, "stack overflow") || !strings.Contains(stderr, "overflow.qrk") {
+		t.Fatalf("stderr:\n%s", stderr)
+	}
+}
+
+func TestRuntimeAndGCLookup_BadEnv(t *testing.T) {
+	tmp := t.TempDir()
+	program := filepath.Join(tmp, "hello.qrk")
+	if err := os.WriteFile(program, []byte("print(1)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	without := func(key, value string) []string {
+		var env []string
+		prefix := key + "="
+		for _, e := range os.Environ() {
+			if strings.HasPrefix(e, prefix) {
+				continue
+			}
+			env = append(env, e)
+		}
+		return append(env, prefix+value)
+	}
+	run := func(env []string) string {
+		t.Helper()
+		cmd := exec.Command(quarkExePath, "run", program)
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Fatalf("expected a lookup error, got:\n%s", out)
+		}
+		return string(out)
+	}
+	if got := run(without("QUARK_RUNTIME", filepath.Join(tmp, "missing"))); !strings.Contains(got, "QUARK_RUNTIME is '") || !strings.Contains(got, "not a directory") {
+		t.Fatalf("runtime lookup:\n%s", got)
+	}
+	if got := run(without("QUARK_GC", filepath.Join(tmp, "missing"))); !strings.Contains(got, "QUARK_GC is '") || !strings.Contains(got, "not a directory") {
+		t.Fatalf("gc lookup:\n%s", got)
 	}
 }

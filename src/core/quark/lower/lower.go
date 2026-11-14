@@ -54,6 +54,13 @@ type lowerer struct {
 
 	elemDescNames map[string]string
 	locIndex      map[SourceLoc]int
+
+	// Queries (query.go): the row a verb expression is being lowered for,
+	// the three-valued parts already lowered inside it (by node), and
+	// the runtime headers included beyond quark.hpp.
+	row      *rowLoop
+	rowSubst map[*ast.TreeNode]Expr
+	included map[string]bool
 }
 
 // Lower lowers an analyzed, validated tree to a Program. sourceName labels
@@ -71,6 +78,8 @@ func Lower(root *ast.TreeNode, an *types.Analysis, sourceName string) (prog *Pro
 		lambdaUserNames: map[*ast.TreeNode]string{},
 		elemDescNames:   map[string]string{},
 		locIndex:        map[SourceLoc]int{},
+		rowSubst:        map[*ast.TreeNode]Expr{},
+		included:        map[string]bool{},
 	}
 	defer func() {
 		if r := recover(); r != nil {

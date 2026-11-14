@@ -17,6 +17,10 @@ func (a *Analyzer) analyzeIdentifier(node *ast.TreeNode) Type {
 		a.errorAt(node, "undefined identifier '%s'", name)
 		return TypeError
 	}
+	if sym.Kind == SymRow {
+		a.errorAt(node, "'%s' is the query's row: read its columns as %s.col (it isn't a value of its own)", name, name)
+		return TypeError
+	}
 	a.refs[node] = sym
 	if f := a.fixedFnOf(sym); f != nil {
 		a.fixedRefs[node] = f
@@ -51,6 +55,9 @@ func (a *Analyzer) analyzeMember(node *ast.TreeNode) Type {
 	if len(node.Children) < 2 || node.Children[0] == nil || node.Children[1] == nil {
 		a.errorAt(node, "malformed dot access expression")
 		return TypeError
+	}
+	if t, ok := a.rowRead(node); ok {
+		return t
 	}
 	targetType := a.Analyze(node.Children[0])
 	if IsErrorType(targetType) {
@@ -115,6 +122,9 @@ func (a *Analyzer) analyzeUnary(node *ast.TreeNode) Type {
 	case token.BANG:
 		// Uses truthiness (§4.3). Always returns bool.
 		a.checkCondition(node.Children[0], operandType)
+		if !a.rowCondition(node.Children[0], operandType, "'!'") {
+			return TypeError
+		}
 		return TypeBool
 	}
 	a.errorAt(node, "unsupported operator '%s'", node.Token.Type.String())
@@ -411,6 +421,12 @@ func (a *Analyzer) analyzeBinary(node *ast.TreeNode) Type {
 		// Short-circuit via truthiness (Python semantics).
 		a.checkCondition(node.Children[0], leftType)
 		a.checkCondition(node.Children[1], rightType)
+		// In a verb expression both operands are bools (D22).
+		okL := a.rowCondition(node.Children[0], leftType, "'"+node.Token.Literal+"'")
+		okR := a.rowCondition(node.Children[1], rightType, "'"+node.Token.Literal+"'")
+		if !okL || !okR {
+			return TypeError
+		}
 		// Return type is the union of both operand types since the result
 		// is one of the two operands (not necessarily bool).
 		if isBoolLike(leftType) && isBoolLike(rightType) {

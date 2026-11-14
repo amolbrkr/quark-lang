@@ -26,6 +26,8 @@ func typeToBuiltinTypeKey(t Type) builtins.TypeKey {
 		return builtins.TypeVectorAny
 	case *ResultType:
 		return builtins.TypeResultAny
+	case *TableType:
+		return builtins.TypeTableAny
 	}
 	return ""
 }
@@ -54,6 +56,8 @@ func mapBuiltinTypeKey(key builtins.TypeKey) Type {
 		return &VectorType{ElementType: TypeAny}
 	case builtins.TypeResultAny:
 		return &ResultType{OkType: TypeAny, ErrType: TypeString}
+	case builtins.TypeTableAny:
+		return &TableType{}
 	default:
 		return TypeAny
 	}

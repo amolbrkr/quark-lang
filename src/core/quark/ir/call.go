@@ -23,16 +23,20 @@ type MethodCandidate struct {
 	ValueTag        string // QValue::ValueType enumerator, e.g. "VAL_STRING"
 	ReceiverTypeKey string // builtins.TypeKey of the receiver
 	RuntimeSymbol   string // runtime function for this receiver type
+	RuntimeHeader   string // header defining it, when quark.hpp doesn't
 }
 
 // CallPlan is a call-focused IR node produced by the analyzer and consumed by lowering.
 // It freezes call semantics so lowering doesn't have to re-derive them.
 type CallPlan struct {
-	CalleeName      string
-	MinArity        int
-	MaxArity        int
-	Dispatch        DispatchMode
-	RuntimeSymbol   string
+	CalleeName    string
+	MinArity      int
+	MaxArity      int
+	Dispatch      DispatchMode
+	RuntimeSymbol string
+	// RuntimeHeader is the runtime header defining RuntimeSymbol when
+	// quark.hpp doesn't (builtins.Spec.Header).
+	RuntimeHeader   string
 	DefaultNodes    []*ast.TreeNode // Trailing default args to append in call order.
 	IsMethod        bool            // True when call was x.method(args) — receiver is first runtime arg.
 	ReceiverNode    *ast.TreeNode   // The receiver expression node (x in x.method(args)).

@@ -17,6 +17,7 @@ const (
 	TypeDictAny    TypeKey = "dict_any"
 	TypeVectorAny  TypeKey = "vec_any"
 	TypeResultAny  TypeKey = "result_any"
+	TypeTableAny   TypeKey = "tbl_any"
 )
 
 // Spec is the single source of truth for builtin definitions.
@@ -31,7 +32,15 @@ type Spec struct {
 	ParamTypes   []TypeKey
 	ReturnType   TypeKey
 	ReceiverType TypeKey // empty = free function; non-empty = method on this type
+	// Header is the runtime header that defines Runtime when it isn't part
+	// of quark.hpp (the table runtime); generated code includes it when it
+	// calls the builtin.
+	Header string
 }
+
+// TableHeader is the table runtime (queries, table methods), which
+// quark.hpp doesn't include.
+const TableHeader = "quark/table/query.hpp"
 
 var catalog = []Spec{
 	// I/O (free functions)
@@ -103,6 +112,12 @@ var catalog = []Spec{
 	{Name: "get", Runtime: "q_vec_get", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeInt}, ReturnType: TypeAny, ReceiverType: TypeVectorAny},
 	{Name: "fillna", Runtime: "q_fillna", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeVectorAny, ReceiverType: TypeVectorAny},
 	{Name: "drop_na", Runtime: "q_drop_na", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeVectorAny, ReceiverType: TypeVectorAny},
+
+	// Table methods (tables_v0_1_spec.md §6, D25): the first or last n rows
+	// (6 by default) as a table of the same row type, and one line per column.
+	{Name: "head", Runtime: "q_tbl_head_method", MinArgs: 0, MaxArgs: 1, ParamTypes: []TypeKey{TypeInt}, ReturnType: TypeTableAny, ReceiverType: TypeTableAny, Header: TableHeader},
+	{Name: "tail", Runtime: "q_tbl_tail_method", MinArgs: 0, MaxArgs: 1, ParamTypes: []TypeKey{TypeInt}, ReturnType: TypeTableAny, ReceiverType: TypeTableAny, Header: TableHeader},
+	{Name: "describe", Runtime: "q_tbl_describe", MinArgs: 0, MaxArgs: 1, ParamTypes: []TypeKey{TypeInt}, ReturnType: TypeVoid, ReceiverType: TypeTableAny, Header: TableHeader},
 	{Name: "astype", Runtime: "q_astype", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeVectorAny, ReceiverType: TypeVectorAny},
 	{Name: "to_list", Runtime: "q_to_list", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeVectorAny},
 	{Name: "enumerate", Runtime: "q_enumerate", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeVectorAny},

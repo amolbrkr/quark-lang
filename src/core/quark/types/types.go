@@ -401,6 +401,7 @@ const (
 	SymLoop                   // a for loop variable
 	SymBinding                // an ok/err binding of a when arm
 	SymFn                     // a fn declaration (its binding, when it needs a closure)
+	SymRow                    // the row name of a table query (no C++ variable; read as e.col)
 )
 
 // Symbol is one declaration: a variable, parameter, loop variable, when
@@ -434,7 +435,7 @@ type Symbol struct {
 }
 
 // IsVariable reports whether the symbol has a C++ variable of its own.
-func (s *Symbol) IsVariable() bool { return s != nil && s.Kind != SymBuiltin }
+func (s *Symbol) IsVariable() bool { return s != nil && s.Kind != SymBuiltin && s.Kind != SymRow }
 
 // Scope represents a lexical scope
 type Scope struct {

@@ -100,11 +100,11 @@ func (a *Analyzer) resolveMethodCall(call, funcNode *ast.TreeNode, argTypes []Ty
 					return methodCallResult{returnType: sig.Type.ReturnType, receiverType: receiverType, resolved: true}
 				}
 
-				runtimeSym := ""
+				runtimeSym, header := "", ""
 				if spec, ok := builtins.LookupMethod(receiverKey, methodName); ok {
-					runtimeSym = spec.Runtime
+					runtimeSym, header = spec.Runtime, spec.Header
 				}
-				a.callPlans[call] = &ir.CallPlan{CalleeName: methodName, MinArity: totalMin, MaxArity: totalMax, Dispatch: ir.DispatchBuiltin, RuntimeSymbol: runtimeSym, IsMethod: true, ReceiverNode: receiverNode, ReceiverTypeKey: string(receiverKey)}
+				a.callPlans[call] = &ir.CallPlan{CalleeName: methodName, MinArity: totalMin, MaxArity: totalMax, Dispatch: ir.DispatchBuiltin, RuntimeSymbol: runtimeSym, RuntimeHeader: header, IsMethod: true, ReceiverNode: receiverNode, ReceiverTypeKey: string(receiverKey)}
 				a.checkArity(call, "method '"+methodName+"'", sig.MinArgs, sig.MaxArgs, argCount)
 				a.checkArgTypes(methodName, sig.Type.ParamTypes, argTypes, argNodes)
 				a.checkMutation(receiverType, methodName, argTypes, argNodes)
@@ -151,6 +151,7 @@ var dynamicReceivers = []struct {
 	{builtins.TypeListAny, "VAL_LIST"},
 	{builtins.TypeDictAny, "VAL_DICT"},
 	{builtins.TypeVectorAny, "VAL_VECTOR"},
+	{builtins.TypeTableAny, "VAL_TABLE"},
 }
 
 // resolveDynamicMethodCall plans a method call on a receiver of unknown type as a
@@ -182,7 +183,7 @@ func (a *Analyzer) resolveDynamicMethodCall(call, funcNode *ast.TreeNode, method
 			}
 			continue
 		}
-		candidates = append(candidates, ir.MethodCandidate{ValueTag: recv.tag, ReceiverTypeKey: string(recv.key), RuntimeSymbol: spec.Runtime})
+		candidates = append(candidates, ir.MethodCandidate{ValueTag: recv.tag, ReceiverTypeKey: string(recv.key), RuntimeSymbol: spec.Runtime, RuntimeHeader: spec.Header})
 		sigs = append(sigs, sig)
 	}
 
@@ -458,6 +459,9 @@ func refineMethodReturnType(catalogReturn Type, receiverType Type, methodName st
 			return receiverType
 		}
 	}
+	if _, ok := receiverType.(*TableType); ok && (methodName == "head" || methodName == "tail") {
+		return receiverType // the same rows' type
+	}
 	if vecType, ok := receiverType.(*VectorType); ok {
 		switch methodName {
 		case "get":
@@ -558,6 +562,8 @@ func typeKeyToReceiverString(key builtins.TypeKey) string {
 		return "dict"
 	case builtins.TypeVectorAny:
 		return "vec"
+	case builtins.TypeTableAny:
+		return "tbl"
 	}
 	return string(key)
 }

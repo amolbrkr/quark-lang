@@ -132,6 +132,9 @@ func (l *lowerer) expr(node *ast.TreeNode) Expr {
 	if node == nil {
 		return nullValue()
 	}
+	if v, ok := l.rowSubst[node]; ok {
+		return v
+	}
 	switch node.NodeType {
 	case ast.LiteralNode:
 		return literal(node)
@@ -193,6 +196,8 @@ func (l *lowerer) expr(node *ast.TreeNode) Expr {
 		return l.blockValue(node)
 	case ast.StructLiteralNode:
 		return l.structLiteral(node)
+	case ast.QueryNode:
+		return l.query(node)
 	case ast.ModuleNode, ast.StructDefNode, ast.ExternHeaderNode, ast.ExternFnNode,
 		ast.ExternLinkNode, ast.ExternIncludePathNode:
 		return nullValue()
@@ -924,6 +929,9 @@ func (l *lowerer) structLiteral(node *ast.TreeNode) Expr {
 func (l *lowerer) member(node *ast.TreeNode) Expr {
 	if len(node.Children) < 2 {
 		return nullValue()
+	}
+	if col, ok := l.an.ColumnRefs[node]; ok {
+		return l.columnRead(node, col)
 	}
 	obj := boxed(l.expr(node.Children[0]))
 	name := node.Children[1].TokenLiteral()

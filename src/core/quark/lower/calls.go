@@ -48,6 +48,10 @@ func (l *lowerer) call(node *ast.TreeNode) Expr {
 	}
 	vals := l.operands(nodes)
 	args := vals[argStart:]
+	l.include(plan.RuntimeHeader)
+	for _, c := range plan.MethodCandidates {
+		l.include(c.RuntimeHeader)
+	}
 
 	switch plan.Dispatch {
 	case ir.DispatchBuiltin:

@@ -73,8 +73,6 @@ const (
 	SortKeyNode
 )
 
-
-
 var nodeTypeNames = map[NodeType]string{
 	CompilationUnitNode:   "CompilationUnit",
 	BlockNode:             "Block",

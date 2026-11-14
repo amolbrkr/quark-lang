@@ -11,6 +11,7 @@
 #define QUARK_TABLE_QUERY_HPP
 
 #include "engine.hpp"
+#include "../builtins/repr.hpp"
 
 #include <initializer_list>
 #include <string>
@@ -55,9 +56,14 @@ inline const QVector& q_tbl_col(const QTable* t, int c) { return *quark::tbl::co
 // here, as in arithmetic; aggregates skip it).
 inline bool q_tbl_present(const QVector& v, long long i) { return !quark::tbl::is_null(v, static_cast<int32_t>(i)); }
 
+// A str cell as a Quark string (one copy; str cells hold no NUL byte, which
+// the reader rejects).
 inline QValue q_tbl_str(const QVector& v, long long i) {
     const std::string_view s = q_vec_str_at(v, static_cast<size_t>(i));
-    return qv_string(std::string(s).c_str());
+    char* out = static_cast<char*>(q_malloc_atomic(s.size() + 1));
+    if (!s.empty()) std::memcpy(out, s.data(), s.size());
+    out[s.size()] = '\0';
+    return qv_string_own(out);
 }
 
 // ------------------------------------------------------------
@@ -181,5 +187,62 @@ inline QTable* q_tbl_make(const QStructDef* def, std::initializer_list<QVector*>
     std::vector<QVector*> cs(cols);
     return quark::tbl::make_table(def, cs.data());
 }
+
+// ------------------------------------------------------------
+// Table methods (D25): t.head(n), t.tail(n), t.describe(n). Builtin methods
+// take QValues: the receiver is a table (dispatch chose this method by its
+// type), the count is checked here, as it may come through `any`.
+
+inline long long q_tbl_method_count(QValue n, const char* method) {
+    if (n.type != QValue::VAL_INT) {
+        q_runtime_reportf("runtime error: %s(n) expects an int, got %s\n", method, q_type_name(n.type));
+        std::exit(1);
+    }
+    return n.data.int_val;
+}
+
+inline QValue q_tbl_head_method(QValue t, QValue n) {
+    return qv_table(q_tbl_head(q_tbl_of(t), q_tbl_method_count(n, "head")));
+}
+inline QValue q_tbl_head_method(QValue t) { return q_tbl_head_method(t, qv_int(6)); }
+
+inline QValue q_tbl_tail_method(QValue t, QValue n) {
+    return qv_table(q_tbl_tail(q_tbl_of(t), q_tbl_method_count(n, "tail")));
+}
+inline QValue q_tbl_tail_method(QValue t) { return q_tbl_tail_method(t, qv_int(6)); }
+
+// t.describe(n) prints one line per column: its name, its type, and its
+// first n values as a vec prints them (R's str, dplyr's glimpse).
+inline QValue q_tbl_describe(QValue tv, QValue nv) {
+    QTable* t = q_tbl_of(tv);
+    const long long n = q_tbl_method_count(nv, "describe");
+    if (n < 0) {
+        q_runtime_reportf("runtime error: describe(n) needs n >= 0, got %lld\n", n);
+        std::exit(1);
+    }
+    std::string out = t->def->anonymous ? "tbl" : q_table_type_name(t);
+    out += ": ";
+    q_table_rows_text(out, t->nrows);
+    out += ", " + std::to_string(t->ncols) + (t->ncols == 1 ? " column" : " columns");
+    size_t name_w = 0;
+    for (int c = 0; c < t->ncols; c++) name_w = std::max(name_w, q_text_width(t->def->field_names[c]));
+    const int32_t shown = n < t->nrows ? static_cast<int32_t>(n) : t->nrows;
+    for (int c = 0; c < t->ncols; c++) {
+        const QVector& col = *quark::tbl::column(t, c);
+        const std::string name = t->def->field_names[c];
+        const char* type = q_dtype_word(static_cast<int>(col.type));
+        out += "\n" + name + std::string(name_w - q_text_width(name) + 2, ' ') + type + std::string(7 - std::strlen(type), ' ');
+        QReprCtx ctx;
+        for (int32_t r = 0; r < shown; r++) {
+            if (r) out += ", ";
+            q_repr_into(out, q_vec_box_at(col, static_cast<size_t>(r)), true, ctx);
+        }
+        if (shown < t->nrows) out += shown ? ", ..." : "...";
+    }
+    out += "\n";
+    std::fputs(out.c_str(), stdout);
+    return qv_null();
+}
+inline QValue q_tbl_describe(QValue t) { return q_tbl_describe(t, qv_int(5)); }
 
 #endif // QUARK_TABLE_QUERY_HPP

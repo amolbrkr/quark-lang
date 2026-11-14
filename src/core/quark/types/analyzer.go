@@ -84,6 +84,14 @@ type Analyzer struct {
 	expected   map[*ast.TreeNode]Type
 	tableReads map[*ast.TreeNode]*TableRead
 	anonRows   map[string]*StructType
+
+	// Queries (analyzer_query.go): every query, every e.col read in a verb
+	// expression (the column index in the row it reads), the row the
+	// expression being analyzed reads, and how deep in functions it is.
+	queries     map[*ast.TreeNode]*Query
+	columnRefs  map[*ast.TreeNode]int
+	rowCtx      *rowContext
+	lambdaDepth int
 }
 
 func NewAnalyzer() *Analyzer {
@@ -140,6 +148,8 @@ func NewAnalyzer() *Analyzer {
 		expected:        make(map[*ast.TreeNode]Type),
 		tableReads:      make(map[*ast.TreeNode]*TableRead),
 		anonRows:        make(map[string]*StructType),
+		queries:         make(map[*ast.TreeNode]*Query),
+		columnRefs:      make(map[*ast.TreeNode]int),
 	}
 }
 
@@ -327,6 +337,11 @@ func (a *Analyzer) analyze(node *ast.TreeNode) Type {
 		return a.analyzeStructDef(node)
 	case ast.StructLiteralNode:
 		return a.analyzeStructLiteral(node)
+	case ast.QueryNode:
+		return a.analyzeQuery(node)
+	case ast.QueryStepNode, ast.ColumnDefNode, ast.AggregateNode, ast.SortKeyNode:
+		a.errorAt(node, "internal compiler error: a query step outside a query")
+		return TypeError
 	default:
 		return TypeAny
 	}

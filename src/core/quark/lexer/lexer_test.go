@@ -409,9 +409,9 @@ func TestOperators_AllTwoChar(t *testing.T) {
 
 func TestDelimiters_MatchedBrackets(t *testing.T) {
 	tests := []struct {
-		open  string
-		close string
-		openT token.TokenType
+		open   string
+		close  string
+		openT  token.TokenType
 		closeT token.TokenType
 	}{
 		{"(", ")", token.LPAR, token.RPAR},

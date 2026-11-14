@@ -79,6 +79,8 @@ func displayType(k builtins.TypeKey) string {
 		return "dict"
 	case strings.HasPrefix(s, "vec"):
 		return "vec"
+	case strings.HasPrefix(s, "tbl"):
+		return "tbl"
 	case strings.HasPrefix(s, "result"):
 		return "result"
 	}
@@ -90,6 +92,7 @@ var receiverNames = map[builtins.TypeKey]string{
 	builtins.TypeListAny:   "list",
 	builtins.TypeDictAny:   "dict",
 	builtins.TypeVectorAny: "vec",
+	builtins.TypeTableAny:  "tbl",
 }
 
 // catalogSignature renders a builtin as name(a: T, ...) R. The catalog has

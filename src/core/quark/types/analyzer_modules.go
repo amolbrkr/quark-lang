@@ -62,6 +62,11 @@ type Analysis struct {
 	// TableReads are the calls of csv::read_file and csv::parse_text, which
 	// lowering turns into calls of the native reader with the row type.
 	TableReads map[*ast.TreeNode]*TableRead
+	// Queries are the table queries by QueryNode; ColumnRefs maps every
+	// e.col of a verb expression to the column's index in the row the
+	// expression reads.
+	Queries    map[*ast.TreeNode]*Query
+	ColumnRefs map[*ast.TreeNode]int
 }
 
 // Analysis returns the analyzer outputs for root, which must be the tree
@@ -81,6 +86,8 @@ func (a *Analyzer) Analysis(root *ast.TreeNode) *Analysis {
 		FnRefs:           a.fixedRefs,
 		HoistScopes:      a.hoistScopes,
 		TableReads:       a.tableReads,
+		Queries:          a.queries,
+		ColumnRefs:       a.columnRefs,
 	}
 }
 

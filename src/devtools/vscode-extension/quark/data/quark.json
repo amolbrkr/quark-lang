@@ -237,6 +237,20 @@
         "signature": "slice(int) str"
       }
     ],
+    "tbl": [
+      {
+        "name": "head",
+        "signature": "head() tbl"
+      },
+      {
+        "name": "tail",
+        "signature": "tail() tbl"
+      },
+      {
+        "name": "describe",
+        "signature": "describe()"
+      }
+    ],
     "vec": [
       {
         "name": "get",

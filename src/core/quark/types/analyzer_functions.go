@@ -104,6 +104,15 @@ func (a *Analyzer) collectFreeVars(node *ast.TreeNode, lambdaScope *Scope, param
 	// Names bound by a nested construct are local to that construct, even
 	// when an outer variable has the same name. Their scopes are already
 	// popped when this walk runs, so they must be tracked here explicitly.
+	// A query's row name is bound in its steps.
+	if node.NodeType == ast.QueryNode && len(node.Children) >= 2 {
+		a.collectFreeVars(node.Children[0], lambdaScope, params, seen, result, syms)
+		rowParams := withParam(params, node.Children[1].TokenLiteral())
+		for _, step := range node.Children[2:] {
+			a.collectFreeVars(step, lambdaScope, rowParams, seen, result, syms)
+		}
+		return
+	}
 	if node.NodeType == ast.ForLoopNode && len(node.Children) >= 3 {
 		a.collectFreeVars(node.Children[1], lambdaScope, params, seen, result, syms)
 		loopParams := withParam(params, node.Children[0].TokenLiteral())
@@ -196,7 +205,9 @@ func (a *Analyzer) analyzeLambda(node *ast.TreeNode) Type {
 	if annotatedReturnType != nil {
 		a.expect(lastValue(bodyNode), annotatedReturnType)
 	}
+	a.lambdaDepth++
 	returnType := a.Analyze(bodyNode)
+	a.lambdaDepth--
 
 	freeVars := []string{}
 	freeSyms := []*Symbol{}

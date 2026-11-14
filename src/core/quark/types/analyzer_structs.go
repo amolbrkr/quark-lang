@@ -191,5 +191,15 @@ func (a *Analyzer) checkStructEquality(node *ast.TreeNode, leftType, rightType T
 		a.errorAt(node, "operator '%s' is not defined for struct values; compare fields explicitly", opStr)
 		return true
 	}
+	_, leftTable := leftType.(*TableType)
+	_, rightTable := rightType.(*TableType)
+	if leftTable || rightTable {
+		opStr := "=="
+		if op == token.NE {
+			opStr = "!="
+		}
+		a.errorAt(node, "operator '%s' is not defined for tables; compare their columns (t.col == u.col compares elementwise)", opStr)
+		return true
+	}
 	return false
 }

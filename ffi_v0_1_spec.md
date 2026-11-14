@@ -1,7 +1,7 @@
 # Quark FFI v0.1 Spec
 
-Status: Phase 1 implemented 2026-11-04 (native library directives, CLI search paths, int→float widening at the boundary, build diagnostics `QK-FFI-001`–`003`, `libqffi_test`, `std/blas`). Since then: function values cross the boundary as `QClosure*` (2026-11-12), and native code is held to the element-type and `null` rules (2026-11-13). Not implemented: separately compiled glue (P2; `extern source` is a parse error), extension handles (P3, `QK-FFI-004`), `qext` result helpers (P4), the Arrow bridge (P5), tables from native code (P6), and the SQLite and DuckDB providers. The table decisions of 2026-11-13 (`tables_v0_1_spec.md`) put the native eager table engine first and make DuckDB a later, optional provider (D1); P5 and P6 follow that spec (§4).
-Last Updated: 2026-11-13
+Status: Phase 1 implemented 2026-11-04 (native library directives, CLI search paths, int→float widening at the boundary, build diagnostics `QK-FFI-001`–`003`, `libqffi_test`, `std/blas`). Since then: function values cross the boundary as `QClosure*` (2026-11-12), native code is held to the element-type and `null` rules (2026-11-13), and a bare `tbl` crosses it as a `QTable*` (2026-11-13, the part of P6 `std/csv` needs). Not implemented: separately compiled glue (P2; `extern source` is a parse error), extension handles (P3, `QK-FFI-004`), `qext` result helpers (P4), the Arrow bridge (P5), building tables in glue code (the rest of P6), and the SQLite and DuckDB providers. The table decisions of 2026-11-13 (`tables_v0_1_spec.md`) put the native eager table engine first and make DuckDB a later, optional provider (D1); P5 and P6 follow that spec (§4).
+Last Updated: 2026-11-14
 Canonical for native interop: `extern` declarations, linking, the `qext` API, handles. Related: `semantics.md` §10.8 (language summary), `architecture.md` §7–8 (pipeline and resource registry), `tables_v0_1_spec.md`.
 
 ## Contents
@@ -219,9 +219,9 @@ Conformance (tables §11):
 
 A provider such as DuckDB returns tables whose columns are known only when the query runs.
 
-- **Runtime.** A table is a `QTable` whose `QStructDef` names its columns (`table/engine.hpp`). The CSV reader already builds a GC-allocated `QStructDef` at runtime for a file read without a schema (`table/csv.hpp`). P6 exposes the same to glue: `qext::new_table(names, columns, n)`.
-- **Typing** follows the tables spec. A native function returning a table is annotated `tbl`. Such a table has no row struct the compiler knows, so it can be printed, rendered with `fmt::table` and written, but a query on it is a compile error until runtime-checked queries arrive with the inference extension (D11, tables §10). Whether a native table can be given a row struct with `t: tbl[Employee] = ...`, checked against the struct at runtime the way `csv::read_file` checks a file, is open (§8.2).
-- P6 starts after the `tbl` type exists in the compiler (tables §9).
+- **Signatures** (implemented). An `extern fn` takes and returns a bare `tbl` as a `QTable*` (`q_as_table`, `qv_table_ptr`; a null pointer returned is an error). `tbl[R]` in an extern signature is a compile error: native code can't know `R`'s definition, so a Quark wrapper carries the annotation.
+- **Runtime.** A table is a `QTable` whose `QStructDef` names its columns and carries their column types (`field_dtypes`) and an `anonymous` flag (`types/struct.hpp`). The CSV reader builds such an anonymous definition at runtime for a file read without a schema (`table/csv.hpp`). P6 exposes the same to glue: `qext::new_table(names, columns, n)` (planned).
+- **Typing** follows the tables spec. A native function returning a table is annotated `tbl`. Such a table has no row struct the compiler knows, so it can be printed, rendered with `fmt::table` and written, but not queried. Given a row struct where it is stored (`t: tbl[Employee] = native_table()`, a `tbl[Employee]` parameter), it is checked against the struct at runtime like any table of unknown row (tables §3.4): an anonymous row of the struct's shape is relabeled, anything else is a runtime error; from then on it can be queried.
 
 ## 5. Providers
 
@@ -342,7 +342,7 @@ duck::close(db)
 | `open(path: str)` | `result` (database handle) | `':memory:'` for in-memory |
 | `connect(db: resource)` | `result` (connection handle) | The connection keeps the database alive (P3 parent) |
 | `exec(con: resource, sql: str)` | `result` (int rows changed) | DDL and DML |
-| `query(con: resource, sql: str)` | `result` (dict of column name → vector, or `tbl`, §8.2) | |
+| `query(con: resource, sql: str)` | `result` (dict of column name → vector, or `tbl`, §8.2 q5) | |
 | `close(h: resource)` | `null` | Idempotent; either handle kind |
 | `version()` | `str` | `duckdb_library_version()` |
 
@@ -404,8 +404,7 @@ Phase 4 depends on the `tbl` type in the compiler (`tables_v0_1_spec.md` §9).
 2. **Fetching libduckdb.** A fetch script into `deps/duckdb/`, or a user-installed library only?
 3. **Unsupported column types.** For `DECIMAL` and temporal types: an error with a cast hint (proposed), or automatic conversion (`DECIMAL` → f64, `TIMESTAMP` → i64 microseconds) with documented precision loss? The same applies to SQLite. Once tables have a `date` type (tables §9), `DATE` maps to it.
 4. **Named handle kinds.** Plain `resource` (proposed), or `resource[duckdb.connection]` annotations?
-5. **What `query` returns.** A dict of column name → vector in phases 2 and 3, or a `tbl` from the start, since the native `tbl` type is planned before DuckDB?
-6. **Typing native tables.** Can a table from native code be given a row struct (`t: tbl[Employee] = unwrap(duck::query(...))`), checked against the struct at runtime like `csv::read_file`, so it can be queried before tables §10?
+5. **What `query` returns.** A dict of column name → vector in phases 2 and 3, or a `tbl` from the start, now that the native `tbl` type exists?
 
 ## 9. Security
 

@@ -20,6 +20,7 @@ The prelude builtins (available everywhere without an import) and the stdlib mod
 - [Vectors (`vec`)](#vectors-vec)
   - [Vector methods](#vector-methods)
   - [Reductions](#reductions)
+- [Tables (`tbl`)](#tables-tbl)
 - [Stdlib modules](#stdlib-modules)
 - [`std/io`](#stdio)
 - [`std/fmt`](#stdfmt)
@@ -68,6 +69,7 @@ Builtin names can't be redefined or assigned (`len = 1`, `fn print(x) -> ...` ar
 - Structs: `Point {x: 1, y: 2}`; results: `ok 5`, `err 'boom'`; files: `<resource file>`.
 - A collection with more than 100 items shows its first and last 5 and a count: `[0, 1, 2, 3, 4, ..., 995, 996, 997, 998, 999] (1000 items)`. `fmt::full(x)` shows every item. A container that contains itself prints `[...]` at the repeat.
 - Floats print as the shortest text that reads back as the same number, with `.0` on whole values: `4.0`, `0.1`, `1.4142135623730951`, `1e+16`, `inf`, `nan`. So `0.1 + 0.2` prints `0.30000000000000004`.
+- Tables print their type and row count, the column names and types, and the first 10 rows ([Tables](#tables-tbl)); inside a collection, a table is `<tbl[Emp], 5 rows>`.
 
 ### Element types of returned lists
 
@@ -407,6 +409,37 @@ print(any(vi > 3))                      // true
 
 ---
 
+## Tables (`tbl`)
+
+A table is made by `std/csv` or a query (semantics.md §9.5, `tables_v0_1_spec.md`); `t.col` is a column as a vec. Its methods (D25):
+
+| Method | Signature | Description |
+|---|---|---|
+| `head` | `t.head(n: int = 6) -> tbl` | The first `n` rows, as a table of the same type (all of them when there are fewer). A negative `n` is a runtime error |
+| `tail` | `t.tail(n: int = 6) -> tbl` | The last `n` rows |
+| `describe` | `t.describe(n: int = 5)` | Prints one line per column: its name, its type and its first `n` values |
+
+`print(t)` shows at most 10 rows and counts the rest; `fmt::full(t)` shows all of them. Numbers are right-aligned, strings left-aligned and unquoted (a line break in one shows as `\n`, and a long one is cut at 32 characters with `...`), and a missing value is `null`. A table with an anonymous row shows `tbl` on its first line; the types are under the column names.
+
+```quark
+staff.describe()
+// tbl[Emp]: 5 rows, 4 columns
+// id      int    1, 2, 3, 4, 5
+// name    str    'Ann', 'Bo', 'Cy', 'Di', 'Ed'
+// dept    str    'eng', 'ops', 'eng', 'ops', null
+// salary  float  120000.0, 90000.5, null, 150000.0, 80000.0
+
+print(staff | e -> group_by(e.dept) | summarize(n = count()))
+// tbl: 3 rows
+// dept    n
+// str   int
+// eng     2
+// ops     2
+// null    1
+```
+
+---
+
 ## Stdlib modules
 
 Each module is a `.qrk` file in `src/core/stdlib/` whose API is a `module` block named like the file, so its functions are `io::open`, `fmt::show_vec`, ... Nothing from an import is visible unqualified, so a program's own names never clash with the stdlib's.
@@ -528,29 +561,36 @@ Run it with `quark run tool.qrk -- data.csv`, or build it once with `quark build
 
 ## `std/csv`
 
-**Slated for replacement** (`tables_v0_1_spec.md` D15, D17): this module will be removed and rebuilt on the typed table reader, as `csv::read_file`, `csv::write_file` and `csv::parse_text`, returning tables. `csv::parse` and `csv::read` will go away.
-
-The current module reads CSV into rows of strings. Every field is a `str`; convert with `to_int` / `to_float`. Import with `incl 'std/csv' as csv`.
+CSV and TSV files as tables (`tables_v0_1_spec.md` §8, D15-D18). Import with `incl 'std/csv'`.
 
 | Function | Signature | Description |
 |---|---|---|
-| `parse` | `text: str, sep: str = ',' -> list` | Rows of a CSV string, each a list of `str`. An unterminated quote is a runtime error |
-| `read` | `path: str, sep: str = ',' -> result` | `ok(rows)` for a CSV file, or `err(message)` when it can't be read or has an unterminated quote |
+| `read_file` | `path: str, columns: dict = dict {} -> result` | `ok(table)` for the file at `path`, or `err(message)`. A path ending in `.tsv` or `.tab` is tab-separated, any other comma-separated |
+| `parse_text` | `text: str, columns: dict = dict {} -> result` | The same for CSV text |
+| `write_file` | `t: tbl, path: str -> result` | Writes a header line, then a line per row; `ok(null)` or `err(message)` |
+| `format_text` | `t: tbl -> str` | The text `write_file` writes |
 
-Fields may be quoted with `"..."`; a quoted field can contain the separator, line breaks and doubled quotes (`""` is one `"`). Lines end with `\n` or `\r\n`; blank lines are skipped. `sep` must be one character (`';'`, `'\t'`, ...); anything else is a runtime error. The header row is returned like any other row.
+**Typed by where the table goes.** When the read's table is stored where a `tbl[R]` is expected, the file is read with `R`'s columns and types: an annotated variable (`staff: tbl[Employee] = unwrap(csv::read_file('staff.csv'))`), a `tbl[R]` parameter, a struct field or a return annotation. A cell that doesn't parse as its column's type is an error naming the line, the column and the text: `staff.csv:412: column 'salary': '12k' is not a float (and 3 more problems)`. Elsewhere (`t = unwrap(csv::read_file(p))`, `when csv::read_file(p): ...`) each column's type is inferred from all of its values: int if every value is an int, else float if every value is a number, else bool (`true`/`false`, `TRUE`/`FALSE`, `True`/`False`, `T`/`F`), else str. Such a table's row type is unknown to the compiler (`tbl`) until it reaches a `tbl[R]` slot, where it is checked (semantics.md §9.5).
 
-Text after a closing quote is accepted instead of rejected: `csv::parse('a,"b"x,c')` returns `[['a', 'bx', 'c']]` (known_issues.md).
+**Columns are matched by name**, so a file may have more columns than the struct and in another order. `columns` maps fields to header names that differ: `csv::read_file('emp.csv', dict { id: 'EmpID', salary: 'Salary ($)' })`; unmapped fields use their own name. The mapping must be a `dict` literal of string literals, and its fields are checked against the row struct at compile time. A column missing from the header is an error that says how to map it: `emp.csv: no column named 'id' in the header (columns: EmpID, name); map field 'id' to one of them with dict { id: '...' }`. For an untyped read, the mapping names the table's columns.
+
+**Format.** Fields may be quoted with `"..."`; a quoted field may contain the separator, line breaks and `""` (one `"`). Lines end with `\n`, `\r\n` or `\r`; a UTF-8 byte-order mark is skipped; blank lines are skipped; spaces around unquoted values are trimmed. Empty and `NA` cells, quoted or not, are missing values in every column. A row with the wrong number of fields, an unterminated quote, text after a closing quote, a duplicated header name, an empty file and an int that overflows are errors; the first problem is reported with the number of others. Str cells and header names must be valid UTF-8 without NUL bytes (`emp.csv:12: column 'name' is not valid UTF-8 (the file may be Latin-1 or another encoding)`).
+
+**Writing.** Missing values are empty fields; strings are quoted when they contain the separator, a quote, a line break or surrounding spaces; floats are written in the shortest form that reads back the same.
 
 ```quark
-incl 'std/csv' as csv
+incl 'std/csv'
 
-rows = csv::parse('name,city\n"Smith, J",NYC\n')
-print(len(rows))                 // 2
-print(rows.get(1).get(0))        // Smith, J
+struct Employee:
+    id: int
+    name: str
+    salary: float
 
-when csv::read('sales.csv'):
-    ok rows -> print(len(rows))
-    err e -> print(e)            // csv.read: sales.csv: No such file or directory
+staff: tbl[Employee] = unwrap(csv::read_file('staff.csv'))
+rich = staff | e -> filter(e.salary > 100_000)
+when csv::write_file(rich, 'rich.csv'):
+    ok _ -> print('written')
+    err e -> print(e)
 ```
 
 ---
@@ -686,7 +726,7 @@ list [1, 2] | len() | print()                                         // 2
 | Invalid value at runtime | Runtime error | `to_int('abc')`, `unwrap(err('x'))`, `range(1, 5, 0)` |
 | Domain error | Runtime error | `list [].pop()`, `sqrt(-1)`, `min()` of an empty vector, `xs.set(99, 1)`, `xs[99]`, `'abc'[5]` |
 | Missing dict key read with `d.key` | Runtime error | `dict {a: 1}.zz` |
-| Failure caused by the environment | `err(...)` result | `io::open('missing.txt')`, `csv::read(path)` |
+| Failure caused by the environment | `err(...)` result | `io::open('missing.txt')`, `csv::read_file(path)` |
 
 Truthiness is not an error: `if 1:` and `while 'yes':` follow `to_bool`.
 

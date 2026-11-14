@@ -15,6 +15,8 @@ func (a *Analyzer) checkCondition(node *ast.TreeNode, t Type) {
 		a.errorAt(node, "result cannot be used as a condition; use is_ok(r), is_err(r) or when")
 	case *VectorType:
 		a.errorAt(node, "vec cannot be used as a condition; use all(v), any(v) or len(v) > 0")
+	case *TableType:
+		a.errorAt(node, "a table cannot be used as a condition; test a column, such as len(t.col) > 0 or any(t.col > 0)")
 	}
 }
 

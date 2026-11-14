@@ -244,6 +244,8 @@ func TestTables_Query(t *testing.T) {
 		q("continuation_lines", "r = staff | e -> filter(e.salary > 0.0)\n    | sort(e.salary)\n    | head(2)\nprint(r.name)\n", "['Ed', 'Bo']"),
 		q("query_of_query", "a = staff | e -> mutate(k = e.id * 2)\nb = a | x -> filter(x.k > 4) | mutate(j = x.k + 1)\nprint(b.j)\nprint(type(b))\n",
 			"[7, 9, 11]\ntbl[{id: int, name: str, dept: str, salary: float, k: int, j: int}]"),
+		q("anonymous_reassign", "x = staff | e -> mutate(k = e.id * 2)\nx = staff | e -> mutate(k = 7)\nprint(x.k.to_list()[0])\nz = staff | e -> mutate(d = 1) | mutate(k = 3)\nw = staff | e -> mutate(k = 3) | mutate(d = 1)\nw = z\nprint(type(w))\n",
+			"7\ntbl[{id: int, name: str, dept: str, salary: float, k: int, d: int}]"),
 		q("nan_in_filter", "r = staff | e -> mutate(z = to_float('nan') + e.salary) | filter(e.z == e.z or e.z > 0.0)\nprint(len(r.id))\n", "0"),
 		{name: "in_module", files: map[string]string{"staff.csv": queryCSV, "lib.qrk": "struct Emp:\n    id: int\n    name: str\n    dept: str\n    salary: float\nmodule lib:\n    fn rich(t: tbl[Emp]) -> t | e -> filter(e.salary > 100000.0)\n"},
 			source: "incl 'std/csv'\nincl './lib'\ne = 'main e'\nfn load(p: str) tbl[lib::Emp] -> unwrap(csv::read_file(p))\nprint(lib::rich(load('staff.csv')).name)\nprint(e)\n",
@@ -323,6 +325,7 @@ func TestTables_QueryRejected(t *testing.T) {
 			"column 'n' is int, but S declares it str"),
 		q("result_field_missing", "struct S:\n    dept: str\n    n: int\n    x: int\nr: tbl[S] = staff | e -> group_by(e.dept) | summarize(n = count())\n",
 			"S has a field 'x', but the table has no column 'x'"),
+		q("anonymous_reassign_type", "x = staff | e -> mutate(k = 1)\nx = staff | e -> mutate(k = 1.5)\n", "column 'k' is float, but the row {id: int, name: str, dept: str, salary: float, k: int} declares it int"),
 		q("result_param", "struct S:\n    n: int\nfn f(t: tbl[S]) -> 1\nf(staff | e -> summarize(m = count()))\n", "argument 1 of 'f' expects tbl[S], got tbl[{m: int}]: the table has a column 'm', but S has no field 'm'"),
 	})
 }
@@ -361,5 +364,31 @@ func TestTables_Inspect(t *testing.T) {
 		{name: "describe_negative", files: files, source: queryPre + "staff.describe(-1)\n", err: "describe(n) needs n >= 0, got -1"},
 		{name: "head_on_list", source: "print(list [1].head())\n", err: "type 'list[int]' has no method 'head'"},
 		{name: "head_on_any_list", source: "fn id(x) -> x\nprint(id(list [1]).describe())\n", err: "has no method 'describe'"},
+	})
+}
+
+// TestTables_ValueRejected: what a table value isn't (immutable, not
+// indexable, no ==, not a condition, not iterable), at compile time and
+// through `any`.
+func TestTables_ValueRejected(t *testing.T) {
+	files := map[string]string{"staff.csv": queryCSV}
+	pre := queryPre + "fn id(x) -> x\n"
+	q := func(name, body, err string) tableCase {
+		return tableCase{name: name, files: files, source: pre + body, err: err}
+	}
+	runTableCases(t, []tableCase{
+		q("assign_column", "staff.salary = vec [1.0]\n", "only dict members are assignable"),
+		q("assign_column_any", "u = id(staff)\nu.salary = 1\n", "cannot set member 'salary' on non-dict type"),
+		q("index", "print(staff[0])\n", "type 'tbl[Emp]' is not indexable"),
+		q("index_any", "print(id(staff)[0])\n", "cannot index a tbl"),
+		q("equality", "print(staff == staff)\n", "operator '==' is not defined for tables; compare their columns"),
+		q("inequality", "print(staff != staff.head(1))\n", "operator '!=' is not defined for tables"),
+		q("equality_any", "print(id(staff) == id(staff))\n", "'==' is not defined for tables"),
+		q("equality_in_list", "print(list [id(staff)] == list [id(staff)])\n", "'==' is not defined for tables"),
+		q("condition", "if staff:\n    print(1)\n", "a table cannot be used as a condition"),
+		q("condition_any", "if id(staff):\n    print(1)\n", "a table used as a condition"),
+		q("for_loop", "for r in staff:\n    print(r)\n", "for loop expects list, vec, or str iterable, got tbl[Emp]"),
+		q("for_loop_any", "for r in id(staff):\n    print(r)\n", "for-loop iterable must be list, string, or vec, got tbl"),
+		q("len", "print(len(staff))\n", "argument 1 of 'len' expects str, list, dict, or vec, got tbl[Emp]"),
 	})
 }

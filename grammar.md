@@ -13,7 +13,7 @@ The syntax of Quark as the compiler in `src/core/quark` accepts it: tokens (`lex
 7. [Results and when](#7-results-and-when)
 8. [Control Flow](#8-control-flow)
 9. [Types and Typed Declarations](#9-types-and-typed-declarations) ([structs](#91-structs))
-10. [Expressions](#10-expressions) ([precedence](#103-precedence-low-to-high), [pipes](#104-pipes))
+10. [Expressions](#10-expressions) ([precedence](#103-precedence-low-to-high), [pipes](#104-pipes), [queries](#105-queries))
 11. [Not in the Language](#11-not-in-the-language)
 12. [Source of Truth](#12-source-of-truth)
 
@@ -245,12 +245,14 @@ WhileLoop       ::= "while" Expression ":" Block
 TypedDecl       ::= ID ":" Type "=" Expression
 Type            ::= "int" | "float" | "str" | "bool" | "any"
                 |   "list" | "dict" | "vec" | "result" | "resource" | "fn"
+                |   "tbl" [ "[" Type "]" ]                    (a table; the type is its row struct)
                 |   TypeName                                  (a struct: Point, geo::Point)
 ```
 
 - `Type` is used in variable, parameter, struct field and return annotations.
 - `fn` is any function value; there is no signature syntax such as `fn(int) int`.
-- Element types can't be written: `x: list[int] = ...` is a parse error (planned: `tables_v0_1_spec.md` D16). `tbl` is not a type yet (`unknown type 'tbl'`; planned as `tbl[Row]`, D10).
+- `tbl[Employee]` is a table whose rows are `Employee` structs, and a bare `tbl` a table of any row (semantics.md §9.5). `tbl` is a type name, not a keyword.
+- Element types can't be written: `x: list[int] = ...` parses, but a type argument on anything but `tbl` is a compile-time error (`'list' takes no type argument`; planned: `tables_v0_1_spec.md` D16).
 - `null` is a parse error in a type position; `void` and other names are a compile-time error (`unknown type 'void'`).
 - A typed declaration needs a value: `x: int` alone is a parse error.
 
@@ -303,7 +305,7 @@ AssignTarget    ::= ID
                 |   Postfix "." ID                (dict key)
                 |   Postfix "[" Expression "]"    (list element)
 
-PipeExpr        ::= Ternary { "|" PipeTarget }
+PipeExpr        ::= Ternary { "|" PipeTarget } [ "|" Query ]
 PipeTarget      ::= Ternary                       (must be a call, §10.4)
 
 Ternary         ::= LogicalOr [ "if" LogicalOr "else" Ternary ]
@@ -399,13 +401,44 @@ The `|` goes at the start of the continuing line: a line ending with `|` is a pa
 
 What a pipe means for arity and checking: semantics.md §7.
 
+### 10.5 Queries
+
+A pipe whose target starts with a name and `->` is a table query (semantics.md §9.5):
+
+```ebnf
+Query           ::= ID "->" Step { "|" Step }
+                |   ID "->" NEWLINE INDENT Step { NEWLINE "|" Step } NEWLINE DEDENT
+Step            ::= ID "(" [ StepArg { "," StepArg } [ "," ] ] ")"
+StepArg         ::= ID "=" PipeExpr               (mutate)
+                |   ID "=" Aggregate              (summarize)
+                |   "desc" "(" PipeExpr ")"       (sort)
+                |   PipeExpr
+Aggregate       ::= ID "(" [ PipeExpr ] ")"       (count(), sum(e.x), ...)
+```
+
+```quark
+stats = staff | e ->
+    filter(e.salary >= 100_000)
+    | mutate(bonus = e.salary * 0.1)
+    | group_by(e.dept)
+    | summarize(avg = mean(e.salary), n = count())
+    | sort(desc(e.avg))
+
+top = staff | e -> sort(desc(e.salary)) | head(3)
+```
+
+- The steps continue on lines that start with `|`, as for pipes (§10.4), or form an indented block after `e ->` at the end of a line.
+- Every `| step` after `e ->` belongs to the query, so a query's result can't be piped into a function directly: `(t | e -> head(3)) | f()`. A second `| x ->` is a parse error (`a query names its row once`).
+- The verb (`filter`, `mutate`, `sort`, `group_by`, `summarize`, `head`, `tail`), the aggregate names, `desc` and the `name =` column names are part of the query, never functions or variables, so a user function named `filter` or `mean` doesn't affect them. Which verbs exist and what their arguments may be is checked by the compiler.
+- A summarize column is exactly one aggregate: `r = max(e.x) - min(e.x)` is a parse error (`a summarize column is exactly one aggregate of a column`).
+
 ## 11) Not in the Language
 
 These are not part of Quark, by decision or because they are planned in a spec:
 
 | Feature | Status |
 |---|---|
-| `tbl[Row]` type and queries (`t \| e -> verb(...)`) | Planned: `tables_v0_1_spec.md` (D3, D10); the runtime engine exists |
+| Table literals (`tbl[Employee] { id: vec [...], ... }`) | Planned: `tables_v0_1_spec.md` D19 |
 | Written element types (`list[int]`) | Planned: `tables_v0_1_spec.md` D16 |
 | `extern source` | Planned: `ffi_v0_1_spec.md` P2 |
 | `struct` inside a function body | Not supported; currently an internal error (known_issues.md) |

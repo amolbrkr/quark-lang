@@ -330,24 +330,27 @@ func RowMatch(dst, src *StructType) (ok bool, why string) {
 	if dst.Equals(src) {
 		return true, ""
 	}
-	if dst.Anonymous {
-		return false, ""
-	}
 	if !src.Anonymous {
 		return false, fmt.Sprintf("%s and %s are different structs", src.String(), dst.String())
+	}
+	// The destination may be anonymous too (a variable whose first value
+	// was a query's result): the same rule, as q_table_conform applies it.
+	name := dst.Name
+	if dst.Anonymous {
+		name = "the row " + dst.String()
 	}
 	for _, f := range src.Fields {
 		df, _ := dst.FieldByName(f.Name)
 		if df == nil {
-			return false, fmt.Sprintf("the table has a column '%s', but %s has no field '%s'", f.Name, dst.Name, f.Name)
+			return false, fmt.Sprintf("the table has a column '%s', but %s has no field '%s'", f.Name, name, f.Name)
 		}
 		if !df.Type.Equals(f.Type) && !(df.Type.Equals(TypeFloat) && f.Type.Equals(TypeInt)) {
-			return false, fmt.Sprintf("column '%s' is %s, but %s declares it %s", f.Name, f.Type.String(), dst.Name, df.Type.String())
+			return false, fmt.Sprintf("column '%s' is %s, but %s declares it %s", f.Name, f.Type.String(), name, df.Type.String())
 		}
 	}
 	for _, f := range dst.Fields {
 		if sf, _ := src.FieldByName(f.Name); sf == nil {
-			return false, fmt.Sprintf("%s has a field '%s', but the table has no column '%s'", dst.Name, f.Name, f.Name)
+			return false, fmt.Sprintf("%s has a field '%s', but the table has no column '%s'", name, f.Name, f.Name)
 		}
 	}
 	return true, ""

@@ -99,9 +99,12 @@ Truthiness applies to every condition (`if`, `elseif`, `while`, the ternary `if`
 | `resource` | the handle is open (not closed or stale) |
 | `struct` | always |
 | `vec` | **error**: use `all(v)`, `any(v)` or `len(v) > 0` |
+| `tbl` | **error**: test a column, such as `len(t.col) > 0` |
 | `result` | **error**: use `is_ok(r)`, `is_err(r)` or `when` |
 
-**Results and vectors are rejected as conditions.** Treating an `err` as false would silently discard the error. A vector comparison such as `v == w` yields a `vec[bool]`, so its emptiness says nothing about whether the elements matched. Using either as a condition, with `!`, or as an `and`/`or` operand is a compile-time error when the type is known and a runtime error otherwise.
+**Results, vectors and tables are rejected as conditions.** Treating an `err` as false would silently discard the error. A vector comparison such as `v == w` yields a `vec[bool]`, so its emptiness says nothing about whether the elements matched, and a table holds columns of such values. Using one as a condition, with `!`, or as an `and`/`or` operand is a compile-time error when the type is known and a runtime error otherwise.
+
+In a query's verb expressions (§9.5) there is no truthiness: `and`, `or`, `!` and a ternary's condition take bools.
 
 ---
 
@@ -153,6 +156,7 @@ Ordering any other pair, such as `'a' < 1` or `true < false`, is a runtime error
 | `fn` | the same function value (`f == f`; two lambdas with the same body are different) |
 | `vec` | element-wise, giving `vec[bool]`. A vector nested in a list, dict or result compares as a whole: same dtype, length, null positions and values |
 | `struct` | compile-time error; compare fields explicitly |
+| `tbl` | error (compile time, or runtime through `any`); compare columns, `t.col == u.col` |
 
 Comparing a `result` with `null` is a compile-time error, since a result is never null. `==` that nests deeper than 512 levels (a container that contains itself) is a runtime error.
 
@@ -256,7 +260,7 @@ A lambda can capture variables from any enclosing scope; a lambda nested in a la
 
 ### 6.4 Default parameters
 
-Default values must be literals: an int, float, string, bool, `null`, a negated number, or an empty `list []`. Required parameters must come before defaulted ones. A default must fit the parameter's annotation, so `xs: list = null` is an error (write `xs: list = list []`).
+Default values must be literals: an int, float, string, bool, `null`, a negated number, an empty `list []` or an empty `dict {}` (a new list or dict for every call). Required parameters must come before defaulted ones. A default must fit the parameter's annotation, so `xs: list = null` is an error (write `xs: list = list []`).
 
 When the compiler knows which function is called, omitted trailing arguments are filled in at the call site. A call through a function value fills them in at runtime (§6.5). Either way a default is built fresh for every call, so an empty-list default is never shared between calls. A pipe counts its input as the first argument: `5 | add_n()` fills the default of `add_n`'s second parameter.
 
@@ -358,6 +362,37 @@ The methods are listed in stdlib.md.
 - Comparisons between `vec[i64]` and floats, or `vec[i64]` and `vec[f64]`, promote to float. `astype('i64')` of a NaN or out-of-range float is a runtime error.
 - A vector can hold missing entries (for example from `to_vec()` of a list with `null` in it). Operations on the whole vector keep them (arithmetic, comparisons) or skip them (reductions); `fillna` replaces them and `drop_na` removes them. Taking one out as a single value (`v[i]`, `for x in v`, `to_list()`, `enumerate()`) is a runtime error naming `fillna` and `drop_na`, so a missing entry never reads as a number. `v.get(i)` returns `null` for one and has type `any`.
 - Storage follows the Apache Arrow columnar layout, so buffers can be shared with Arrow-compatible libraries without copying (architecture.md, `QVector`).
+
+### 9.5 Tables
+
+A table (`tbl`) is an immutable, in-memory, columnar set of rows: one vec per column, all of one length, in the Arrow layout. Its design and decisions are in `tables_v0_1_spec.md`.
+
+**Types.** `tbl[R]` is a table whose rows are the struct `R`: its columns are `R`'s fields, in field order, with their types, which must be `int`, `float`, `bool` or `str` (`struct S can't be a table row: field 'xs' is list[any]`). A bare `tbl` is a table whose row type the compiler doesn't know: it can be printed, written and passed on, but its columns can't be read and it can't be queried until it reaches a `tbl[R]` slot. A query step's output has an *anonymous* row, written by its shape: `tbl[{dept: str, n: int}]`. A table is never `null`.
+
+**Columns.** `t.salary` on a `tbl[Employee]` is the column as a `vec[float]` (no copy); an unknown column is a compile-time error that lists the columns. There is no cell or column assignment, no `t[i]`, no iteration over rows (`for r in t`), and no `==` (§4.2); `len(t)` isn't defined (use `len(t.col)`).
+
+**Matching rows by shape.** Where a table is stored (a variable, parameter, struct field or return value of type `tbl[R]`, whether `R` is a struct or an anonymous row, as for a variable whose first value was a query's result), a table of row `R` is stored as it is. One with an anonymous row matches when its columns are exactly `R`'s fields: the same names (in any order) and types, where an `int` column also fills a `float` field. It is then relabeled `R`, its columns put in field order and int columns converted. Two named structs never match, even with the same fields. The compiler checks this when it knows both rows and names the difference (`the table has a column 'avg', but DeptStats has no field 'avg'`; `column 'n' is int, but S declares it str`); a table of unknown row (a bare `tbl`, or a value of type `any`) is checked when it is stored: `variable 'v' is declared tbl[Emp] but got tbl[{id: int, name: str}]`. Containers share their elements, so a list of `tbl[R]` holds tables of row `R` only, with no relabeling.
+
+**Creating tables.** `csv::read_file` and `csv::parse_text` (`stdlib.md`, `std/csv`) read a table, with the column types of the row struct where the expected type names one (`staff: tbl[Employee] = unwrap(csv::read_file('staff.csv'))`, a `tbl[R]` parameter, field or return annotation), and with inferred column types otherwise. Queries make new tables from tables.
+
+**Queries.** `t | e -> verb(...) | verb(...)` runs verbs on `t` in order (`grammar.md` §10.5). `e` names the row of each step's input: inside a verb's arguments it is read only as `e.col`, it shadows an outer variable of that name, and a function written inside a verb can't read it. The compiler follows the row type through every step, so every column a query reads is checked at compile time; the source must be a table whose row type it knows.
+
+| Step | Result |
+|---|---|
+| `filter(cond)` | The rows where `cond` (a bool) is true; rows where it is false or missing are dropped |
+| `mutate(name = expr, ...)` | The input's columns with each new column added at the end, or a column of the same name replaced in place (its type may change). Columns are computed in the order written, and each expression sees the columns written before it in the same `mutate` |
+| `sort(e.a, desc(e.b))` | The rows ordered by the key columns, stable, missing values last (NaN after numbers, before missing values) in either direction |
+| `group_by(e.k, ...)` then `summarize(...)` | One row per distinct key, in key order (missing keys last): the key columns, then the summarize columns. `group_by` must be followed directly by `summarize` |
+| `summarize(name = agg(e.col), ...)` | Without `group_by`, one row for the whole table. Each column is one aggregate of one column: `count()` (rows), `count(e.col)` (present values), `sum`, `mean`, `min`, `max` |
+| `head(n)`, `tail(n)` | The first or last `n` rows (6 by default); `n` is computed once and may not read the row |
+
+Sort and group keys and aggregate arguments are columns, not expressions: to sort, group or aggregate by a computed value, `mutate` it first. A verb expression may use arithmetic, comparisons, `and`/`or`/`!`, `x if c else y`, literals, outer variables and calls of builtins, methods and functions with known return types; the column a `mutate` computes must have a column type. Each expression runs once per row, in row order.
+
+Aggregates: `sum` of an int or bool column is an int (overflow is a runtime error), of a float column a float; `mean` is a float (of a bool column, the share of true values); `min` and `max` keep the column's type, and compare strings by bytes.
+
+**Missing values.** A column may hold missing values (empty or `NA` CSV cells). Aggregates skip them, and NaN in float columns: `sum` of no values is 0, `count()` counts every row, and `mean`, `min` and `max` of no values are missing. In a verb expression, a part that reads a missing value is missing, without running it: `e.salary * 0.1` is missing where `salary` is, and a function call whose arguments read a missing value isn't made for that row. `and`, `or`, `!` and `x if c else y` follow SQL's three-valued logic instead: `true or <missing>` is true, `false and <missing>` is false, other combinations with a missing operand are missing, and a ternary with a missing condition is missing. A missing `filter` condition drops the row. Taking a missing value out of a column as one value (`v[i]`, `for x in t.col`) is a runtime error (§9.4).
+
+**Inspection.** `print(t)` shows the table's type and row count, the column names and types, and its first 10 rows (`fmt::full(t)` shows all), a missing value as `null`; inside a list it prints as `<tbl[Emp], 5 rows>`. `t.head(n)` and `t.tail(n)` (6 by default) are tables of the same type, and `t.describe(n)` prints one line per column with its name, type and first `n` values (5 by default).
 
 ---
 
@@ -529,9 +564,9 @@ A result has no truthiness (§3). Storing a result where a non-result type is de
 
 ### 13.1 Available types
 
-Variable, parameter, struct field and return annotations: `int`, `float`, `str`, `bool`, `list`, `dict`, `vec`, `result`, `resource`, `fn`, `any`, and struct names (qualified for another file: `geo::Point`). `fn` accepts any function value; it has no signature, and how the body calls the parameter is checked against the function passed instead (§6.5).
+Variable, parameter, struct field and return annotations: `int`, `float`, `str`, `bool`, `list`, `dict`, `vec`, `result`, `resource`, `fn`, `any`, struct names (qualified for another file: `geo::Point`), and tables: `tbl[R]` for a table whose rows are the struct `R`, and a bare `tbl` for a table of any row (§9.5). `fn` accepts any function value; it has no signature, and how the body calls the parameter is checked against the function passed instead (§6.5).
 
-`null` and `void` are not annotations; `void` appears only in inferred types, such as a non-exhaustive `when`. Element types can't be written: `list[int]` is a parse error, and a `list` annotation holds any element type. The compiler infers element types (§9.1) and shows them in messages (`list[int]`, `dict[str, int]`). Written element types are planned (`list[T]`, `tables_v0_1_spec.md` D16).
+`null` and `void` are not annotations; `void` appears only in inferred types, such as a non-exhaustive `when`. Element types can't be written: `list[int]` is a compile-time error (`'list' takes no type argument`), and a `list` annotation holds any element type. The compiler infers element types (§9.1) and shows them in messages (`list[int]`, `dict[str, int]`). Written element types are planned (`list[T]`, `tables_v0_1_spec.md` D16).
 
 ### 13.2 Parameter annotations
 
@@ -544,7 +579,7 @@ Each annotated parameter is enforced, whether or not the function's other parame
 - When the argument's type is known at compile time, it is checked then (`argument 1 of 'foo' expects int, got str`), at no runtime cost.
 - When it isn't (`any`, for example the result of `unwrap` or of an unannotated function), it is checked on entry to the function, and a mismatch is a runtime error naming the parameter: `argument 'x' of 'foo' expects int, got str`. Calls through function values, pipes and default arguments are covered too.
 - An `int` passed to a `float` parameter is converted to `float`.
-- `null` is accepted only by `any`, struct and `resource` annotations. `list`, `dict`, `vec` and `fn` mean a list, dict, vec or function (an optional list parameter is written `xs: list = list []`; use `any` for a value that may be null). A `result` is always `ok(...)` or `err(...)`, so `null` can't be passed, stored, returned or used as a default where a `result` is expected.
+- `null` is accepted only by `any`, struct and `resource` annotations. `list`, `dict`, `vec`, `tbl` and `fn` mean a list, dict, vec, table or function (an optional list parameter is written `xs: list = list []`; use `any` for a value that may be null). A `result` is always `ok(...)` or `err(...)`, so `null` can't be passed, stored, returned or used as a default where a `result` is expected.
 
 A parameter without an annotation but with a literal default takes the default's type and is enforced the same way: `fn foo(y = 0)` has an `int` parameter, so `foo('a')` is a compile-time error and `foo(v)` with a `v` of unknown type is checked on entry. A `null` default gives no type. A parameter with both an annotation and a default needs a default that fits the annotation.
 

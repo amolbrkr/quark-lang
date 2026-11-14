@@ -17,6 +17,10 @@ func (a *Analyzer) analyzeIdentifier(node *ast.TreeNode) Type {
 		a.errorAt(node, "undefined identifier '%s'", name)
 		return TypeError
 	}
+	if sym.Kind == SymRow {
+		a.errorAt(node, "'%s' is the query's row: read its columns as %s.col (it isn't a value of its own)", name, name)
+		return TypeError
+	}
 	a.refs[node] = sym
 	if f := a.fixedFnOf(sym); f != nil {
 		a.fixedRefs[node] = f
@@ -52,6 +56,9 @@ func (a *Analyzer) analyzeMember(node *ast.TreeNode) Type {
 		a.errorAt(node, "malformed dot access expression")
 		return TypeError
 	}
+	if t, ok := a.rowRead(node); ok {
+		return t
+	}
 	targetType := a.Analyze(node.Children[0])
 	if IsErrorType(targetType) {
 		return TypeError
@@ -71,6 +78,18 @@ func (a *Analyzer) analyzeMember(node *ast.TreeNode) Type {
 			return TypeError
 		}
 		return field.Type
+	case *TableType:
+		// t.col is the column as a vec (tables_v0_1_spec.md §3).
+		if t.Row == nil {
+			a.errorAt(node, "the row type of this table isn't known, so its columns aren't either; give it a row struct where it is created or passed (t: tbl[Employee])")
+			return TypeError
+		}
+		field, _ := t.Row.FieldByName(member)
+		if field == nil {
+			a.errorAt(node, "%s has no column '%s' (columns: %s)", t.String(), member, columnList(t.Row))
+			return TypeError
+		}
+		return &VectorType{ElementType: field.Type}
 	default:
 		if isUnknownType(targetType) {
 			return TypeAny
@@ -103,6 +122,9 @@ func (a *Analyzer) analyzeUnary(node *ast.TreeNode) Type {
 	case token.BANG:
 		// Uses truthiness (§4.3). Always returns bool.
 		a.checkCondition(node.Children[0], operandType)
+		if !a.rowCondition(node.Children[0], operandType, "'!'") {
+			return TypeError
+		}
 		return TypeBool
 	}
 	a.errorAt(node, "unsupported operator '%s'", node.Token.Type.String())
@@ -237,6 +259,9 @@ func (a *Analyzer) assignName(target, value *ast.TreeNode) Type {
 			return rightType
 		}
 	}
+	if sym != nil && sym.IsVariable() {
+		a.expect(value, sym.StoreType)
+	}
 	rightType := a.Analyze(value)
 	if sym == nil {
 		a.recordDef(a.declareSym(varName, rightType, true, SymLocal, rightType, target), target)
@@ -277,7 +302,7 @@ func (a *Analyzer) checkReassign(target *ast.TreeNode, sym *Symbol, rightType Ty
 		a.errorAt(target, "cannot assign %s to '%s', which holds %s: a variable keeps the type of its first value; declare it '%s: fn = ...' to hold any function", rightType.String(), name, sym.Type.String(), name)
 		return
 	}
-	a.errorAt(target, "cannot assign value of type '%s' to '%s'", rightType.String(), sym.Type.String())
+	a.errorAt(target, "cannot assign value of type '%s' to '%s'%s", rightType.String(), sym.Type.String(), mismatchDetail(sym.Type, rightType))
 }
 
 // checkElemWrite checks a value of type valueType written into the list or
@@ -396,6 +421,12 @@ func (a *Analyzer) analyzeBinary(node *ast.TreeNode) Type {
 		// Short-circuit via truthiness (Python semantics).
 		a.checkCondition(node.Children[0], leftType)
 		a.checkCondition(node.Children[1], rightType)
+		// In a verb expression both operands are bools (D22).
+		okL := a.rowCondition(node.Children[0], leftType, "'"+node.Token.Literal+"'")
+		okR := a.rowCondition(node.Children[1], rightType, "'"+node.Token.Literal+"'")
+		if !okL || !okR {
+			return TypeError
+		}
 		// Return type is the union of both operand types since the result
 		// is one of the two operands (not necessarily bool).
 		if isBoolLike(leftType) && isBoolLike(rightType) {
@@ -680,6 +711,7 @@ func (a *Analyzer) analyzeVarDecl(node *ast.TreeNode) Type {
 	valueNode := node.Children[2]
 	varName := nameNode.TokenLiteral()
 	declType := a.resolveTypeNode(typeNode)
+	a.expect(valueNode, declType)
 	valueType := a.Analyze(valueNode)
 	if _, srcIsResult := valueType.(*ResultType); srcIsResult {
 		if _, dstIsResult := declType.(*ResultType); !dstIsResult && !isUnknownType(declType) {
@@ -694,7 +726,7 @@ func (a *Analyzer) analyzeVarDecl(node *ast.TreeNode) Type {
 	SettleContainers(declType, valueType)
 	a.contextLiteral(valueNode, declType)
 	if !CanAssign(declType, valueType) && !isUnknownType(valueType) {
-		a.errorAt(nameNode, "cannot assign value of type '%s' to '%s'", valueType.String(), declType.String())
+		a.errorAt(nameNode, "cannot assign value of type '%s' to '%s'%s", valueType.String(), declType.String(), mismatchDetail(declType, valueType))
 	}
 	if existing := a.currentScope.LookupLocal(varName); existing != nil {
 		if f := a.fixedFnOf(existing); f != nil {

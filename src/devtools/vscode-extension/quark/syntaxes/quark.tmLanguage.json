@@ -230,9 +230,9 @@
           "match": "\\b(print|input|len|to_str|to_int|to_float|to_bool|type|is_ok|is_err|unwrap|range|abs|min|max|sum|all|any|sqrt|floor|ceil|round)\\b(?=\\s*\\()"
         },
         {
-          "comment": "Builtin methods (str, list, dict, vec), after a dot",
+          "comment": "Builtin methods (str, list, dict, vec, tbl), after a dot",
           "name": "support.function.method.quark",
-          "match": "(?<=\\.)(upper|lower|trim|contains|startswith|endswith|replace|concat|split|slice|push|pop|get|set|insert|remove|reverse|sort_by|sort|enumerate|join|to_vec|keys|values|items|fillna|drop_na|astype|to_list)\\b(?=\\s*\\()"
+          "match": "(?<=\\.)(upper|lower|trim|contains|startswith|endswith|replace|concat|split|slice|push|pop|get|set|insert|remove|reverse|sort_by|sort|enumerate|join|to_vec|keys|values|items|fillna|drop_na|astype|to_list|head|tail|describe)\\b(?=\\s*\\()"
         }
       ]
     },
@@ -249,13 +249,13 @@
     "numbers": {
       "patterns": [
         {
-          "comment": "1.5, 2., .5",
+          "comment": "1.5, 2., .5, 1e3, 100_000.5",
           "name": "constant.numeric.float.quark",
-          "match": "\\b[0-9]+\\.[0-9]*|(?<![A-Za-z0-9_)\\]])\\.[0-9]+\\b"
+          "match": "\\b[0-9](?:_?[0-9])*(?:\\.(?:[0-9](?:_?[0-9])*)?(?:[eE][+-]?[0-9](?:_?[0-9])*)?|[eE][+-]?[0-9](?:_?[0-9])*\\b)|(?<![A-Za-z0-9_)\\]])\\.[0-9](?:_?[0-9])*\\b"
         },
         {
           "name": "constant.numeric.integer.quark",
-          "match": "\\b[0-9]+\\b"
+          "match": "\\b[0-9](?:_?[0-9])*\\b"
         }
       ]
     },

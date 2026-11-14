@@ -237,6 +237,20 @@
         "signature": "slice(int) str"
       }
     ],
+    "tbl": [
+      {
+        "name": "head",
+        "signature": "head() tbl"
+      },
+      {
+        "name": "tail",
+        "signature": "tail() tbl"
+      },
+      {
+        "name": "describe",
+        "signature": "describe()"
+      }
+    ],
     "vec": [
       {
         "name": "get",
@@ -314,14 +328,24 @@
       "name": "csv",
       "functions": [
         {
-          "name": "parse",
-          "signature": "parse(text: str, sep: str = ',') list",
-          "doc": "may contain the separator, quotes and newlines."
+          "name": "read_file",
+          "signature": "read_file(path: str, columns: dict = dict) result",
+          "doc": "header names that differ from them: dict { id: 'EmpID' }."
         },
         {
-          "name": "read",
-          "signature": "read(path: str, sep: str = ',') result",
-          "doc": "or is malformed."
+          "name": "parse_text",
+          "signature": "parse_text(text: str, columns: dict = dict) result",
+          "doc": "csv::read_file for CSV text."
+        },
+        {
+          "name": "write_file",
+          "signature": "write_file(t: tbl, path: str) result",
+          "doc": "ok(null), or err(message)."
+        },
+        {
+          "name": "format_text",
+          "signature": "format_text(t: tbl) str",
+          "doc": "The table as CSV text, as write_file writes it."
         }
       ]
     },

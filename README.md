@@ -25,6 +25,7 @@ Go, translates each program to C++17 and builds a standalone native binary.
   - [Dicts](#dicts)
   - [Vectors](#vectors)
   - [Structs](#structs)
+  - [Tables](#tables)
   - [Modules and imports](#modules-and-imports)
 - [Builtin reference](#builtin-reference)
 - [Standard library modules](#standard-library-modules)
@@ -95,12 +96,11 @@ annotated also gets a native C++ signature. A `vec` is a typed column in the
 Apache Arrow memory layout, and arithmetic on it runs over the whole column.
 Memory is managed by the Boehm garbage collector. There is no interpreter or VM.
 
-**Tables are next.** A typed, columnar table type (`tbl[Employee]`) with a
-query syntax (`staff | e -> filter(e.salary > 100.0) | group_by(e.dept) | ...`)
-is the planned centrepiece for data wrangling
-([tables_v0_1_spec.md](tables_v0_1_spec.md)). Its runtime
-engine and CSV reader exist; the compiler side does not, so `tbl` can't be
-used in a program yet.
+**Tables.** A typed, columnar table type (`tbl[Employee]`) with a query
+syntax (`staff | e -> filter(e.salary > 100.0) | group_by(e.dept) | ...`) is
+the centrepiece for data wrangling: every column a query reads is checked at
+compile time, and each step runs as a typed loop over the column buffers
+([Tables](#tables), [tables_v0_1_spec.md](tables_v0_1_spec.md)).
 
 > **Maturity.** Quark is early and changes often. Large parts of the compiler
 > were written with AI assistance; use it at your own risk, and please file
@@ -223,9 +223,10 @@ print(x)          // five
 ```
 
 The annotation names are `int`, `float`, `str`, `bool`, `any`, `list`, `dict`,
-`vec`, `result`, `resource`, `fn` (any function value) and struct names
-(`Customer`, `geo::Point`). There are no element types in annotations yet
-(`list[int]` is a parse error; `list[T]` and `tbl[T]` are planned). There are
+`vec`, `result`, `resource`, `fn` (any function value), struct names
+(`Customer`, `geo::Point`) and tables (`tbl[Customer]`, or `tbl` for any
+row). There are no element types in annotations yet (`list[int]` is an
+error; `list[T]` is planned). There are
 no nullable types: only struct and `resource` annotations (and `any`) accept
 `null`.
 
@@ -409,7 +410,7 @@ parameter accepts any value; misuse inside the body (`x.upper()` on an int)
 is a runtime error.
 
 **Default parameters** are literals (a number, string, bool, `null`, a negated
-number or an empty `list []`) and follow the required parameters. A literal
+number, an empty `list []` or an empty `dict {}`) and follow the required parameters. A literal
 default also types its parameter (`n = 1` makes `n` an int):
 
 ```quark
@@ -659,6 +660,49 @@ got str`), and an int going into a `float` field becomes a float. Structs are
 immutable (`c.age = 2` is an error; build a new one) and have no methods or
 `==` (compare fields). A struct-typed field may be `null`.
 
+### Tables
+
+A `tbl[Row]` is a table whose rows are `Row` structs, stored column by column
+(one vec per field). Read one with `std/csv`; its columns are typed by the
+struct, and a bad cell is an error naming its line and column:
+
+```quark
+incl 'std/csv'
+
+struct Employee:
+    id: int
+    name: str
+    dept: str
+    salary: float
+
+staff: tbl[Employee] = unwrap(csv::read_file('staff.csv'))
+print(staff.head(3))             // the first 3 rows, with column names and types
+print(sum(staff.salary))         // a column is a vec
+```
+
+A query runs verbs on a table, naming the row (`e`) once; every column it
+reads is checked at compile time, and each step compiles to a loop over the
+column buffers:
+
+```quark
+stats = staff | e ->
+    filter(e.salary >= 100_000 or e.dept == 'eng')
+    | mutate(bonus = e.salary * 0.1)
+    | group_by(e.dept)
+    | summarize(avg = mean(e.salary), top = max(e.bonus), n = count())
+    | sort(desc(e.avg))
+print(stats)
+```
+
+The verbs are `filter`, `mutate`, `sort`, `group_by` + `summarize`, `head`
+and `tail`. A query's result has an anonymous row (`{dept: str, avg: float,
+top: float, n: int}`), which matches a struct with exactly those fields where
+it is stored (`s: tbl[DeptStats] = ...`). Missing values (empty or `NA` cells)
+are skipped by aggregates and make an expression missing, and `and`/`or`
+follow SQL (`true or <missing>` is true). `t.describe()` prints each column's
+type and first values. The details are in [semantics.md](semantics.md) §9.5,
+and the design in [tables_v0_1_spec.md](tables_v0_1_spec.md).
+
 ### Modules and imports
 
 A file is the unit you import, and each file has its own names. Names from
@@ -773,6 +817,8 @@ names, arities and types is `src/core/quark/builtins/catalog.go`.
 | | `.fillna(x)` | new vector with missing values replaced |
 | | `.astype(dtype)` | new vector of dtype `'i64'`, `'f64'` or `'bool'` |
 | | `.to_list()`, `.enumerate()` | lists |
+| `tbl` | `.head(n = 6)`, `.tail(n = 6)` | the first or last `n` rows, as a table of the same type |
+| | `.describe(n = 5)` | prints each column's name, type and first `n` values |
 
 When a receiver's type isn't known at compile time (for example the result of
 `unwrap`), the method is chosen at runtime, and a receiver without that method
@@ -787,16 +833,15 @@ which binds `name`.
 | Module | Functions |
 |---|---|
 | `io` | `io::open(path, mode = 'r', binary = false)`, `io::read(f, n)`, `io::write(f, s)`, `io::close(f)`, `io::seek(f, offset, whence = 0)` (all return results), `io::exists(path)`, and `io::seek_set()`/`seek_cur()`/`seek_end()` |
-| `fmt` | `fmt::show_list`, `fmt::show_vec`, `fmt::show_dict`, `fmt::table` (a dict of columns), `fmt::head`, `fmt::tail`, `fmt::full` |
+| `fmt` | `fmt::show_list`, `fmt::show_vec`, `fmt::show_dict`, `fmt::table` (a table or a dict of columns), `fmt::head`, `fmt::tail`, `fmt::full` |
 | `sys` | `sys::args()` (arguments after `--`), `sys::env(name)` (`null` if unset), `sys::exit(code = 0)` |
 | `time` | `time::now()` (epoch seconds), `time::clock()` (monotonic seconds), `time::sleep(seconds)` |
 | `random` | `random::seed(n)`, `random::uniform()`, `random::randint(lo, hi)` (both ends included), `random::choice(xs)`, `random::shuffle(xs)` |
-| `csv` | `csv::parse(text, sep = ',')`, `csv::read(path, sep = ',')`: rows as lists of `str` |
+| `csv` | `csv::read_file(path, columns = dict {})`, `csv::parse_text(text, columns = dict {})` (tables, typed by where they go), `csv::write_file(t, path)`, `csv::format_text(t)` |
 | `blas` | `blas::dot`, `axpy`, `scal`, `nrm2`, `asum`, `gemv` on `vec[f64]` via OpenBLAS (needs `libopenblas-dev` or `brew install openblas`) |
 
-The current `std/csv` will be replaced when tables land, by a reader that
-returns typed tables (`csv::read_file`). A module's native bindings are
-reachable too (`fmt::fmt_vec`), but its functions are the intended API.
+A module's native bindings are reachable too (`fmt::fmt_vec`), but its
+functions are the intended API.
 
 ## Native code
 
@@ -880,8 +925,9 @@ and don't. An `INV-*` diagnostic is a compiler bug.
 
 **Planned:**
 
-- Tables: the `tbl[T]` type, queries, a typed CSV reader
-  ([tables_v0_1_spec.md](tables_v0_1_spec.md)).
+- Tables after v0.1: table literals, joins, `select`/`rename`, `distinct`,
+  `summary(t)`, date columns, and compile-time schema inference for CSV files
+  ([tables_v0_1_spec.md](tables_v0_1_spec.md) §9-10).
 - Element types in annotations: `list[T]`.
 - Struct methods and whole-struct equality.
 - Result helpers such as `unwrap_or` and `map_ok`.
@@ -899,6 +945,11 @@ and don't. An `INV-*` diagnostic is a compiler bug.
   (only from how it calls it), so `fn f(x) -> x.upper()` called with an int is
   a runtime error, not a compile error.
 - A `vec` literal can't contain `null`.
+- Tables: a query needs a row struct the compiler knows (a table read
+  without one can be printed and written, or given one with `t: tbl[Row] =
+  ...`); summarize columns aggregate one column each (`mutate` first to
+  aggregate a computed value); there are no row reads (`t[i]`), table
+  literals or joins yet.
 
 **Known issues.** Bugs, including the cases where the compiler still gives a
 wrong result without an error, are listed with reproductions in [known_issues.md](known_issues.md).

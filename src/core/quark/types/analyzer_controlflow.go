@@ -15,6 +15,8 @@ func (a *Analyzer) checkCondition(node *ast.TreeNode, t Type) {
 		a.errorAt(node, "result cannot be used as a condition; use is_ok(r), is_err(r) or when")
 	case *VectorType:
 		a.errorAt(node, "vec cannot be used as a condition; use all(v), any(v) or len(v) > 0")
+	case *TableType:
+		a.errorAt(node, "a table cannot be used as a condition; test a column, such as len(t.col) > 0 or any(t.col > 0)")
 	}
 }
 
@@ -228,7 +230,11 @@ func (a *Analyzer) analyzeTernary(node *ast.TreeNode) Type {
 	if len(node.Children) < 3 {
 		return TypeAny
 	}
-	a.checkCondition(node.Children[0], a.Analyze(node.Children[0]))
+	condType := a.Analyze(node.Children[0])
+	a.checkCondition(node.Children[0], condType)
+	if !a.rowCondition(node.Children[0], condType, "a condition (x if c else y)") {
+		return TypeError
+	}
 	trueType := a.Analyze(node.Children[1])
 	falseType := a.Analyze(node.Children[2])
 	if !isUnknownType(trueType) && !isUnknownType(falseType) && !CanAssign(trueType, falseType) && !CanAssign(falseType, trueType) {

@@ -40,6 +40,11 @@ struct QReprCtx {
 
 inline void q_repr_into(std::string& out, QValue v, bool quoteStrings, QReprCtx& ctx);
 
+inline void q_table_rows_text(std::string& out, long long n) {
+    out += std::to_string(n);
+    out += n == 1 ? " row" : " rows";
+}
+
 inline void q_repr_quoted(std::string& out, const char* s) {
     out.push_back('\'');
     for (const char* p = s ? s : ""; *p; p++) {
@@ -201,12 +206,13 @@ inline void q_repr_into(std::string& out, QValue v, bool quoteStrings, QReprCtx&
             out += buf;
             return;
         case QValue::VAL_TABLE:
-            if (v.data.table_val && v.data.table_val->def) {
-                std::snprintf(buf, sizeof(buf), "[table<%s> rows=%d]", v.data.table_val->def->name, v.data.table_val->nrows);
-                out += buf;
-            } else {
-                out += "<table>";
-            }
+            // Inside a container, a table is its type and size; on its own
+            // (q_repr) it prints its rows (q_table_render).
+            out += "<";
+            out += q_table_type_name(v.data.table_val);
+            out += ", ";
+            q_table_rows_text(out, v.data.table_val ? v.data.table_val->nrows : 0);
+            out += ">";
             return;
         default:
             out += "<value>";
@@ -214,9 +220,105 @@ inline void q_repr_into(std::string& out, QValue v, bool quoteStrings, QReprCtx&
     }
 }
 
-// q_repr renders a value as print shows it (top-level strings unquoted).
+// Table printing (tables_v0_1_spec.md §6): a line with the table's type and
+// row count, the column names and their types, then the rows, numbers
+// right-aligned, strings left-aligned and unquoted, a missing value as null.
+// Q_TABLE_ROWS rows are shown and the rest counted, unless truncation is off.
+constexpr int32_t Q_TABLE_ROWS = 10;
+constexpr size_t Q_TABLE_CELL = 32; // code points; longer cells end in "..."
+
+// q_text_width counts the code points of UTF-8 text.
+inline size_t q_text_width(const std::string& s) {
+    size_t n = 0;
+    for (unsigned char c : s) n += (c & 0xC0) != 0x80;
+    return n;
+}
+
+inline std::string q_table_cell(const QVector& v, int32_t r, bool truncate) {
+    if (q_vec_is_null_at(v, static_cast<size_t>(r))) return "null";
+    char buf[64];
+    switch (v.type) {
+        case QVector::Type::I64:
+            std::snprintf(buf, sizeof buf, "%lld", static_cast<long long>(q_vec_i64_data(v)[r]));
+            return buf;
+        case QVector::Type::F64:
+            return q_format_float(q_vec_f64_data(v)[r], buf, sizeof buf);
+        case QVector::Type::BOOL:
+            return q_vec_bool_at(v, static_cast<size_t>(r)) ? "true" : "false";
+        case QVector::Type::STR: {
+            std::string out;
+            size_t width = 0;
+            const std::string_view s = q_vec_str_at(v, static_cast<size_t>(r));
+            for (size_t i = 0; i < s.size(); i++) {
+                const unsigned char c = static_cast<unsigned char>(s[i]);
+                if ((c & 0xC0) != 0x80) {
+                    if (truncate && width == Q_TABLE_CELL - 3) {
+                        out += "...";
+                        return out;
+                    }
+                    width++;
+                }
+                switch (c) {
+                    case '\n': out += "\\n"; break;
+                    case '\t': out += "\\t"; break;
+                    case '\r': out += "\\r"; break;
+                    default: out += static_cast<char>(c);
+                }
+            }
+            return out;
+        }
+    }
+    return "";
+}
+
+inline void q_table_render(std::string& out, const QTable* t, bool truncate) {
+    if (!t || !t->def) {
+        out += "<tbl>";
+        return;
+    }
+    out += t->def->anonymous ? "tbl" : q_table_type_name(t);
+    out += ": ";
+    q_table_rows_text(out, t->nrows);
+    if (t->ncols == 0) return;
+    const int32_t shown = truncate && t->nrows > Q_TABLE_ROWS ? Q_TABLE_ROWS : t->nrows;
+    std::vector<std::vector<std::string>> cells(static_cast<size_t>(t->ncols));
+    std::vector<size_t> width(static_cast<size_t>(t->ncols));
+    std::vector<bool> right(static_cast<size_t>(t->ncols));
+    for (int c = 0; c < t->ncols; c++) {
+        const QVector& col = *t->cols[c].data.vector_val;
+        auto& cs = cells[static_cast<size_t>(c)];
+        cs.push_back(t->def->field_names[c]);
+        cs.push_back(q_dtype_word(static_cast<int>(col.type)));
+        for (int32_t r = 0; r < shown; r++) cs.push_back(q_table_cell(col, r, truncate));
+        right[static_cast<size_t>(c)] = col.type != QVector::Type::STR;
+        for (const std::string& s : cs) width[static_cast<size_t>(c)] = std::max(width[static_cast<size_t>(c)], q_text_width(s));
+    }
+    for (size_t line = 0; line < static_cast<size_t>(shown) + 2; line++) {
+        out += "\n";
+        std::string row;
+        for (int c = 0; c < t->ncols; c++) {
+            const std::string& s = cells[static_cast<size_t>(c)][line];
+            const std::string pad(width[static_cast<size_t>(c)] - q_text_width(s), ' ');
+            if (c) row += "  ";
+            row += right[static_cast<size_t>(c)] ? pad + s : s + pad;
+        }
+        while (!row.empty() && row.back() == ' ') row.pop_back();
+        out += row;
+    }
+    if (shown < t->nrows) {
+        const int32_t more = t->nrows - shown;
+        out += "\n... " + std::to_string(more) + (more == 1 ? " more row" : " more rows");
+    }
+}
+
+// q_repr renders a value as print shows it (top-level strings unquoted, a
+// table with its rows).
 inline std::string q_repr(QValue v, bool truncate = true) {
     std::string out;
+    if (v.type == QValue::VAL_TABLE) {
+        q_table_render(out, v.data.table_val, truncate);
+        return out;
+    }
     QReprCtx ctx;
     ctx.truncate = truncate;
     q_repr_into(out, v, false, ctx);

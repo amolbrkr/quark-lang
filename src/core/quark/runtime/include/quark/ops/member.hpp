@@ -5,9 +5,11 @@
 #include "../core/value.hpp"
 #include "../core/constructors.hpp"
 #include "../types/dict.hpp"
+#include "../types/table.hpp"
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 
 // Dict member read: d.key → q_member_get(d, "key")
 inline QValue q_member_get(QValue obj, const char* member) {
@@ -27,6 +29,20 @@ inline QValue q_member_get(QValue obj, const char* member) {
             }
         }
         q_runtime_reportf("runtime error: dict has no key '%s'; use .get('%s') if the key may be missing\n", member, member);
+        std::exit(1);
+    }
+
+    // t.col on a table whose type the compiler didn't know: the column by
+    // name, as a vec.
+    if (obj.type == QValue::VAL_TABLE && obj.data.table_val) {
+        const QTable* t = obj.data.table_val;
+        std::string cols;
+        for (int c = 0; c < t->ncols; c++) {
+            if (std::strcmp(t->def->field_names[c], member) == 0) return t->cols[c];
+            if (c) cols += ", ";
+            cols += t->def->field_names[c];
+        }
+        q_runtime_reportf("runtime error: %s has no column '%s' (columns: %s)\n", q_table_type_name(t), member, cols.c_str());
         std::exit(1);
     }
 

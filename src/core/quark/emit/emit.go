@@ -54,7 +54,16 @@ func Program(p *lower.Program) string {
 			}
 			w.ind--
 			w.line("};")
-			w.line("static const QStructDef _sdef_%s = {\"%s\", _sfields_%s, %d};", s.CName, esc(s.Display), s.CName, len(s.Fields))
+			if s.Dtypes == nil {
+				w.line("static const QStructDef _sdef_%s = {\"%s\", _sfields_%s, %d};", s.CName, esc(s.Display), s.CName, len(s.Fields))
+				continue
+			}
+			dts := make([]string, len(s.Dtypes))
+			for i, d := range s.Dtypes {
+				dts[i] = fmt.Sprint(d)
+			}
+			w.line("static const signed char _sdtypes_%s[] = {%s};", s.CName, strings.Join(dts, ", "))
+			w.line("static const QStructDef _sdef_%s = {\"%s\", _sfields_%s, %d, _sdtypes_%s, %t};", s.CName, esc(s.Display), s.CName, len(s.Fields), s.CName, s.Anonymous)
 		}
 		w.raw("\n")
 	}
@@ -287,6 +296,7 @@ var boxFns = map[lower.Rep]string{
 	lower.RepDict:   "qv_dict_ptr",
 	lower.RepFunc:   "qv_closure_ptr",
 	lower.RepStruct: "qv_struct",
+	lower.RepTable:  "qv_table_ptr",
 }
 
 var adaptFns = map[lower.Rep]string{
@@ -298,6 +308,7 @@ var adaptFns = map[lower.Rep]string{
 	lower.RepList:   "q_as_list",
 	lower.RepDict:   "q_as_dict",
 	lower.RepFunc:   "q_as_closure",
+	lower.RepTable:  "q_as_table",
 }
 
 var unboxFields = map[lower.Rep]string{
@@ -362,6 +373,12 @@ func (w *printer) expr(e lower.Expr) string {
 			return fmt.Sprintf("q_%s_%s(%s, %s)", e.Family, e.Scalar, x, args)
 		case lower.CheckStruct:
 			return fmt.Sprintf("q_%s_struct(%s, &%s, %s)", e.Family, x, e.StructDef, args)
+		case lower.CheckTable:
+			def := "nullptr"
+			if e.StructDef != "" {
+				def = "&" + e.StructDef
+			}
+			return fmt.Sprintf("q_%s_table(%s, %s, \"%s\", %s)", e.Family, x, def, esc(e.Key), args)
 		}
 		return fmt.Sprintf("q_%s_check(%s, QValue::%s, %t, \"%s\", %s)", e.Family, x, e.Tag, e.AllowNull, e.Key, args)
 	case *lower.Arith:

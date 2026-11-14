@@ -167,6 +167,8 @@ func (ml *ModuleLoader) walk(n *ast.TreeNode, c rctx) {
 		ml.walkLambda(n, c)
 	case ast.ForLoopNode:
 		ml.walkFor(n, c)
+	case ast.QueryNode:
+		ml.walkQuery(n, c)
 	case ast.PatternNode:
 		ml.walkPattern(n, c)
 	case ast.VarDeclNode:
@@ -278,6 +280,22 @@ func (ml *ModuleLoader) walkFor(n *ast.TreeNode, c rctx) {
 	bc := c.with(n.Children[0].TokenLiteral())
 	ml.renameLocal(n.Children[0], bc)
 	ml.walk(n.Children[2], bc)
+}
+
+// walkQuery resolves a table query: the source in the enclosing scope, the
+// steps with the row name bound, like a parameter. Verb, column and
+// aggregate names are node tokens, not identifiers, so they aren't resolved.
+func (ml *ModuleLoader) walkQuery(n *ast.TreeNode, c rctx) {
+	if len(n.Children) < 2 {
+		ml.walkChildren(n, c)
+		return
+	}
+	ml.walk(n.Children[0], c)
+	sc := c.with(n.Children[1].TokenLiteral())
+	ml.renameLocal(n.Children[1], sc)
+	for _, step := range n.Children[2:] {
+		ml.walk(step, sc)
+	}
 }
 
 func (ml *ModuleLoader) walkPattern(n *ast.TreeNode, c rctx) {
@@ -518,12 +536,16 @@ func (ml *ModuleLoader) walkType(n *ast.TreeNode, c rctx) {
 		return
 	}
 	ml.resolveStructName(n, c, "unknown type '%s'")
+	for _, arg := range n.Children { // tbl[geo::Point]
+		ml.walkType(arg, c)
+	}
 }
 
 // builtinTypeNames are the annotation types that aren't structs.
 var builtinTypeNames = map[string]bool{
 	"int": true, "float": true, "str": true, "bool": true, "null": true, "any": true,
 	"list": true, "dict": true, "vec": true, "result": true, "resource": true, "fn": true,
+	"tbl": true,
 }
 
 // resolveStructName renames the struct a type annotation or struct literal

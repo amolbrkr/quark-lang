@@ -31,10 +31,10 @@ static bool fails_with(const std::string& text, const std::vector<csv::Column>* 
 }
 
 static const std::vector<csv::Column> employee = {
-    {"id", QVector::Type::I64},
-    {"name", QVector::Type::STR},
-    {"salary", QVector::Type::F64},
-    {"active", QVector::Type::BOOL},
+    {"id", QVector::Type::I64, ""},
+    {"name", QVector::Type::STR, ""},
+    {"salary", QVector::Type::F64, ""},
+    {"active", QVector::Type::BOOL, ""},
 };
 
 static void test_messy_typed() {
@@ -81,7 +81,7 @@ static void test_messy_typed() {
     csv::Options raw;
     raw.trim = false;
     raw.na = {"-"};
-    std::vector<csv::Column> one = {{"name", QVector::Type::STR}};
+    std::vector<csv::Column> one = {{"name", QVector::Type::STR, ""}};
     QTable* r = parse("name\n  padded \n-\nNA\n", &one, &err, raw);
     EXPECT("no trim, custom NA", r && strs(col(r, 0)) == std::vector<OptS>{"  padded ", nullopt, "NA"});
 }
@@ -153,7 +153,7 @@ static void test_inference() {
     nohdr.header = false;
     QTable* nh = parse("1,a\n2,b\n", nullptr, &err, nohdr);
     EXPECT("no header inferred", nh && nh->nrows == 2 && std::strcmp(nh->def->field_names[1], "x2") == 0);
-    std::vector<csv::Column> pos = {{"n", QVector::Type::I64}, {"s", QVector::Type::STR}};
+    std::vector<csv::Column> pos = {{"n", QVector::Type::I64, ""}, {"s", QVector::Type::STR, ""}};
     QTable* np = parse("1,a\n2,b\n", &pos, &err, nohdr);
     EXPECT("no header typed", np && ints(col(np, 0)) == std::vector<Opt>{1, 2});
     EXPECT("no header width mismatch", fails_with("1,a,x\n", &pos, "the schema has 2 columns but the file has 3", nohdr));
@@ -175,8 +175,8 @@ static void test_write(const std::string& dir) {
     csv::Options opt;
     const std::string path = dir + "/out.tsv";
     EXPECT("write tsv", csv::write_table(t, path.c_str(), opt, &err));
-    std::vector<csv::Column> sch = {{"id", QVector::Type::I64}, {"name", QVector::Type::STR},
-                                    {"score", QVector::Type::F64}, {"ok", QVector::Type::BOOL}};
+    std::vector<csv::Column> sch = {{"id", QVector::Type::I64, ""}, {"name", QVector::Type::STR, ""},
+                                    {"score", QVector::Type::F64, ""}, {"ok", QVector::Type::BOOL, ""}};
     std::vector<const char*> names = {"id", "name", "score", "ok"};
     QTable* back = csv::read_table(path.c_str(), opt, schema(names), &sch, &err);
     EXPECT("read tsv back", back != nullptr);
@@ -204,8 +204,8 @@ static void test_scale() {
                       40000 + (i * 7919) % 90000, i % 100, 1 + i % 28, (i % 3) ? "true" : "false");
         text += line;
     }
-    std::vector<csv::Column> sch = {{"id", QVector::Type::I64}, {"name", QVector::Type::STR},
-                                    {"salary", QVector::Type::F64}, {"active", QVector::Type::BOOL}};
+    std::vector<csv::Column> sch = {{"id", QVector::Type::I64, ""}, {"name", QVector::Type::STR, ""},
+                                    {"salary", QVector::Type::F64, ""}, {"active", QVector::Type::BOOL, ""}};
     std::string err;
     Timer tt;
     QTable* t = parse(text, &sch, &err);
@@ -219,12 +219,71 @@ static void test_scale() {
                 static_cast<double>(text.size()) / (1 << 20), typed_ms, untyped_ms);
 }
 
+// Str cells and header names must be valid UTF-8 without NUL bytes, in typed
+// and inferred columns; other columns are checked by their parsers.
+static void test_text_validation() {
+    using csv::text_problem;
+    EXPECT("ascii", text_problem("plain") == nullptr);
+    EXPECT("2-byte", text_problem("Zo\xC3\xAB") == nullptr);
+    EXPECT("3-byte", text_problem("\xE2\x82\xAC") == nullptr);
+    EXPECT("4-byte", text_problem("\xF0\x9F\x98\x80") == nullptr);
+    EXPECT("max code point", text_problem("\xF4\x8F\xBF\xBF") == nullptr);
+    EXPECT("latin-1", text_problem("Jos\xE9") != nullptr);
+    EXPECT("lone continuation", text_problem("\x80") != nullptr);
+    EXPECT("overlong 2-byte", text_problem("\xC0\xAF") != nullptr);
+    EXPECT("overlong 3-byte", text_problem("\xE0\x80\xAF") != nullptr);
+    EXPECT("overlong 4-byte", text_problem("\xF0\x80\x80\xAF") != nullptr);
+    EXPECT("surrogate", text_problem("\xED\xA0\x80") != nullptr);
+    EXPECT("past U+10FFFF", text_problem("\xF4\x90\x80\x80") != nullptr);
+    EXPECT("truncated", text_problem("\xE2\x82") != nullptr);
+    EXPECT("nul", text_problem(std::string_view("a\0b", 3)) != nullptr);
+
+    const std::string head = "id,name,salary,active\n";
+    EXPECT("latin-1 typed cell", fails_with(head + "1,Jos\xE9,1,true\n", &employee,
+                                            "data.csv:2: column 'name' is not valid UTF-8 (the file may be Latin-1"));
+    EXPECT("latin-1 inferred cell", fails_with(head + "1,Jos\xE9,1,true\n", nullptr, "data.csv:2: column 'name' is not valid UTF-8"));
+    EXPECT("nul cell", fails_with(head + std::string("1,a\0b,1,true\n", 13), &employee,
+                                  "data.csv:2: column 'name' contains a NUL byte"));
+    EXPECT("latin-1 header", fails_with("id,nam\xE9\n1,2\n", nullptr, "data.csv:1: column 2 of the header is not valid UTF-8"));
+    // A column the schema doesn't read isn't checked.
+    std::vector<csv::Column> ids = {{"id", QVector::Type::I64, ""}};
+    std::string err;
+    EXPECT("unread column", parse(head + "1,Jos\xE9,1,true\n", &ids, &err) != nullptr);
+}
+
+// D17: fields read header columns of other names.
+static void test_mapping() {
+    std::vector<csv::Column> sch = {{"id", QVector::Type::I64, "EmpID"}, {"sal", QVector::Type::F64, "Salary ($)"}};
+    std::string err;
+    QTable* t = parse("EmpID,Name,Salary ($)\n1,a,10\n2,b,2.5\n", &sch, &err);
+    EXPECT("mapped parses", t != nullptr && t->nrows == 2);
+    if (t) {
+        EXPECT("mapped names", std::string(t->def->field_names[0]) == "id" && std::string(t->def->field_names[1]) == "sal");
+        EXPECT("mapped values", q_vec_i64_data(*quark::tbl::column(t, 0))[1] == 2 && q_vec_f64_data(*quark::tbl::column(t, 1))[1] == 2.5);
+    }
+    EXPECT("mapped header missing", fails_with("ID,Salary ($)\n1,2\n", &sch,
+                                               "no column named 'EmpID' in the header (columns: ID, Salary ($)); field 'id' is mapped to it"));
+    EXPECT("unmapped hint", fails_with("ID,name,salary,active\n1,a,1,true\n", &employee,
+                                       "no column named 'id' in the header (columns: ID, name, salary, active); map field 'id' to one of them with dict { id: '...' }"));
+    EXPECT("mapped bad value", fails_with("EmpID,Salary ($)\n1,12k\n", &sch, "data.csv:2: column 'Salary ($)': '12k' is not a float"));
+
+    csv::Options opt;
+    opt.rename = {{"id", "EmpID"}};
+    t = parse("EmpID,name\n1,a\n", nullptr, &err, opt);
+    EXPECT("renamed inferred", t != nullptr && std::string(t->def->field_names[0]) == "id" && t->def->anonymous);
+    EXPECT("rename missing", fails_with("ID,name\n1,a\n", nullptr, "no column named 'EmpID' in the header (columns: ID, name); 'id' is mapped to it", opt));
+    opt.rename = {{"name", "EmpID"}};
+    EXPECT("rename clash", fails_with("EmpID,name\n1,a\n", nullptr, "the table would have two columns named 'name' (header columns 'EmpID' and 'name')", opt));
+}
+
 int main(int argc, char** argv) {
     q_gc_init();
     const std::string dir = argc > 1 ? argv[1] : ".";
     test_messy_typed();
     test_errors();
     test_inference();
+    test_text_validation();
+    test_mapping();
     test_write(dir);
     test_scale();
     return finish("table csv");

@@ -52,6 +52,25 @@ const (
 	// Token.Literal holds the whole path ("io::exists"); the loader resolves
 	// it and turns the node into an IdentifierNode with the internal name.
 	QualifiedNameNode
+	// QueryNode is a table query, `t | e -> verb(...) | verb(...)`
+	// (tables_v0_1_spec.md §4): [source, IdentifierNode row name,
+	// QueryStepNode...]. Token is the `|` that starts it.
+	QueryNode
+	// QueryStepNode is one verb of a query: Token is the verb's name
+	// (filter, mutate, ...), Children its arguments: expressions,
+	// ColumnDefNodes (mutate, summarize) or SortKeyNodes (sort).
+	QueryStepNode
+	// ColumnDefNode is `name = value` in mutate or summarize: Token is the
+	// column name, Children [value]; in summarize the value is an
+	// AggregateNode.
+	ColumnDefNode
+	// AggregateNode is a summarize aggregate, `sum(e.x)` or `count()`:
+	// Token is its name, Children its arguments. Aggregate names are syntax
+	// here, never resolved as functions.
+	AggregateNode
+	// SortKeyNode is a sort key: Children [key]; Descending is set for
+	// desc(key).
+	SortKeyNode
 )
 
 var nodeTypeNames = map[NodeType]string{
@@ -95,6 +114,11 @@ var nodeTypeNames = map[NodeType]string{
 	ExternLinkNode:        "ExternLink",
 	ExternIncludePathNode: "ExternIncludePath",
 	QualifiedNameNode:     "QualifiedName",
+	QueryNode:             "Query",
+	QueryStepNode:         "QueryStep",
+	ColumnDefNode:         "ColumnDef",
+	AggregateNode:         "Aggregate",
+	SortKeyNode:           "SortKey",
 }
 
 func (n NodeType) String() string {
@@ -130,6 +154,9 @@ type TreeNode struct {
 	// is parsed as `f(x, a)`, so the piped input is the first argument.
 	// Only messages use it ("including piped input").
 	Piped bool
+
+	// Descending marks a SortKeyNode written desc(key).
+	Descending bool
 
 	// SourceFile is the display name of the file the node was parsed from, set
 	// by the loader for nodes spliced in from imported modules (empty for the

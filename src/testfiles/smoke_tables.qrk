@@ -1,0 +1,29 @@
+print('== smoke: tables ==')
+incl 'std/csv'
+
+struct Employee:
+    id: int
+    name: str
+    dept: str
+    salary: float
+
+struct DeptStats:
+    dept: str
+    avg: float
+    n: int
+
+text = 'id,name,dept,salary\n1,Ann,eng,120000\n2,Bo,ops,90000.5\n3,Cy,eng,\n4,Di,ops,150000\n'
+staff: tbl[Employee] = unwrap(csv::parse_text(text))
+print(staff)
+print(sum(staff.salary))
+
+stats: tbl[DeptStats] = staff | e ->
+    filter(e.salary > 0.0 or e.dept == 'eng')
+    | mutate(bonus = e.salary * 0.1)
+    | group_by(e.dept)
+    | summarize(n = count(), avg = mean(e.salary))
+print(stats)
+
+top = staff | e -> sort(desc(e.salary)) | head(2)
+print(top.name)
+staff.describe(2)

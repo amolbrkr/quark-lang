@@ -26,6 +26,7 @@
 #include "../core/constructors.hpp"
 #include "../types/vector.hpp"
 #include "../types/dict.hpp"
+#include "../types/table.hpp"
 #include "../types/closure.hpp"
 #include "../types/function.hpp"
 
@@ -395,10 +396,10 @@ inline QValue call(QClosure* fn, QValue a0, QValue a1, QValue a2) {
 inline const char* q_as_type_name(QValue::ValueType t) {
     static const char* names[] = {
         "int", "float", "str", "bool", "null",
-        "list", "vec", "dict", "fn", "result", "resource"
+        "list", "vec", "dict", "fn", "result", "resource", "struct", "tbl"
     };
     int idx = static_cast<int>(t);
-    if (idx >= 0 && idx <= 10) return names[idx];
+    if (idx >= 0 && idx <= 12) return names[idx];
     return "unknown";
 }
 
@@ -441,6 +442,11 @@ inline QDict* q_as_dict(QValue v) {
 inline QClosure* q_as_closure(QValue v) {
     if (v.type != QValue::VAL_FUNC) q_as_type_panic("fn", v.type);
     return static_cast<QClosure*>(v.data.func_val);
+}
+// A `tbl` parameter of an extern fn (FFI P6): any table, as a QTable*.
+inline QTable* q_as_table(QValue v) {
+    if (v.type != QValue::VAL_TABLE || !v.data.table_val) q_as_type_panic("tbl", v.type);
+    return v.data.table_val;
 }
 
 // Boxing wrappers for native return values back to QValue (generated code
@@ -486,6 +492,11 @@ inline QValue qv_closure_ptr(QClosure* v) {
     q.type = QValue::VAL_FUNC;
     q.data.func_val = static_cast<void*>(v);
     return q;
+}
+
+inline QValue qv_table_ptr(QTable* t) {
+    if (!t) q_native_null_return("tbl");
+    return qv_table(t);
 }
 
 #endif // QUARK_EXT_API_HPP

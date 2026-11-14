@@ -409,9 +409,9 @@ func TestOperators_AllTwoChar(t *testing.T) {
 
 func TestDelimiters_MatchedBrackets(t *testing.T) {
 	tests := []struct {
-		open  string
-		close string
-		openT token.TokenType
+		open   string
+		close  string
+		openT  token.TokenType
 		closeT token.TokenType
 	}{
 		{"(", ")", token.LPAR, token.RPAR},
@@ -567,5 +567,42 @@ func TestNumber_Exponent(t *testing.T) {
 		if len(toks) == 0 || toks[0].Type != tc.typ || toks[0].Literal != tc.lit {
 			t.Fatalf("%s: got %v, want %s(%s)", tc.input, toks, tc.typ, tc.lit)
 		}
+	}
+}
+
+// TestNumber_DigitSeparators: `_` between two digits is dropped from the
+// literal; anywhere else in a number it is an error.
+func TestNumber_DigitSeparators(t *testing.T) {
+	cases := []struct {
+		src  string
+		typ  token.TokenType
+		want string
+	}{
+		{"100_000\n", token.INT, "100000"},
+		{"1_000.5\n", token.FLOAT, "1000.5"},
+		{"0.000_1\n", token.FLOAT, "0.0001"},
+		{"1e1_0\n", token.FLOAT, "1e10"},
+		{"9_223_372_036_854_775_807\n", token.INT, "9223372036854775807"},
+	}
+	for _, c := range cases {
+		toks := testutil.Lex(c.src)
+		if len(toks) == 0 || toks[0].Type != c.typ || toks[0].Literal != c.want {
+			t.Errorf("%q: got %v, want %s %q", c.src, toks, c.typ, c.want)
+		}
+	}
+	for _, bad := range []string{"1_\n", "1__0\n", "1_.5\n", "1._5\n", "1_e5\n", "1.5_\n"} {
+		found := false
+		for _, tok := range testutil.Lex(bad) {
+			if tok.Type == token.ILLEGAL && strings.Contains(tok.Literal, "'_' in a number must be between two digits") {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%q: expected a digit separator error, got %v", bad, testutil.Lex(bad))
+		}
+	}
+	// A leading underscore starts a name.
+	if toks := testutil.Lex("_1\n"); len(toks) == 0 || toks[0].Type != token.ID || toks[0].Literal != "_1" {
+		t.Errorf("_1: got %v, want an identifier", toks)
 	}
 }

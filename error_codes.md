@@ -101,6 +101,9 @@ Raised while lowering the analyzed tree to the IR (`src/core/quark/lower/`). Pri
 | `INV-STRUCT-DEFAULT` | A struct field default is well formed | `lower/expr.go` |
 | `INV-SYMBOL` | An identifier has an analyzer symbol | `lower/expr.go` |
 | `INV-STORAGE` | A scalar conversion is only requested for scalar storage | `lower/store.go` |
+| `INV-QUERY` | A query was analyzed, and each of its steps is a known verb | `lower/query.go` |
+| `INV-QUERY-REP` | A verb expression's value has a scalar or `QValue` representation that converts to its column's | `lower/query.go` |
+| `INV-QUERY-COLUMN` | A column read (`e.col`) is lowered inside the row loop that binds the column | `lower/query.go` |
 
 ### IR verification
 

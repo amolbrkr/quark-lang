@@ -23,6 +23,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <string>
 
 // QTable: runtime table instance.
 struct QTable {
@@ -53,6 +55,93 @@ inline QTable* q_table_create(const QStructDef* def, int nrows) {
         t->cols[i].data.int_val = 0;
     }
     return t;
+}
+
+inline const QStructDef* q_table_def(const QTable* t) { return t ? t->def : nullptr; }
+
+// q_dtype_word is the Quark name of a column type (QVector::Type as int).
+inline const char* q_dtype_word(int dtype) {
+    switch (dtype) {
+        case static_cast<int>(QVector::Type::F64): return "float";
+        case static_cast<int>(QVector::Type::I64): return "int";
+        case static_cast<int>(QVector::Type::BOOL): return "bool";
+        case static_cast<int>(QVector::Type::STR): return "str";
+    }
+    return "any";
+}
+
+inline int q_table_col_dtype(const QTable* t, int c) {
+    const QValue& col = t->cols[c];
+    if (col.type != QValue::VAL_VECTOR || !col.data.vector_val) return -1;
+    return static_cast<int>(col.data.vector_val->type);
+}
+
+// q_table_type_name is a table's type as the compiler writes it:
+// tbl[Employee] for a named row, tbl[{dept: str, n: int}] for an anonymous
+// one (a query's derived row, or a file read without a row type).
+inline const char* q_table_type_name(const QTable* t) {
+    if (!t || !t->def) return "tbl";
+    std::string s = "tbl[";
+    if (!t->def->anonymous) {
+        s += t->def->name;
+    } else {
+        s += "{";
+        for (int c = 0; c < t->ncols; c++) {
+            if (c) s += ", ";
+            s += t->def->field_names[c];
+            s += ": ";
+            s += q_dtype_word(q_table_col_dtype(t, c));
+        }
+        s += "}";
+    }
+    s += "]";
+    return q_strdup(s.c_str());
+}
+
+// q_table_conform gives v the row type want, as a table reaching a tbl[R]
+// slot (tables_v0_1_spec.md §3.4): a table whose row is want's own
+// definition passes as it is; one with an anonymous row matches when its
+// column names are exactly want's fields and its column types are the
+// fields' types, and is relabeled want with its columns in want's order (an
+// int column widens to a float field, which copies that column). want ==
+// nullptr is the bare `tbl`, which accepts any table. Returns false for
+// anything else.
+inline bool q_table_conform(QValue v, const QStructDef* want, QValue* out) {
+    if (v.type != QValue::VAL_TABLE || !v.data.table_val) return false;
+    QTable* t = v.data.table_val;
+    if (want == nullptr || t->def == want) {
+        *out = v;
+        return true;
+    }
+    if (!t->def || !t->def->anonymous || !want->field_dtypes || t->ncols != want->field_count) return false;
+    QTable* r = q_table_create(want, t->nrows);
+    for (int f = 0; f < want->field_count; f++) {
+        int found = -1;
+        for (int c = 0; c < t->ncols; c++) {
+            if (std::strcmp(t->def->field_names[c], want->field_names[f]) == 0) {
+                found = c;
+                break;
+            }
+        }
+        if (found < 0) return false;
+        const int have = q_table_col_dtype(t, found);
+        const int need = want->field_dtypes[f];
+        if (have == need) {
+            r->cols[f] = t->cols[found];
+        } else if (have == static_cast<int>(QVector::Type::I64) && need == static_cast<int>(QVector::Type::F64)) {
+            const QVector& src = *t->cols[found].data.vector_val;
+            QVector* w = q_vec_alloc(QVector::Type::F64, src.count);
+            const int64_t* in = q_vec_i64_data(src);
+            double* o = q_vec_f64_data_mut(*w);
+            for (size_t i = 0; i < src.count; i++) o[i] = static_cast<double>(in[i]);
+            q_vec_copy_validity(*w, src);
+            r->cols[f] = qv_vector_from(w);
+        } else {
+            return false;
+        }
+    }
+    *out = qv_table(r);
+    return true;
 }
 
 // q_table_get_col returns the QValue (VAL_VECTOR) for column index i.

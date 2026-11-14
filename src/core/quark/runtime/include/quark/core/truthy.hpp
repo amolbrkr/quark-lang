@@ -47,7 +47,9 @@ inline bool q_truthy(QValue v) {
         case QValue::VAL_STRUCT:
             return v.data.struct_val != nullptr;
         case QValue::VAL_TABLE:
-            return v.data.table_val != nullptr;
+            q_runtime_reportf("runtime error: a table used as a condition; "
+                              "test a column, such as len(t.col) > 0 or any(t.col > 0)\n");
+            std::exit(1);
         default:
             return false;
     }

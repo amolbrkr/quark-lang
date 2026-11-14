@@ -58,6 +58,15 @@ type Analysis struct {
 	FixedFns    map[*ast.TreeNode]*FixedFn
 	FnRefs      map[*ast.TreeNode]*FixedFn
 	HoistScopes map[*ast.TreeNode]*HoistScope
+
+	// TableReads are the calls of csv::read_file and csv::parse_text, which
+	// lowering turns into calls of the native reader with the row type.
+	TableReads map[*ast.TreeNode]*TableRead
+	// Queries are the table queries by QueryNode; ColumnRefs maps every
+	// e.col of a verb expression to the column's index in the row the
+	// expression reads.
+	Queries    map[*ast.TreeNode]*Query
+	ColumnRefs map[*ast.TreeNode]int
 }
 
 // Analysis returns the analyzer outputs for root, which must be the tree
@@ -76,6 +85,9 @@ func (a *Analyzer) Analysis(root *ast.TreeNode) *Analysis {
 		FixedFns:         a.fixedByLambda,
 		FnRefs:           a.fixedRefs,
 		HoistScopes:      a.hoistScopes,
+		TableReads:       a.tableReads,
+		Queries:          a.queries,
+		ColumnRefs:       a.columnRefs,
 	}
 }
 
@@ -131,6 +143,7 @@ func (a *Analyzer) analyzeExternFn(node *ast.TreeNode) Type {
 		if len(child.Children) > 1 {
 			typeNode = child.Children[1]
 		}
+		a.checkExternTableType(typeNode)
 		t := resolveTypeNodeStatic(typeNode) // nil typeNode → TypeAny
 		if t == nil {
 			t = TypeAny
@@ -141,6 +154,7 @@ func (a *Analyzer) analyzeExternFn(node *ast.TreeNode) Type {
 
 	// Return type
 	var returnType Type = TypeAny
+	a.checkExternTableType(node.ReturnType)
 	if node.ReturnType != nil {
 		if rt := resolveTypeNodeStatic(node.ReturnType); rt != nil {
 			returnType = rt
@@ -214,6 +228,15 @@ func (a *Analyzer) analyzeExternFn(node *ast.TreeNode) Type {
 	return TypeVoid
 }
 
+// checkExternTableType rejects tbl[R] in an extern fn signature: native code
+// sees a table as a QTable* and can't know R's definition, so it takes and
+// returns a bare `tbl` (FFI P6), which a Quark wrapper can annotate.
+func (a *Analyzer) checkExternTableType(typeNode *ast.TreeNode) {
+	if typeNode != nil && typeNode.TokenLiteral() == "tbl" && len(typeNode.Children) > 0 {
+		a.errorAt(typeNode, "an extern fn takes and returns a bare 'tbl', not tbl[...]: native code can't know the row struct; give a Quark function that calls it the tbl[...] annotation")
+	}
+}
+
 // quarkTypeToNativeCType maps a Quark Type to the C++ type string used in extern fn ABI.
 func quarkTypeToNativeCType(t Type) string {
 	if t == nil {
@@ -241,6 +264,13 @@ func quarkTypeToNativeCType(t Type) string {
 		return "QVector*"
 	case *FunctionType:
 		return "QClosure*"
+	case *TableType:
+		// Only a bare tbl: a QTable* can't carry tbl[R]'s row check, so a
+		// function taking or returning a tbl[R] keeps the QValue convention,
+		// where q_param_table / q_ret_table check and relabel it.
+		if v.Row == nil {
+			return "QTable*"
+		}
 	}
 	if t.Equals(TypeAny) {
 		return "QValue"

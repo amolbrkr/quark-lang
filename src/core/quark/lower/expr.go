@@ -132,6 +132,9 @@ func (l *lowerer) expr(node *ast.TreeNode) Expr {
 	if node == nil {
 		return nullValue()
 	}
+	if v, ok := l.rowSubst[node]; ok {
+		return v
+	}
 	switch node.NodeType {
 	case ast.LiteralNode:
 		return literal(node)
@@ -193,6 +196,8 @@ func (l *lowerer) expr(node *ast.TreeNode) Expr {
 		return l.blockValue(node)
 	case ast.StructLiteralNode:
 		return l.structLiteral(node)
+	case ast.QueryNode:
+		return l.query(node)
 	case ast.ModuleNode, ast.StructDefNode, ast.ExternHeaderNode, ast.ExternFnNode,
 		ast.ExternLinkNode, ast.ExternIncludePathNode:
 		return nullValue()
@@ -925,11 +930,22 @@ func (l *lowerer) member(node *ast.TreeNode) Expr {
 	if len(node.Children) < 2 {
 		return nullValue()
 	}
+	if col, ok := l.an.ColumnRefs[node]; ok {
+		return l.columnRead(node, col)
+	}
 	obj := boxed(l.expr(node.Children[0]))
 	name := node.Children[1].TokenLiteral()
 	if st, ok := l.nodeType(node.Children[0]).(*types.StructType); ok {
 		if _, idx := st.FieldByName(name); idx >= 0 {
 			return &Call{Fn: "q_struct_get_field", Args: []Expr{obj, &Const{R: RepInt, Text: fmt.Sprint(idx)}}, R: RepValue}
+		}
+	}
+	// t.col on a tbl[R]: every way into a tbl[R] slot gives the table R's
+	// definition (the runtime checks relabel anonymous rows), so the column
+	// is at R's field index.
+	if tt, ok := l.nodeType(node.Children[0]).(*types.TableType); ok && tt.Row != nil {
+		if _, idx := tt.Row.FieldByName(name); idx >= 0 {
+			return &Call{Fn: "q_table_get_col", Args: []Expr{obj, &Const{R: RepInt, Text: fmt.Sprint(idx)}}, R: RepValue}
 		}
 	}
 	return &Call{Fn: "q_member_get", Args: []Expr{obj, &Const{R: RepStr, Text: cstr(name)}}, R: RepValue}

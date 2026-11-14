@@ -55,44 +55,18 @@ func resolveTypeNodeStatic(node *ast.TreeNode) Type {
 	return resolveTypeNodeStaticWithStructs(node, nil)
 }
 
+// resolveTypeNodeStaticWithStructs resolves an annotation without reporting
+// errors (the checker reports them where it analyzes the declaration); an
+// annotation that names no valid type is any.
 func resolveTypeNodeStaticWithStructs(node *ast.TreeNode, structTypes map[string]*StructType) Type {
 	if node == nil || node.NodeType != ast.TypeNode {
 		return nil
 	}
-	name := node.TokenLiteral()
-	switch name {
-	case "int":
-		return TypeInt
-	case "float":
-		return TypeFloat
-	case "str":
-		return TypeString
-	case "bool":
-		return TypeBool
-	case "null":
-		return TypeNull
-	case "any":
-		return TypeAny
-	case "list":
-		return &ListType{ElementType: TypeAny}
-	case "dict":
-		return &DictType{KeyType: TypeAny, ValueType: TypeAny}
-	case "vec":
-		return &VectorType{ElementType: TypeAny}
-	case "result":
-		return &ResultType{OkType: TypeAny, ErrType: TypeAny}
-	case "resource":
-		return TypeResource
-	case "fn":
-		return TypeFn
-	default:
-		if structTypes != nil {
-			if st, ok := structTypes[name]; ok {
-				return st
-			}
-		}
+	t, _, msg := annotationType(node, structTypes)
+	if msg != "" {
 		return TypeAny
 	}
+	return t
 }
 
 func inferLiteralType(node *ast.TreeNode) Type {
@@ -118,6 +92,9 @@ func inferLiteralType(node *ast.TreeNode) Type {
 	}
 	if node.NodeType == ast.ListNode {
 		return &ListType{ElementType: TypeAny}
+	}
+	if node.NodeType == ast.DictNode {
+		return &DictType{KeyType: TypeString, ValueType: TypeAny}
 	}
 	return TypeAny
 }

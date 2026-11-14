@@ -524,7 +524,7 @@ func (p *Parser) parseParameters() *ast.TreeNode {
 			if defaultExpr != nil {
 				// Enforce literals only for default values
 				if !p.isLiteralDefault(defaultExpr) {
-					p.addError("default parameter values must be literals (int, float, string, bool, null, or empty list)")
+					p.addError("default parameter values must be literals (int, float, string, bool, null, an empty list [] or dict {})")
 				}
 				paramNode.DefaultValue = defaultExpr
 			}
@@ -565,8 +565,8 @@ func (p *Parser) isLiteralDefault(node *ast.TreeNode) bool {
 	if node.Op() == token.MINUS && len(node.Children) == 1 {
 		return p.isNegatedNumericLiteral(node)
 	}
-	// Allow empty list: list []
-	if node.NodeType == ast.ListNode && len(node.Children) == 0 {
+	// Allow an empty list or dict: list [], dict {} (a fresh one per call)
+	if (node.NodeType == ast.ListNode || node.NodeType == ast.DictNode) && len(node.Children) == 0 {
 		return true
 	}
 	return false
@@ -594,6 +594,10 @@ func (p *Parser) isNegatedNumericLiteral(node *ast.TreeNode) bool {
 	return false
 }
 
+// parseTypeExpr parses a type annotation: a name (int, list, Point), a
+// qualified struct name (geo::Point), or a name with one bracketed type
+// argument (tbl[Employee]), which becomes the TypeNode's child. Which names
+// take an argument is the checker's business.
 func (p *Parser) parseTypeExpr() *ast.TreeNode {
 	if p.curToken.Type != token.ID && p.curToken.Type != token.LIST && p.curToken.Type != token.DICT && p.curToken.Type != token.VEC && p.curToken.Type != token.RESULT && p.curToken.Type != token.FN {
 		p.addError("expected type name")
@@ -613,11 +617,33 @@ func (p *Parser) parseTypeExpr() *ast.TreeNode {
 	node := ast.NewNode(ast.TypeNode, &tok)
 	p.nextToken()
 
+	if p.curToken.Type == token.LBRACKET {
+		open := p.curToken
+		p.nextToken()
+		if p.curToken.Type == token.RBRACKET {
+			p.addErrorAt(&open, "expected a type inside '%s[...]'", tok.Literal)
+			return nil
+		}
+		arg := p.parseTypeExpr()
+		if arg == nil {
+			return nil
+		}
+		if p.curToken.Type == token.COMMA {
+			p.addError("'%s[...]' takes one type", tok.Literal)
+			return nil
+		}
+		if !p.expect(token.RBRACKET) {
+			return nil
+		}
+		node.AddChild(arg)
+	}
+
 	return node
 }
 
 // atReturnType reports whether the tokens before the next `->` are a return
-// type annotation: a type name, possibly qualified (geo::Point).
+// type annotation: a type name, possibly qualified (geo::Point) or with a
+// bracketed type argument (tbl[Employee]).
 func (p *Parser) atReturnType() bool {
 	if !p.isTypeToken() {
 		return false
@@ -626,6 +652,23 @@ func (p *Parser) atReturnType() bool {
 	if p.curToken.Type == token.ID {
 		for p.peek(i).Type == token.COLONCOLON && p.peek(i+1).Type == token.ID {
 			i += 2
+		}
+	}
+	if p.peek(i).Type == token.LBRACKET {
+		depth := 0
+		for {
+			switch p.peek(i).Type {
+			case token.LBRACKET:
+				depth++
+			case token.RBRACKET:
+				depth--
+			case token.EOF, token.NEWLINE, token.ARROW:
+				return false
+			}
+			i++
+			if depth == 0 {
+				break
+			}
 		}
 	}
 	return p.peek(i).Type == token.ARROW

@@ -9,6 +9,7 @@
 #include "repr.hpp"
 #include "../types/dict.hpp"
 #include "../types/resource.hpp"
+#include "../types/table.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -235,10 +236,7 @@ inline QValue q_type(QValue v) {
             }
             return qv_string("struct");
         case QValue::VAL_TABLE:
-            if (v.data.table_val && v.data.table_val->def) {
-                return qv_string(v.data.table_val->def->name);
-            }
-            return qv_string("tbl");
+            return qv_string(q_table_type_name(v.data.table_val));
         case QValue::VAL_VECTOR: {
             if (!q_vec_has_valid_handle(v) || !q_vec_validate(*v.data.vector_val)) {
                 return qv_string("vec[invalid]");

@@ -7,6 +7,7 @@
 #define QUARK_BUILTINS_PARAMS_HPP
 
 #include "../core/value.hpp"
+#include "../types/table.hpp"
 #include "conversion.hpp"
 #include <cstdlib>
 #include <cstring>
@@ -56,6 +57,15 @@ inline QValue q_param_struct(QValue v, const QStructDef* def, const char* fn, co
     q_param_type_error(v, def->name, fn, param);
 }
 
+// q_param_table checks a tbl[R] parameter (def is R's definition, nullptr
+// for a bare `tbl`): a table of row R, or one with an anonymous row of R's
+// shape, which is relabeled R (q_table_conform). Tables don't accept null.
+inline QValue q_param_table(QValue v, const QStructDef* def, const char* expected, const char* fn, const char* param) {
+    QValue out;
+    if (q_table_conform(v, def, &out)) return out;
+    q_param_type_error(v, expected, fn, param);
+}
+
 // Struct field values. A struct literal checks each field value whose type the
 // compiler couldn't prove, with the same rules as parameters (float widens an
 // int, reference types accept null), so a field read can trust the stored tag.
@@ -93,6 +103,12 @@ inline QValue q_field_struct(QValue v, const QStructDef* expected, const char* s
         return v;
     }
     q_field_type_error(v, expected->name, structName, field);
+}
+
+inline QValue q_field_table(QValue v, const QStructDef* def, const char* expected, const char* structName, const char* field) {
+    QValue out;
+    if (q_table_conform(v, def, &out)) return out;
+    q_field_type_error(v, expected, structName, field);
 }
 
 // Typed declarations (`x: int = value`). The value is checked when the
@@ -135,6 +151,12 @@ inline QValue q_var_struct(QValue v, const QStructDef* def, const char* var) {
     q_var_type_error(v, def->name, var);
 }
 
+inline QValue q_var_table(QValue v, const QStructDef* def, const char* expected, const char* var) {
+    QValue out;
+    if (q_table_conform(v, def, &out)) return out;
+    q_var_type_error(v, expected, var);
+}
+
 // Return values of functions with a return annotation (`fn f(c) int -> ...`)
 // whose body's type the compiler couldn't prove: checked once on return,
 // with the same rules as parameters (float widens an int; struct and
@@ -173,6 +195,12 @@ inline QValue q_ret_struct(QValue v, const QStructDef* def, const char* fn) {
         return v;
     }
     q_ret_type_error(v, def->name, fn);
+}
+
+inline QValue q_ret_table(QValue v, const QStructDef* def, const char* expected, const char* fn) {
+    QValue out;
+    if (q_table_conform(v, def, &out)) return out;
+    q_ret_type_error(v, expected, fn);
 }
 
 #endif // QUARK_BUILTINS_PARAMS_HPP

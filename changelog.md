@@ -10,6 +10,8 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 
 ## Contents
 
+- [2026-11-14: Table queries, table printing and table methods (tables v0.1)](#2026-11-14-table-queries-table-printing-and-table-methods-tables-v01)
+- [2026-11-13: The `tbl` type, `std/csv` on the table reader, digit separators (tables v0.1)](#2026-11-13-the-tbl-type-stdcsv-on-the-table-reader-digit-separators-tables-v01)
 - [2026-11-13: A statement ends at the end of its line; indented pipe lines](#2026-11-13-a-statement-ends-at-the-end-of-its-line-indented-pipe-lines)
 - [2026-11-13: Known issues move to `known_issues.md`](#2026-11-13-known-issues-move-to-known_issuesmd)
 - [2026-11-13: Benchmark suite; `std/blas` gemm, syrk and transposed gemv](#2026-11-13-benchmark-suite-stdblas-gemm-syrk-and-transposed-gemv)
@@ -34,6 +36,91 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 - [2026-03-28: Vector soundness, `std/fmt` on `extern`, build output](#2026-03-28-vector-soundness-stdfmt-on-extern-build-output)
 
 ---
+
+## 2026-11-14: Table queries, table printing and table methods (tables v0.1)
+
+Completes `tables_v0_1_spec.md` §9, the first implementation of tables, on branch `worktree-tbl-v01`. Four decisions were taken while implementing it (spec §2): `and`/`or` follow SQL's three-valued logic with missing values (D22), the columns of one `mutate` are computed in order (D23), a summarize column is one aggregate of one column (D24), and inspection is table methods rather than prelude functions (D25).
+
+Commits: `e16a54a`, `cc6407e`
+
+### Added
+- **Queries** (semantics.md §9.5, `grammar.md` §10.5): `t | e -> verb(...) | verb(...)` with the verbs `filter`, `mutate`, `sort`, `group_by` + `summarize`, `head` and `tail`. The compiler follows the row type through every step, so every column a query reads, and its type, is checked at compile time; each step compiles to a loop over the column buffers.
+  ```quark
+  stats = staff | e ->
+      filter(e.salary >= 100_000 or e.dept == 'eng')
+      | mutate(bonus = e.salary * 0.1, total = e.salary + e.bonus)
+      | group_by(e.dept)
+      | summarize(avg = mean(e.salary), top = max(e.bonus), n = count())
+      | sort(desc(e.avg))
+  ```
+  - `filter(cond)` keeps the rows where the bool `cond` is true. `mutate(name = expr, ...)` adds columns at the end or replaces one in place (its type may change), in the order written, each seeing the ones before it. `sort` takes columns, each optionally `desc(...)`, and is stable with missing values last. `group_by(cols)` must be followed by `summarize`, which gives one row per key in key order (missing keys last) with the keys first; without `group_by`, `summarize` gives one row. Aggregates are `count()`, `count(e.col)`, `sum`, `mean`, `min` and `max`, each of one column. `head(n)`/`tail(n)` keep the first or last rows (6 by default).
+  - A verb expression may use arithmetic, comparisons, `and`/`or`/`!`, `x if c else y`, outer variables and calls of builtins, methods and functions with known return types. The row name shadows an outer variable of the same name, may only be used as `e.col`, and can't be read from a function written inside a verb.
+  - A query's result has an anonymous row, shown by its shape (`tbl[{dept: str, avg: float, top: float, n: int}]`), which matches a struct of exactly that shape where it is stored: `s: tbl[DeptStats] = staff | e -> ...`. A variable whose first value was a query's result accepts a later table with the same columns in another order, relabeled the same way.
+  - Errors the compiler reports include an unknown verb or column (with the columns listed), a query on a table whose row type it doesn't know (`a query needs a table whose row type is known ...; annotate it (t: tbl[Employee])`), a non-bool condition, a `group_by` not followed by `summarize`, an expression where a sort key, group key or aggregate argument must be a column (`sum aggregates a column (e.col), not an expression; compute the value with mutate first`), `max(e.x) - min(e.x)` as a summarize column, duplicate column names, and a column of a type a table can't hold.
+- **Missing values in queries** (§5): an expression is computed for a row only when the columns it reads are present, and is otherwise missing (a function it calls isn't called for that row); `and`, `or`, `!` and ternaries follow SQL's three-valued logic, so `filter(e.dept == 'Sales' or e.salary > 100)` keeps a Sales row whose salary is missing; a missing `filter` condition drops the row; aggregates skip missing values and NaN. Their operands and a ternary's condition must be bools (`in a query, 'and' takes bools, got str (write a comparison, such as e.name != '')`).
+- **Printing a table** shows its type and row count, the column names and types, and the first 10 rows (`fmt::full(t)`: all), a missing value as `null`; inside a list it prints `<tbl[Emp], 5 rows>`:
+  ```
+  tbl[Emp]: 5 rows
+   id  name  dept    salary
+  int  str   str      float
+    1  Ann   eng   120000.0
+    2  Bo    ops    90000.5
+    3  Cy    eng       null
+  ```
+- **Table methods** (D25): `t.head(n = 6)` and `t.tail(n = 6)` return a table of the same type, and `t.describe(n = 5)` prints each column's name, type and first values.
+- A table can't be compared with `==` or `!=` (`operator '==' is not defined for tables; compare their columns ...`) or used as a condition (`a table cannot be used as a condition; test a column, such as len(t.col) > 0`), at compile time and, through `any`, at runtime.
+
+### Internal
+- `ast`: `QueryNode`, `QueryStepNode`, `ColumnDefNode`, `AggregateNode`, `SortKeyNode` (`TreeNode.Descending`). The parser makes verb, column and aggregate names and `desc` node tokens, so the loader never resolves them; the loader binds the row name in the steps like a parameter (`walkQuery`), renaming it in imported files.
+- `types/analyzer_query.go`: `analyzeQuery` records a `types.Query` per query (steps with their input and output rows, mutate columns, keys, aggregates) and the column index of every `e.col` (`Analysis.Queries`, `ColumnRefs`); the row name is a `SymRow` symbol, which has no C++ variable. Derived rows are interned by shape (`anonRow`) and emitted as static `QStructDef`s.
+- `lower/query.go`: queries lower to `QTable*` temporaries and engine calls; filter and mutate are `ForIndex` loops over bound columns, with strict parts guarded by `q_tbl_present` and three-valued parts lowered first (`rowLogic`, `rowTernary`, `lowerer.rowSubst`). Runtime: `table/query.hpp` (`RowSet`, `ColOut`, `q_tbl_*`, the table methods), included only when used: a catalog builtin may name its header (`builtins.Spec.Header` → `CallPlan.RuntimeHeader`). `INV-QUERY`, `INV-QUERY-REP` and `INV-QUERY-COLUMN` are new internal error codes.
+- Measured on 500K rows (`architecture.md` §15): a two-column numeric `mutate` 10 ms, `group_by` + `summarize` 27 ms, a filter with a string comparison 38 ms (a string allocated per row), a sort by a nullable key 239 ms (the engine's slow path, `known_issues.md`).
+- Tests: `TestTables_Query`, `TestTables_QueryRejected`, `TestTables_Inspect`, `TestTables_ValueRejected`, and `smoke_tables.qrk`. The editor grammar highlights the table methods, and its data has them.
+- `known_issues.md` gains three issues found here: sorting by a nullable key is slow, `fmt::table` shows missing values as `NA` while `print` shows `null`, and the editor's method signatures drop their first parameter.
+
+## 2026-11-13: The `tbl` type, `std/csv` on the table reader, digit separators (tables v0.1)
+
+The first half of `tables_v0_1_spec.md` §9, on branch `worktree-tbl-v01`; queries followed on 2026-11-14.
+
+Commits: `2785a46`, `54f38cf`
+
+### Breaking
+- **`std/csv` is rebuilt on the table reader** (D15): `csv::parse(text, sep)` and `csv::read(path, sep)`, which returned lists of str lists, are removed. Use `csv::parse_text(text)` and `csv::read_file(path)`, which return `ok(table)` (below); a `;`-separated text has no form yet (a path ending in `.tsv` or `.tab` is tab-separated).
+- `tbl` is a type name: a program with its own `struct tbl:` now gets confusing messages where it writes `tbl` as an annotation (`known_issues.md`); rename the struct.
+
+### Added
+- **Digit separators** (`grammar.md` §3.3): `_` may stand between two digits of a number, in any part of it, and is ignored: `100_000`, `1_000.5`, `0.000_1`, `1e1_0`. Anywhere else in a number it is an error: `x = 1__0` is `'_' in a number must be between two digits: '1__0' (write 100_000)`, as are `1_`, `1_.5`, `1._5` and `1_e5`. `_1` is still a name.
+- **The table type** (D10, D20): `tbl[Employee]` is a table whose rows are `Employee` structs (every field an `int`, `float`, `bool` or `str`), and a bare `tbl` is a table of any row. `t.salary` on a `tbl[Employee]` is the column as a `vec[float]`; an unknown column is a compile error that lists the columns (`tbl[Emp] has no column 'wage' (columns: id, name, dept, salary)`), and so is a column of a bare `tbl` (`the row type of this table isn't known`). `null` is not a table. `type(t)` is `tbl[Employee]`, or the shape for a table whose row has no name: `tbl[{id: int, name: str}]`.
+  ```quark
+  incl 'std/csv'
+
+  struct Employee:
+      id: int
+      name: str
+      salary: float
+
+  staff: tbl[Employee] = unwrap(csv::read_file('staff.csv'))
+  print(sum(staff.salary))
+  ```
+- **A table with an anonymous row matches a named one by shape** where it is stored (§3.2-3.4): its columns must be the struct's fields exactly (names and types, in any order; an int column fills a float field), and it is relabeled with the struct and its columns put in field order. The compiler checks what it can see and names the difference (`cannot assign value of type 'tbl[Emp]' to 'tbl[Emp2]': Emp and Emp2 are different structs`); a table whose row it doesn't know (a bare `tbl`, a value of type `any`) is checked when it reaches a `tbl[R]` parameter, variable, field or return value: `variable 'v' is declared tbl[Emp] but got tbl[{id: int, name: str}]`.
+- **`csv::read_file(path)` and `csv::parse_text(text)` are typed by where their table goes** (D18): with `staff: tbl[Employee] = unwrap(csv::read_file('staff.csv'))`, a `tbl[Employee]` parameter, struct field or return annotation, the file is read with `Employee`'s columns and types, and a bad cell names its line and column (`staff.csv:3: column 'salary': '12k' is not a float`). Elsewhere every column's type is inferred from its values (int, else float, else bool, else str). Empty and `NA` cells are missing values in every column.
+- **A column mapping** (D17): `csv::read_file('emp.csv', dict { id: 'EmpID', salary: 'Salary ($)' })` reads fields from header columns with other names. The mapping must be a dict literal of string literals; its fields are checked against the row struct at compile time. A field missing from the header says how to map it: `emp.csv: no column named 'id' in the header (columns: EmpID, name); map field 'id' to one of them with dict { id: '...' }`.
+- **`csv::write_file(t, path)`** (a header line, missing values as empty fields; tab-separated for `.tsv` and `.tab`) returns `ok(null)` or `err(message)`, and **`csv::format_text(t)`** returns the same text.
+- **CSV text must be UTF-8**: a str cell or header name that isn't valid UTF-8 (`emp.csv:2: column 'name' is not valid UTF-8 (the file may be Latin-1 or another encoding)`) or holds a NUL byte is an error, so a Latin-1 `José` can't silently fail to equal `'José'`.
+- An empty `dict {}` may be a parameter default, like `list []`, and is a new dict on every call.
+- An `extern fn` may take and return a bare `tbl`, as a `QTable*` (FFI P6); `tbl[R]` in an extern signature is a compile error.
+
+### Fixed
+- A struct or table passed to a native function that expects another type was reported as `expected int, got unknown`; it now names `struct` or `tbl`.
+- Text after a closing quote in a CSV field is an error (`text:2: unexpected text after a closing quote`); the old `csv::parse('a,"b"x,c')` returned `[['a', 'bx', 'c']]`.
+- A NUL byte in a CSV str cell is an error; the reader used to keep it in the column while a value taken out of it was cut short at the NUL.
+
+### Internal
+- `lexer.readNumber` reads digit runs with separators and drops them from the literal, so later stages see `100000`. The editor grammar highlights separators and exponents (`1e3` was highlighted as `1`).
+- Types: `types.TableType{Row}` (nil row for `tbl`); `StructType.Anonymous` for derived rows, one per shape (`row__N`), shown as their shape; `RowMatch` is the shape rule, used by `CanAssign` (a conversion, like int to float) but not `IsSubtype`, so containers never hold a relabeled table. `annotationType` is the one annotation resolver behind `resolveTypeNode` and the error-free `resolveTypeNodeStatic`; a `TypeNode` may have one type argument (the parser reads `name[T]`, the checker accepts it on `tbl` only). Struct field types are resolved twice, so a `tbl[R]` field sees `R`'s fields whatever the definition order.
+- Expected types: the analyzer records the type a node's value is stored as (`Analyzer.expected`: typed declarations, assignments to typed variables, arguments of functions with known signatures, struct literal fields, the last statement of a body with a return annotation; `unwrap` passes `result[T]` to its argument). The std/csv reads are recognized by their definition (`names.Origin` in `std/csv.qrk`) and recorded in `Analysis.TableReads`; lowering calls the native reader (`q_csv_read_file`, `q_csv_parse_text`) with the row's `QStructDef`, which now carries each field's column type (`field_dtypes`) and an `anonymous` flag.
+- Runtime: `q_table_conform` is the shape rule at runtime, behind `q_param_table`, `q_var_table`, `q_field_table` and `q_ret_table` (IR `CheckTable`); element descriptors check tables by row definition. `q_member_get` reads a column of a table of unknown type by name. The reader takes a header name per schema column (`csv::Column::header`) and renames for untyped reads (`Options::rename`), and validates text (`csv::text_problem`). A function whose signature has a `tbl[R]` keeps the QValue convention: a `QTable*` can't carry the row check.
+- Tests: `integration_tables_test.go` (`TestTables_TypeRejected`, `TestTables_CSV`, `TestTables_CSVRejected`, parallel subtests), new cases in `src/testfiles/table/csv_test.cpp` (UTF-8 edge cases, NUL, mapping), `smoke_csv.qrk` on the new API.
 
 ## 2026-11-13: A statement ends at the end of its line; indented pipe lines
 

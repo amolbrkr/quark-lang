@@ -208,6 +208,10 @@ inline bool values_equal(const QValue& a, const QValue& b, int depth) {
         }
         case QValue::VAL_FUNC:
             return a.data.func_val == b.data.func_val;
+        case QValue::VAL_TABLE:
+            // Rejected at compile time where the types are known.
+            q_runtime_reportf("runtime error: '==' is not defined for tables; compare their columns (t.col == u.col compares elementwise)\n");
+            std::exit(1);
         default:
             return false;
     }

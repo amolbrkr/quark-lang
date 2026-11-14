@@ -85,6 +85,8 @@ The analyzer returns one `types.Analysis` (`types/analyzer_modules.go`), passed 
 | `StructTypes` | Declared structs and their fields |
 | `Names` | The loader's name table |
 | `FixedFns`, `FnRefs`, `HoistScopes` | Fixed declarations (by lambda node), identifier nodes that name a declaration needing no closure, and per scope the cells and closures created at its start |
+| `TableReads` | The calls of `csv::read_file` / `csv::parse_text`, with the native reader and the row struct the expected type names (`types/analyzer_tables.go`) |
+| `Queries`, `ColumnRefs` | Every table query (`types.Query`: per step the verb, its input and output rows, the mutate columns, sort/group keys, aggregates), and every `e.col` of a verb expression with its column index (`types/analyzer_query.go`) |
 
 Diagnostics are severity-tagged: errors (`QK-CHECK-001`) stop `check`/`emit`/`build`/`run`; warnings (`QK-CHECK-002`) are reported and don't. Every message goes through `names.DisplayText`.
 
@@ -102,7 +104,10 @@ When either side of a check (parameter and argument, slot and value) has an unkn
 - Containers are covariant in element type (`list[int]` is a `list[any]`) and never the other way: a list's static element type is a guarantee about every value in it (§12).
 - A union destination accepts a value of any of its options; a union source must fit every option.
 - A function value fits a signature with the same arity whose return type it returns; a value typed only `fn` fits no specific signature.
+- A table: a bare `tbl` holds any table. A `tbl[R]` slot accepts a `tbl[R]`, and, as a conversion (so `CanAssign` only), a table with an anonymous row of `R`'s shape (`RowMatch`: the same column names in any order, each of the field's type or an int for a float field) or with a row the compiler doesn't know (checked at runtime). Lowering stores such a value through the slot's check, which relabels it (§12).
 - Everything else requires an exact match.
+
+**Expected types** (`Analyzer.expected`, `types/analyzer_tables.go`). Before analyzing an expression whose value goes into a typed slot, the analyzer records the slot's type for it: typed declarations, assignments to typed variables, arguments of a callee whose signature is known by name, struct literal fields, and the last statement of a body with a return annotation; `unwrap` passes `result[T]` on to its argument. Only the std/csv reads consume it so far (D18): they are recognized by their definition (a `names.Origin` in `std/csv.qrk`), and with an expected `result[tbl[R], ...]` they are typed `result[tbl[R], str]` and lowered to the native reader with `R`'s `QStructDef`.
 
 **Pending containers.** An empty `list []` / `dict {}` has a pending `ListType`/`DictType` (`NewPendingList`) that reads as `list[any]` until its element type is decided: by the container type it is stored into or merged with (`SettleContainers`, `MergeTypes`), or by its first write (`checkElemWrite` → `FixElementType`). Pending literals stored into each other become peers and are fixed together. One passed where writes can't be seen (an untyped parameter, an `any` slot) is fixed to `any` (`escapePending`). Every alias shares the one type object, so the fix applies to all of them and to the literal's runtime descriptor.
 
@@ -124,6 +129,8 @@ The back end is two packages. `lower/` turns the analyzed AST into a small typed
 - Operands run left to right: a function value before its arguments, a method's receiver before its arguments, the arguments, then filled-in defaults; the object (and index) of an assignment target before the value (`obj.k = v`, `xs[i] = v`); struct literal fields in the order written. An operand is moved into a temporary only when a later operand needs statements or has effects (`operands`, `sequence` in `lower/expr.go`), so `x + 1` stays `q_checked_add(quark_x, 1)`.
 - Conditional and repeated contexts get their own blocks, so their temporaries live in the branch or loop that runs them: the right side of `and`/`or`, both branches of `x if c else y`, each `elseif` condition (inside the else branch of the test before it), and a `while` condition, which is re-run before every iteration (`while (true) { pre; if (!(cond)) break; body }`, or `while (cond)` when it needs no statements). `and`/`or` on two raw bools that need no statements are C++ `&&`/`||`.
 - An `if` or `when` used as a statement assigns no result; used as a value, each branch assigns a `QValue` temporary.
+
+**Queries** (`lower/query.go`, runtime `table/query.hpp`). The source becomes a `QTable*` temporary and each step a new one: `sort`, `head`/`tail` and `summarize` call engine kernels (`q_tbl_sort`, `q_tbl_group` + `q_tbl_agg_*` + `q_tbl_make`); `filter` and each `mutate` column are a `ForIndex` over the rows of the current table, with the columns the expression reads bound once (`const QVector&`) and read raw (`VecElem`, `q_tbl_str`). Per row, a strict part of the expression runs only inside `if (present)`, where `present` ANDs the validity of the columns it reads (`q_tbl_present`); `and`/`or`/`!`/ternary parts are lowered first into a value and a presence temporary each, with three-valued logic, and stand for themselves in the strict part through `lowerer.rowSubst`. Filter pushes kept rows into a `RowSet` (`q_tbl_take`); a mutate column pushes each value or a missing value into a `ColOut` and becomes a column of the next table (`q_tbl_put`, with the static `QStructDef` of the row after that column). Programs that use queries or table methods include `table/query.hpp` (a builtin's `Spec.Header`, passed on as `CallPlan.RuntimeHeader`).
 
 **Naming** (see also §4):
 - User names are prefixed `quark_` (`quark_x`). A module member is `quark_<internal name>`.
@@ -217,7 +224,7 @@ struct QValue {
         QResult* result_val;   // {bool is_ok, QValue payload}
         QResourceHandle* resource_val;
         QStruct* struct_val;
-        QTable* table_val;     // runtime only; no Quark syntax creates a table yet
+        QTable* table_val;     // a tbl
     } data;
 };
 ```
@@ -266,7 +273,7 @@ A cell for a variable that a hoisted function captures is created unassigned (`q
 - **QVector**: typed columnar storage, dtype f64, i64, bool or str, in the Arrow layout (`types/vector.hpp`): contiguous values, bit-packed bools, int32 offsets plus UTF-8 bytes for strings, a validity bitmap that is `nullptr` when there are no nulls, 64-byte aligned buffers. Vectors are immutable.
 - **QResult**: `{ bool is_ok; QValue payload; }`.
 - **QStruct** / **QStructDef** (`types/struct.hpp`): a struct value points to its definition; identity is the definition's address (`q_param_struct` / `q_field_struct` compare pointers), and `QStructDef.name` is the display name (`geo::Point`).
-- **QTable** (`types/table.hpp`): a `QStructDef` naming the columns, a row count, and one `QVector*` per column. Used by the table engine (`tables_v0_1_spec.md` §7); no Quark syntax creates one yet.
+- **QTable** (`types/table.hpp`): a `QStructDef` naming the columns, a row count, and one `QVector*` per column (`tables_v0_1_spec.md` §7). The `QStructDef` is the row type: `field_dtypes` gives each field's column type and `anonymous` marks a row a query derived or the CSV reader inferred. `q_table_conform` is the shape rule at runtime (§12).
 
 ### 2.5 Capture Analysis
 
@@ -551,6 +558,8 @@ A runtime function's `QValue` result is never unboxed on trust; a function whose
 
 The reads that could give `null` where the analyzer said "element" are closed: `xs[i]` and `s[i]` out of range are runtime errors (`q_index`), and `xs.get(i)` and `d.get(k)` have type `any`.
 
+**Tables.** A `tbl[R]`'s columns are read by index and their buffers raw, so every table in a `tbl[R]` slot has `R`'s definition, or an anonymous one with the same field order. Every way in is guarded: a typed read gets the definition from the compiler; a query step builds its output with the static definition the analyzer derived; a value from anywhere else reaching a `tbl[R]` parameter, variable, field or return value goes through `q_param_table` / `q_var_table` / `q_field_table` / `q_ret_table`, which accept `R`'s own definition, relabel an anonymous row of `R`'s shape (a new `QTable` with the columns reordered, an int column copied as floats) and reject anything else; a function with a `tbl[R]` in its signature keeps the QValue convention, since a native `QTable*` can't carry the check. Containers never relabel: a `tbl[R]` element descriptor matches `R`'s definition only. A missing value taken out of a column is an error (D12), and verb expressions read a slot only after testing its validity.
+
 **Holes left** (listed with reproductions in `known_issues.md`): native code writing lists directly skips the element check.
 
 **Finding holes mechanically** (planned):
@@ -567,7 +576,7 @@ The back end is the lowering pass, IR, verifier and emitter (§1.6). What is lef
 
 1. **Checked mode**: a build flag that turns every `ProofType` and `ProofElement` unbox into a checked read (§12, Finding holes mechanically). Running the test corpus in both modes, any check failure or output difference is a soundness bug.
 
-The table compiler work (`tables_v0_1_spec.md` §9) targets `lower/` and `emit/`.
+Tables (`tables_v0_1_spec.md`) are lowered in `lower/query.go` (§1.6, Queries), with their runtime in `table/query.hpp`.
 
 ---
 
@@ -613,6 +622,11 @@ Measured with the benchmark suite (`src/benchmarks/`; the numbers and how they w
 - **Dict lookups** build a new key string and hash it again on every `get` and `set`, in a node-based `std::unordered_map`; "get, then set" is two full lookups. A dict-based group-by of 1M rows takes 332 ms (CPython 397 ms, Polars 55 ms). Directions: open addressing with stored hashes, an update-in-place operation. The table engine already groups with its own open-addressing table.
 - **Strings** are NUL-terminated without a stored length: every method calls `strlen` again, `lower` calls the locale's `tolower` per byte, and every step allocates. `trim().lower().replace()` on 1M strings takes 530 ms (CPython 402 ms). Directions: store the length; ASCII fast paths.
 - **Sorting** compares `QValue`s with a type-checking comparator: 280 ms for 1M floats (NumPy 27 ms, R 156 ms). Direction: sort raw doubles when the element type is known; give `vec` a sort.
+
+**Tables** (`tables_v0_1_spec.md`; 500K rows, one float column with 1% missing, measured 2026-11-14 with `quark run`)
+- Numeric verb expressions run at loop speed: `mutate(bonus = e.salary * 0.1, total = e.salary + e.bonus)` takes 10 ms, `group_by` + `summarize(mean, count)` 27 ms.
+- **A str column read allocates a Quark string per row** (`q_tbl_str`), so `filter(e.dept == 'eng' or ...)` takes 38 ms and `mutate(up = e.name.upper())` 54 ms. Direction: compare and hash str cells as views of the column buffer, and allocate only where a string escapes (a call or a new column).
+- **Sorting by a nullable key** takes the engine's generic comparator: 239 ms, against 97 ms for a dense key (`known_issues.md`, Slow paths).
 
 **Libraries**
 - A program that imports `std/blas` starts OpenBLAS's thread pool at load (one thread per CPU), and then large vec allocations make the GC print `Repeated allocation of very large block` warnings and get slower (`blas::axpy` on 10M doubles: 30 ms with `OPENBLAS_NUM_THREADS=1`, 135 ms without). Direction: find why the pool disturbs the GC's large-block allocation, or start OpenBLAS with one thread and let programs ask for more.

@@ -1,15 +1,24 @@
 print('== smoke: csv ==')
-incl 'std/csv' as csv
+incl 'std/csv'
+
+struct Note:
+    name: str
+    note: str
 
 // Quoted fields may hold the separator, doubled quotes and newlines;
 // \r\n line endings and blank lines are handled.
 text = 'name,note\n"Smith, J","say ""hi"""\r\n\n"multi\nline",x\n'
-rows = csv::parse(text)
-print(len(rows))
-for r in rows:
-    print(r.join(' | '))
-print(csv::parse('a;b\n1;2', ';').get(1).join('+'))
+t: tbl[Note] = unwrap(csv::parse_text(text))
+print(len(t.name))
+for n in t.name:
+    print(n)
+print(t.note)
+print(csv::format_text(t))
 
-when csv::read('definitely_missing_file.csv'):
+// Without a row type, column types come from the values.
+u = unwrap(csv::parse_text('n,x,ok\n1,2.5,true\n2,,false\n'))
+print(type(u))
+
+when csv::read_file('definitely_missing_file.csv'):
     ok r -> print('unexpected')
-    err e -> print(e.startswith('csv.read: definitely_missing_file.csv'))
+    err e -> print(e.startswith("cannot open 'definitely_missing_file.csv'"))

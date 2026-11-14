@@ -52,28 +52,36 @@ func (a *Analyzer) predeclareStructTypes(children []*ast.TreeNode) {
 		a.structTypes[name] = st
 	}
 
-	// Pass 2: resolve field types now that all struct names are registered
-	for _, child := range children {
-		if child.NodeType != ast.StructDefNode {
-			continue
-		}
-		name := child.TokenLiteral()
-		st := a.structTypes[name]
-		if st == nil {
-			continue // was skipped above due to duplicate
-		}
-		fieldIdx := 0
-		for _, fieldNode := range child.Children {
-			if fieldNode.NodeType != ast.StructFieldNode {
+	// Pass 2: resolve field types now that all struct names are registered,
+	// first without errors, then again reporting them, so a field of type
+	// tbl[R] sees R's field types whatever the order of the definitions.
+	for _, report := range []bool{false, true} {
+		for _, child := range children {
+			if child.NodeType != ast.StructDefNode {
 				continue
 			}
-			if fieldIdx >= len(st.Fields) {
-				break
+			name := child.TokenLiteral()
+			st := a.structTypes[name]
+			if st == nil {
+				continue // was skipped above due to duplicate
 			}
-			if len(fieldNode.Children) > 0 && fieldNode.Children[0].NodeType == ast.TypeNode {
-				st.Fields[fieldIdx].Type = a.resolveTypeNode(fieldNode.Children[0])
+			fieldIdx := 0
+			for _, fieldNode := range child.Children {
+				if fieldNode.NodeType != ast.StructFieldNode {
+					continue
+				}
+				if fieldIdx >= len(st.Fields) {
+					break
+				}
+				if len(fieldNode.Children) > 0 && fieldNode.Children[0].NodeType == ast.TypeNode {
+					if report {
+						st.Fields[fieldIdx].Type = a.resolveTypeNode(fieldNode.Children[0])
+					} else {
+						st.Fields[fieldIdx].Type = resolveTypeNodeStaticWithStructs(fieldNode.Children[0], a.structTypes)
+					}
+				}
+				fieldIdx++
 			}
-			fieldIdx++
 		}
 	}
 }
@@ -144,6 +152,7 @@ func (a *Analyzer) analyzeStructLiteral(node *ast.TreeNode) Type {
 
 		// Type-check value expression
 		valueNode := pair.Children[1]
+		a.expect(valueNode, field.Type)
 		valueType := a.Analyze(valueNode)
 		if isUnknownType(field.Type) {
 			escapePending(valueType)
@@ -152,7 +161,7 @@ func (a *Analyzer) analyzeStructLiteral(node *ast.TreeNode) Type {
 		a.contextLiteral(valueNode, field.Type)
 
 		if !isUnknownType(valueType) && !IsErrorType(valueType) && !CanAssign(field.Type, valueType) {
-			a.errorAt(pair, "cannot assign value of type '%s' to field '%s' of type '%s'", valueType.String(), fieldName, field.Type.String())
+			a.errorAt(pair, "cannot assign value of type '%s' to field '%s' of type '%s'%s", valueType.String(), fieldName, field.Type.String(), mismatchDetail(field.Type, valueType))
 		}
 	}
 
@@ -180,6 +189,16 @@ func (a *Analyzer) checkStructEquality(node *ast.TreeNode, leftType, rightType T
 			opStr = "!="
 		}
 		a.errorAt(node, "operator '%s' is not defined for struct values; compare fields explicitly", opStr)
+		return true
+	}
+	_, leftTable := leftType.(*TableType)
+	_, rightTable := rightType.(*TableType)
+	if leftTable || rightTable {
+		opStr := "=="
+		if op == token.NE {
+			opStr = "!="
+		}
+		a.errorAt(node, "operator '%s' is not defined for tables; compare their columns (t.col == u.col compares elementwise)", opStr)
 		return true
 	}
 	return false

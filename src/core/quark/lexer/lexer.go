@@ -1,8 +1,11 @@
 package lexer
 
 import (
-	"quark/token"
+	"fmt"
+	"strings"
 	"unicode"
+
+	"quark/token"
 )
 
 type Lexer struct {
@@ -448,28 +451,44 @@ func (l *Lexer) readIdentifier() string {
 	return l.input[position:l.position]
 }
 
+// readNumber reads an int or float literal. `_` may separate two digits
+// (100_000, 1_000.5, 1e1_0) and is dropped from the literal; anywhere else
+// in a number (1_, 1__0, 1_.5) it is an error.
 func (l *Lexer) readNumber() (token.TokenType, string) {
 	position := l.position
 	isFloat := false
+	badSep := false
+
+	// digits reads a run of digits, with `_` allowed between two of them.
+	digits := func() {
+		for isDigit(l.ch) || l.ch == '_' {
+			if l.ch == '_' {
+				prevDigit := l.position > position && isDigit(l.input[l.position-1])
+				if !prevDigit || !isDigit(l.peekChar()) {
+					badSep = true
+				}
+			}
+			l.readChar()
+		}
+	}
 
 	// Read integer part
-	for isDigit(l.ch) {
-		l.readChar()
-	}
+	digits()
 
 	// Check for decimal point
 	if l.ch == '.' && isDigit(l.peekChar()) {
 		isFloat = true
 		l.readChar() // consume '.'
-		for isDigit(l.ch) {
-			l.readChar()
-		}
+		digits()
 	} else if l.ch == '.' && l.position > position {
 		// Handle cases like "2." (float with no decimal digits)
 		// Check if next char could be part of .. operator
 		if l.peekChar() != '.' {
 			isFloat = true
 			l.readChar() // consume '.'
+			if l.ch == '_' {
+				digits() // 1._5: the separator follows the point
+			}
 		}
 	}
 
@@ -477,9 +496,7 @@ func (l *Lexer) readNumber() (token.TokenType, string) {
 	if position == l.position && l.ch == '.' {
 		isFloat = true
 		l.readChar()
-		for isDigit(l.ch) {
-			l.readChar()
-		}
+		digits()
 	}
 
 	// Exponent: 1e3, 2.5E-4, 6e+2 (a digit must follow e/E and its sign).
@@ -495,16 +512,19 @@ func (l *Lexer) readNumber() (token.TokenType, string) {
 			if l.ch == '+' || l.ch == '-' {
 				l.readChar()
 			}
-			for isDigit(l.ch) {
-				l.readChar()
-			}
+			digits()
 		}
 	}
 
-	if isFloat {
-		return token.FLOAT, l.input[position:l.position]
+	text := l.input[position:l.position]
+	if badSep {
+		return token.ILLEGAL, fmt.Sprintf("'_' in a number must be between two digits: '%s' (write 100_000)", text)
 	}
-	return token.INT, l.input[position:l.position]
+	lit := strings.ReplaceAll(text, "_", "")
+	if isFloat {
+		return token.FLOAT, lit
+	}
+	return token.INT, lit
 }
 
 func (l *Lexer) readString(quote byte) string {

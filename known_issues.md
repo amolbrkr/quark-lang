@@ -9,6 +9,7 @@ This file lists bugs only. Deliberate gaps (features that don't exist yet) are i
 - [Adding an issue](#adding-an-issue)
 - [Wrong results with no error](#wrong-results-with-no-error)
 - [Fails loudly, but with a C++ error, a wrong location or a misleading message](#fails-loudly-but-with-a-c-error-a-wrong-location-or-a-misleading-message)
+- [Slow paths](#slow-paths)
 
 ## Adding an issue
 
@@ -40,24 +41,30 @@ When a change fixes an issue, delete its entry here and describe the fix under F
 - `d.set(1, 'a')` and `d.set('1', 'b')` write the same key: `d` prints `{'1': 'b'}`.
 - `sys::exit(256)` exits with status 0.
 - `io::read` stops at a NUL byte: on a file containing `ab\0cd`, the first read returns `ab` and the next returns `''`.
-- A CSV cell containing a NUL byte is kept whole in its column but cut short when taken out as one value. Parsing `name,n` / `ab\0cd,1` with `quark::csv::parse_table` stores 5 bytes in the `name` column, but `q_vec_box_at` (`types/vector.hpp`) copies a str entry into a NUL-terminated string, so the value is `ab`: the engine's sort and group-by see `ab\0cd`, an element read sees `ab`. The reader (`table/csv.hpp`) has no NUL check. Reach: none from Quark yet, since the reader has no Quark binding until `std/csv` is rebuilt (`tables_v0_1_spec.md` D15); the rebuild is planned to reject NUL bytes along with invalid UTF-8 (§9). Found 2026-11-13 while checking the reader's input validation for the tables plan.
-- `csv::parse('a,"b"x,c')` returns `[['a', 'bx', 'c']]` instead of an error.
 - Two-argument `min`/`max` with NaN depend on the order: `min(n, 1.0)` with `n = to_float('nan')` is `1.0`, but `min(1.0, n)` is `nan` (vec reductions skip NaN). Sorting a list that contains NaN is undefined behavior in the C++ sort.
 
 **Unbounded recursion crashes with no message.** `print('before')`, `fn f(n) -> f(n + 1)`, `f(0)` overflows the C++ stack: the binary dies with a segmentation fault (status 139), `quark run` exits with 255 and prints nothing, not even `before`, since buffered output is lost. It should be a runtime error with a location, and output printed before it should appear.
 
 ## Fails loudly, but with a C++ error, a wrong location or a misleading message
 
+- A struct named like a builtin type is accepted, and the annotation then means the builtin: `struct int:` / `    x: int`, then `p: int = int { x: 1 }` is `cannot assign value of type 'int' to 'int'`, and `struct vec:` is a parse error (`expected struct name after 'struct'`). It should be a clear error at the `struct` (`'int' is a builtin type; choose another name`). Found 2026-11-13 while adding the `tbl` type (tables v0.1). Reach: `tbl` is now a builtin type name, so a program with `struct tbl:`, which worked before, now gets these messages where it uses `tbl` as an annotation.
 - A prelude builtin used as a value passes the checker and fails in clang: `f = len`, then `print(f('ab'))`, or `print(len)`, gives `use of undeclared identifier 'quark_len'`. Extern fns used as values work (they have thunks).
 - `struct S` inside a `fn` body fails with `internal: struct 'S' not pre-declared`.
 - A call written above a `fn` declaration is checked less than one below it. `print(apply(fn(a, b) -> a + b))` above `fn apply(k) -> k(1)` is a runtime error, below it a compile error.
 - Calling a function value with more than 12 arguments compiles and always fails at runtime (`function call supports up to 12 arguments, got 13`); it could be a compile error.
 - A struct field named with `__` (`a__b: int`) is accepted in the `struct` and rejected only where a literal uses it.
+- Every lexer error after `=` is reported twice: `x = @` gives `unexpected character '@'` and then `unexpected '@' after '='; put each statement on its own line, or join the two with an operator`, and `x = 1__0` repeats the digit separator message inside a second one. The parser reports the `ILLEGAL` token as the expression error (`parseExpression`) and again when the statement doesn't end there (`endLine`, `parser/parser.go`). Found 2026-11-13 while adding digit separators (tables v0.1), whose error goes through the same path. Reach: digit separators add one more lexer error that hits it.
 - A syntax error in an imported file is reported inside a load error located at the importer's `incl` line. Load errors in the main file show its absolute path, while check errors show the path as written. Several messages name token kinds instead of source text (`operator 'PLUS'`, `expected identifier after OK`, `no prefix parse function for NEWLINE`), and a multi-line `g = fn(x) ->` body gives about ten cascading `DEDENT` errors.
 - Native code that appends to a list with `push_back`, or writes `d->entries` directly, skips the element-type check; `qext::list_push` and `qext::dict_set` check it.
+- `fmt::table(t)` shows a missing value as `NA`, while `print(t)` and vec printing show `null`: with a `tbl[Emp]` read from `id,salary` / `1,` / `2,5`, `print(t)` has `null` in the salary column and `fmt::table(t)` has `NA` (`q_fmt_vector_cells`, `stdlib/fmt.hpp`). Found 2026-11-14 adding table printing (tables v0.1). Reach: tables are now reachable from Quark, so `fmt::table` on one is too.
+- The editor extension's hover and completion show builtin method signatures without their first parameter: `xs.slice(start, end)` is shown as `slice(int) list`, `s.replace(old, new)` as one parameter too, and the new `t.head(n)` as `head()`. `catalogSignature` (`internal/editordata/editordata_test.go`) drops `ParamTypes[0]` and lowers `MinArgs` for methods, as if the catalog listed the receiver among the parameters, which it doesn't. Found 2026-11-14 regenerating the editor data for the table methods (tables v0.1).
 - Tooling: the integration tests share one binary, `src/core/quark/quark_test`, which `TestMain` deletes at the start and end of every run. A second `go test` in the same checkout (another session, an editor) deletes it mid-run, and every integration test then fails with `fork/exec .../quark_test: no such file or directory`. Each run should build into its own temporary directory.
 - A field read on a struct of unknown type that lacks the field says `dot access is only supported on dict; got type 'struct'` (`fn id(v) -> v`, `p = id(P { x: 1 })`, `p.y`).
 - A wrong argument type for a fully annotated function or an `extern fn`, from an untyped value, reports `expected int, got str` without the function or parameter name (ordinary functions say `argument 'x' of 'f' expects int, got str`).
-- Stdlib runtime errors use the old `.` spelling: `io::read` on a closed file says `io.read() expects an open file (resource is closed)`; `csv.read`, `random.randint` and `blas.dot` likewise.
+- Stdlib runtime errors use the old `.` spelling: `io::read` on a closed file says `io.read() expects an open file (resource is closed)`; `random.randint` and `blas.dot` likewise.
 - `qext::box(int)` in native code doesn't compile (ambiguous between the `int64_t`, `double` and `bool` overloads); pass an `int64_t`.
 - A program that imports `std/blas` starts OpenBLAS's thread pool (one thread per CPU), and then allocating large vecs makes the GC print `GC Warning: Repeated allocation of very large block (appr. size 78128 KiB): May lead to memory leak and poor performance` to stderr, and vec allocation gets erratic (`2.5 * a + b` on 10M-element vecs with `blas::axpy` measured 30 ms with `OPENBLAS_NUM_THREADS=1`, 135 ms without). The same program without `incl 'std/blas'`, or with `OPENBLAS_NUM_THREADS=1`, prints nothing (`src/benchmarks/RESULTS.md`).
+
+## Slow paths
+
+- Sorting a table by a column with missing values takes the generic comparator: 500K rows by one float key with 1% of it missing sort in 239 ms, against 97 ms for a key with no missing values (`sort_perm`, `table/engine.hpp`, takes its fast path only when `null_count == 0`). The fast path could sort the present values and put the missing rows last. Found 2026-11-14 measuring the tables v0.1 queries. Reach: `sort(...)` in a query reaches it for every nullable key, which CSV columns with gaps are.

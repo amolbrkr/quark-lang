@@ -60,6 +60,13 @@ inline QValue q_print_impl(QValue v, QValue end, QValue width, QValue align, QVa
         q_runtime_reportf("runtime error: print() align must be str\n");
         std::exit(1);
     }
+    // Checked on every call, whether or not the text is padded, so a
+    // misspelled alignment fails on every input instead of aligning left.
+    if (std::strcmp(align.data.string_val, "left") != 0 && std::strcmp(align.data.string_val, "right") != 0 &&
+        std::strcmp(align.data.string_val, "center") != 0) {
+        q_runtime_reportf("runtime error: print() align must be 'left', 'right' or 'center', got '%s'\n", align.data.string_val);
+        std::exit(1);
+    }
     if (pad.type != QValue::VAL_STRING || !pad.data.string_val) {
         q_runtime_reportf("runtime error: print() pad must be str\n");
         std::exit(1);

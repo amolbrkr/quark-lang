@@ -64,7 +64,7 @@ Identifiers are letters, digits and `_`, starting with a letter or `_`. A name c
 - `INT`: decimal digits (`42`). There are no hex, octal or binary forms.
 - Digit separators: `_` may stand between two digits of an `INT` or `FLOAT`, in any part of it (`100_000`, `1_000.5`, `0.000_1`, `1e1_0`), and is ignored. Anywhere else in a number it is a lex error (`1_`, `1__0`, `1_.5`, `1._5`, `1_e5`: `'_' in a number must be between two digits`); `_1` is a name.
 - `FLOAT`: digits, a dot and digits (`3.14`), or digits and a dot (`2.` is `2.0`), optionally followed by an exponent: `e` or `E`, an optional sign, and digits (`1e3`, `2.5E-4`, `6e+2`). An exponent makes the literal a float even without a dot. A leading dot (`.5`) is a parse error.
-- `STRING`: single-quoted or double-quoted, on one line.
+- `STRING`: single-quoted or double-quoted, on one line. A string whose line or file ends before the closing quote is a `QK-PARSE-001` error (`unclosed string: the line ends before the closing '`); write `\n` for a line break.
 - `true`, `false`, `null`.
 
 Because `2.` is a float, a method call directly on an int literal does not work: `42.upper()` lexes as the float `42.` followed by `upper()`.

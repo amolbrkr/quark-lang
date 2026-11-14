@@ -19,6 +19,9 @@ type Lexer struct {
 	// stringHasNul is set by readString when a literal contains the \0 escape,
 	// which strings can't hold (they are NUL-terminated C strings).
 	stringHasNul bool
+	// stringUnclosed is set by readString when the line or the file ends
+	// before the closing quote.
+	stringUnclosed bool
 
 	// For indentation handling
 	parenCount   int
@@ -359,8 +362,14 @@ func (l *Lexer) nextRawToken() token.Token {
 		tok = newToken(token.UNDERSCORE, l.ch, tok.Line, tok.Column)
 	case '\'', '"':
 		tok.Type = token.STRING
-		tok.Literal = l.readString(l.ch)
-		if l.stringHasNul {
+		quote := l.ch
+		tok.Literal = l.readString(quote)
+		switch {
+		case l.stringUnclosed:
+			l.stringUnclosed, l.stringHasNul = false, false
+			tok.Type = token.ILLEGAL
+			tok.Literal = fmt.Sprintf("unclosed string: the line ends before the closing %c (a string can't span lines; write \\n for a line break)", quote)
+		case l.stringHasNul:
 			l.stringHasNul = false
 			tok.Type = token.ILLEGAL
 			tok.Literal = "'\\0' is not supported in string literals: strings can't contain NUL characters"
@@ -585,6 +594,8 @@ func (l *Lexer) readString(quote byte) string {
 
 	if l.ch == quote {
 		l.readChar() // skip closing quote
+	} else {
+		l.stringUnclosed = true
 	}
 	return string(buf)
 }

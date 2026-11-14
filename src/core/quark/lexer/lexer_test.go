@@ -295,6 +295,33 @@ func TestStringLiteral_NulEscapeRejected(t *testing.T) {
 	}
 }
 
+// TestStringLiteral_UnclosedRejected: a string whose line (or file) ends
+// before the closing quote is an error, not a string up to the line end.
+func TestStringLiteral_UnclosedRejected(t *testing.T) {
+	for _, input := range []string{"msg = \"hello\nprint(msg)\n", "print('abc)\n", "print('a\\')\n", "x = 'end", "s = 'a\\0"} {
+		toks := testutil.Lex(input)
+		found := false
+		for _, tok := range toks {
+			if tok.Type == token.STRING {
+				t.Fatalf("input %q: expected an ILLEGAL token, got STRING %q", input, tok.Literal)
+			}
+			if tok.Type == token.ILLEGAL && strings.Contains(tok.Literal, "unclosed string: the line ends before the closing") {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("input %q: no ILLEGAL token for the unclosed string", input)
+		}
+	}
+	// Closed strings, with escaped quotes, still lex as one STRING.
+	for input, want := range map[string]string{"'it\\'s'\n": "it's", "\"q'\"\n": "q'", "'a\\\\'\n": "a\\"} {
+		toks := testutil.Lex(input)
+		if toks[0].Type != token.STRING || toks[0].Literal != want {
+			t.Fatalf("input %q: got %v, want STRING %q", input, toks[0], want)
+		}
+	}
+}
+
 func TestStringLiteral_EmptyString(t *testing.T) {
 	toks := testutil.Lex("''\n")
 	for _, tok := range toks {

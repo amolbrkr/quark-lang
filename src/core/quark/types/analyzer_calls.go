@@ -285,6 +285,7 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 			a.callPlans[node] = &ir.CallPlan{CalleeName: name, MinArity: sig.MinArgs, MaxArity: sig.MaxArgs, Dispatch: ir.DispatchBuiltin, RuntimeSymbol: builtinsRuntimeName(name)}
 			a.checkArity(node, "builtin '"+name+"'", sig.MinArgs, sig.MaxArgs, argCount)
 			a.checkArgTypes(name, sig.Type.ParamTypes, argTypes, argNodes)
+			a.checkPrintAlign(name, argNodes)
 			return a.inferBuiltinReturnType(name, argTypes, node)
 		}
 	}
@@ -420,6 +421,23 @@ func (a *Analyzer) checkMutation(receiverType Type, methodName string, argTypes 
 		key = argNodes[0].Token.Literal
 	}
 	a.checkElemWrite(receiverType, argTypes[valueArg], argNodes[valueArg], key)
+}
+
+// checkPrintAlign rejects a literal print() alignment other than 'left',
+// 'right' and 'center'; a computed one is checked at runtime (q_print_impl).
+func (a *Analyzer) checkPrintAlign(name string, argNodes []*ast.TreeNode) {
+	if name != "print" || len(argNodes) < 4 {
+		return
+	}
+	at := argNodes[3]
+	if at == nil || at.Token == nil || at.Token.Type != token.STRING {
+		return
+	}
+	switch at.Token.Literal {
+	case "left", "right", "center":
+		return
+	}
+	a.errorAt(at, "print() align must be 'left', 'right' or 'center', got '%s'", at.Token.Literal)
 }
 
 // checkFillValue checks the value of v.fillna(value) against the vec's

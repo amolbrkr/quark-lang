@@ -992,6 +992,13 @@ func TestSemanticsSafety_Rejected(t *testing.T) {
 		{"dict_set_int_key_any", "fn id(v) -> v\nd = dict {}\nd.set(id(1), 'a')\n", "set(): dict keys are str, got int; convert it with to_str()"},
 		{"dict_get_null_key_any", "fn id(v) -> v\nd = dict { a: 1 }\nprint(d.get(id(null)))\n", "get(): dict keys are str, got null"},
 		{"dict_key_dynamic_receiver", "fn id(v) -> v\nx = id(dict { a: 1 })\nprint(x.get(1))\n", "get(): dict keys are str, got int"},
+		// A string must close on its line.
+		{"string_unclosed", "msg = \"hello\nprint(msg)\n", "unclosed string: the line ends before the closing \""},
+		{"string_unclosed_escaped_quote", "print('a\\')\n", "unclosed string: the line ends before the closing '"},
+		// print's alignment is one of three words.
+		{"print_align_literal", "print('x', '|\\n', 5, 'rigth', '.')\n", "print() align must be 'left', 'right' or 'center', got 'rigth'"},
+		{"print_align_pipe", "'x' | print('\\n', 5, 'Right')\n", "got 'Right'"},
+		{"print_align_any", "fn id(v) -> v\nprint('x', '\\n', 0, id('middle'))\n", "print() align must be 'left', 'right' or 'center', got 'middle'"},
 		// Exit statuses outside 0-255 would wrap (256 reads as success).
 		{"sys_exit_256", "incl 'std/sys'\nsys::exit(256)\n", "sys::exit() status must be between 0 and 255, got 256"},
 		{"sys_exit_negative", "incl 'std/sys'\nsys::exit(-1)\n", "sys::exit() status must be between 0 and 255, got -1"},
@@ -1338,8 +1345,16 @@ func TestEdgeValues_Accepted(t *testing.T) {
 		{"int_limits", "print(to_int('-9223372036854775808'))\nprint(floor(-9223372036854775808.0))\nprint(abs(-9223372036854775807))\nprint(to_int(-3.9))\n",
 			"-9223372036854775808\n-9223372036854775808\n9223372036854775807\n-3"},
 		{"fillna_widens", "v = vec [1.5, 2.0]\nprint(v.fillna(2))\nprint(vec [1, 2].fillna(0))\n", "[1.5, 2.0]\n[1, 2]"},
+		{"min_max_nan", "n = to_float('nan')\nprint(min(n, 1.0))\nprint(min(1.0, n))\nprint(max(n, 1))\nprint(max(2, n))\nprint(min(1, 2.5))\nprint(max(3, 2))\n", "nan\nnan\nnan\nnan\n1.0\n3"},
+		{"sort_nan_last", "n = to_float('nan')\nprint(list [3.0, n, 1.0, 2, n, -5].sort())\nprint(list [2, 1, 3].sort_by(fn(x) -> n if x == 3 else x))\n", "[-5, 1.0, 2, 3.0, nan, nan]\n[1, 2, 3]"},
+		{"print_align_ok", "print('x', '|\\n', 3, 'right', '.')\nprint('x', '|\\n', 3, 'center')\nprint('x', '|\\n', 0, 'left')\n", "..x|\n x |\nx|"},
+		{"io_read_nul", "incl 'std/io'\nf = unwrap(io::open('nul.txt'))\nr = io::read(f, 100)\nprint(is_err(r))\nwhen r:\n    err e -> print(e)\n    ok s -> print(s)\n",
+			"true\nread: the data contains a NUL byte, which a str can't hold (std/io reads text files)"},
 	}
 	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "nul.txt"), []byte("ab\x00cd"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(tmp, tc.name+".qrk"), []byte(tc.source), 0o644); err != nil {

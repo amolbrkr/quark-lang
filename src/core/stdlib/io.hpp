@@ -164,6 +164,11 @@ inline QValue q_file_read(QValue file, int64_t n) {
     }
 
     buffer.resize(static_cast<size_t>(got));
+    // A str ends at its first NUL byte, so returning the bytes would cut the
+    // data short with no sign of it; std/io reads text.
+    if (std::memchr(buffer.data(), '\0', buffer.size()) != nullptr) {
+        return q_file_err_with_detail("read", "the data contains a NUL byte, which a str can't hold (std/io reads text files)");
+    }
     return qv_ok(qv_string(buffer.c_str()));
 }
 

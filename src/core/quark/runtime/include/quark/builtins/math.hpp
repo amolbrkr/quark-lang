@@ -40,6 +40,10 @@ inline QValue q_min(QValue a, QValue b) {
     if (quark::detail::either_float(a, b)) {
         double av = quark::detail::to_double(a);
         double bv = quark::detail::to_double(b);
+        // NaN wins, whatever the order, as in arithmetic (vec reductions
+        // skip NaN instead, treating it as missing).
+        if (av != av) return qv_float(av);
+        if (bv != bv) return qv_float(bv);
         return qv_float(av < bv ? av : bv);
     }
     return qv_int(a.data.int_val < b.data.int_val ? a.data.int_val : b.data.int_val);
@@ -64,6 +68,10 @@ inline QValue q_max(QValue a, QValue b) {
     if (quark::detail::either_float(a, b)) {
         double av = quark::detail::to_double(a);
         double bv = quark::detail::to_double(b);
+        // NaN wins, whatever the order, as in arithmetic (vec reductions
+        // skip NaN instead, treating it as missing).
+        if (av != av) return qv_float(av);
+        if (bv != bv) return qv_float(bv);
         return qv_float(av > bv ? av : bv);
     }
     return qv_int(a.data.int_val > b.data.int_val ? a.data.int_val : b.data.int_val);

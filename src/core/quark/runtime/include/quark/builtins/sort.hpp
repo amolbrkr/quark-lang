@@ -10,8 +10,10 @@
 #include <vector>
 
 // q_sort_less orders two sort keys: numbers (int and float together) by value,
-// strings by byte order, bools false before true. Any other pair, such as a
-// str and an int or anything with null, is a runtime error.
+// with NaN after every number (as table sorts put it) so that the order is a
+// strict weak ordering, strings by byte order, bools false before true. Any
+// other pair, such as a str and an int or anything with null, is a runtime
+// error.
 inline bool q_sort_less(const QValue& a, const QValue& b, const char* method) {
     const bool aNum = a.type == QValue::VAL_INT || a.type == QValue::VAL_FLOAT;
     const bool bNum = b.type == QValue::VAL_INT || b.type == QValue::VAL_FLOAT;
@@ -21,6 +23,10 @@ inline bool q_sort_less(const QValue& a, const QValue& b, const char* method) {
         }
         const double x = a.type == QValue::VAL_INT ? static_cast<double>(a.data.int_val) : a.data.float_val;
         const double y = b.type == QValue::VAL_INT ? static_cast<double>(b.data.int_val) : b.data.float_val;
+        const bool xNaN = x != x, yNaN = y != y;
+        if (xNaN || yNaN) {
+            return !xNaN && yNaN;  // a number before NaN; two NaNs are equal
+        }
         return x < y;
     }
     if (a.type == QValue::VAL_STRING && b.type == QValue::VAL_STRING) {

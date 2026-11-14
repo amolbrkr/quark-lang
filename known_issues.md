@@ -23,14 +23,7 @@ When a change fixes an issue, delete its entry here and describe the fix under F
 
 ## Wrong results with no error
 
-**The lexer accepts an unclosed string.** It ends at the end of the line with no error: `msg = "hello` then `print(msg)` prints `hello`.
-
-**`print`.**
-- A misspelled `print` alignment is ignored: `print('x', '|\n', 5, 'rigth', '.')` prints `x....|` (left-aligned) with no error.
-
-**Runtime numbers and edge cases.**
-- `io::read` stops at a NUL byte: on a file containing `ab\0cd`, the first read returns `ab` and the next returns `''`.
-- Two-argument `min`/`max` with NaN depend on the order: `min(n, 1.0)` with `n = to_float('nan')` is `1.0`, but `min(1.0, n)` is `nan` (vec reductions skip NaN). Sorting a list that contains NaN is undefined behavior in the C++ sort.
+**Comparing an int with a float goes through a double, which loses precision above 2^53.** `9007199254740993 == 9007199254740992.0` is `true` (the int is rounded to the float), `9007199254740993 > 9007199254740992.0` is `false`, and `list [9007199254740993, 9007199254740992.0, 9007199254740992].sort()` leaves `9007199254740993` first. An exact comparison (as Python does) would compare the int with the float's integer part. The conversion is in `values_equal` and `to_double` (`ops/comparison.hpp`), the raw `Compare` of an int and a float, and `q_sort_less` (`builtins/sort.hpp`). Found 2026-11-14 while making the list sort put NaN last.
 
 **Runtime headers from the working directory.** When the compiler has no `runtime/include` next to it (a binary copied elsewhere), it uses `runtime/include` in the current directory with no warning (`RuntimeIncludePath`, `toolchain/toolchain.go`), so a program is compiled against whatever headers happen to be there. It should be an error that says where it looked and how to point it at the runtime, as the stdlib lookup does. Found 2026-11-14 while removing the stdlib lookup's search near the script.
 
@@ -44,7 +37,7 @@ When a change fixes an issue, delete its entry here and describe the fix under F
 - A call written above a `fn` declaration is checked less than one below it. `print(apply(fn(a, b) -> a + b))` above `fn apply(k) -> k(1)` is a runtime error, below it a compile error.
 - Calling a function value with more than 12 arguments compiles and always fails at runtime (`function call supports up to 12 arguments, got 13`); it could be a compile error.
 - A struct field named with `__` (`a__b: int`) is accepted in the `struct` and rejected only where a literal uses it.
-- Every lexer error after `=` is reported twice: `x = @` gives `unexpected character '@'` and then `unexpected '@' after '='; put each statement on its own line, or join the two with an operator`, and `x = 1__0` repeats the digit separator message inside a second one. The parser reports the `ILLEGAL` token as the expression error (`parseExpression`) and again when the statement doesn't end there (`endLine`, `parser/parser.go`). Found 2026-11-13 while adding digit separators (tables v0.1), whose error goes through the same path. Reach: digit separators add one more lexer error that hits it.
+- Every lexer error after `=` is reported twice: `x = @` gives `unexpected character '@'` and then `unexpected '@' after '='; put each statement on its own line, or join the two with an operator`, and `x = 1__0` repeats the digit separator message inside a second one. The parser reports the `ILLEGAL` token as the expression error (`parseExpression`) and again when the statement doesn't end there (`endLine`, `parser/parser.go`). Found 2026-11-13 while adding digit separators (tables v0.1), whose error goes through the same path. Reach: digit separators add one more lexer error that hits it, and so does the unclosed-string error (2026-11-14): `x = 'abc` reports `unclosed string: ...` and then `unexpected 'unclosed string: ...' after '='`, and `print('abc)` adds `expected RPAR but got ILLEGAL`.
 - A syntax error in an imported file is reported inside a load error located at the importer's `incl` line. Load errors in the main file show its absolute path, while check errors show the path as written. Several messages name token kinds instead of source text (`operator 'PLUS'`, `expected identifier after OK`, `no prefix parse function for NEWLINE`), and a multi-line `g = fn(x) ->` body gives about ten cascading `DEDENT` errors.
 - Native code that appends to a list with `push_back`, or writes `d->entries` directly, skips the element-type check; `qext::list_push` and `qext::dict_set` check it.
 - `fmt::table(t)` shows a missing value as `NA`, while `print(t)` and vec printing show `null`: with a `tbl[Emp]` read from `id,salary` / `1,` / `2,5`, `print(t)` has `null` in the salary column and `fmt::table(t)` has `NA` (`q_fmt_vector_cells`, `stdlib/fmt.hpp`). Found 2026-11-14 adding table printing (tables v0.1). Reach: tables are now reachable from Quark, so `fmt::table` on one is too.

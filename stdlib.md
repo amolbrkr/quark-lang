@@ -111,7 +111,7 @@ print('42', '\n', 8, 'right', '0')      // 00000042
 name = unwrap(input('Name: '))
 ```
 
-`align` is `left`, `right` or `center`. `pad` is one character (only its first character is used; `''` pads with spaces). If `width` is 0 or smaller than the text, nothing is padded. A misspelled `align` value is not rejected and aligns left.
+`align` is `left`, `right` or `center`. `pad` is one character (only its first character is used; `''` pads with spaces). If `width` is 0 or smaller than the text, nothing is padded. Any other `align` is an error, even when nothing is padded: a compile-time error for a literal (`print() align must be 'left', 'right' or 'center', got 'rigth'`), otherwise a runtime error.
 
 To process stdin line by line, loop until `input()` returns an `err`:
 
@@ -200,7 +200,7 @@ A float argument is an error, not truncated: a compile-time error when the type 
 | Function | Signature | Description |
 |---|---|---|
 | `abs` | `int\|float -> int\|float` | Absolute value, same type as the argument |
-| `min`, `max` | `number, number -> number` | The smaller/larger of two numbers: an `int` when both are ints, otherwise a `float` (`min(1, 2.5)` is `1.0`). With one argument they reduce a vector ([Reductions](#reductions)) |
+| `min`, `max` | `number, number -> number` | The smaller/larger of two numbers: an `int` when both are ints, otherwise a `float` (`min(1, 2.5)` is `1.0`). If either is NaN the result is NaN, in either order, as in arithmetic (the vector reductions skip NaN instead). With one argument they reduce a vector ([Reductions](#reductions)) |
 | `sum`, `all`, `any` | `vec -> ...` | Vector reductions ([Reductions](#reductions)); the mean is `stats::mean` (`std/stats`) |
 | `sqrt` | `float -> float` | Square root; an int argument is widened. A negative argument is a runtime error |
 | `floor`, `ceil` | `float -> int` | Round down / up |
@@ -216,7 +216,6 @@ sqrt(16) | print()         // 4.0
 floor(3.7) | print()       // 3
 ```
 
-Two-argument `min`/`max` with NaN give wrong values; see known_issues.md.
 
 ---
 
@@ -269,7 +268,7 @@ A list keeps its element type ([Element types](#element-types-of-returned-lists)
 | `.remove(idx)` | `int -> any` | Remove and return the item at `idx` (negative counts from the end). Out of range is a runtime error |
 | `.slice(start, end)` | `int, int -> list` | New list of items `[start, end)`; negative indices count from the end, out-of-range indices are clamped |
 | `.reverse()` | `-> list` | Reverse in place; returns the list |
-| `.sort()` | `-> list` | Sort in place, ascending, stable; returns the list. Items must be all numbers (ints and floats mix), all strings (byte order) or all bools; anything else, including `null`, is a runtime error. Descending: `.sort().reverse()` |
+| `.sort()` | `-> list` | Sort in place, ascending, stable; returns the list. Items must be all numbers (ints and floats mix; NaN goes after every number, as in a table sort), all strings (byte order) or all bools; anything else, including `null`, is a runtime error. Descending: `.sort().reverse()` |
 | `.sort_by(key)` | `fn -> list` | Sort in place by `key(item)`, calling `key` once per item; stable; returns the list. Keys follow the `.sort()` rules |
 | `.concat(other)` | `list -> list` | New list: the items of both. `other` must be a list with the same element type |
 | `.join(sep)` | `str -> str` | Items joined by `sep`; non-strings are converted with `to_str` |
@@ -297,7 +296,6 @@ list [1, 2, 3].join('+') | print()            // 1+2+3
 print(type(list [1, 2, 3].to_vec()))          // vec[i64]
 ```
 
-Known issues (known_issues.md): sorting a list that contains NaN is undefined.
 
 ---
 
@@ -459,7 +457,7 @@ File I/O over `src/core/stdlib/io.hpp`. Import with `incl 'std/io' as io`. An op
 | Function | Signature | Description |
 |---|---|---|
 | `open` | `path: str, mode: str = 'r', binary: bool = false -> result` | Open with mode `r` (read), `w` (create or truncate, then write) or `a` (create if missing, write at the end); `ok` holds the file. Another mode returns `err("open: mode must be 'r', 'w' or 'a'")`; a system failure returns `err('open: <path>: <reason>')` |
-| `read` | `file: resource, n: int -> result` | Read up to `n` bytes; `ok('')` at end of file. A negative `n` is a runtime error |
+| `read` | `file: resource, n: int -> result` | Read up to `n` bytes; `ok('')` at end of file. Bytes that contain a NUL are `err` (`read: the data contains a NUL byte, which a str can't hold ...`), since a str can't hold one. A negative `n` is a runtime error |
 | `write` | `file: resource, data: str -> result` | Write `data`; `ok` holds the byte count. Writing to a file opened for reading returns `err('write: Bad file descriptor')` |
 | `close` | `file: resource -> result` | Close; `ok(null)`. An already closed file returns `err('close: resource is closed')` |
 | `seek` | `file: resource, offset: int, whence: int = 0 -> result` | Move the position (`0` = start, `1` = current, `2` = end); `ok` holds the new position. Another `whence` is a runtime error |
@@ -468,7 +466,7 @@ File I/O over `src/core/stdlib/io.hpp`. Import with `incl 'std/io' as io`. An op
 
 Reading, writing or seeking a closed file (or `null`) is a runtime error: `io.read() expects an open file (resource is closed)`.
 
-Limits: writes are unbuffered; a file that is never closed stays open until the program exits; `binary` only changes newline handling on Windows; a read stops at a NUL byte (known_issues.md). `std/io` is for text. A rework is proposed in `stdlib_expansion_v0_1_spec.md` §6.
+Limits: writes are unbuffered; a file that is never closed stays open until the program exits; `binary` only changes newline handling on Windows; a read whose bytes contain a NUL is an `err`. `std/io` is for text. A rework is proposed in `stdlib_expansion_v0_1_spec.md` §6.
 
 ```quark
 incl 'std/io' as io

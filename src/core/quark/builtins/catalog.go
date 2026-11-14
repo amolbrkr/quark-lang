@@ -113,7 +113,7 @@ var catalog = []Spec{
 	{Name: "fillna", Runtime: "q_fillna", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeVectorAny, ReceiverType: TypeVectorAny},
 	{Name: "drop_na", Runtime: "q_drop_na", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeVectorAny, ReceiverType: TypeVectorAny},
 
-	// Table methods (tables_v0_1_spec.md §6, D25): the first or last n rows
+	// Table methods (specs/tables_v0_1_spec.md §6, D25): the first or last n rows
 	// (6 by default) as a table of the same row type, and one line per column.
 	{Name: "head", Runtime: "q_tbl_head_method", MinArgs: 0, MaxArgs: 1, ParamTypes: []TypeKey{TypeInt}, ReturnType: TypeTableAny, ReceiverType: TypeTableAny, Header: TableHeader},
 	{Name: "tail", Runtime: "q_tbl_tail_method", MinArgs: 0, MaxArgs: 1, ParamTypes: []TypeKey{TypeInt}, ReturnType: TypeTableAny, ReceiverType: TypeTableAny, Header: TableHeader},

@@ -99,7 +99,7 @@ inline const char* q_table_type_name(const QTable* t) {
 }
 
 // q_table_conform gives v the row type want, as a table reaching a tbl[R]
-// slot (tables_v0_1_spec.md §3.4): a table whose row is want's own
+// slot (specs/tables_v0_1_spec.md §3.4): a table whose row is want's own
 // definition passes as it is; one with an anonymous row matches when its
 // column names are exactly want's fields and its column types are the
 // fields' types, and is relabeled want with its columns in want's order (an

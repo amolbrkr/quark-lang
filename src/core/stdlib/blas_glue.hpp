@@ -3,7 +3,7 @@
 // Quark f64 vectors are contiguous double buffers (Arrow layout), so BLAS
 // reads them in place through qext::as_f64; nothing is copied on the way in.
 //
-// Rules (ffi_v0_1_spec.md §5.3):
+// Rules (specs/ffi_v0_1_spec.md §5.3):
 //   - Inputs must be f64 vectors without nulls. Anything else is a
 //     programming error and stops the program with a message.
 //   - Vectors are immutable: routines that write their output in place

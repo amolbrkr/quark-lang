@@ -86,7 +86,7 @@ The list tier is named after Quark's `list`, but it is the tier of plain code in
 
 A tool is left out of a benchmark (`n/a` in the report) when it has no natural way to do it, for example `quark_vec` in `sieve` (vectors are immutable) or `numpy` in `fib`. The table tiers appear where the frame API is different code from plain vectors (filter, sort, group, join, adding a column); `sum(df$a)` would only repeat `r_vec`.
 
-`quark_tbl` uses tables v0.1 (`tables_v0_1_spec.md`): a `tbl[Row]` read with `std/csv`, and the query verbs `filter`, `mutate`, `sort`, `group_by` and `summarize`. A table can only be made by reading CSV in v0.1, so its input is a CSV copy of the same data (`datagen.py` writes both; the floats read back to the same doubles), read before timing like every other input. It is `planned` in `join` (there is no join verb yet) and `wordcount` (a table can't be built from a list of words yet).
+`quark_tbl` uses tables v0.1 (`specs/tables_v0_1_spec.md`): a `tbl[Row]` read with `std/csv`, and the query verbs `filter`, `mutate`, `sort`, `group_by` and `summarize`. A table can only be made by reading CSV in v0.1, so its input is a CSV copy of the same data (`datagen.py` writes both; the floats read back to the same doubles), read before timing like every other input. It is `planned` in `join` (there is no join verb yet) and `wordcount` (a table can't be built from a list of words yet).
 
 ## Rules every implementation follows
 
@@ -211,7 +211,7 @@ Sum and count of a value per string key: 1M rows, 1,000 distinct keys (`id000`-`
 
 Left join of 1M `(k, v)` rows to a 100,000-row `(k, w)` table on a string key, giving the joined `w` column (every key is found). Checksum: `sum(v · w)`.
 
-The pandas, Polars, data.frame and data.table implementations are real data frame joins. Quark's tables have no join verb yet, so its only implementation is the one a Quark user can write today, a `dict` and lists, like the pure Python one. `quark_tbl` comes with the join verb, which is planned after tables v0.1 (`tables_v0_1_spec.md` §9).
+The pandas, Polars, data.frame and data.table implementations are real data frame joins. Quark's tables have no join verb yet, so its only implementation is the one a Quark user can write today, a `dict` and lists, like the pure Python one. `quark_tbl` comes with the join verb, which is planned after tables v0.1 (`specs/tables_v0_1_spec.md` §9).
 
 - `quark_list`: a `dict` from the second table, then a lookup per row. Its time is all runtime code (about 70% the hash lookups, 25% building the result list, 10% building the dict), so it doesn't change with the back end. A key missing from the dict is a runtime error (`w: float = lookup.get(k)` is checked), like Python's `KeyError`; the data has none. `py_list`: `dict(zip(...))` and a comprehension.
 - `numpy`: no hash join: sort the dimension keys, `np.searchsorted`, and mark keys that don't match (NaN), so it is a real left join.
@@ -224,7 +224,7 @@ Split a 1M-word text (words separated by single spaces, a Zipf-distributed vocab
 - `quark_list`: `text.split(' ')` and a `dict`. `py_list`: `Counter(text.split(' '))`.
 - `numpy`: `np.unique(np.array(text.split(' ')), return_counts=True)`; `pandas`: `pd.Series(text.split(' ')).value_counts()`; `polars`: the split, `explode` and `value_counts` all in Polars.
 - `r_vec`: `table(strsplit(text, ' ', fixed = TRUE)[[1]])`; `r_dt`: the words in a data.table, `[, .N, by = w]`.
-- `quark_tbl` is planned: a table can't be built from the list `split` returns until table literals come (`tables_v0_1_spec.md` D19).
+- `quark_tbl` is planned: a table can't be built from the list `split` returns until table literals come (`specs/tables_v0_1_spec.md` D19).
 
 #### strings
 

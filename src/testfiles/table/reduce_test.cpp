@@ -1,4 +1,4 @@
-// Vector reductions agree with the table aggregates (tables_v0_1_spec.md
+// Vector reductions agree with the table aggregates (specs/tables_v0_1_spec.md
 // D13): sum(v), min(v), max(v) and stats::mean(v) of a vec must give what
 // summarize gives for the same column over the whole table.
 

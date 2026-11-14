@@ -79,7 +79,7 @@ func (a *Analyzer) analyzeMember(node *ast.TreeNode) Type {
 		}
 		return field.Type
 	case *TableType:
-		// t.col is the column as a vec (tables_v0_1_spec.md §3).
+		// t.col is the column as a vec (specs/tables_v0_1_spec.md §3).
 		if t.Row == nil {
 			a.errorAt(node, "the row type of this table isn't known, so its columns aren't either; give it a row struct where it is created or passed (t: tbl[Employee])")
 			return TypeError

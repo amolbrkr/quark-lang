@@ -50,7 +50,7 @@ func (a *Analyzer) inferBuiltinReturnType(name string, argTypes []Type, callNode
 		}
 		return TypeAny
 	case "sum":
-		// Like the table aggregate (tables_v0_1_spec.md D13): an int for int
+		// Like the table aggregate (specs/tables_v0_1_spec.md D13): an int for int
 		// and bool vectors, a float for float vectors.
 		if len(argTypes) >= 1 && !isUnknownType(argTypes[0]) {
 			t := argTypes[0]

@@ -220,7 +220,7 @@ inline void q_repr_into(std::string& out, QValue v, bool quoteStrings, QReprCtx&
     }
 }
 
-// Table printing (tables_v0_1_spec.md §6): a line with the table's type and
+// Table printing (specs/tables_v0_1_spec.md §6): a line with the table's type and
 // row count, the column names and their types, then the rows, numbers
 // right-aligned, strings left-aligned and unquoted, a missing value as null.
 // Q_TABLE_ROWS rows are shown and the rest counted, unless truncation is off.

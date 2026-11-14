@@ -1,8 +1,8 @@
 # Quark FFI v0.1 Spec
 
-Status: Phase 1 implemented 2026-11-04 (native library directives, CLI search paths, int→float widening at the boundary, build diagnostics `QK-FFI-001`–`003`, `libqffi_test`, `std/blas`). Since then: function values cross the boundary as `QClosure*` (2026-11-12), native code is held to the element-type and `null` rules (2026-11-13), and a bare `tbl` crosses it as a `QTable*` (2026-11-13, the part of P6 `std/csv` needs). Not implemented: separately compiled glue (P2; `extern source` is a parse error), extension handles (P3, `QK-FFI-004`), `qext` result helpers (P4), the Arrow bridge (P5), building tables in glue code (the rest of P6), and the SQLite and DuckDB providers. The table decisions of 2026-11-13 (`tables_v0_1_spec.md`) put the native eager table engine first and make DuckDB a later, optional provider (D1); P5 and P6 follow that spec (§4).
+Status: Phase 1 implemented 2026-11-04 (native library directives, CLI search paths, int→float widening at the boundary, build diagnostics `QK-FFI-001`–`003`, `libqffi_test`, `std/blas`). Since then: function values cross the boundary as `QClosure*` (2026-11-12), native code is held to the element-type and `null` rules (2026-11-13), and a bare `tbl` crosses it as a `QTable*` (2026-11-13, the part of P6 `std/csv` needs). Not implemented: separately compiled glue (P2; `extern source` is a parse error), extension handles (P3, `QK-FFI-004`), `qext` result helpers (P4), the Arrow bridge (P5), building tables in glue code (the rest of P6), and the SQLite and DuckDB providers. The table decisions of 2026-11-13 (`specs/tables_v0_1_spec.md`) put the native eager table engine first and make DuckDB a later, optional provider (D1); P5 and P6 follow that spec (§4).
 Last Updated: 2026-11-14
-Canonical for native interop: `extern` declarations, linking, the `qext` API, handles. Related: `semantics.md` §10.8 (language summary), `architecture.md` §7–8 (pipeline and resource registry), `tables_v0_1_spec.md`.
+Canonical for native interop: `extern` declarations, linking, the `qext` API, handles. Related: `semantics.md` §10.8 (language summary), `architecture.md` §7–8 (pipeline and resource registry), `specs/tables_v0_1_spec.md`.
 
 ## Contents
 
@@ -53,8 +53,8 @@ extern fn list.shuffle2(seed: int) list as 'q_shuf'  // a method on list
 
 - `extern '<path>'` includes a header, resolved relative to the declaring `.qrk` file, or in the stdlib for `std/...`. Text after the string is a parse error.
 - `extern fn name(params) [ReturnType] as 'symbol'` binds `name` to the C++ function `symbol`. `as 'symbol'` is required. An unannotated parameter or return is `any` (`QValue`).
-- `extern fn type.name(...)` adds a method to `str`, `list`, `dict` or `vec`; the receiver is passed as the first C++ argument. The method is visible only in the file that declares it (`modules_v0_2_spec.md` rule 12); a library exposes it through a function. Its name can't be the name of a prelude method of any type, and it can't be declared twice for one receiver in a file.
-- An `extern fn` can be declared at the top level of a file, in a module body or in a function body. It is a definition of its file like any other (`modules_v0_2_spec.md`): reached as `file::name` from an importer, file-scoped, and an error to define twice in one file. Free extern fns are first-class values (`g = io::exists`, `x | kid()`): the back end emits a `QValue` thunk for each.
+- `extern fn type.name(...)` adds a method to `str`, `list`, `dict` or `vec`; the receiver is passed as the first C++ argument. The method is visible only in the file that declares it (`specs/implemented/modules_v0_2_spec.md` rule 12); a library exposes it through a function. Its name can't be the name of a prelude method of any type, and it can't be declared twice for one receiver in a file.
+- An `extern fn` can be declared at the top level of a file, in a module body or in a function body. It is a definition of its file like any other (`specs/implemented/modules_v0_2_spec.md`): reached as `file::name` from an importer, file-scoped, and an error to define twice in one file. Free extern fns are first-class values (`g = io::exists`, `x | kid()`): the back end emits a `QValue` thunk for each.
 
 ### 2.2 Type mapping and checks
 
@@ -202,7 +202,7 @@ An `extern fn` declared to return `result` already works: it returns a `QValue` 
 
 ### P5. Arrow C Data Interface bridge
 
-New header `runtime/include/quark/ext/arrow.hpp`. Vectors already use the Arrow layout for the types Quark has (float64 `g`, int64 `l`, boolean `b`, utf8 `u` with int32 offsets; validity bitmaps LSB first, 64-byte aligned, offset 0, immutable; `tables_v0_1_spec.md` §11).
+New header `runtime/include/quark/ext/arrow.hpp`. Vectors already use the Arrow layout for the types Quark has (float64 `g`, int64 `l`, boolean `b`, utf8 `u` with int32 offsets; validity bitmaps LSB first, 64-byte aligned, offset 0, immutable; `specs/tables_v0_1_spec.md` §11).
 
 - **ABI structs.** Vendor `struct ArrowSchema` and `struct ArrowArray` from the Arrow spec, with `ARROW_C_DATA_INTERFACE` guards so they coexist with Arrow's or DuckDB's copy.
 - **Export, zero-copy.** `qext::export_vector(const QVector*, ArrowArray*, ArrowSchema*)` points at the vector's buffers. `private_data` holds an uncollectable GC root to the vector, and `release` frees it, so the buffers stay alive until the consumer releases them. Boehm never moves objects.
@@ -300,7 +300,7 @@ A rehearsal for DuckDB with the same API shape (`open`, `exec`, `query`, `close`
 
 ## 6. DuckDB (planned)
 
-DuckDB is an optional provider, not the core table engine: tables are native and eager (`tables_v0_1_spec.md` D1), and DuckDB comes after them, for SQL over data larger than the native engine handles comfortably.
+DuckDB is an optional provider, not the core table engine: tables are native and eager (`specs/tables_v0_1_spec.md` D1), and DuckDB comes after them, for SQL over data larger than the native engine handles comfortably.
 
 **Why DuckDB.** A stable C API (`duckdb.h`) with prebuilt `libduckdb` for Linux, macOS and Windows; columnar, chunked results that map onto Quark vectors with little more than `memcpy` for numeric columns; and it exercises P1, P3, P4, P5 and P6.
 
@@ -384,7 +384,7 @@ Results and data chunks never become handles: they are converted and destroyed i
 | 4. Tables and parameters | P6, `query_params`, `insert` | `query` returns a `tbl`; parameterized queries; bulk insert |
 | 5. Arrow | P5 | `register` queries a Quark table from DuckDB without copying; `import_vector` serves Arrow-producing providers |
 
-Phase 4 depends on the `tbl` type in the compiler (`tables_v0_1_spec.md` §9).
+Phase 4 depends on the `tbl` type in the compiler (`specs/tables_v0_1_spec.md` §9).
 
 ## 8. Decisions
 

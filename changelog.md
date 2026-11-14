@@ -10,6 +10,7 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 
 ## Contents
 
+- [2026-11-14: Specs move to `specs/`](#2026-11-14-specs-move-to-specs)
 - [2026-11-14: Hardening: silent wrong results](#2026-11-14-hardening-silent-wrong-results)
 - [2026-11-14: Table benchmarks; README language goals](#2026-11-14-table-benchmarks-readme-language-goals)
 - [2026-11-14: Table queries, table printing and table methods (tables v0.1)](#2026-11-14-table-queries-table-printing-and-table-methods-tables-v01)
@@ -39,12 +40,21 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 
 ---
 
+## 2026-11-14: Specs move to `specs/`
+
+### Changed
+- The feature specs leave the repository root. Specs whose design is fully implemented are in `specs/implemented/` (`modules_v0_2_spec.md`, `structs_v0_1_spec.md`); proposals and specs with work still planned are in `specs/` (`tables_v0_1_spec.md`, `ffi_v0_1_spec.md`, `repl_v0_1_spec.md`, `stdlib_expansion_v0_1_spec.md`). Every link and mention in the docs, code comments and this changelog points to the new paths.
+
+---
+
 ## 2026-11-14: Hardening: silent wrong results
 
 Fixes from the "Wrong results with no error" section of `known_issues.md`: each of these programs gave a wrong answer with no error, and now fails at compile time or with a runtime error.
 
+Commits: `ea97737`, `379f197`, `e8ca299`, `e638b64`
+
 ### Breaking
-- **Extern methods are visible only in the file that declares them** (`modules_v0_2_spec.md` rules 12 and 14). A method call can't be qualified, so another file reaches the method through a function of the declaring file:
+- **Extern methods are visible only in the file that declares them** (`specs/implemented/modules_v0_2_spec.md` rules 12 and 14). A method call can't be qualified, so another file reaches the method through a function of the declaring file:
   ```quark
   // lib.qrk
   extern fn str.shout() str as 'h_shout'
@@ -109,7 +119,7 @@ Commits: `59ef3f3`
 
 ## 2026-11-14: Table queries, table printing and table methods (tables v0.1)
 
-Completes `tables_v0_1_spec.md` §9, the first implementation of tables, on branch `worktree-tbl-v01`. Four decisions were taken while implementing it (spec §2): `and`/`or` follow SQL's three-valued logic with missing values (D22), the columns of one `mutate` are computed in order (D23), a summarize column is one aggregate of one column (D24), and inspection is table methods rather than prelude functions (D25).
+Completes `specs/tables_v0_1_spec.md` §9, the first implementation of tables, on branch `worktree-tbl-v01`. Four decisions were taken while implementing it (spec §2): `and`/`or` follow SQL's three-valued logic with missing values (D22), the columns of one `mutate` are computed in order (D23), a summarize column is one aggregate of one column (D24), and inspection is table methods rather than prelude functions (D25).
 
 Commits: `e16a54a`, `cc6407e`
 
@@ -150,7 +160,7 @@ Commits: `e16a54a`, `cc6407e`
 
 ## 2026-11-13: The `tbl` type, `std/csv` on the table reader, digit separators (tables v0.1)
 
-The first half of `tables_v0_1_spec.md` §9, on branch `worktree-tbl-v01`; queries followed on 2026-11-14.
+The first half of `specs/tables_v0_1_spec.md` §9, on branch `worktree-tbl-v01`; queries followed on 2026-11-14.
 
 Commits: `2785a46`, `54f38cf`
 
@@ -221,7 +231,7 @@ Commits: `38f4d84`
 
 ### Internal
 - `parser.endStatement` / `endLine` run after every statement (top level, indented and inline blocks), `when` arm and struct field: the next token must end the line, the block or the file, unless the statement ended with a block of its own (the last token read was a `NEWLINE` or `DEDENT`). `parseBlock`'s inline form parses one statement. The lexer passes a deeper line that starts with `|` through without an `INDENT` (`indentationFilter`), and the parser's existing `NEWLINE` + `|` continuation joins it. The editor snippet test expands a placeholder with no default (`$0`) to nothing, as the editor does, instead of `null`, which only parsed because of the separator bug. Tests: `parser/statement_end_test.go`, `TestIndentation_DeeperPipeLineContinues`, `TestStatementEnd_Programs`, `TestSemanticsSafety_Rejected` (`no_separator*`, `pipe_*`).
-- `known_issues.md` drops the two entries fixed here (statements on one line, the inline `when` body); the unclosed string stays. `tables_v0_1_spec.md` §9 has no prerequisite left before the `tbl` compiler work.
+- `known_issues.md` drops the two entries fixed here (statements on one line, the inline `when` body); the unclosed string stays. `specs/tables_v0_1_spec.md` §9 has no prerequisite left before the `tbl` compiler work.
 
 ## 2026-11-13: Known issues move to `known_issues.md`
 
@@ -268,7 +278,7 @@ Commits: `41b8279`, `cbb3ea7`, `c92a964`
 
 Commits: `571cab3` (merged in `5ff0225`)
 
-Implements `tables_v0_1_spec.md` D13: `sum`, `min` and `max` of a vector follow the table aggregate rules, so `sum(t.x)` and `summarize(s = sum(e.x))` will agree. Two decisions were taken while implementing it: `min`/`max`/mean of a vector with no present values are a runtime error (D13 had said `null`), and the mean is `stats::mean` in a new `std/stats` module rather than a prelude builtin.
+Implements `specs/tables_v0_1_spec.md` D13: `sum`, `min` and `max` of a vector follow the table aggregate rules, so `sum(t.x)` and `summarize(s = sum(e.x))` will agree. Two decisions were taken while implementing it: `min`/`max`/mean of a vector with no present values are a runtime error (D13 had said `null`), and the mean is `stats::mean` in a new `std/stats` module rather than a prelude builtin.
 
 ### Breaking
 - **`sum` of an int or bool vector is an `int`, and exact**; it was a float summed in floating point. `sum(vec [1, 2, 3, 4])` prints `10` (it printed `10.0`), `sum(vec [true, false, true])` is `2`, and `sum(vec [9007199254740993, 1])` is `9007199254740994` (it was `9007199254740992.0`). An overflowing int sum is a runtime error (`integer overflow in 'sum'`). A float vector still sums to a float.
@@ -296,7 +306,7 @@ Implements `tables_v0_1_spec.md` D13: `sum`, `min` and `max` of a vector follow 
 
 Commits: `571cab3` (merged in `5ff0225`)
 
-Implements `tables_v0_1_spec.md` D12, the first prerequisite of the table compiler work: vectors keep their missing entries, and a missing entry can't leave a vector as a single value. Before, it was read as `0` (`0.0`, `false`) into a typed variable.
+Implements `specs/tables_v0_1_spec.md` D12, the first prerequisite of the table compiler work: vectors keep their missing entries, and a missing entry can't leave a vector as a single value. Before, it was read as `0` (`0.0`, `false`) into a typed variable.
 
 ### Breaking
 - **`for x in v`, `v[i]`, `v.to_list()` and `v.enumerate()` on a vector with a missing entry are runtime errors**: `vec element 1 is missing; use fillna or drop_na first`, and `to_list() of a vec with 2 missing entries; use fillna or drop_na first`. This holds for every element type and also when the vector reaches the code through `any`. They printed or stored `0`, `0.0`, `false` or `null`:
@@ -386,10 +396,10 @@ No compiler, runtime or stdlib changes. Every doc was rewritten against the curr
 
 ### Docs
 - **README.md**: describes Quark as what it is: a data language whose compiler infers types and checks them at compile time, with runtime checks only as the backstop (it opened with "dynamically-typed"). Every sample was run against the compiler. Stale items are removed: the `QK-CHECK-002` dict warning, "return annotations are only checked on native functions", `::` listed as planned, the "inline lambda doesn't parse" caveat, and string interpolation as planned (not decided). Known limitations now list only deliberate gaps; bugs link to Known issues here.
-- **tables_v0_1_spec.md** (revision 3): the 2026-11-13 decisions are now the spec itself, rather than a "Revision 2" section over the April draft that still contradicted them (`orders: Order = tbl {...}`, `as` aliases, backends, schemas). Sections are renumbered (§2 decisions, §7 engine, §8 CSV, §9 plan, §10 inference, §11 Arrow). Literals, row access, masks and an annotation for untyped tables are listed as open questions.
+- **specs/tables_v0_1_spec.md** (revision 3): the 2026-11-13 decisions are now the spec itself, rather than a "Revision 2" section over the April draft that still contradicted them (`orders: Order = tbl {...}`, `as` aliases, backends, schemas). Sections are renumbered (§2 decisions, §7 engine, §8 CSV, §9 plan, §10 inference, §11 Arrow). Literals, row access, masks and an annotation for untyped tables are listed as open questions.
 - **architecture.md**: named functions are fixed declarations, called directly when they capture nothing (it said they were mutable closure bindings, called through `DispatchClosure`). Runtime errors are report-and-exit (it said ops return `qv_null()` on a mismatch). Also brought up to date: the analyzer pass order, `types.Analysis` fields, `QClosure`/`QFnInfo`, the `qext` API, the codegen output order and tests. The old §12 health review is replaced by §12 Soundness contract, §13 Roadmap (the lowering/IR plan, remaining steps only) and §14 Structural debt (only items still true).
 - **semantics.md, grammar.md**: fixed declarations, block scoping and assignment to outer names, element and value types, the `null` rules, unannotated extern parameters being `any`, structs across files. Duplication removed: precedence and syntax live in grammar.md, behaviour in semantics.md, builtins in stdlib.md.
-- **stdlib.md, error_codes.md, stdlib_expansion_v0_1_spec.md**: element types of returned lists, dict value-type errors, vec reductions as they behave today (with the planned D13 change), `std/csv` marked for replacement; `INV-SYMBOL`, `INV-STORAGE`, `INV-FIXED-FN`, `INV-OPERATOR` and `INV-ASSIGN-TARGET` added, and `INV-ARGCHECK` removed; the expansion spec's CSV section points to the tables spec, and every name uses `::`.
+- **stdlib.md, error_codes.md, specs/stdlib_expansion_v0_1_spec.md**: element types of returned lists, dict value-type errors, vec reductions as they behave today (with the planned D13 change), `std/csv` marked for replacement; `INV-SYMBOL`, `INV-STORAGE`, `INV-FIXED-FN`, `INV-OPERATOR` and `INV-ASSIGN-TARGET` added, and `INV-ARGCHECK` removed; the expansion spec's CSV section points to the tables spec, and every name uses `::`.
 - **structs, modules and FFI specs, editor extension README**: rewritten as current references, with the implementation deviations folded into the rules. Structs: imported and module structs, widening, `null` rules, `fn` fields, no separate schema type. FFI: the current interface, callbacks, the `qext` API; DuckDB after native tables.
 - **CLAUDE.md**: new "Docs" section: which doc owns which topic, and the current-state-only rule. It also stops calling Quark dynamically typed, and the `qv_null()` rule is fixed.
 - **Known issues** (now `known_issues.md`) gains bugs found while checking: two expressions with no separator are accepted (`total = price qty`), unclosed strings, struct `==` through untyped values, extern methods colliding across files, the `stdlib/` folder hijack, a misspelled `print` alignment being ignored, and four misleading messages.
@@ -456,7 +466,7 @@ Implements rules A-E of `architecture.md` §12 (§12.9 at the time) and the `nul
 
 Commits: `e6a1db9`
 
-Nothing here is reachable from Quark code yet: the `tbl` type, queries and the `std/csv` bindings are the next step (`tables_v0_1_spec.md`, Revision 2, which records the design decisions of this day).
+Nothing here is reachable from Quark code yet: the `tbl` type, queries and the `std/csv` bindings are the next step (`specs/tables_v0_1_spec.md`, Revision 2, which records the design decisions of this day).
 
 ### Internal
 - **Table engine** (`runtime/include/quark/table/engine.hpp`, namespace `quark::tbl`): the kernels behind the planned verbs, working on raw column buffers. `make_table`, `take`/`take_table` (row gathering for filter and sort), `sort_perm`/`sort_table` (stable, several keys, nulls last, a fast path for one dense numeric key), `group_rows` (hash grouping, groups in key order, nulls last) and the aggregates `agg_count`, `agg_count_values`, `agg_sum`, `agg_mean`, `agg_min`, `agg_max`. Missing values follow `na.rm = TRUE`. Row indices are int32. On 500K rows: group + mean 23 ms, sort by one float key 97 ms.
@@ -535,7 +545,7 @@ Commits: `c0ac8cd`, `ac274c0`, `6dc11a0` (keyword renames), `2e62209` (struct fi
   g = fn(x) -> x + 1
   g = fn(x) -> 0        // fine: g is a variable
   ```
-- **Modules v0.2: `::` names, one scope per file** (`modules_v0_2_spec.md`). Programs that use modules need these changes:
+- **Modules v0.2: `::` names, one scope per file** (`specs/implemented/modules_v0_2_spec.md`). Programs that use modules need these changes:
 
   | Before | Now |
   |---|---|
@@ -640,7 +650,7 @@ Commits: `c0ac8cd`, `ac274c0`, `6dc11a0` (keyword renames), `2e62209` (struct fi
 - **Compile-time arity messages read like the runtime ones**, with the function's name and a correct plural: `function 'f' expects 1 argument but got 2` (was `function expects 1 arguments but got 2`), `method 'split' expects 1 argument but got 0` (was `1 argument(s)`), `builtin 'len' expects 1 argument but got 2 (including piped input)`.
 - **A declared function that captures no variables is a plain C++ function.** Calls to it are direct (`quark_f(nullptr, ...)`), with no binding, closure allocation or indirect call. Before, every named function lived in a closure and was called through it, unless it was fully annotated. Whether a function is native (fully annotated) is now decided after the whole program is analyzed, so a fully annotated function that calls another non-capturing function is native too. A declared function that captures a variable stays a closure, held in a binding that never changes.
 - A fully annotated lambda assigned to a variable (`g = fn(x: int) int -> x`) is now a closure like any other variable. Only `fn` declarations compile to native C++ functions.
-- Tables spec (`tables_v0_1_spec.md`, still not implemented): the literal is `tbl { ... }` and the type annotation is `tbl` (`fn f(t: tbl)`). The runtime type name for a table is `tbl`. `fmt.table(...)` keeps its name.
+- Tables spec (`specs/tables_v0_1_spec.md`, still not implemented): the literal is `tbl { ... }` and the type annotation is `tbl` (`fn f(t: tbl)`). The runtime type name for a table is `tbl`. `fmt.table(...)` keeps its name.
 
 ### Fixed
 - **A loop variable named like a `g = fn` variable defined elsewhere failed in clang.** `f = fn(x) -> x + 1`, then inside a function `for f in list [fn(x) -> x * 10]: print(f(2))`, stopped with `type 'QValue' does not provide a call operator`. It now prints `20`: the loop variable was called as the C++ function of the outer `f`.
@@ -745,7 +755,7 @@ Commit: `c33d362`
 - A fully annotated function that captures an outer variable is no longer compiled as `DispatchNative`. That path called it without its closure.
 
 ### Docs
-- New draft `stdlib_expansion_v0_1_spec.md`, not implemented: multi-argument `println`, `fmt.format`, `std/fs`, and sys/time/io/csv additions.
+- New draft `specs/stdlib_expansion_v0_1_spec.md`, not implemented: multi-argument `println`, `fmt.format`, `std/fs`, and sys/time/io/csv additions.
 - Float exponent literals documented. README gains a *Known limitations* section.
 
 ### Internal
@@ -782,7 +792,7 @@ Commit: `a5afa58`
 - **GC: dict keys longer than 15 bytes leaked memory** (about 6 MiB over 8 rounds in the test). `QDictKey` now uses `q_allocator`.
 
 ### Removed
-- `native_modules_design.md`. `ffi_v0_1_spec.md` is now the canonical spec for native interop.
+- `native_modules_design.md`. `specs/ffi_v0_1_spec.md` is now the canonical spec for native interop.
 
 ---
 
@@ -906,7 +916,7 @@ Commit: `c349da8`
 - New `driver/` package (`CompileFile`/`CompileSource` by stage, returning a `Unit`) and `toolchain/` package (clang/GC discovery, compile, link, PCH). `main.go` shrank from about 860 lines to about 380.
 - `types.Analysis` with a single `Generator.SetAnalysis` replaces seven `codegen.Set*` setters.
 - Deleted the dead `runtime/.../builtins/fmt.hpp`.
-- `ffi_v0_1_spec.md` rewritten, design only: `extern` directives instead of `ffi lib`.
+- `specs/ffi_v0_1_spec.md` rewritten, design only: `extern` directives instead of `ffi lib`.
 
 ---
 
@@ -975,7 +985,7 @@ Commits: `26d21f9`, `f76348a` (merged through PR #1, `d899f2c`)
 Commits: `fd14038`, `df813dc`, `7b150a1`
 
 ### Added
-- `tables_v0_1_spec.md`, a draft design for a struct-shaped columnar `table` type.
+- `specs/tables_v0_1_spec.md`, a draft design for a struct-shaped columnar `table` type.
 - Runtime support for tables (`types/table.hpp`, `VAL_TABLE`). **`table { ... }` literals don't parse**, so user code can't create a table yet.
 - An empty `dict {}` is allowed as a default parameter value.
 
@@ -1016,7 +1026,7 @@ Commits: `7fd7670`, `0474262`, `22c8a71`, `97a43ee`
   - field type mismatches;
   - assignment to a field (structs are immutable);
   - `==`/`!=` on structs (compare fields explicitly).
-- `structs_v0_1_spec.md`.
+- `specs/implemented/structs_v0_1_spec.md`.
 
 ---
 

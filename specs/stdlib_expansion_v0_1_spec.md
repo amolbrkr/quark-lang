@@ -1,8 +1,8 @@
 # Quark Standard Library Expansion v0.1 Spec
 
-Status: Draft proposal, revision 2 (2026-11-13). Nothing here is implemented. CSV is superseded by `tables_v0_1_spec.md` (D8, D15, D17, tables §8), and decisions 7 and 8 are answered there.
+Status: Draft proposal, revision 2 (2026-11-13). Nothing here is implemented. CSV is superseded by `specs/tables_v0_1_spec.md` (D8, D15, D17, tables §8), and decisions 7 and 8 are answered there.
 Scope: `std/fmt`, `std/sys`, `std/time`, `std/io`, a new `std/fs`, and additions to `std/random`. JSON, regex and subprocesses are covered briefly in §9.
-Related: `stdlib.md` (current API), `ffi_v0_1_spec.md` (how modules bind native code), `modules_v0_2_spec.md` (modules), `tables_v0_1_spec.md` (CSV and tables)
+Related: `stdlib.md` (current API), `specs/ffi_v0_1_spec.md` (how modules bind native code), `specs/implemented/modules_v0_2_spec.md` (modules), `specs/tables_v0_1_spec.md` (CSV and tables)
 
 ## Contents
 
@@ -127,7 +127,7 @@ Filesystem operations (listing, creating and removing directories and files) go 
 
 `now()` (epoch seconds), `clock()` (monotonic seconds) and `sleep(seconds)` exist. There is no way to show a timestamp as a date, read a date, or present a duration.
 
-Timestamps stay floats: seconds since the Unix epoch, UTC. That keeps arithmetic trivial (`ts + time::days(3)`), sorts, and fits vectors. Durations are float seconds too. A dedicated date type isn't worth it for v0.1; the tables work plans a `date` column type (`tables_v0_1_spec.md` §9), and this module should convert to and from it when it exists.
+Timestamps stay floats: seconds since the Unix epoch, UTC. That keeps arithmetic trivial (`ts + time::days(3)`), sorts, and fits vectors. Durations are float seconds too. A dedicated date type isn't worth it for v0.1; the tables work plans a `date` column type (`specs/tables_v0_1_spec.md` §9), and this module should convert to and from it when it exists.
 
 ### 5.2 Proposal
 
@@ -224,7 +224,7 @@ The things Python has in `os`, `os.path`, `shutil` and `pathlib`, implemented wi
 
 ## 8. `std/csv`
 
-Superseded by `tables_v0_1_spec.md`. The reader is written in-house and parses straight into typed columns (D8, tables §8); `std/csv` is rebuilt on it as `csv::read_file`, `csv::write_file` and `csv::parse_text`, returning tables, and `csv::parse` / `csv::read` are removed (D15); columns are matched to struct fields by name, with a literal `dict` to rename (D17).
+Superseded by `specs/tables_v0_1_spec.md`. The reader is written in-house and parses straight into typed columns (D8, tables §8); `std/csv` is rebuilt on it as `csv::read_file`, `csv::write_file` and `csv::parse_text`, returning tables, and `csv::parse` / `csv::read` are removed (D15); columns are matched to struct fields by name, with a literal `dict` to rename (D17).
 
 ## 9. Other Gaps
 
@@ -282,5 +282,5 @@ Every function gets a smoke test, negative tests for its misuse paths (wrong typ
 
 ### 12.2 Answered by the tables spec
 
-7. **CSV type inference**: from every value of the column (`tables_v0_1_spec.md` D8, tables §8), and from the struct when the table is typed (D2).
+7. **CSV type inference**: from every value of the column (`specs/tables_v0_1_spec.md` D8, tables §8), and from the struct when the table is typed (D2).
 8. **CSV library**: in-house, no third-party library (D8).

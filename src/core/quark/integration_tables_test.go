@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// Tables v0.1 (tables_v0_1_spec.md): the tbl type, std/csv on the table
+// Tables v0.1 (specs/tables_v0_1_spec.md): the tbl type, std/csv on the table
 // reader, and queries. Programs run in a temporary directory that also holds
 // the CSV files they read.
 

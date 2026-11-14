@@ -2,7 +2,7 @@
 
 Status: Revision 3; the first implementation (§9) is done (2026-11-14). The design is the set of decisions in §2 (D1-D25). Implemented and tested: the `tbl[R]` type and shape matching (§3), queries (§4), the missing-value rules (§5), inspection (§6), the runtime engine (§7), `std/csv` on the reader with the column mapping and input validation (§8), digit separators, and the vector rules D12 and D13 (`TestTables_*` in `integration_tables_test.go`, `TestTableEngine`). Not yet: the items after v0.1 in §9 and the extension in §10.
 Last Updated: 2026-11-14
-Related: `structs_v0_1_spec.md` (row types), `architecture.md` §1.6 (the lowering pass and IR the compiler work targets), `ffi_v0_1_spec.md` P5/P6 (Arrow export, DuckDB).
+Related: `specs/implemented/structs_v0_1_spec.md` (row types), `architecture.md` §1.6 (the lowering pass and IR the compiler work targets), `specs/ffi_v0_1_spec.md` P5/P6 (Arrow export, DuckDB).
 
 ## Contents
 
@@ -192,7 +192,7 @@ Measured on 500K rows (`-O2`, one core, Linux x86_64, 2026-11-13): `group_by` + 
 - Verbs: joins, `select`/`rename`, `distinct`, `n_distinct`, `slice`/`head`.
 - Column types: `date` (int32 days, Arrow `date32`), then timestamps and categoricals.
 - `map` over vecs and tables (D4), `list[T]` (D16).
-- DuckDB as an optional backend (`ffi_v0_1_spec.md` §6). User-facing semantics must stay the same across backends; only performance and where the work runs may differ.
+- DuckDB as an optional backend (`specs/ffi_v0_1_spec.md` §6). User-facing semantics must stay the same across backends; only performance and where the work runs may differ.
 
 ## 10. Extension: schema inference at compile time (planned, after the first implementation)
 

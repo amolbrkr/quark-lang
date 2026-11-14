@@ -4,7 +4,7 @@ import (
 	"quark/ast"
 )
 
-// Table queries, `t | e -> verb(...) | verb(...)` (tables_v0_1_spec.md §3-4).
+// Table queries, `t | e -> verb(...) | verb(...)` (specs/tables_v0_1_spec.md §3-4).
 // The checker follows the row type through every step (§3.1): each step reads
 // the row its input has and produces the row of its output, so every column
 // a verb expression reads (e.col) is known with its type at compile time.

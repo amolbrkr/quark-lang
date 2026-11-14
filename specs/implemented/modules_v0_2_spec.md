@@ -90,7 +90,7 @@ Everything is public; there are no access modifiers.
 15. An imported file may contain only definitions, at the top level and in module bodies:
     - `fn` declarations, `struct` definitions and `module` blocks (not nested);
     - `incl` (top level only);
-    - `extern '<header>'`, `extern fn`, `extern link` and `extern include_path` (directives at the top level only, `ffi_v0_1_spec.md` P1);
+    - `extern '<header>'`, `extern fn`, `extern link` and `extern include_path` (directives at the top level only, `specs/ffi_v0_1_spec.md` P1);
     - `name = <constant>`: an `int`, `float`, `str` or `bool` literal, unary minus on one, or `+ - * / %` over constants (`-1`, `60 * 60`). `list []` and `dict {}` are rejected, so a library has no mutable state.
 
     Any other statement, such as a call or `print`, is a load error naming the statement. References to an imported file's constants are replaced by the constant's value, so library functions don't capture them.
@@ -117,7 +117,7 @@ Everything is public; there are no access modifiers.
 27. Inside its file a struct is written bare (`Point { ... }`), or `module::Point` from outside its module. `geo.Point { ... }` is a parse error that points to `::`.
 28. Diagnostics, `type()` and `print` show an imported struct qualified by its defining file's stem (`geo::Point`), a struct of a main-script module as `m::S`, and a main-script top-level struct bare (`Point`). The stem is used, not the importer's alias, because one struct may be imported under several aliases.
 
-`structs_v0_1_spec.md` covers the rest of struct semantics.
+`specs/implemented/structs_v0_1_spec.md` covers the rest of struct semantics.
 
 ### 3.8 Reserved names
 
@@ -204,7 +204,7 @@ The local rename exists because the spliced tree has one global scope in which m
 ### 5.5 Interactions
 
 - **Call shapes** (`types/analyzer_callshapes.go`): fixed declarations mean a function name's `FunctionType` never changes, and hoisting gives every call its real signature.
-- **FFI:** `extern link` and `extern include_path` are collected across all files (`ffi_v0_1_spec.md` P1). C++ symbols in glue headers are global: two glue headers that define the same C++ function clash in C++. That is a rule for glue authors, not a Quark scoping matter.
+- **FFI:** `extern link` and `extern include_path` are collected across all files (`specs/ffi_v0_1_spec.md` P1). C++ symbols in glue headers are global: two glue headers that define the same C++ function clash in C++. That is a rule for glue authors, not a Quark scoping matter.
 - **Editor extension:** highlights `::` paths, completes `name::` and `file::module::`, and hovers qualified functions; `internal/editordata` lists stdlib members as `fmt::show_vec`.
 
 ## 6. Tests

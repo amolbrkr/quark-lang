@@ -1014,7 +1014,7 @@ func (p *Parser) parseExtern() *ast.TreeNode {
 			p.addError("unknown extern directive 'include'; use extern include_path 'dir' to add an include search path, or extern 'file.hpp' to include a header")
 			return nil
 		case "source":
-			p.addError("extern source is not supported yet (planned: ffi_v0_1_spec.md P2); use a header-only glue file with extern 'file.hpp'")
+			p.addError("extern source is not supported yet (planned: specs/ffi_v0_1_spec.md P2); use a header-only glue file with extern 'file.hpp'")
 			return nil
 		}
 	}

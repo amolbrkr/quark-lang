@@ -129,7 +129,7 @@ func annotationType(node *ast.TreeNode, structTypes map[string]*StructType) (Typ
 }
 
 // tableAnnotation resolves R in tbl[R]: a struct whose fields all have
-// column types (tables_v0_1_spec.md §3).
+// column types (specs/tables_v0_1_spec.md §3).
 func tableAnnotation(arg *ast.TreeNode, structTypes map[string]*StructType) (Type, *ast.TreeNode, string) {
 	t, at, msg := annotationType(arg, structTypes)
 	if msg != "" {

@@ -53,7 +53,7 @@ Key decisions:
 
 ### 1.3 Loader → One Tree and a Name Table
 
-Names are resolved per file (`modules_v0_2_spec.md`, `semantics.md` §10).
+Names are resolved per file (`specs/implemented/modules_v0_2_spec.md`, `semantics.md` §10).
 
 - `loader/files.go` loads each `incl`uded file once (identity: the real path, symbolic links resolved; numbered in load order), checks file names and that imported files contain only definitions and constants, and builds each file's scope (top-level definitions, modules with their members, import bindings), reporting clashes as `QK-LOAD-001`.
 - `loader/resolve.go` then walks every file. Each definition of imported file N (stem `s`) gets the internal name `q<N>_s__name` (module members `q<N>_s__module__name`); main-script module members become `module__name`; main-script top-level names are unchanged. Every reference, bare (local, then enclosing module, then file) or `::`-qualified, is rewritten to its internal name. Two definitions that would get the same internal name are a load error. A local of an imported file named like a main-script name becomes `q<N>__name__l`, since the spliced tree has one global scope. Every extern method of file N (main: 0) becomes `q<N>__name__m`, and so do the method calls of that file with its name, so only that file reaches it (a method call can't be qualified, and the loader doesn't know a call's receiver type; an extern method therefore can't be named like any prelude method). Constants of imported files are inlined at each use. User names can't contain `__` (`checkReservedNames`), so no user name can reach an internal one.
@@ -273,7 +273,7 @@ A cell for a variable that a hoisted function captures is created unassigned (`q
 - **QVector**: typed columnar storage, dtype f64, i64, bool or str, in the Arrow layout (`types/vector.hpp`): contiguous values, bit-packed bools, int32 offsets plus UTF-8 bytes for strings, a validity bitmap that is `nullptr` when there are no nulls, 64-byte aligned buffers. Vectors are immutable.
 - **QResult**: `{ bool is_ok; QValue payload; }`.
 - **QStruct** / **QStructDef** (`types/struct.hpp`): a struct value points to its definition; identity is the definition's address (`q_param_struct` / `q_field_struct` compare pointers), and `QStructDef.name` is the display name (`geo::Point`).
-- **QTable** (`types/table.hpp`): a `QStructDef` naming the columns, a row count, and one `QVector*` per column (`tables_v0_1_spec.md` §7). The `QStructDef` is the row type: `field_dtypes` gives each field's column type and `anonymous` marks a row a query derived or the CSV reader inferred. `q_table_conform` is the shape rule at runtime (§12).
+- **QTable** (`types/table.hpp`): a `QStructDef` naming the columns, a row count, and one `QVector*` per column (`specs/tables_v0_1_spec.md` §7). The `QStructDef` is the row type: `field_dtypes` gives each field's column type and `anonymous` marks a row a query derived or the CSV reader inferred. `q_table_conform` is the shape rule at runtime (§12).
 
 ### 2.5 Capture Analysis
 
@@ -374,7 +374,7 @@ Functionality that isn't needed in the prelude belongs in a stdlib module (`src/
 
 ## 7) Extern Function System
 
-`extern fn` binds a C++ function (`semantics.md` §10.8, `ffi_v0_1_spec.md`). Stdlib modules use it: each is a `.qrk` file with a primary `module X:` block that binds a sibling `.hpp` with `extern 'x.hpp'`.
+`extern fn` binds a C++ function (`semantics.md` §10.8, `specs/ffi_v0_1_spec.md`). Stdlib modules use it: each is a `.qrk` file with a primary `module X:` block that binds a sibling `.hpp` with `extern 'x.hpp'`.
 
 ### Pipeline
 
@@ -576,7 +576,7 @@ The back end is the lowering pass, IR, verifier and emitter (§1.6). What is lef
 
 1. **Checked mode**: a build flag that turns every `ProofType` and `ProofElement` unbox into a checked read (§12, Finding holes mechanically). Running the test corpus in both modes, any check failure or output difference is a soundness bug.
 
-Tables (`tables_v0_1_spec.md`) are lowered in `lower/query.go` (§1.6, Queries), with their runtime in `table/query.hpp`.
+Tables (`specs/tables_v0_1_spec.md`) are lowered in `lower/query.go` (§1.6, Queries), with their runtime in `table/query.hpp`.
 
 ---
 
@@ -623,7 +623,7 @@ Measured with the benchmark suite (`src/benchmarks/`; the numbers and how they w
 - **Strings** are NUL-terminated without a stored length: every method calls `strlen` again, `lower` calls the locale's `tolower` per byte, and every step allocates. `trim().lower().replace()` on 1M strings takes 530 ms (CPython 402 ms). Directions: store the length; ASCII fast paths.
 - **Sorting** compares `QValue`s with a type-checking comparator: 280 ms for 1M floats (NumPy 27 ms, R 156 ms). Direction: sort raw doubles when the element type is known; give `vec` a sort.
 
-**Tables** (`tables_v0_1_spec.md`; 500K rows with one float column 1% missing, measured with `quark run`, and the `quark_tbl` benchmarks, 2026-11-14)
+**Tables** (`specs/tables_v0_1_spec.md`; 500K rows with one float column 1% missing, measured with `quark run`, and the `quark_tbl` benchmarks, 2026-11-14)
 - Numeric verb expressions run at loop speed: `mutate(bonus = e.salary * 0.1, total = e.salary + e.bonus)` takes 10 ms, `group_by` + `summarize(mean, count)` 27 ms. In the benchmarks a query of five steps on 1M rows takes 134 ms (data.table 142 ms, Polars 167 ms), `group_by` + `summarize(sum, count)` 52 ms (Polars 55 ms), and an eight-operation `mutate` on 10M rows 59 ms, one fused loop (Polars 93 ms, Quark's `vec` 197 ms).
 - **`min` and `max` aggregates use the generic comparator** (`agg_extremum` → `compare_rows`, a type switch and null and NaN tests per row) and have no whole-table path: 76 ms for `summarize(lo = min(e.a))` on 10M floats, against 6.1 ms for `min(t.a)` (`known_issues.md`, Slow paths). Direction: typed loops, and the vec reductions for a whole table, as `agg_sum` and `agg_mean` do.
 - **A sort with a str key or several keys** sorts row positions with `compare_rows` per key and comparison: `sort(e.k, desc(e.v))` on 1M rows takes 1.13 s (data.table 255 ms). Direction: replace a str key by its value's rank among the distinct values, then compare ints; a radix sort for the one-dense-numeric-key fast path (173 ms for 1M floats; NumPy 26 ms, Polars 80 ms).

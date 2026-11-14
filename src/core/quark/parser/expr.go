@@ -562,7 +562,7 @@ func (p *Parser) parsePipe(left *ast.TreeNode) *ast.TreeNode {
 	return right
 }
 
-// parseQuery parses a table query after `source |` (tables_v0_1_spec.md
+// parseQuery parses a table query after `source |` (specs/tables_v0_1_spec.md
 // §4): `e ->`, then one or more steps `verb(...)` separated by `|`, on one
 // line, on following lines that start with `|`, or as an indented block
 // (`t | e ->` on its own line, then a step per line):

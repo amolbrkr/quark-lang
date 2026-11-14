@@ -53,7 +53,7 @@ const (
 	// it and turns the node into an IdentifierNode with the internal name.
 	QualifiedNameNode
 	// QueryNode is a table query, `t | e -> verb(...) | verb(...)`
-	// (tables_v0_1_spec.md §4): [source, IdentifierNode row name,
+	// (specs/tables_v0_1_spec.md §4): [source, IdentifierNode row name,
 	// QueryStepNode...]. Token is the `|` that starts it.
 	QueryNode
 	// QueryStepNode is one verb of a query: Token is the verb's name

@@ -1,6 +1,6 @@
 package main
 
-// FFI Phase 1 integration tests (ffi_v0_1_spec.md §5.2): extern link,
+// FFI Phase 1 integration tests (specs/ffi_v0_1_spec.md §5.2): extern link,
 // extern include_path, --lib-path / QUARK_LIB_PATH, rpath, link order, and
 // the QK-FFI-001/002/003 diagnostics, against a small C library built here.
 
@@ -230,7 +230,7 @@ func TestFFI_Phase1(t *testing.T) {
 	})
 }
 
-// TestStdBlas runs std/blas against the system OpenBLAS (ffi_v0_1_spec.md
+// TestStdBlas runs std/blas against the system OpenBLAS (specs/ffi_v0_1_spec.md
 // §5.3). It is skipped when OpenBLAS or its headers aren't installed.
 func TestStdBlas(t *testing.T) {
 	root := repoRootFromThisFile(t)

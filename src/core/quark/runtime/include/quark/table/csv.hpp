@@ -51,7 +51,7 @@ struct Options {
     bool trim = true;
     std::vector<std::string> na = {"", "NA"};
     // Untyped reads: (name, header) pairs giving the header column `header`
-    // the column name `name` (tables_v0_1_spec.md D17). Typed reads map
+    // the column name `name` (specs/tables_v0_1_spec.md D17). Typed reads map
     // with Column::header.
     std::vector<std::pair<std::string, std::string>> rename;
 };

@@ -9,7 +9,7 @@ import (
 	"quark/token"
 )
 
-// Tables (tables_v0_1_spec.md): expected types, the std/csv reads typed by
+// Tables (specs/tables_v0_1_spec.md): expected types, the std/csv reads typed by
 // them, and anonymous rows.
 
 // TableRead is a call of csv::read_file or csv::parse_text. Lowering calls
@@ -146,7 +146,7 @@ func (a *Analyzer) checkColumnMapping(arg *ast.TreeNode, row *StructType) {
 
 // anonRow is the anonymous row type with these fields, in this order: one
 // StructType per shape, registered with the struct types so lowering emits
-// its definition (tables_v0_1_spec.md §3.2).
+// its definition (specs/tables_v0_1_spec.md §3.2).
 func (a *Analyzer) anonRow(fields []StructField) *StructType {
 	parts := make([]string, len(fields))
 	for i, f := range fields {

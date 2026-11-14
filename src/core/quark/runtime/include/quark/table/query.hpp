@@ -1,5 +1,5 @@
 // quark/table/query.hpp - what generated code calls for table queries
-// (tables_v0_1_spec.md §4, lower/query.go).
+// (specs/tables_v0_1_spec.md §4, lower/query.go).
 //
 // The compiler lowers each verb expression into a typed loop over the input
 // table's column buffers: per row, it tests the validity of the columns the

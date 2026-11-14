@@ -346,11 +346,11 @@ vs = vec ['a', 'b', 'c']     // vec[str]
 v2 = list [10, null, 30].to_vec()   // vec[i64] with a missing entry
 ```
 
-- A literal must be homogeneous and can't contain `null`; missing entries come from `list [...].to_vec()`. `vec [1, null, 3]` is planned (`tables_v0_1_spec.md` D12).
+- A literal must be homogeneous and can't contain `null`; missing entries come from `list [...].to_vec()`. `vec [1, null, 3]` is planned (`specs/tables_v0_1_spec.md` D12).
 - Vectors can't be assigned into (`v[0] = 5` is a compile-time error).
 - Arithmetic `+ - * /` works elementwise on numeric vectors of equal length, or a vector and a number; `/` gives `vec[f64]`. Comparisons (`<`, `==`, ...) give `vec[bool]`. Missing entries stay missing. A length mismatch is a runtime error.
 - `v[i]` reads one element (negative counts from the end; out of range is a runtime error), and `v[mask]` with a `vec[bool]` of the same length keeps the selected elements: `v[v > 2]` (a mask of another length is a runtime error).
-- **A missing entry taken out as one value is a runtime error** (`tables_v0_1_spec.md` D12): `v[i]`, `for x in v`, `.to_list()` and `.enumerate()` stop with `vec element 1 is missing; use fillna or drop_na first`, whatever the element type and whether or not the compiler knows the value is a vec. Operations on the whole vector (arithmetic, comparisons, masks, reductions, `fillna`, `drop_na`) keep or skip missing entries instead. `.get(i)` returns `null` for one, so its result has type `any`.
+- **A missing entry taken out as one value is a runtime error** (`specs/tables_v0_1_spec.md` D12): `v[i]`, `for x in v`, `.to_list()` and `.enumerate()` stop with `vec element 1 is missing; use fillna or drop_na first`, whatever the element type and whether or not the compiler knows the value is a vec. Operations on the whole vector (arithmetic, comparisons, masks, reductions, `fillna`, `drop_na`) keep or skip missing entries instead. `.get(i)` returns `null` for one, so its result has type `any`.
 
 ```quark
 v = list [1, null, 3].to_vec()
@@ -379,7 +379,7 @@ for x in v:                  // runtime error: vec element 1 is missing; use fil
 
 ### Reductions
 
-Reductions follow the table aggregates (`tables_v0_1_spec.md` D6, D13), so `sum(t.x)` and `summarize(s = sum(e.x))` agree.
+Reductions follow the table aggregates (`specs/tables_v0_1_spec.md` D6, D13), so `sum(t.x)` and `summarize(s = sum(e.x))` agree.
 
 | Function | Signature | Description |
 |---|---|---|
@@ -407,7 +407,7 @@ print(any(vi > 3))                      // true
 
 ## Tables (`tbl`)
 
-A table is made by `std/csv` or a query (semantics.md §9.5, `tables_v0_1_spec.md`); `t.col` is a column as a vec. Its methods (D25):
+A table is made by `std/csv` or a query (semantics.md §9.5, `specs/tables_v0_1_spec.md`); `t.col` is a column as a vec. Its methods (D25):
 
 | Method | Signature | Description |
 |---|---|---|
@@ -440,7 +440,7 @@ print(staff | e -> group_by(e.dept) | summarize(n = count()))
 
 Each module is a `.qrk` file in `src/core/stdlib/` whose API is a `module` block named like the file, so its functions are `io::open`, `fmt::show_vec`, ... Nothing from an import is visible unqualified, so a program's own names never clash with the stdlib's.
 
-The `extern fn` bindings a module is built on (`io_open`, `fmt_vec`, `blas_dot`, ...) sit at the file's top level and are reachable too (`fmt::fmt_vec`), since Quark has no access modifiers. They are implementation details: they take every argument explicitly (no defaults) and may change. Use the module functions. Native bindings are specified in `ffi_v0_1_spec.md`.
+The `extern fn` bindings a module is built on (`io_open`, `fmt_vec`, `blas_dot`, ...) sit at the file's top level and are reachable too (`fmt::fmt_vec`), since Quark has no access modifiers. They are implementation details: they take every argument explicitly (no defaults) and may change. Use the module functions. Native bindings are specified in `specs/ffi_v0_1_spec.md`.
 
 Module functions check their annotated parameters like any Quark function: `list`, `dict`, `vec` and `fn` parameters reject `null`; `resource` parameters accept it (and the function then reports an invalid handle).
 
@@ -466,7 +466,7 @@ File I/O over `src/core/stdlib/io.hpp`. Import with `incl 'std/io' as io`. An op
 
 Reading, writing or seeking a closed file (or `null`) is a runtime error: `io.read() expects an open file (resource is closed)`.
 
-Limits: writes are unbuffered; a file that is never closed stays open until the program exits; `binary` only changes newline handling on Windows; a read whose bytes contain a NUL is an `err`. `std/io` is for text. A rework is proposed in `stdlib_expansion_v0_1_spec.md` §6.
+Limits: writes are unbuffered; a file that is never closed stays open until the program exits; `binary` only changes newline handling on Windows; a read whose bytes contain a NUL is an `err`. `std/io` is for text. A rework is proposed in `specs/stdlib_expansion_v0_1_spec.md` §6.
 
 ```quark
 incl 'std/io' as io
@@ -500,7 +500,7 @@ Text rendering beyond what `print` shows. Each function returns a `str`. Import 
 | `show_list` | `lst: list, n: int = 10, show_index: bool = true -> str` | A list as a column, up to `n` items |
 | `show_vec` | `v: vec, n: int = 10, show_index: bool = true -> str` | A vector as a column, up to `n` items |
 | `show_dict` | `dct: dict, n: int = 10, show_index: bool = true -> str` | A dict as key/value columns, sorted by key |
-| `table` | `df: any, n: int = 20, show_index: bool = true -> str` | A dict of equal-length lists or vectors (columns sorted by name) as a boxed table, up to `n` rows. It also renders runtime tables, which Quark code can't create yet (`tables_v0_1_spec.md`). Columns of different lengths, or a column that isn't a list or vector, are runtime errors |
+| `table` | `df: any, n: int = 20, show_index: bool = true -> str` | A dict of equal-length lists or vectors (columns sorted by name) as a boxed table, up to `n` rows. It also renders runtime tables, which Quark code can't create yet (`specs/tables_v0_1_spec.md`). Columns of different lengths, or a column that isn't a list or vector, are runtime errors |
 | `head` | `lst: list, n: int = 5 -> str` | The first `n` items of a list, rendered like `show_list` |
 | `tail` | `lst: list, n: int = 5 -> str` | The last `n` items of a list |
 | `full` | `x: any -> str` | `x` as `print` shows it, with every item of long collections |
@@ -557,7 +557,7 @@ Run it with `quark run tool.qrk -- data.csv`, or build it once with `quark build
 
 ## `std/csv`
 
-CSV and TSV files as tables (`tables_v0_1_spec.md` §8, D15-D18). Import with `incl 'std/csv'`.
+CSV and TSV files as tables (`specs/tables_v0_1_spec.md` §8, D15-D18). Import with `incl 'std/csv'`.
 
 | Function | Signature | Description |
 |---|---|---|
@@ -593,7 +593,7 @@ when csv::write_file(rich, 'rich.csv'):
 
 ## `std/stats`
 
-Statistics on vectors. Import with `incl 'std/stats'`. The functions follow the table aggregates (`tables_v0_1_spec.md` D6), so they agree with `summarize`.
+Statistics on vectors. Import with `incl 'std/stats'`. The functions follow the table aggregates (`specs/tables_v0_1_spec.md` D6), so they agree with `summarize`.
 
 | Function | Signature | Description |
 |---|---|---|

@@ -1,5 +1,5 @@
 // quark/core/sum.hpp - float summation shared by the vec reductions, std/stats
-// and the table aggregates (tables_v0_1_spec.md D13), so that sum(v),
+// and the table aggregates (specs/tables_v0_1_spec.md D13), so that sum(v),
 // stats::mean(v) and summarize over the same values give the same bits.
 #ifndef QUARK_CORE_SUM_HPP
 #define QUARK_CORE_SUM_HPP

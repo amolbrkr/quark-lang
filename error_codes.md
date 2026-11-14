@@ -121,7 +121,7 @@ Run on every compile after lowering (`src/core/quark/lower/verify.go`, `architec
 
 ## Planned codes
 
-- `QK-FFI-004` (runtime): wrong handle kind or use of a closed handle (`ffi_v0_1_spec.md` P8). Today these are `QK-RUNTIME-001`.
+- `QK-FFI-004` (runtime): wrong handle kind or use of a closed handle (`specs/ffi_v0_1_spec.md` P8). Today these are `QK-RUNTIME-001`.
 
 ## Rules for new codes
 

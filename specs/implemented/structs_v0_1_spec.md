@@ -1,6 +1,6 @@
 # Quark Structs v0.1 Spec
 
-Status: Implemented. Structs landed on 2026-04-02; the modules v0.2 rules for structs (qualified names, structs in module bodies, identity by definition), int→float widening of fields and checks on field values of unknown type landed on 2026-11-12; the `null` rules for field types on 2026-11-13. Not implemented: structs defined inside a function body (§9). Tables typed by a struct (`tbl[Employee]`) are specified, not implemented, in `tables_v0_1_spec.md`. There is no separate schema type: it was folded into `struct` (decided 2026-11-12).
+Status: Implemented. Structs landed on 2026-04-02; the modules v0.2 rules for structs (qualified names, structs in module bodies, identity by definition), int→float widening of fields and checks on field values of unknown type landed on 2026-11-12; the `null` rules for field types on 2026-11-13. Not implemented: structs defined inside a function body (§9). Tables typed by a struct (`tbl[Employee]`) are specified, not implemented, in `specs/tables_v0_1_spec.md`. There is no separate schema type: it was folded into `struct` (decided 2026-11-12).
 Last Updated: 2026-11-13
 Scope: struct declarations, literals, field access, and how structs interact with modules, annotations, containers and tables.
 
@@ -103,7 +103,7 @@ FieldInit        ::= ID ":" Expression
 
 ## 4. Where Structs Live and How They Are Named
 
-The naming rules are those of `modules_v0_2_spec.md` §3.7:
+The naming rules are those of `specs/implemented/modules_v0_2_spec.md` §3.7:
 
 - A struct can be defined at the top level of a file or inside a `module` block.
 - Inside its file it is written bare (`Point`), or `module::Point` from outside its module.
@@ -218,7 +218,7 @@ fn is_adult(c: Customer) bool -> c.age >= 18
 
 ### 8.3 Tables
 
-A table's row type is a struct (`tables_v0_1_spec.md` D2 and D10; planned):
+A table's row type is a struct (`specs/tables_v0_1_spec.md` D2 and D10; planned):
 
 ```quark
 struct Employee:

@@ -42,7 +42,7 @@ Every runtime value has one of twelve types. `type(v)` returns the name in the f
 | `resource` | Opaque native handle | Created only by native code, such as `io::open` (§1.4) |
 | `struct` | Fixed set of named fields | Declared with `struct`; immutable (grammar.md §9.1) |
 
-Tables (`tbl`) are not a Quark type yet: the runtime has the table engine and CSV reader, and the compiler side is planned in `tables_v0_1_spec.md` (the type is written `tbl[Employee]`, D10).
+Tables (`tbl`) are not a Quark type yet: the runtime has the table engine and CSV reader, and the compiler side is planned in `specs/tables_v0_1_spec.md` (the type is written `tbl[Employee]`, D10).
 
 ### 1.1 Aliasing
 
@@ -365,7 +365,7 @@ The methods are listed in stdlib.md.
 
 ### 9.5 Tables
 
-A table (`tbl`) is an immutable, in-memory, columnar set of rows: one vec per column, all of one length, in the Arrow layout. Its design and decisions are in `tables_v0_1_spec.md`.
+A table (`tbl`) is an immutable, in-memory, columnar set of rows: one vec per column, all of one length, in the Arrow layout. Its design and decisions are in `specs/tables_v0_1_spec.md`.
 
 **Types.** `tbl[R]` is a table whose rows are the struct `R`: its columns are `R`'s fields, in field order, with their types, which must be `int`, `float`, `bool` or `str` (`struct S can't be a table row: field 'xs' is list[any]`). A bare `tbl` is a table whose row type the compiler doesn't know: it can be printed, written and passed on, but its columns can't be read and it can't be queried until it reaches a `tbl[R]` slot. A query step's output has an *anonymous* row, written by its shape: `tbl[{dept: str, n: int}]`. A table is never `null`.
 
@@ -398,7 +398,7 @@ Aggregates: `sum` of an int or bool column is an int (overflow is a runtime erro
 
 ## 10) Modules and Imports
 
-The full rules are in `modules_v0_2_spec.md`; this section summarizes them.
+The full rules are in `specs/implemented/modules_v0_2_spec.md`; this section summarizes them.
 
 ### 10.1 Import forms
 
@@ -450,7 +450,7 @@ The loader gives every definition a unique internal name (`q2_fmt__fmt_vec` for 
 
 ### 10.8 Extern functions (native C++ interop)
 
-`ffi_v0_1_spec.md` is the full specification of native interop. A Quark file binds native C++ with `extern` declarations:
+`specs/ffi_v0_1_spec.md` is the full specification of native interop. A Quark file binds native C++ with `extern` declarations:
 
 ```quark
 extern './math_ext.hpp'
@@ -475,7 +475,7 @@ Native code that adds to a list or dict should use `qext::list_push` and `qext::
 
 #### Native libraries
 
-A file links a native library and adds a C++ include search path with one-line directives (`ffi_v0_1_spec.md` P1):
+A file links a native library and adds a C++ include search path with one-line directives (`specs/ffi_v0_1_spec.md` P1):
 
 ```quark
 extern include_path 'include'   // -I, relative to this file
@@ -569,7 +569,7 @@ A result has no truthiness (§3). Storing a result where a non-result type is de
 
 Variable, parameter, struct field and return annotations: `int`, `float`, `str`, `bool`, `list`, `dict`, `vec`, `result`, `resource`, `fn`, `any`, struct names (qualified for another file: `geo::Point`), and tables: `tbl[R]` for a table whose rows are the struct `R`, and a bare `tbl` for a table of any row (§9.5). `fn` accepts any function value; it has no signature, and how the body calls the parameter is checked against the function passed instead (§6.5).
 
-`null` and `void` are not annotations; `void` appears only in inferred types, such as a non-exhaustive `when`. Element types can't be written: `list[int]` is a compile-time error (`'list' takes no type argument`), and a `list` annotation holds any element type. The compiler infers element types (§9.1) and shows them in messages (`list[int]`, `dict[str, int]`). Written element types are planned (`list[T]`, `tables_v0_1_spec.md` D16).
+`null` and `void` are not annotations; `void` appears only in inferred types, such as a non-exhaustive `when`. Element types can't be written: `list[int]` is a compile-time error (`'list' takes no type argument`), and a `list` annotation holds any element type. The compiler infers element types (§9.1) and shows them in messages (`list[int]`, `dict[str, int]`). Written element types are planned (`list[T]`, `specs/tables_v0_1_spec.md` D16).
 
 ### 13.2 Parameter annotations
 
@@ -680,7 +680,7 @@ When the receiver's type isn't known at compile time (the result of `unwrap`, or
 | `xs[i]` and `s[i]` out of range are errors; `xs.get(i)` and `d.get(k)` return `null` and have type `any` | A typed read is never a hidden `null`; probing stays available, and its result is checked where it meets a type |
 | `d.key` on a missing key is an error | `d.key` names a key in the source, so a missing one is usually a typo; `.get` is for keys that may be absent |
 | Dict keys are strings | Simple hashing and printing; `.get`/`.set` convert other keys to strings |
-| Element types are inferred, not written | Keeps annotations short; `list[T]` is planned (`tables_v0_1_spec.md` D16) |
+| Element types are inferred, not written | Keeps annotations short; `list[T]` is planned (`specs/tables_v0_1_spec.md` D16) |
 | Runtime errors are fatal (no exceptions) | One predictable failure mode with no hidden control flow; expected failures are results |
 | Lists, dicts and results compare structurally | Value-equal containers are equal, as users expect; functions compare by identity |
 | `any` forces boxed storage | Lets a variable change type; native scalar storage is an optimization `any` opts out of |

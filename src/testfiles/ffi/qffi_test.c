@@ -1,5 +1,5 @@
 /* libqffi_test: a small C library the FFI integration tests build and link
- * (ffi_v0_1_spec.md §5.2). Plain functions over int64_t, double, bool and
+ * (specs/ffi_v0_1_spec.md §5.2). Plain functions over int64_t, double, bool and
  * const char*. */
 #include <string.h>
 

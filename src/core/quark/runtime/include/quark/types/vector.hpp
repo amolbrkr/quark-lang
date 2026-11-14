@@ -717,7 +717,7 @@ inline QValue q_vec_div(QValue a, QValue b) { return q_vec_binary_numeric(a, b, 
 // Reductions (nulls are skipped)
 // ============================================================
 
-// The reductions follow the table aggregates (tables_v0_1_spec.md D6, D13;
+// The reductions follow the table aggregates (specs/tables_v0_1_spec.md D6, D13;
 // table/engine.hpp agg_*), so sum(t.x) and summarize(s = sum(e.x)) agree:
 // missing entries are skipped, and NaN too in float vectors.
 
@@ -1307,7 +1307,7 @@ inline QValue q_vec_get(QValue vec, QValue index) {
 }
 
 // q_vec_missing reports a missing entry taken out of a vec as one value
-// (tables_v0_1_spec.md D12): it is an error, never a null read as a number.
+// (specs/tables_v0_1_spec.md D12): it is an error, never a null read as a number.
 [[noreturn]] inline void q_vec_missing(long long index) {
     q_runtime_reportf("runtime error: vec element %lld is missing; use fillna or drop_na first\n", index);
     std::exit(1);

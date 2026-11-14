@@ -255,7 +255,7 @@ type StructField struct {
 // Identity is nominal: two structs with identical fields but different names are distinct.
 //
 // An anonymous struct is a table row the compiler derived (a query step's
-// output, tables_v0_1_spec.md §3.2). It has an internal Name (row__N), one
+// output, specs/tables_v0_1_spec.md §3.2). It has an internal Name (row__N), one
 // per distinct shape, so two anonymous rows are equal when their columns
 // and column types are, in order; it is shown as its shape,
 // {dept: str, n: int}, and matches a named struct by shape where a value is
@@ -277,7 +277,7 @@ func (t *StructType) String() string {
 	return t.Name
 }
 
-// TableType is a table (tables_v0_1_spec.md §3): tbl[R] when Row is the
+// TableType is a table (specs/tables_v0_1_spec.md §3): tbl[R] when Row is the
 // struct R, a named struct or an anonymous row a query derived. Row is nil
 // for the bare `tbl` annotation, a table whose row the compiler doesn't know
 // (D20): it can be printed, written and passed on, but not queried.

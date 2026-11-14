@@ -9,7 +9,7 @@ import (
 	"quark/types"
 )
 
-// Table queries (tables_v0_1_spec.md §4, types/analyzer_query.go). Each step
+// Table queries (specs/tables_v0_1_spec.md §4, types/analyzer_query.go). Each step
 // becomes engine calls on QTable* temporaries, and each verb expression a
 // typed loop over the input's column buffers: per row the expression reads
 // its columns' raw values, guarded by their validity (runtime/.../table/

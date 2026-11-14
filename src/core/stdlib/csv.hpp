@@ -1,6 +1,6 @@
 // stdlib/csv.hpp — native implementations for the std/csv module (csv.qrk):
 // CSV / TSV files and text read into tables, and tables written back
-// (tables_v0_1_spec.md §8, D15-D18). The reader and writer are the runtime's
+// (specs/tables_v0_1_spec.md §8, D15-D18). The reader and writer are the runtime's
 // (quark/table/csv.hpp).
 //
 // A read takes the row struct of the table it produces when the compiler

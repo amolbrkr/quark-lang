@@ -5,7 +5,7 @@
 #include <cmath>
 
 // Mean of the present values of a vec, with the table aggregate's rules
-// (tables_v0_1_spec.md D6, table/engine.hpp agg_mean): missing entries and
+// (specs/tables_v0_1_spec.md D6, table/engine.hpp agg_mean): missing entries and
 // NaN are skipped, a bool vec gives the share of true values
 // (q_vec_mean_present). A vec with no present values is an error, as for min
 // and max (D13).

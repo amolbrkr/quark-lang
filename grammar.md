@@ -151,9 +151,9 @@ ReceiverType      ::= "int" | "float" | "str" | "bool" | "list" | "dict" | "vec"
 - `extern 'path.hpp'` `#include`s a C++ header, resolved relative to the declaring file (`std/...` in the stdlib).
 - `extern fn name(...) T as 'symbol'` binds a free function; `extern fn list.name(...) T as 'symbol'` adds a method to a builtin type. The return type comes before `as`, with no `->`.
 - Nothing may follow a directive's string on its line. `extern link` takes a bare library name (`'openblas'`, not `'-lopenblas'` or `'libopenblas.so'`).
-- `extern source` and `extern include` are parse errors (`extern source` is planned: `ffi_v0_1_spec.md` P2).
+- `extern source` and `extern include` are parse errors (`extern source` is planned: `specs/ffi_v0_1_spec.md` P2).
 
-Semantics: semantics.md §10.8 and `ffi_v0_1_spec.md`.
+Semantics: semantics.md §10.8 and `specs/ffi_v0_1_spec.md`.
 
 ## 6) Functions and Lambdas
 
@@ -252,7 +252,7 @@ Type            ::= "int" | "float" | "str" | "bool" | "any"
 - `Type` is used in variable, parameter, struct field and return annotations.
 - `fn` is any function value; there is no signature syntax such as `fn(int) int`.
 - `tbl[Employee]` is a table whose rows are `Employee` structs, and a bare `tbl` a table of any row (semantics.md §9.5). `tbl` is a type name, not a keyword.
-- Element types can't be written: `x: list[int] = ...` parses, but a type argument on anything but `tbl` is a compile-time error (`'list' takes no type argument`; planned: `tables_v0_1_spec.md` D16).
+- Element types can't be written: `x: list[int] = ...` parses, but a type argument on anything but `tbl` is a compile-time error (`'list' takes no type argument`; planned: `specs/tables_v0_1_spec.md` D16).
 - `null` is a parse error in a type position; `void` and other names are a compile-time error (`unknown type 'void'`).
 - A typed declaration needs a value: `x: int` alone is a parse error.
 
@@ -289,7 +289,7 @@ print(type(c))    // Customer
 - Fields are read with `c.name`. Struct values are immutable: `c.age = 31` is a compile-time error.
 - `==` and `!=` on structs are compile-time errors; compare fields.
 
-Full rules: `structs_v0_1_spec.md`.
+Full rules: `specs/implemented/structs_v0_1_spec.md`.
 
 ## 10) Expressions
 
@@ -438,14 +438,14 @@ These are not part of Quark, by decision or because they are planned in a spec:
 
 | Feature | Status |
 |---|---|
-| Table literals (`tbl[Employee] { id: vec [...], ... }`) | Planned: `tables_v0_1_spec.md` D19 |
-| Written element types (`list[int]`) | Planned: `tables_v0_1_spec.md` D16 |
-| `extern source` | Planned: `ffi_v0_1_spec.md` P2 |
+| Table literals (`tbl[Employee] { id: vec [...], ... }`) | Planned: `specs/tables_v0_1_spec.md` D19 |
+| Written element types (`list[int]`) | Planned: `specs/tables_v0_1_spec.md` D16 |
+| `extern source` | Planned: `specs/ffi_v0_1_spec.md` P2 |
 | `struct` inside a function body | Not supported; currently an internal error (known_issues.md) |
 | `return` | None: a function's value is its last statement (semantics.md §6.1) |
 | `in` as an operator | None: use `any(v == x)`, `d.get(k) != null`, `s.contains(sub)` |
-| String interpolation, varargs, keyword arguments | None (`stdlib_expansion_v0_1_spec.md` §1) |
-| Struct methods | None (`structs_v0_1_spec.md`) |
+| String interpolation, varargs, keyword arguments | None (`specs/stdlib_expansion_v0_1_spec.md` §1) |
+| Struct methods | None (`specs/implemented/structs_v0_1_spec.md`) |
 | Exceptions | None: runtime errors are fatal, expected failures are results (semantics.md §11) |
 
 ## 12) Source of Truth
@@ -454,6 +454,6 @@ These are not part of Quark, by decision or because they are planned in a spec:
 - `semantics.md`: runtime behaviour, types, scoping, the error model and design decisions.
 - `stdlib.md`: builtin functions, methods and stdlib modules. The code-level source of truth for builtin names, arity and types is `src/core/quark/builtins/catalog.go`.
 - `architecture.md`: compiler pipeline, runtime structures and the back end.
-- `modules_v0_2_spec.md`, `structs_v0_1_spec.md`, `ffi_v0_1_spec.md`, `tables_v0_1_spec.md`: the full rules of each area.
+- `specs/implemented/modules_v0_2_spec.md`, `specs/implemented/structs_v0_1_spec.md`, `specs/ffi_v0_1_spec.md`, `specs/tables_v0_1_spec.md`: the full rules of each area.
 
 A change to the language updates these docs in the same change. A conflict between a doc and the implementation is a bug to fix before adding features.

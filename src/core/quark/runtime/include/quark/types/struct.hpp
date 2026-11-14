@@ -10,7 +10,7 @@
 
 // QStructDef: static metadata for a struct type. One per struct definition,
 // emitted as a global constant by the compiler. It is also the row type of a
-// table (tables_v0_1_spec.md §3): field_dtypes gives each field's column type
+// table (specs/tables_v0_1_spec.md §3): field_dtypes gives each field's column type
 // (a QVector::Type as int, -1 for a field that can't be a column), and
 // anonymous marks a row the compiler derived for a query step or the reader
 // inferred from a file, which matches a named row by shape (§3.4).

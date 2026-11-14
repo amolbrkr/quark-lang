@@ -1,7 +1,7 @@
 package toolchain
 
 // Native dependencies requested by `extern link` / `extern include_path`
-// (ffi_v0_1_spec.md P1) and the build diagnostics that go with them (P8).
+// (specs/ffi_v0_1_spec.md P1) and the build diagnostics that go with them (P8).
 
 import (
 	"bufio"

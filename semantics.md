@@ -414,7 +414,7 @@ The full rules are in `modules_v0_2_spec.md`; this section summarizes them.
 
 A path starting with `./`, `../`, `/` or a drive letter (`C:/`) is a file path, resolved against the importing file's directory unless it is absolute.
 
-A `std/` path is resolved in the stdlib root, found in this order: the `QUARK_STDLIB_ROOT` environment variable; the first directory named `stdlib` in the importing file's directory or one of its parents; `stdlib` next to the compiler executable, or one or two directories above it.
+A `std/` path is resolved in the stdlib root: the `QUARK_STDLIB_ROOT` environment variable when it is set (a value that isn't a directory is an error), else `stdlib` next to the compiler executable, or one or two directories above it. A directory named `stdlib` near the program is never used.
 
 ### 10.3 Scopes and qualified names
 
@@ -465,7 +465,7 @@ An extern function can also be declared as a method of a builtin type (`int`, `f
 extern fn list.shuffle(seed: int) list as 'q_list_shuffle'
 ```
 
-which makes `my_list.shuffle(42)` call it.
+which makes `my_list.shuffle(42)` call it. An extern method is visible only in the file that declares it, since a method call can't be qualified: another file calls it through a function of that file (`lib::shuffle(xs, 42)`, §10.3). Its name can't be the name of a prelude method of any type (`extern fn list.contains(x)` is an error because of `str.contains`), and declaring it twice for one receiver in a file is an error.
 
 Types map to C++ as follows: `int`, `float`, `bool` and `str` become `int64_t`, `double`, `bool` and `const char*`; `list`, `dict` and `vec` become `QList*`, `QDict*` and `QVector*`; `fn` becomes `QClosure*`; every other annotation (`any`, `result`, `resource`, struct names), and a missing one, is passed as a boxed `QValue`. Arguments follow the parameter rules (§13.2): an `int` widens to a `float` parameter, and a `float` for an `int` parameter is an error. A native function can't return a null pointer for `str`, `list`, `dict`, `vec` or `fn` (`a native function declared to return list returned a null pointer`).
 

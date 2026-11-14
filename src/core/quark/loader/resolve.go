@@ -175,6 +175,9 @@ func (ml *ModuleLoader) walk(n *ast.TreeNode, c rctx) {
 		ml.walkVarDecl(n, c)
 	case ast.MemberNode:
 		ml.walkMember(n, c)
+	case ast.FunctionCallNode:
+		ml.renameMethodCall(n, c)
+		ml.walkChildren(n, c)
 	case ast.AssignNode, ast.FnDeclNode:
 		if len(n.Children) != 2 {
 			ml.walkChildren(n, c)
@@ -192,6 +195,22 @@ func (ml *ModuleLoader) walkChildren(n *ast.TreeNode, c rctx) {
 		ml.walk(ch, c)
 	}
 	ml.walk(n.DefaultValue, c)
+}
+
+// renameMethodCall gives a method call `x.m(...)` the internal name of f's
+// extern method m (collectMethods). A call of a method another file declares
+// keeps the name as written, which no method has, so the checker reports it.
+func (ml *ModuleLoader) renameMethodCall(n *ast.TreeNode, c rctx) {
+	if len(n.Children) == 0 {
+		return
+	}
+	callee := n.Children[0]
+	if callee == nil || callee.NodeType != ast.MemberNode || len(callee.Children) != 2 {
+		return
+	}
+	if internal, ok := c.f.methods[callee.Children[1].TokenLiteral()]; ok {
+		setLiteral(callee.Children[1], internal)
+	}
 }
 
 func (ml *ModuleLoader) walkModule(n *ast.TreeNode, c rctx) {
@@ -216,6 +235,8 @@ func (ml *ModuleLoader) walkExternFn(n *ast.TreeNode, c rctx) {
 		if d := c.lookupBare(n.TokenLiteral()); d != nil && d.kind == kExtern && d.node == n {
 			setLiteral(n, d.internal)
 		}
+	} else if internal, ok := c.f.methods[n.TokenLiteral()]; ok {
+		setLiteral(n, internal)
 	}
 	for _, p := range n.Children {
 		ml.walk(p, c)
@@ -651,6 +672,17 @@ func paramNames(args *ast.TreeNode) []string {
 func isPreludeName(name string) bool {
 	_, ok := builtins.Lookup(name)
 	return ok
+}
+
+// preludeMethodReceiver is the receiver type of a prelude method named name
+// ("str" for contains), or "" when no type has one.
+func preludeMethodReceiver(name string) string {
+	for _, spec := range builtins.Catalog() {
+		if spec.ReceiverType != "" && spec.Name == name {
+			return strings.TrimSuffix(string(spec.ReceiverType), "_any")
+		}
+	}
+	return ""
 }
 
 func (f *srcFile) topNames(kinds ...defKind) []string {

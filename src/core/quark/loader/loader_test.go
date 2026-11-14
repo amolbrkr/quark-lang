@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -294,6 +295,52 @@ func TestResolveImports_StdlibNotFoundError(t *testing.T) {
 
 	if len(ml.Errors()) == 0 {
 		t.Fatal("expected error for non-existent stdlib module")
+	}
+}
+
+// TestResolveImports_StdlibNotNearScript: a directory named stdlib next to
+// the script or above it is never used as the standard library; std/ imports
+// come from QUARK_STDLIB_ROOT or the compiler's own stdlib only.
+func TestResolveImports_StdlibNotNearScript(t *testing.T) {
+	tmp := t.TempDir()
+	real := filepath.Join(tmp, "real")
+	writeFile(t, filepath.Join(real, "io.qrk"), "module io:\n    fn which() -> 'real'\n")
+	writeFile(t, filepath.Join(tmp, "x", "stdlib", "io.qrk"), "module io:\n    fn which() -> 'planted'\n")
+	entry := filepath.Join(tmp, "x", "a", "main.qrk")
+	writeFile(t, entry, "incl 'std/io'\nprint(io::which())\n")
+	t.Setenv("QUARK_STDLIB_ROOT", real)
+
+	ml := NewModuleLoader()
+	ml.ResolveImports(parseRoot(t, entry), entry)
+	if len(ml.Errors()) > 0 {
+		t.Fatalf("unexpected loader errors: %v", ml.Errors())
+	}
+	loaded := 0
+	for _, o := range ml.Names() {
+		if o.File != nil && !o.File.Main && o.File.Path != filepath.Join(real, "io.qrk") {
+			t.Fatalf("std/io loaded from %s, want %s", o.File.Path, filepath.Join(real, "io.qrk"))
+		}
+		loaded++
+	}
+	if loaded == 0 {
+		t.Fatal("std/io defined no names")
+	}
+}
+
+// TestResolveImports_StdlibRootNotADirectory: a QUARK_STDLIB_ROOT that isn't
+// a directory is an error naming it, not a silent fallback.
+func TestResolveImports_StdlibRootNotADirectory(t *testing.T) {
+	tmp := t.TempDir()
+	entry := filepath.Join(tmp, "main.qrk")
+	writeFile(t, entry, "incl 'std/io'\n")
+	writeFile(t, filepath.Join(tmp, "stdlib", "io.qrk"), "module io:\n    fn which() -> 1\n")
+	t.Setenv("QUARK_STDLIB_ROOT", filepath.Join(tmp, "missing"))
+
+	ml := NewModuleLoader()
+	ml.ResolveImports(parseRoot(t, entry), entry)
+	errs := fmt.Sprint(ml.Errors())
+	if !strings.Contains(errs, "QUARK_STDLIB_ROOT is '"+filepath.Join(tmp, "missing")+"', which is not a directory") {
+		t.Fatalf("expected a QUARK_STDLIB_ROOT error, got: %v", ml.Errors())
 	}
 }
 

@@ -4,6 +4,10 @@
 package testutil
 
 import (
+	"os"
+	"path/filepath"
+	"runtime"
+
 	"quark/ast"
 	"quark/diagnostics"
 	"quark/driver"
@@ -14,9 +18,20 @@ import (
 )
 
 // sourceFile is the virtual path inline test sources are compiled as. It
-// sits in the test's working directory so relative and std/ imports resolve
-// the same way they would for a real file there.
+// sits in the test's working directory so relative imports resolve the same
+// way they would for a real file there.
 const sourceFile = "test_input.qrk"
+
+// init points std/ imports at the repository's standard library: a test
+// binary doesn't sit next to it, which is where the loader looks.
+func init() {
+	if os.Getenv("QUARK_STDLIB_ROOT") != "" {
+		return
+	}
+	if _, file, _, ok := runtime.Caller(0); ok {
+		os.Setenv("QUARK_STDLIB_ROOT", filepath.Join(filepath.Dir(file), "..", "..", "..", "stdlib"))
+	}
+}
 
 // Result is the outcome of running the driver on an inline source.
 type Result struct {

@@ -968,10 +968,8 @@ one`**: your platform has no prebuilt GC. Fetch the GC source as described in
 **Imports, runtime headers or the GC not found**: keep the binary in
 `src/core/quark`. Otherwise:
 
-- Standard library: `QUARK_STDLIB_ROOT` if set, else a `stdlib/` directory in
-  the source file's directory or any parent, else `stdlib/`, `../stdlib` or
-  `../../stdlib` next to the binary. An unrelated `stdlib/` directory above
-  your program is picked up first; set `QUARK_STDLIB_ROOT` to avoid that:
+- Standard library: `QUARK_STDLIB_ROOT` if set (it must be a directory),
+  else `stdlib/`, `../stdlib` or `../../stdlib` next to the binary:
   `export QUARK_STDLIB_ROOT=/abs/path/to/src/core/stdlib`.
 - Runtime headers: `runtime/include` next to the binary, else in the current
   directory.

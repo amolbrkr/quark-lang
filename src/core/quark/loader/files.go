@@ -23,6 +23,7 @@ type srcFile struct {
 
 	top      map[string]*def // top-level names: definitions, modules, import bindings
 	topOrder []*def
+	methods  map[string]string // extern method name as written -> internal name (collectMethods)
 }
 
 type fileImport struct {
@@ -166,6 +167,7 @@ func (ml *ModuleLoader) ResolveImports(root *ast.TreeNode, currentFilePath strin
 	}
 	for _, f := range ml.files {
 		ml.collect(f)
+		ml.collectMethods(f)
 	}
 	if len(ml.errors) > 0 {
 		return
@@ -618,6 +620,55 @@ func (ml *ModuleLoader) collect(f *srcFile) {
 		if d.kind == kModule {
 			for _, md := range d.mod.members {
 				ml.record(md)
+			}
+		}
+	}
+}
+
+// collectMethods gives every extern method of f (`extern fn str.shout()`, at
+// the top level or in a module) an internal name of its file, q<N>__<name>__m,
+// so that only calls written in f reach it (modules v0.2 rule 6: nothing from
+// another file is visible unqualified, and a method call can't be qualified).
+// Methods of one name on different receivers share the internal name; the
+// analyzer keys methods by receiver and name. A method declared twice for one
+// receiver, or named like a prelude method of any type, is an error: a call
+// site's receiver type isn't known here, so a prelude method of that name
+// would become unreachable in f.
+//
+// The name can't be produced by anything else: an imported file's names are
+// q<N>_<stem>__..., locals q<N>__<name>__l, and the back end's suffixes
+// (__thunk, __default_arg, __<n>) don't end in __m.
+func (ml *ModuleLoader) collectMethods(f *srcFile) {
+	f.methods = map[string]string{}
+	seen := map[string]int{} // receiver.name -> line
+	add := func(stmt *ast.TreeNode) {
+		if stmt == nil || stmt.NodeType != ast.ExternFnNode || stmt.ExternReceiver == "" {
+			return
+		}
+		name := stmt.TokenLiteral()
+		key := stmt.ExternReceiver + "." + name
+		if line, dup := seen[key]; dup {
+			ml.errIn(f, stmt, "extern method '%s' is already declared on line %d", key, line)
+			return
+		}
+		seen[key] = lineOf(stmt)
+		if recv := preludeMethodReceiver(name); recv != "" {
+			ml.errIn(f, stmt, "extern method '%s': '%s' is a prelude method (%s.%s), so it can't be the name of an extern method of any type; choose another name",
+				key, name, recv, name)
+			return
+		}
+		if _, ok := f.methods[name]; ok {
+			return
+		}
+		internal := fmt.Sprintf("q%d__%s__m", f.info.ID, name)
+		f.methods[name] = internal
+		ml.names[internal] = &names.Origin{File: f.info, Name: name, Kind: names.Method, Def: stmt}
+	}
+	for _, stmt := range f.ast.Children {
+		add(stmt)
+		if stmt != nil && stmt.NodeType == ast.ModuleNode && len(stmt.Children) >= 2 && stmt.Children[1] != nil {
+			for _, member := range stmt.Children[1].Children {
+				add(member)
 			}
 		}
 	}

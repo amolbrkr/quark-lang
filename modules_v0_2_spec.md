@@ -1,7 +1,7 @@
 # Quark Modules v0.2 Spec
 
 Status: Implemented 2026-11-12: fixed and hoisted `fn` declarations (rules 17-23) and the module rules (`::`, one scope per file, struct identity). This spec is the reference for imports, name scoping and `fn` declarations; README.md, grammar.md and semantics.md §10 summarize it. Not implemented: the items in §7.
-Last Updated: 2026-11-13
+Last Updated: 2026-11-14
 Scope: the import unit, name scoping and qualification (`::`), `fn` declarations, struct naming across files, and how the compiler carries names from the loader to generated code.
 
 ## Contents
@@ -72,13 +72,16 @@ Everything is public; there are no access modifiers.
     3. a top-level name of the file: a definition, a module name, or an import binding;
     4. the prelude.
 
-    Nothing from another file is visible unqualified.
+    Nothing from another file is visible unqualified. This includes extern methods, since a method call can't be qualified: `extern fn str.shout() str as 'h_shout'` in `lib.qrk` is called as `s.shout()` inside `lib.qrk` only, the importer and other imported files get `type 'str' has no method 'shout'`, and they reach it through a function of `lib.qrk` (`lib::shout(s)`, or `s | lib::shout()`). Two files may declare the same method without affecting each other.
 13. Within a module body, the module's own members are written bare (`X::myfn` is also accepted). Other modules of the same file, and file-level code, write `module::name`.
 14. Names never collide silently. Each of these is an error naming both definitions:
     - a name defined twice at one level (two functions, a struct and a function, an `extern fn` and a function, two modules);
     - a module member named like a top-level name of the same file;
     - an import binding (stem or `as` name) equal to a top-level name of the importing file, or to another import binding;
-    - two definitions that would get the same internal name (§5.2), such as member `_x` of `module m` and member `x` of `module m_`.
+    - two definitions that would get the same internal name (§5.2), such as member `_x` of `module m` and member `x` of `module m_`;
+    - an extern method declared twice for one receiver in a file, at the top level or in modules.
+
+    An extern method can't be named like a prelude method of any type (`extern fn list.contains(x)` is rejected because of `str.contains`): the loader resolves method names without knowing a call's receiver type, so in that file a prelude method of the same name would become unreachable.
 
     Prelude builtins can't be redefined or assigned (`fn len`, `sum = 0`); parameters, loop variables and `when` bindings may shadow them.
 
@@ -137,6 +140,9 @@ Name resolution happens in the loader, so most violations are load errors (`QK-L
 | `incl` of a same-file module | `QK-LOAD-001` | `incl m: a module in the same file needs no incl; write m::name directly` |
 | Assignment to an imported name | `QK-LOAD-001` | `'geo::x' belongs to geo.qrk and can't be assigned here` |
 | Duplicate declaration | `QK-LOAD-001` | `'f' is already defined on line 1`; `module 'a' is already defined on line 1` |
+| Duplicate extern method | `QK-LOAD-001` | `extern method 'str.shout' is already declared on line 2` |
+| Extern method named like a prelude method | `QK-LOAD-001` | `extern method 'list.contains': 'contains' is a prelude method (str.contains), so it can't be the name of an extern method of any type; choose another name` |
+| Another file's extern method | `QK-CHECK-001` | `type 'str' has no method 'shout'` |
 | Member/top-level clash | `QK-LOAD-001` | `module member 'csv::read' has the same name as the top-level function 'read' on line 1` |
 | Internal-name clash | `QK-LOAD-001` | `'m_::x' and 'm::_x' (line 2) can't both be defined: the compiler would give them the same internal name; rename one of them` |
 | Nested module | `QK-LOAD-001` | `module 'inner' is inside module 'outer'; modules can't be nested, so define it at the top level of the file` |
@@ -162,7 +168,8 @@ The analyzer never sees `::` or `incl`: the loader resolves every name and hands
 3. Collect each file's top-level definitions and module members, and report the clash rules (rule 14) and reserved names (§3.8).
 4. Rename every definition of an imported file, and every module member, to its internal name (§5.2). Resolve bare references by rule 12, with parameters and locals as shadows, and `binding::name` / `binding::module::name` against the imported file with the primary-module rule. Inline imported constants.
 5. Splice the files into one tree and drop `incl`.
-6. Return a `names.Table` (package `names`) in `driver.Unit.Names`: internal name → `Origin{File, Module, Name, Kind}`, with `Kind` one of `Func`, `Struct`, `Extern`, `Value`, `Module`, `Local`.
+6. Give each extern method of a file its file's internal method name (§5.2, `collectMethods`) and rename the method calls of that file to it (`renameMethodCall`); calls of a method no other file of the call's file declares keep their written name.
+7. Return a `names.Table` (package `names`) in `driver.Unit.Names`: internal name → `Origin{File, Module, Name, Kind}`, with `Kind` one of `Func`, `Struct`, `Extern`, `Value`, `Module`, `Local`, `Method`.
 
 Everything user-facing goes through the table: `Table.Display(internal)` gives `geo::Point` or `fmt::show_vec`, and `Table.DisplayText(msg)` rewrites every internal name in a message. The analyzer gets the table with `SetNames`, applies `DisplayText` to every diagnostic, and passes it on in `Analysis.Names`; lowering uses it for `QFnInfo` and struct display names.
 
@@ -175,6 +182,7 @@ Everything user-facing goes through the table: `Table.Display(internal)` gives `
 | Main-script top-level name | unchanged | `helper` |
 | Main-script module member | `module__name` | `mathx__square` |
 | Local of an imported file named like any main-script name | `q<N>__name__l` | `q2__x__l` |
+| Extern method of file N (main script: 0), for every receiver | `q<N>__name__m` | `q1__shout__m` |
 
 The local rename exists because the spliced tree has one global scope in which main-script names are bare. Two definitions that would get the same internal name are a load error, never merged. The back end prefixes internal names with `quark_` for functions and variables (`quark_q2_lib2__sq`), emits `_qfi_<internal>` for each `QFnInfo` and `_sdef_quark_<internal>` / `_sfields_quark_<internal>` for each struct. Names the compiler generates itself (lambdas, nested declarations, duplicate variables) start with `quark___`.
 
@@ -184,7 +192,7 @@ The local rename exists because the spliced tree has one global scope in which m
 - **Fixed declarations** (`types/analyzer_fixed.go`): `declareFixedFns` declares a scope's `fn` declarations as non-mutable symbols before its statements and checks rules 18 and 20; rule 19 is checked at assignments and typed declarations. Signatures (parameter types, annotations, defaults) are known before any body is analyzed, so forward and recursive calls see the real `FunctionType`, including `ParamCalls`.
 - **Definite assignment** (rule 23): `checkDefiniteAssignment` orders statements per statement list, follows direct calls through declared functions transitively, and records each `HoistScope`: the cells lowering creates unassigned and the closures it creates at the scope's start. The top level and module bodies are one hoisting unit, since they all run in `main`.
 - **Module bodies** are analyzed in the file scope (their members already have unique internal names), and their declarations are hoisted with the top level. Structs are predeclared per file, including those in module bodies.
-- **Externs** are registered under their internal names, which are unique per file, so an `extern fn` is scoped to its file like any other definition. Extern *methods* (`extern fn str.shout()`) are not names: they are attached to the receiver type for the whole program (see §7).
+- **Externs** are registered under their internal names, which are unique per file, so an `extern fn` is scoped to its file like any other definition. Extern methods are registered by receiver type and internal method name, so a call finds only the methods of its own file (rule 12).
 - **Dispatch** (`finalizeFixedFns`, once the program is analyzed): a declaration that captures nothing, directly or through another declaration, is a plain C++ function, called with `DispatchDirect` or, when fully annotated, `DispatchNative`, and never captured. A declaration that captures stays a closure in a binding that never changes, called with `DispatchClosure`.
 
 ### 5.4 Back end and runtime
@@ -214,7 +222,7 @@ The local rename exists because the spliced tree has one global scope in which m
 - **Mutable module-level state.**
 - **Resolution without renaming:** the analyzer already resolves identifiers to symbols (§5.3), but the loader still renames strings and diagnostics go through `DisplayText`. Resolving `::` names to symbols directly would remove the renaming pass and the string-keyed tables.
 
-Known gaps (`known_issues.md`): a call written above a `fn` declaration is checked less than one below it; a syntax error in an imported file is reported at the importer's `incl` line. **Known bug (found 2026-11-13):** two `extern fn` methods with the same receiver and name (`extern fn str.shout() str` in two imported files, or twice in one file) are not rejected; the later one silently replaces the earlier for callers analyzed after it, and the main script can call another file's method unqualified (`'a'.shout()`).
+Known gaps (`known_issues.md`): a call written above a `fn` declaration is checked less than one below it; a syntax error in an imported file is reported at the importer's `incl` line.
 
 ## 8. Decisions
 

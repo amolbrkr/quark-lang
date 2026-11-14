@@ -1957,6 +1957,66 @@ func TestNamesArePerFile(t *testing.T) {
 	}
 }
 
+// TestExternMethodsPerFile: an extern method (`extern fn str.shout()`) is
+// visible only in the file that declares it (modules v0.2 rule 6), so two
+// files can declare the same method without one replacing the other, and
+// neither the importer nor an imported file reaches another file's method. A
+// method declared twice for one receiver, or named like a prelude method of
+// any type, is a load error.
+func TestExternMethodsPerFile(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmp, "lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"lib/h.hpp": "#pragma once\n#include <quark/ext/api.hpp>\n" +
+			"inline const char* h1_shout(const char* s) { return \"one\"; }\n" +
+			"inline const char* h2_shout(const char* s) { return \"two\"; }\n" +
+			"inline const char* hm_shout(const char* s) { return \"main\"; }\n" +
+			"inline int64_t h_count(QList* xs, int64_t k) { return k; }\n",
+		"lib/e1.qrk":    "extern './h.hpp'\nextern fn str.shout() str as 'h1_shout'\nfn one(s: str) str -> s.shout()\n",
+		"lib/e2.qrk":    "extern './h.hpp'\nmodule e2:\n    extern fn str.shout() str as 'h2_shout'\n    fn two(s: str) str -> s.shout()\n",
+		"lib/plain.qrk": "fn g(s: str) str -> s.shout()\n",
+		"ok.qrk": "incl './lib/e1'\nincl './lib/e2'\nextern './lib/h.hpp'\nextern fn str.shout() str as 'hm_shout'\n" +
+			"extern fn list.shout(k: int) int as 'h_count'\n" +
+			"print(e1::one('a') + ' ' + e2::two('a') + ' ' + 'a'.shout())\nprint(list [1].shout(4))\nprint(7 | list [1].shout())\nprint('ab'.contains('b'))\n",
+		"from_importer.qrk":  "incl './lib/e1'\nprint('a'.shout())\n",
+		"from_imported.qrk":  "incl './lib/plain'\nextern './lib/h.hpp'\nextern fn str.shout() str as 'hm_shout'\nprint(plain::g('a'))\n",
+		"untyped.qrk":        "incl './lib/e1'\nfn id(v) -> v\nprint(id('a').shout())\n",
+		"twice.qrk":          "extern './lib/h.hpp'\nextern fn str.shout() str as 'h1_shout'\nextern fn str.shout() str as 'h2_shout'\n",
+		"twice_module.qrk":   "extern './lib/h.hpp'\nextern fn str.shout() str as 'h1_shout'\nmodule m:\n    extern fn str.shout() str as 'h2_shout'\n",
+		"prelude_other.qrk":  "extern './lib/h.hpp'\nextern fn list.contains(x) bool as 'h1_shout'\n",
+		"prelude_same.qrk":   "extern './lib/h.hpp'\nextern fn str.upper() str as 'h1_shout'\n",
+		"prelude_import.qrk": "incl './lib/bad'\nprint(1)\n",
+		"lib/bad.qrk":        "extern './h.hpp'\nextern fn vec.head() str as 'h1_shout'\n",
+	}
+	for name, src := range files {
+		if err := os.WriteFile(filepath.Join(tmp, name), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, want := strings.TrimSpace(normalizeNewlines(runQuarkIn(t, tmp, "run", "ok.qrk"))), "one two main\n4\n7\ntrue"; got != want {
+		t.Fatalf("ok.qrk output:\n%s\nwant:\n%s", got, want)
+	}
+	for file, wantErr := range map[string]string{
+		"from_importer.qrk":  "type 'str' has no method 'shout' at from_importer.qrk:2:10",
+		"from_imported.qrk":  "type 'str' has no method 'shout' at lib/plain.qrk:1:22",
+		"untyped.qrk":        "no type has a method 'shout'",
+		"twice.qrk":          "extern method 'str.shout' is already declared on line 2 at",
+		"twice_module.qrk":   "extern method 'str.shout' is already declared on line 2",
+		"prelude_other.qrk":  "extern method 'list.contains': 'contains' is a prelude method (str.contains), so it can't be the name of an extern method of any type",
+		"prelude_same.qrk":   "extern method 'str.upper': 'upper' is a prelude method (str.upper)",
+		"prelude_import.qrk": "extern method 'vec.head': 'head' is a prelude method",
+	} {
+		cmd := exec.Command(quarkExePath, "check", file)
+		cmd.Dir = tmp
+		out, err := cmd.CombinedOutput()
+		if err == nil || !strings.Contains(string(out), wantErr) {
+			t.Fatalf("%s: expected error %q, got (err=%v):\n%s", file, wantErr, err, out)
+		}
+	}
+}
+
 // TestStructsAcrossFiles: a struct of an imported file is named file::Struct
 // (or file::module::Struct) in literals, annotations and return types; its
 // field values are checked like a local struct's; a struct can be defined in

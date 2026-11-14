@@ -10,6 +10,7 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 
 ## Contents
 
+- [2026-11-14: Hardening: silent wrong results](#2026-11-14-hardening-silent-wrong-results)
 - [2026-11-14: Table queries, table printing and table methods (tables v0.1)](#2026-11-14-table-queries-table-printing-and-table-methods-tables-v01)
 - [2026-11-13: The `tbl` type, `std/csv` on the table reader, digit separators (tables v0.1)](#2026-11-13-the-tbl-type-stdcsv-on-the-table-reader-digit-separators-tables-v01)
 - [2026-11-13: A statement ends at the end of its line; indented pipe lines](#2026-11-13-a-statement-ends-at-the-end-of-its-line-indented-pipe-lines)
@@ -34,6 +35,33 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 - [2026-04-03: Table runtime scaffolding; struct fixes](#2026-04-03-table-runtime-scaffolding-struct-fixes)
 - [2026-04-02: Structs v0.1](#2026-04-02-structs-v01)
 - [2026-03-28: Vector soundness, `std/fmt` on `extern`, build output](#2026-03-28-vector-soundness-stdfmt-on-extern-build-output)
+
+---
+
+## 2026-11-14: Hardening: silent wrong results
+
+Fixes from the "Wrong results with no error" section of `known_issues.md`: each of these programs gave a wrong answer with no error, and now fails at compile time or with a runtime error.
+
+### Breaking
+- **Extern methods are visible only in the file that declares them** (`modules_v0_2_spec.md` rules 12 and 14). A method call can't be qualified, so another file reaches the method through a function of the declaring file:
+  ```quark
+  // lib.qrk
+  extern fn str.shout() str as 'h_shout'
+  fn shout(s: str) str -> s.shout()
+
+  // main.qrk
+  incl './lib'
+  print(lib::shout('a'))   // 'a'.shout() here: type 'str' has no method 'shout'
+  ```
+  An extern method named like a prelude method of any type is a load error (`extern fn list.contains(x)`: `'contains' is a prelude method (str.contains), so it can't be the name of an extern method of any type`), and so is a method declared twice for one receiver in a file.
+- **The standard library is never taken from near the program.** `std/` imports come from `QUARK_STDLIB_ROOT` or from the stdlib next to the compiler. A directory named `stdlib` in the program's directory or above it is no longer used, and a `QUARK_STDLIB_ROOT` that isn't a directory is an error (`QUARK_STDLIB_ROOT is '/x', which is not a directory`) instead of being skipped.
+
+### Fixed
+- Two files that declare the same extern method (`extern fn str.shout()` in `e1.qrk` and `e2.qrk`) no longer replace each other: each file's calls get its own declaration. Before, the later declaration won for every caller analyzed after it, and the main script could call either one unqualified.
+- A directory named `stdlib` above a program (`/tmp/x/stdlib/io.qrk` for `/tmp/x/a/main.qrk`) silently replaced the standard library.
+
+### Internal
+- The loader gives each extern method its file's internal name, `q<N>__<name>__m` (`names.Method`), and renames the method calls of that file to it (`collectMethods`, `renameMethodCall`); the duplicate and prelude-name checks moved there from the analyzer. `findStdlibRoot` takes no path and returns an error naming where it looked. `internal/testutil` sets `QUARK_STDLIB_ROOT` to the repository's stdlib, since a test binary isn't next to it.
 
 ---
 

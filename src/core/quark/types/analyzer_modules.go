@@ -202,12 +202,10 @@ func (a *Analyzer) analyzeExternFn(node *ast.TreeNode) Type {
 		}
 		nativeReceiver := receiverStringToNativeCType(receiverTypeStr)
 
+		// The loader gave funcName its file's internal method name and
+		// rejected duplicates and prelude method names (collectMethods).
 		if a.methods[receiverKey] == nil {
 			a.methods[receiverKey] = make(map[string]*builtinSignature)
-		}
-		if _, isBuiltin := builtins.LookupMethod(receiverKey, funcName); isBuiltin {
-			a.errorAt(node, "cannot redefine prelude method '%s.%s'", receiverTypeStr, funcName)
-			return TypeVoid
 		}
 		a.methods[receiverKey][funcName] = sig
 

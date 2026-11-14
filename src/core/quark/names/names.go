@@ -22,7 +22,8 @@ const (
 	Extern
 	Value
 	Module
-	Local // a local of an imported file renamed to avoid the importer's names
+	Local  // a local of an imported file renamed to avoid the importer's names
+	Method // an extern method, renamed so only its own file can call it
 )
 
 // File is one loaded source file.
@@ -47,7 +48,7 @@ type Origin struct {
 // geo::Point, fmt::show_vec, formats::csv::read; main-script names without
 // the file (Point, mathx::square).
 func (o *Origin) Qualified() string {
-	if o.Kind == Local {
+	if o.Kind == Local || o.Kind == Method {
 		return o.Name
 	}
 	parts := make([]string, 0, 3)

@@ -25,12 +25,10 @@ When a change fixes an issue, delete its entry here and describe the fix under F
 
 **The lexer accepts an unclosed string.** It ends at the end of the line with no error: `msg = "hello` then `print(msg)` prints `hello`.
 
-**Structs and extern methods.**
+**Structs.**
 - `==` on structs reached through an untyped path is always `false`, with no error: `struct P:` / `x: int`, `fn id(v) -> v`, `a = P { x: 1 }`, then `print(id(a) == id(a))` and `print(list [a] == list [a])` both print `false`. A direct `a == a` is a compile error (structs have no `==`).
-- Extern methods with one receiver and name collide silently and leak across files. If `e1.qrk` declares `extern fn str.shout() str as 'h1_shout'` and `e2.qrk` declares the same method as `'h2_shout'`, a script that includes both can call `'a'.shout()` unqualified and gets e2's function, while `e1::one('a')` (which calls `s.shout()` inside e1) gets h1's. Declaring the same method twice in one file is accepted too. Methods are registered by `(receiver, name)` in one table (`a.methods`, `types/analyzer_modules.go`), and the loader doesn't resolve them per file.
 
-**Stdlib lookup and `print`.**
-- Any directory named `stdlib` in the script's directory or a parent is used as the standard library, before the real one and with no warning (`findStdlibRoot`, `loader/loader.go`). With `/tmp/x/stdlib/io.qrk` present, `incl 'std/io'` in `/tmp/x/a/main.qrk` silently loads that file; without one it fails with `cannot find module 'std/io': file '/tmp/x/stdlib/io.qrk' does not exist`.
+**`print`.**
 - A misspelled `print` alignment is ignored: `print('x', '|\n', 5, 'rigth', '.')` prints `x....|` (left-aligned) with no error.
 
 **Runtime numbers and edge cases.**
@@ -42,6 +40,8 @@ When a change fixes an issue, delete its entry here and describe the fix under F
 - `sys::exit(256)` exits with status 0.
 - `io::read` stops at a NUL byte: on a file containing `ab\0cd`, the first read returns `ab` and the next returns `''`.
 - Two-argument `min`/`max` with NaN depend on the order: `min(n, 1.0)` with `n = to_float('nan')` is `1.0`, but `min(1.0, n)` is `nan` (vec reductions skip NaN). Sorting a list that contains NaN is undefined behavior in the C++ sort.
+
+**Runtime headers from the working directory.** When the compiler has no `runtime/include` next to it (a binary copied elsewhere), it uses `runtime/include` in the current directory with no warning (`RuntimeIncludePath`, `toolchain/toolchain.go`), so a program is compiled against whatever headers happen to be there. It should be an error that says where it looked and how to point it at the runtime, as the stdlib lookup does. Found 2026-11-14 while removing the stdlib lookup's search near the script.
 
 **Unbounded recursion crashes with no message.** `print('before')`, `fn f(n) -> f(n + 1)`, `f(0)` overflows the C++ stack: the binary dies with a segmentation fault (status 139), `quark run` exits with 255 and prints nothing, not even `before`, since buffered output is lost. It should be a runtime error with a location, and output printed before it should appear.
 

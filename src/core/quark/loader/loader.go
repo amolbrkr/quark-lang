@@ -154,9 +154,9 @@ func (ml *ModuleLoader) recordExternDirective(node *ast.TreeNode, currentFilePat
 	case ast.ExternIncludePathNode:
 		var dir string
 		if isStdlibImportPath(arg) {
-			root, ok := findStdlibRoot(currentFilePath)
-			if !ok {
-				ml.addFFIError("QK-FFI-001", currentFilePath, node.Token, "cannot resolve extern include_path '%s': no stdlib root found (set QUARK_STDLIB_ROOT)", arg)
+			root, err := findStdlibRoot()
+			if err != nil {
+				ml.addFFIError("QK-FFI-001", currentFilePath, node.Token, "cannot resolve extern include_path '%s': %v", arg, err)
 				return
 			}
 			dir = filepath.Join(root, strings.TrimPrefix(arg, "std/"))
@@ -299,47 +299,43 @@ func isStdlibImportPath(importPath string) bool {
 	return strings.HasPrefix(importPath, "std/")
 }
 
-func findStdlibRoot(currentFilePath string) (string, bool) {
+// findStdlibRoot is the standard library directory: $QUARK_STDLIB_ROOT when
+// set, which must then be a directory, else the stdlib directory installed
+// with the compiler (src/core/stdlib next to src/core/quark). It never looks
+// near the script: a directory named stdlib there would silently replace the
+// standard library.
+func findStdlibRoot() (string, error) {
 	if envRoot := os.Getenv("QUARK_STDLIB_ROOT"); envRoot != "" {
-		if st, err := os.Stat(envRoot); err == nil && st.IsDir() {
-			return envRoot, true
+		if st, err := os.Stat(envRoot); err != nil || !st.IsDir() {
+			return "", fmt.Errorf("QUARK_STDLIB_ROOT is '%s', which is not a directory", envRoot)
 		}
+		return envRoot, nil
 	}
-
-	currentDir := filepath.Dir(currentFilePath)
-	for dir := currentDir; ; {
-		candidate := filepath.Join(dir, "stdlib")
+	exePath, err := os.Executable()
+	if err == nil {
+		exePath, err = filepath.EvalSymlinks(exePath)
+	}
+	if err != nil {
+		return "", fmt.Errorf("can't locate the standard library: %v (set QUARK_STDLIB_ROOT)", err)
+	}
+	exeDir := filepath.Dir(exePath)
+	candidates := []string{
+		filepath.Join(exeDir, "stdlib"),
+		filepath.Join(exeDir, "..", "stdlib"),
+		filepath.Join(exeDir, "..", "..", "stdlib"),
+	}
+	for _, candidate := range candidates {
 		if st, err := os.Stat(candidate); err == nil && st.IsDir() {
-			return candidate, true
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
-	}
-
-	if exePath, err := os.Executable(); err == nil {
-		exeDir := filepath.Dir(exePath)
-		candidates := []string{
-			filepath.Join(exeDir, "stdlib"),
-			filepath.Join(exeDir, "..", "stdlib"),
-			filepath.Join(exeDir, "..", "..", "stdlib"),
-		}
-		for _, candidate := range candidates {
-			if st, err := os.Stat(candidate); err == nil && st.IsDir() {
-				return candidate, true
-			}
+			return candidate, nil
 		}
 	}
-
-	return "", false
+	return "", fmt.Errorf("can't find the standard library next to the compiler (looked in %s); set QUARK_STDLIB_ROOT", strings.Join(candidates, ", "))
 }
 
 func normalizeStdlibImportPath(importPath, currentFilePath string) (string, error) {
-	root, ok := findStdlibRoot(currentFilePath)
-	if !ok {
-		return "", fmt.Errorf("cannot resolve stdlib import '%s': no stdlib root found (set QUARK_STDLIB_ROOT or add a stdlib directory)", importPath)
+	root, err := findStdlibRoot()
+	if err != nil {
+		return "", fmt.Errorf("cannot resolve stdlib import '%s': %v", importPath, err)
 	}
 	rel := strings.TrimPrefix(importPath, "std/")
 	resolved := filepath.Join(root, rel)

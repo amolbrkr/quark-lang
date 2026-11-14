@@ -1,6 +1,6 @@
 # Quark Standard Library Expansion v0.1 Spec
 
-Status: Draft proposal, revision 2 (2026-11-13). Nothing here is implemented. CSV is superseded by `specs/tables_v0_1_spec.md` (D8, D15, D17, tables §8), and decisions 7 and 8 are answered there.
+Status: Partly implemented (2026-11-14). Implemented: §4 `std/sys`, §5 `std/time` except the named stopwatch (decision 5 is open), and §9.1 `std/random`. Still open: multi-argument `print` (decision 1), `fmt::format` (§3), the `std/io` rework (§6, FFI phase 3 finalizers), `std/fs` (§7, waits on FFI phase 2), JSON and subprocesses (§9.2-9.3). CSV is superseded by `specs/tables_v0_1_spec.md` (D8, D15, D17, tables §8), and decisions 7 and 8 are answered there.
 Scope: `std/fmt`, `std/sys`, `std/time`, `std/io`, a new `std/fs`, and additions to `std/random`. JSON, regex and subprocesses are covered briefly in §9.
 Related: `stdlib.md` (current API), `specs/ffi_v0_1_spec.md` (how modules bind native code), `specs/implemented/modules_v0_2_spec.md` (modules), `specs/tables_v0_1_spec.md` (CSV and tables)
 
@@ -101,6 +101,8 @@ The existing `show_list`, `show_vec`, `show_dict`, `table`, `head`, `tail` and `
 
 ## 4. `std/sys`: Process and Environment
 
+Implemented (2026-11-14). `eprint` takes one value; multi-argument `eprint` waits on decision 1. See `stdlib.md`.
+
 | Function | Notes |
 |---|---|
 | `args() list` | exists |
@@ -130,6 +132,8 @@ Filesystem operations (listing, creating and removing directories and files) go 
 Timestamps stay floats: seconds since the Unix epoch, UTC. That keeps arithmetic trivial (`ts + time::days(3)`), sorts, and fits vectors. Durations are float seconds too. A dedicated date type isn't worth it for v0.1; the tables work plans a `date` column type (`specs/tables_v0_1_spec.md` §9), and this module should convert to and from it when it exists.
 
 ### 5.2 Proposal
+
+Implemented (2026-11-14), except `stopwatch` / `lap` (decision 5). UTC conversion is civil-date arithmetic; the local path uses `mktime` and checks the result by reading it back. See `stdlib.md`.
 
 Durations:
 
@@ -230,7 +234,7 @@ Superseded by `specs/tables_v0_1_spec.md`. The reader is written in-house and pa
 
 ### 9.1 `std/random`
 
-Add `uniform(lo, hi)` next to `uniform()`, `normal(mean = 0.0, sd = 1.0)`, `sample(xs, k)` (without replacement), `weighted(xs, weights)`, and vector generators for data work: `uniform_vec(n)`, `normal_vec(n, mean, sd)`, `randint_vec(n, lo, hi)`. Two functions can't share a name in one module, so `uniform(lo, hi)` would be default parameters on one `uniform(lo: float = 0.0, hi: float = 1.0)`.
+Implemented (2026-11-14). One function, `uniform(lo: float = 0.0, hi: float = 1.0)`, covers `uniform()` and a range, because two functions can't share a name. Also `normal(mean = 0.0, sd = 1.0)`, `sample(xs, k)` (without replacement), `weighted(xs, weights)`, and the vector generators `uniform_vec(n)`, `normal_vec(n, mean = 0.0, sd = 1.0)`, `randint_vec(n, lo, hi)`. See `stdlib.md`.
 
 ### 9.2 JSON
 
@@ -252,7 +256,7 @@ Measured 2026-11-11 (`quark build`, PCH warm, Linux x86_64): a one-line program 
 - **P3 (extension handles), at least its finalizers**, should come before the `std/io` rework (§6.2). Closing forgotten files is part of P3; doing it for files alone first means writing it twice. P3's dynamic handle kinds also give `stdin()`/`stdout()`/`stderr()` and later SQLite and DuckDB handles one mechanism. Parent references aren't needed by the stdlib.
 - **P4 (result helpers) and `QK-FFI-004`** are small and help every new function that returns a result or checks a handle; do them alongside.
 
-Not dependent on P2: multi-argument `print` (prelude), the `std/sys` and `std/time` additions (small headers), and `std/random`. These can go first or in parallel.
+Shipped without waiting on P2 (2026-11-14): the `std/sys` and `std/time` additions, and `std/random`. Multi-argument `print` is still decision 1.
 
 FFI Phase 2 as specified ends with `std/sqlite`; the stdlib needs only P2, P3 and P4 from it, so the order can be P2, P3, P4, then stdlib phase 1, then SQLite.
 
@@ -260,9 +264,9 @@ FFI Phase 2 as specified ends with `std/sqlite`; the stdlib needs only P2, P3 an
 
 | Phase | Contents | Done when |
 |---|---|---|
-| 1. Daily friction | multi-argument `print` (if decision 1 is accepted), `sys::eprint`, `fmt::format` and helpers, `io` whole-file and line helpers, buffering, file finalizers and flush at exit | a log-writing script needs no `to_str` chains, guessed sizes or manual flushing; the `io` write benchmark is within 2× of Python |
-| 2. Scripting | `sys` additions, `std/fs`, `std/time` dates and durations | a script can find files, check modification times and print readable dates and durations |
-| 3. Data generators | `random` additions | `normal_vec(1000000, 0.0, 1.0)` builds a `vec[f64]` without a list in between |
+| 1. Daily friction | multi-argument `print` (if decision 1 is accepted), `sys::eprint` (**done**), `fmt::format` and helpers, `io` whole-file and line helpers, buffering, file finalizers and flush at exit | a log-writing script needs no `to_str` chains, guessed sizes or manual flushing; the `io` write benchmark is within 2× of Python |
+| 2. Scripting | `sys` additions (**done**), `std/time` dates and durations except the named stopwatch (**done**), `std/fs` (waits on FFI P2) | a script can find files, check modification times and print readable dates and durations |
+| 3. Data generators | `random` additions (**done**) | `normal_vec(1000000, 0.0, 1.0)` builds a `vec[f64]` without a list in between |
 | 4. Formats | JSON, subprocesses | — |
 
 Every function gets a smoke test, negative tests for its misuse paths (wrong type, `null`, an `any` value), an entry in `stdlib.md`, and editor data (`go test ./internal/editordata -update`).
@@ -277,7 +281,7 @@ Every function gets a smoke test, negative tests for its misuse paths (wrong typ
 4. **`std/fs` vs. more in `std/io`.** A separate module (proposed), or directory and path functions in `std/io`?
 5. **Timing helpers.** Is `time::since(start)` plus `time::duration(s)` enough, or do you want a named stopwatch (`stopwatch('load')` … `lap('load')` printing `load: 1.25s`)? The named form needs state kept between calls; an imported file can only hold definitions and constants, so the state would live in the glue header.
 6. **Results on open handles.** Make `read`, `read_line`, `write` and `flush` on an open handle return plain values with runtime errors on failure (proposed, like Python's exceptions for rare I/O errors), and keep results for `open` and the path-based helpers? This changes the current `io::read`/`io::write` signatures.
-9. **Structs for compound returns** (§2 principle 4). Return module structs (`time::Parts`, `sys::Completed`) instead of dicts?
+9. **Structs for compound returns** (§2 principle 4). Return module structs (`time::Parts`, `sys::Completed`) instead of dicts? `time::Parts` shipped as a struct (2026-11-14). `sys::Completed` waits on subprocesses (§9.3).
 10. **`read_line` at end of file.** Return a result like `input()` (`ok(line)`, then `err('end of input')`), or `null` at end of file? `null` keeps the plain-value style of decision 6, but a function that can return `null` can't be annotated `str`, so its result is untyped.
 
 ### 12.2 Answered by the tables spec

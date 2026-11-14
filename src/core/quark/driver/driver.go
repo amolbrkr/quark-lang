@@ -49,18 +49,34 @@ func (u *Unit) Failed() bool {
 	return u.failed || u.Err != nil
 }
 
+// Options is how the front end emits. Stages before emit ignore it.
+type Options struct {
+	// Checked prints every proven unbox as a tag check (architecture.md §12).
+	Checked bool
+}
+
 // CompileFile reads path and runs the front end through stage upTo.
 func CompileFile(path string, upTo Stage) *Unit {
+	return CompileFileOptions(path, upTo, Options{})
+}
+
+// CompileFileOptions is CompileFile with emit options.
+func CompileFileOptions(path string, upTo Stage, opt Options) *Unit {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return &Unit{File: path, Err: fmt.Errorf("Error reading file: %s", err)}
 	}
-	return CompileSource(string(content), path, upTo)
+	return CompileSourceOptions(string(content), path, upTo, opt)
 }
 
 // CompileSource runs the front end on src through stage upTo. file locates
 // relative imports and labels diagnostics.
 func CompileSource(src, file string, upTo Stage) *Unit {
+	return CompileSourceOptions(src, file, upTo, Options{})
+}
+
+// CompileSourceOptions is CompileSource with emit options.
+func CompileSourceOptions(src, file string, upTo Stage, opt Options) *Unit {
 	u := &Unit{File: file}
 
 	u.Tokens = lexer.New(src).Tokenize()
@@ -103,7 +119,7 @@ func CompileSource(src, file string, upTo Stage) *Unit {
 		u.Err = err
 		return u
 	}
-	cpp, err := Generate(u.AST, u.Analysis, file)
+	cpp, err := GenerateOptions(u.AST, u.Analysis, file, opt)
 	if err != nil {
 		u.Err = err
 		return u
@@ -138,6 +154,12 @@ func Validate(tree *ast.TreeNode, an *types.Analysis) error {
 // Generate emits C++ for an analyzed, validated tree: it lowers the tree to
 // the IR, verifies the IR and prints it (architecture.md §1.6).
 func Generate(tree *ast.TreeNode, an *types.Analysis, sourceName string) (string, error) {
+	return GenerateOptions(tree, an, sourceName, Options{})
+}
+
+// GenerateOptions is Generate with emit options. Checked mode changes only
+// the printing of an unbox; the IR that Verify sees is the same.
+func GenerateOptions(tree *ast.TreeNode, an *types.Analysis, sourceName string, opt Options) (string, error) {
 	prog, err := lower.Lower(tree, an, sourceName)
 	if err != nil {
 		return "", err
@@ -145,7 +167,7 @@ func Generate(tree *ast.TreeNode, an *types.Analysis, sourceName string) (string
 	if err := lower.Verify(prog); err != nil {
 		return "", err
 	}
-	return emit.Program(prog), nil
+	return emit.ProgramOptions(prog, emit.Options{Checked: opt.Checked}), nil
 }
 
 // PrintDiagnostics writes u's diagnostics and error to stderr.

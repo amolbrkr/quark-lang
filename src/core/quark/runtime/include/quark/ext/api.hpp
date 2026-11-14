@@ -423,6 +423,17 @@ inline bool q_as_bool(QValue v) {
     if (v.type != QValue::VAL_BOOL) q_as_type_panic("bool", v.type);
     return v.data.bool_val;
 }
+
+// q_prove_* is the --checked form of a ProofType or ProofElement unbox
+// (architecture.md §12). The compiler claimed this QValue is already exactly
+// that scalar, so the tag is checked and an int does not widen to a float
+// the way q_as_float does: q_as_float is a conversion, not a proof.
+inline int64_t q_prove_int(QValue v) { return q_as_int(v); }
+inline bool q_prove_bool(QValue v) { return q_as_bool(v); }
+inline double q_prove_float(QValue v) {
+    if (v.type != QValue::VAL_FLOAT) q_as_type_panic("float", v.type);
+    return v.data.float_val;
+}
 inline const char* q_as_str(QValue v) {
     if (v.type != QValue::VAL_STRING) q_as_type_panic("str", v.type);
     return v.data.string_val;

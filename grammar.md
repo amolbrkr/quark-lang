@@ -438,7 +438,8 @@ These are not part of Quark, by decision or because they are planned in a spec:
 
 | Feature | Status |
 |---|---|
-| Table literals (`tbl[Employee] { id: vec [...], ... }`) | Planned: `specs/tables_v0_1_spec.md` D19 |
+| `select`, `deselect`, `rename`, `distinct` | Planned: `specs/tables_v0_2_spec.md` |
+| Table literals (`tbl[Employee] { id: vec [...], ... }`) | Deferred: `specs/tables_v0_2_spec.md` §6.1 |
 | Written element types (`list[int]`) | Planned: `specs/tables_v0_1_spec.md` D16 |
 | `extern source` | Planned: `specs/ffi_v0_1_spec.md` P2 |
 | `struct` inside a function body | Not supported; currently an internal error (known_issues.md) |
@@ -454,6 +455,6 @@ These are not part of Quark, by decision or because they are planned in a spec:
 - `semantics.md`: runtime behaviour, types, scoping, the error model and design decisions.
 - `stdlib.md`: builtin functions, methods and stdlib modules. The code-level source of truth for builtin names, arity and types is `src/core/quark/builtins/catalog.go`.
 - `architecture.md`: compiler pipeline, runtime structures and the back end.
-- `specs/implemented/modules_v0_2_spec.md`, `specs/implemented/structs_v0_1_spec.md`, `specs/ffi_v0_1_spec.md`, `specs/tables_v0_1_spec.md`: the full rules of each area.
+- `specs/implemented/modules_v0_2_spec.md`, `specs/implemented/structs_v0_1_spec.md`, `specs/ffi_v0_1_spec.md`, `specs/tables_v0_1_spec.md`, `specs/tables_v0_2_spec.md`: the full rules of each area. `tables_v0_2_spec.md` is not implemented.
 
 A change to the language updates these docs in the same change. A conflict between a doc and the implementation is a bug to fix before adding features.

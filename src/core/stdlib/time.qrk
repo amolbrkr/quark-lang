@@ -3,8 +3,28 @@ extern 'time.hpp'
 extern fn time_now() float as 'q_time_now'
 extern fn time_clock() float as 'q_time_clock'
 extern fn time_sleep(seconds: float) any as 'q_time_sleep'
+extern fn time_duration(seconds: float) str as 'q_time_duration'
+extern fn time_format(ts: float, pattern: str, local: bool) str as 'q_time_format'
+extern fn time_iso(ts: float) str as 'q_time_iso'
+extern fn time_parse(text: str, pattern: str, local: bool) result as 'q_time_parse'
+extern fn time_parse_iso(text: str) result as 'q_time_parse_iso'
+// year, month, day, hour, minute, second, weekday, yearday. second is a float.
+extern fn time_parts(ts: float, local: bool) list as 'q_time_parts'
+extern fn time_make(year: int, month: int, day: int, hour: int, minute: int, second: float, local: bool) float as 'q_time_make'
+extern fn time_today(local: bool) float as 'q_time_today'
 
 module time:
+    // A UTC or local time. weekday is 0 = Monday. yearday is 1 = 1 January.
+    struct Parts:
+        year: int
+        month: int
+        day: int
+        hour: int
+        minute: int
+        second: float
+        weekday: int
+        yearday: int
+
     // Seconds since the Unix epoch (wall-clock time), as a float.
     fn now() float -> time_now()
 
@@ -13,3 +33,56 @@ module time:
 
     // Pause for `seconds` (fractions allowed).
     fn sleep(seconds: float) -> time_sleep(seconds)
+
+    // Seconds elapsed since a clock() reading.
+    fn since(start: float) float -> clock() - start
+
+    // `n` as seconds.
+    fn seconds(n: float) float -> n
+
+    // `n` minutes, in seconds.
+    fn minutes(n: float) float -> n * 60.0
+
+    // `n` hours, in seconds.
+    fn hours(n: float) float -> n * 3600.0
+
+    // `n` days, in seconds.
+    fn days(n: float) float -> n * 86400.0
+
+    // `n` weeks, in seconds.
+    fn weeks(n: float) float -> n * 604800.0
+
+    // A short reading of a duration in seconds, such as '250ms' or '1d 2h 3m 4s'.
+    fn duration(seconds: float) str -> time_duration(seconds)
+
+    // `ts` formatted with a strftime pattern. UTC unless `local` is true.
+    fn format(ts: float, pattern: str = '%Y-%m-%d %H:%M:%S', local: bool = false) str -> time_format(ts, pattern, local)
+
+    // ISO 8601 UTC, with fractional seconds when `ts` is not a whole second.
+    fn iso(ts: float) str -> time_iso(ts)
+
+    // ok(timestamp) when `text` matches a strftime pattern, otherwise err.
+    fn parse(text: str, pattern: str = '%Y-%m-%d', local: bool = false) result -> time_parse(text, pattern, local)
+
+    // ok(timestamp) for ISO 8601 text with Z or a ±hh:mm offset, otherwise err.
+    fn parse_iso(text: str) result -> time_parse_iso(text)
+
+    // The calendar fields of `ts`. UTC unless `local` is true.
+    fn parts(ts: float, local: bool = false) Parts ->
+        p = time_parts(ts, local)
+        Parts {
+            year: p[0]
+            month: p[1]
+            day: p[2]
+            hour: p[3]
+            minute: p[4]
+            second: p[5]
+            weekday: p[6]
+            yearday: p[7]
+        }
+
+    // The timestamp for a calendar time. The inverse of parts.
+    fn make(year: int, month: int, day: int, hour: int = 0, minute: int = 0, second: float = 0.0, local: bool = false) float -> time_make(year, month, day, hour, minute, second, local)
+
+    // Midnight of the current day, UTC unless `local` is true.
+    fn today(local: bool = false) float -> time_today(local)

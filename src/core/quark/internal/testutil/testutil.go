@@ -66,7 +66,16 @@ func Parse(source string) (*ast.TreeNode, []string) {
 
 // Compile runs the driver on source through stage upTo.
 func Compile(source string, upTo driver.Stage) *Result {
-	u := driver.CompileSource(source, sourceFile, upTo)
+	return compile(source, upTo, driver.Options{})
+}
+
+// CompileOptions is Compile with emit options.
+func CompileOptions(source string, upTo driver.Stage, opt driver.Options) *Result {
+	return compile(source, upTo, opt)
+}
+
+func compile(source string, upTo driver.Stage, opt driver.Options) *Result {
+	u := driver.CompileSourceOptions(source, sourceFile, upTo, opt)
 	r := &Result{Unit: u, AST: u.AST, Analysis: u.Analysis, CPP: u.CPP}
 	for _, d := range u.Diagnostics {
 		if d.Severity == diagnostics.SeverityWarning {
@@ -97,4 +106,9 @@ func Analyze(source string) (*Result, *ast.TreeNode, []string, []string) {
 // checks and back end as the compiler.
 func GenerateCPP(source string) Result {
 	return *Compile(source, driver.StageEmit)
+}
+
+// GenerateCPPOptions is GenerateCPP with emit options.
+func GenerateCPPOptions(source string, opt driver.Options) Result {
+	return *CompileOptions(source, driver.StageEmit, opt)
 }

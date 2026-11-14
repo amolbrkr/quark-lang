@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"quark/driver"
 	"quark/internal/testutil"
 )
 
@@ -116,4 +117,35 @@ func TestEmit_DynamicMethodTagChain(t *testing.T) {
 func TestEmit_ConditionComparisonHasNoExtraParentheses(t *testing.T) {
 	out := cpp(t, "x = 1\nif x == 1:\n    print(x)\n")
 	mustContain(t, out, "if (quark_x == 1) {")
+}
+
+func cppOptions(t *testing.T, src string, opt driver.Options) string {
+	t.Helper()
+	res := testutil.GenerateCPPOptions(src, opt)
+	if len(res.ParserErrors) > 0 || len(res.TypeErrors) > 0 {
+		t.Fatalf("unexpected errors: %v %v", res.ParserErrors, res.TypeErrors)
+	}
+	return res.CPP
+}
+
+// TestEmit_CheckedModeProvesUnbox: --checked prints a proven unbox as
+// q_prove_* instead of a raw union field. An int widened into a float is
+// still proved as an int and then cast; the proof does not widen.
+func TestEmit_CheckedModeProvesUnbox(t *testing.T) {
+	loop := "for x in list [1, 2, 3]:\n    print(x)\n"
+	normal := cpp(t, loop)
+	mustContain(t, normal, ".data.int_val")
+	mustNotContain(t, normal, "q_prove_")
+	checked := cppOptions(t, loop, driver.Options{Checked: true})
+	mustContain(t, checked, "q_prove_int(q_list_at(")
+	mustNotContain(t, checked, ".data.int_val")
+
+	widened := "xs = list [1]\nn: float = xs[0]\nprint(n)\n"
+	out := cppOptions(t, widened, driver.Options{Checked: true})
+	mustContain(t, out, "q_prove_int(")
+	mustNotContain(t, out, "q_prove_float(")
+
+	exact := "ys = list [1.5]\nf: float = ys[0]\nprint(f)\n"
+	out = cppOptions(t, exact, driver.Options{Checked: true})
+	mustContain(t, out, "q_prove_float(")
 }

@@ -56,7 +56,7 @@ python3 bench.py run --quark /path/to/quark      # a different compiler build, e
 
 `setup` creates `.venv/` and installs `requirements.txt` into it (with uv when it is on the `PATH`, else `venv` and pip); it never touches the system Python. If data.table is missing, it installs it from CRAN into the R user library (`R_LIBS_USER`, created if needed); `setup --no-r-packages` skips that.
 
-**Windows is not tested yet.** The driver has the Windows paths (`.venv\Scripts\python.exe`, `.exe` programs, finding `Rscript`), but no run has been made there; peak memory is not measured on Windows (it comes from `wait4`).
+A full `default` run on Windows (2026-11-14, 15 timed reps, one thread and library defaults) completed with every implementation agreeing. The driver uses the Windows paths (`.venv\Scripts\python.exe`, `.exe` programs, `Rscript` under Program Files). Peak memory is not measured on Windows (it comes from `wait4`). The setup table has no load average, prints memory as `None GB`, and names the CPU from `platform.processor()` (`Intel64 Family 6 ...`) with virtualization `unknown`. `quark_blas` is skipped unless OpenBLAS is installed.
 
 ### Reproducing the numbers
 

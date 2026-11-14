@@ -436,8 +436,13 @@
         },
         {
           "name": "uniform",
-          "signature": "uniform() float",
-          "doc": "A float in [0, 1)."
+          "signature": "uniform(lo: float = 0.0, hi: float = 1.0) float",
+          "doc": "A float in [lo, hi). Defaults to [0, 1). lo == hi returns lo."
+        },
+        {
+          "name": "normal",
+          "signature": "normal(mean: float = 0.0, sd: float = 1.0) float",
+          "doc": "A normal float. sd of 0 returns mean."
         },
         {
           "name": "randint",
@@ -453,6 +458,31 @@
           "name": "shuffle",
           "signature": "shuffle(xs: list) list",
           "doc": "Shuffle a list in place and return it."
+        },
+        {
+          "name": "sample",
+          "signature": "sample(xs: list, k: int) list",
+          "doc": "k elements of xs, without replacement, as a new list. xs is unchanged."
+        },
+        {
+          "name": "weighted",
+          "signature": "weighted(xs: list, weights: list)",
+          "doc": "One element of xs, with probability proportional to the matching weight."
+        },
+        {
+          "name": "uniform_vec",
+          "signature": "uniform_vec(n: int) vec",
+          "doc": "n floats in [0, 1), as a vec."
+        },
+        {
+          "name": "normal_vec",
+          "signature": "normal_vec(n: int, mean: float = 0.0, sd: float = 1.0) vec",
+          "doc": "n normal floats, as a vec."
+        },
+        {
+          "name": "randint_vec",
+          "signature": "randint_vec(n: int, lo: int, hi: int) vec",
+          "doc": "n ints in [lo, hi], both ends included, as a vec."
         }
       ]
     },
@@ -475,14 +505,74 @@
           "doc": "Command-line arguments after the program name, as a list of strings."
         },
         {
+          "name": "program",
+          "signature": "program() str",
+          "doc": "The path the program was started as."
+        },
+        {
           "name": "env",
           "signature": "env(name: str)",
           "doc": "Value of the environment variable `name`, or null when it isn't set."
         },
         {
+          "name": "env_or",
+          "signature": "env_or(name: str, default: str) str",
+          "doc": "The value of `name`, or `default` when it isn't set."
+        },
+        {
+          "name": "set_env",
+          "signature": "set_env(name: str, value: str)",
+          "doc": "Set `name` for this process and the processes it starts."
+        },
+        {
+          "name": "unset_env",
+          "signature": "unset_env(name: str)",
+          "doc": "Remove `name`. Removing a variable that isn't set succeeds."
+        },
+        {
+          "name": "environ",
+          "signature": "environ() dict",
+          "doc": "Every environment variable, as a dict of strings."
+        },
+        {
           "name": "exit",
           "signature": "exit(code: int = 0)",
           "doc": "Exit immediately with status `code` (0 means success)."
+        },
+        {
+          "name": "cwd",
+          "signature": "cwd() str",
+          "doc": "The working directory."
+        },
+        {
+          "name": "chdir",
+          "signature": "chdir(path: str) result",
+          "doc": "Make `path` the working directory. err if it cannot be entered."
+        },
+        {
+          "name": "platform",
+          "signature": "platform() str",
+          "doc": "'windows', 'linux', 'darwin', or 'unknown'."
+        },
+        {
+          "name": "arch",
+          "signature": "arch() str",
+          "doc": "'x86_64', 'arm64', 'x86', or 'unknown'."
+        },
+        {
+          "name": "pid",
+          "signature": "pid() int",
+          "doc": "The process id."
+        },
+        {
+          "name": "cpu_count",
+          "signature": "cpu_count() int",
+          "doc": "Logical CPUs, or 0 when the operating system does not report a count."
+        },
+        {
+          "name": "eprint",
+          "signature": "eprint(x, end: str = '\n')",
+          "doc": "Write `x` to stderr, rendered like print, then `end`."
         }
       ]
     },
@@ -503,6 +593,76 @@
           "name": "sleep",
           "signature": "sleep(seconds: float)",
           "doc": "Pause for `seconds` (fractions allowed)."
+        },
+        {
+          "name": "since",
+          "signature": "since(start: float) float",
+          "doc": "Seconds elapsed since a clock() reading."
+        },
+        {
+          "name": "seconds",
+          "signature": "seconds(n: float) float",
+          "doc": "`n` as seconds."
+        },
+        {
+          "name": "minutes",
+          "signature": "minutes(n: float) float",
+          "doc": "`n` minutes, in seconds."
+        },
+        {
+          "name": "hours",
+          "signature": "hours(n: float) float",
+          "doc": "`n` hours, in seconds."
+        },
+        {
+          "name": "days",
+          "signature": "days(n: float) float",
+          "doc": "`n` days, in seconds."
+        },
+        {
+          "name": "weeks",
+          "signature": "weeks(n: float) float",
+          "doc": "`n` weeks, in seconds."
+        },
+        {
+          "name": "duration",
+          "signature": "duration(seconds: float) str",
+          "doc": "A short reading of a duration in seconds, such as '250ms' or '1d 2h 3m 4s'."
+        },
+        {
+          "name": "format",
+          "signature": "format(ts: float, pattern: str = '%Y-%m-%d %H:%M:%S', local: bool = false) str",
+          "doc": "`ts` formatted with a strftime pattern. UTC unless `local` is true."
+        },
+        {
+          "name": "iso",
+          "signature": "iso(ts: float) str",
+          "doc": "ISO 8601 UTC, with fractional seconds when `ts` is not a whole second."
+        },
+        {
+          "name": "parse",
+          "signature": "parse(text: str, pattern: str = '%Y-%m-%d', local: bool = false) result",
+          "doc": "ok(timestamp) when `text` matches a strftime pattern, otherwise err."
+        },
+        {
+          "name": "parse_iso",
+          "signature": "parse_iso(text: str) result",
+          "doc": "ok(timestamp) for ISO 8601 text with Z or a ±hh:mm offset, otherwise err."
+        },
+        {
+          "name": "parts",
+          "signature": "parts(ts: float, local: bool = false) Parts",
+          "doc": "The calendar fields of `ts`. UTC unless `local` is true."
+        },
+        {
+          "name": "make",
+          "signature": "make(year: int, month: int, day: int, hour: int = 0, minute: int = 0, second: float = 0.0, local: bool = false) float",
+          "doc": "The timestamp for a calendar time. The inverse of parts."
+        },
+        {
+          "name": "today",
+          "signature": "today(local: bool = false) float",
+          "doc": "Midnight of the current day, UTC unless `local` is true."
         }
       ]
     }

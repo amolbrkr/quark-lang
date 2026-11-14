@@ -504,7 +504,7 @@ Float `+ - *` and comparisons use plain C++ operators. `/` always produces `doub
 
 All tests run from `src/core/quark` with `go test ./...`.
 
-- **Integration tests** (`integration_*_test.go`): `TestMain` builds the `quark` binary once (`src/core/quark/quark_test`) and tests run it on programs. `TestSmokePrograms_Run` compiles and runs every `src/testfiles/smoke_*.qrk` and compares stdout exactly; `TestSmokePrograms_CompileError` checks expected error substrings. `TestSemanticsSafety_Rejected` holds the negative cases the robustness bar asks for (wrong type, arity, `null`, `any`, defaults, other modules, native code). `TestEvaluationOrder` checks that each part of an expression runs when and as often as it should. Other files cover the GC (`integration_gc_test.go`), FFI (`integration_ffi_test.go`, which builds the C libraries in `src/testfiles/ffi/`; `TestStdBlas` skips without OpenBLAS), element types (`integration_types_test.go`) and the table engine (`integration_table_test.go`).
+- **Integration tests** (`integration_*_test.go`): `TestMain` builds the `quark` binary once (`src/core/quark/quark_test`) and tests run it on programs. `TestSmokePrograms_Run` compiles and runs every `src/testfiles/smoke_*.qrk` and compares stdout exactly; `TestSmokePrograms_CompileError` checks expected error substrings. `TestSemanticsSafety_Rejected` holds the negative cases the robustness bar asks for (wrong type, arity, `null`, `any`, defaults, other modules, native code). `TestEvaluationOrder` checks that each part of an expression runs when and as often as it should. Other files cover the GC (`integration_gc_test.go`), FFI (`integration_ffi_test.go`, which builds the C libraries in `src/testfiles/ffi/`; `TestStdBlas` skips without OpenBLAS), element types (`integration_types_test.go`) and the table engine (`integration_table_test.go`). `integration_soundness_test.go` runs every smoke program again with `--checked` and requires the same result, and checks that a query agrees with the vec operation on the same column and that storing an expression prints what `print` of it prints.
 - **C++ runtime tests**: `TestVectorArrowLayout` checks the vector layout byte by byte; `TestTableEngine` builds and runs `src/testfiles/table/*_test.cpp` (sharing `check.hpp`). Go's test cache doesn't see C++ changes, so run them with `-count=1`.
 - **Package tests**: lexer, parser, loader (`loader/modules_v02_test.go`), analyzer, `lower/` (every smoke program lowers and verifies; malformed IR is rejected), `emit/` (the C++ shapes of each lowering) and `internal/editordata` (generated editor data, grammar coverage, snippets parse, and the extension's JS tests when `node` is available).
 - **GC self-check**: a standalone C++ program that allocates every kind of runtime value and checks with `GC_base()` that every object and buffer is on the GC heap.
@@ -562,19 +562,16 @@ The reads that could give `null` where the analyzer said "element" are closed: `
 
 **Holes left** (listed with reproductions in `known_issues.md`): native code writing lists directly skips the element check.
 
-**Finding holes mechanically** (planned):
-- A *checked mode* build flag turns every raw read into a checked one; running the test corpus in both modes, any check failure or output difference is a soundness bug.
-- A differential test for single expressions: `print(E)` (boxed, trusts nothing) must print what `x = E`, `print(x)` (stored as the claimed type) prints.
+**Finding holes mechanically:**
+- `--checked` (`quark run`, `quark build`, `quark emit`) prints every `ProofType` and `ProofElement` unbox as `q_prove_int`, `q_prove_float` or `q_prove_bool` (`ext/api.hpp`). The tag must be exactly that scalar; an int does not widen to a float. `TestCheckedMode_SmokeAgrees` runs every `src/testfiles/smoke_*.qrk` both ways and requires the same stdout, stderr and exit code. The temporary C++ path in a clang error is not part of that comparison. A check failure or a different result is a soundness bug. A column buffer read (`VecElem`) stays raw: it is not a `QValue`, and checking its validity bit would turn a missing salary in a query into an error.
+- `TestStoreAgreesWithBoxed` checks single expressions: `print(E)` must print what `x = E` and a typed declaration such as `n: int = E` print.
+- `TestQueryAgreesWithVec` checks a query against the vec operation on the same column: `sum(t.salary)` against `summarize(s = sum(e.salary))`, and the same for `mean`, `min`, `max`, a group, `filter` and `sort`. `summarize` calls the engine with a column index; `filter` and `mutate` are loops emitted in `lower/query.go`.
 
 ---
 
 ## 13) Roadmap: Back End
 
-The back end is the lowering pass, IR, verifier and emitter (§1.6). What is left to do in it:
-
-**Remaining steps** (each ends with the full suite green):
-
-1. **Checked mode**: a build flag that turns every `ProofType` and `ProofElement` unbox into a checked read (§12, Finding holes mechanically). Running the test corpus in both modes, any check failure or output difference is a soundness bug.
+The back end is the lowering pass, IR, verifier and emitter (§1.6). Checked mode is the `--checked` flag (§12): every `ProofType` and `ProofElement` unbox is printed as a tag check.
 
 Tables (`specs/tables_v0_1_spec.md`) are lowered in `lower/query.go` (§1.6, Queries), with their runtime in `table/query.hpp`.
 
@@ -604,7 +601,7 @@ Independent of §13 and can be done in any order. Each is a decision made in mor
 
 ## 15) Performance Findings
 
-Measured with the benchmark suite (`src/benchmarks/`; the numbers and how they were checked are in `src/benchmarks/RESULTS.md`, one thread, 2026-11-13 and, for tables and the items that changed, 2026-11-14). Each item is a cost the suite found, its cause, and a direction to try; none is scheduled yet. To measure a change, rerun the affected benchmarks against the old and new compiler: `python3 bench.py run --bench fib,reduce --lang quark --quark <path>`.
+Measured with the benchmark suite (`src/benchmarks/`; the numbers and how they were checked are in `src/benchmarks/RESULTS.md`, one thread, 2026-11-13 and, for tables and the items that changed, 2026-11-14). Each item is a cost the suite found, its cause, and a direction to try. The table items are specified in `specs/tables_v0_2_spec.md` and not implemented; the rest are not scheduled. To measure a change, rerun the affected benchmarks against the old and new compiler: `python3 bench.py run --bench fib,reduce --lang quark --quark <path>`.
 
 **Generated code**
 - **Source-location tracking is the largest remaining cost of a function call.** Every generated function saves the current location on entry and restores it on exit (`QSourceLocGuard`, plus an exception cleanup path), and every statement stores one pointer into a static table of locations. `fib(30)` takes 10.7 ms; rebuilt by hand with the runtime headers, 8.7 ms without the per-call save and restore, 7.3 ms with no tracking, 4.3 ms as plain C++ (three stores per statement, the earlier scheme, took 22.1 ms). Direction: avoid the per-call save and restore, for example by recording the location at call sites instead.

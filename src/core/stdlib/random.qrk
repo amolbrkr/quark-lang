@@ -1,17 +1,26 @@
 extern 'random.hpp'
 
 extern fn random_seed(n: int) any as 'q_random_seed'
-extern fn random_uniform() float as 'q_random_uniform'
+extern fn random_uniform_range(lo: float, hi: float) float as 'q_random_uniform_range'
+extern fn random_normal(mean: float, sd: float) float as 'q_random_normal'
 extern fn random_randint(lo: int, hi: int) int as 'q_random_randint'
 extern fn random_choice(xs: list) any as 'q_random_choice'
 extern fn random_shuffle(xs: list) list as 'q_random_shuffle'
+extern fn random_sample(xs: list, k: int) list as 'q_random_sample'
+extern fn random_weighted(xs: list, weights: list) any as 'q_random_weighted'
+extern fn random_uniform_vec(n: int) vec as 'q_random_uniform_vec'
+extern fn random_normal_vec(n: int, mean: float, sd: float) vec as 'q_random_normal_vec'
+extern fn random_randint_vec(n: int, lo: int, hi: int) vec as 'q_random_randint_vec'
 
 module random:
     // Seed the generator so the following results are reproducible.
     fn seed(n: int) -> random_seed(n)
 
-    // A float in [0, 1).
-    fn uniform() float -> random_uniform()
+    // A float in [lo, hi). Defaults to [0, 1). lo == hi returns lo.
+    fn uniform(lo: float = 0.0, hi: float = 1.0) float -> random_uniform_range(lo, hi)
+
+    // A normal float. sd of 0 returns mean.
+    fn normal(mean: float = 0.0, sd: float = 1.0) float -> random_normal(mean, sd)
 
     // An int in [lo, hi], both ends included.
     fn randint(lo: int, hi: int) int -> random_randint(lo, hi)
@@ -21,3 +30,18 @@ module random:
 
     // Shuffle a list in place and return it.
     fn shuffle(xs: list) list -> random_shuffle(xs)
+
+    // k elements of xs, without replacement, as a new list. xs is unchanged.
+    fn sample(xs: list, k: int) list -> random_sample(xs, k)
+
+    // One element of xs, with probability proportional to the matching weight.
+    fn weighted(xs: list, weights: list) -> random_weighted(xs, weights)
+
+    // n floats in [0, 1), as a vec.
+    fn uniform_vec(n: int) vec -> random_uniform_vec(n)
+
+    // n normal floats, as a vec.
+    fn normal_vec(n: int, mean: float = 0.0, sd: float = 1.0) vec -> random_normal_vec(n, mean, sd)
+
+    // n ints in [lo, hi], both ends included, as a vec.
+    fn randint_vec(n: int, lo: int, hi: int) vec -> random_randint_vec(n, lo, hi)

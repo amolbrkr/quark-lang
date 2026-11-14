@@ -1,15 +1,63 @@
 extern 'sys.hpp'
 
 extern fn sys_args() list as 'q_sys_args'
+extern fn sys_program() str as 'q_sys_program'
 extern fn sys_env(name: str) any as 'q_sys_env'
+extern fn sys_env_or(name: str, default: str) str as 'q_sys_env_or'
+extern fn sys_set_env(name: str, value: str) any as 'q_sys_set_env'
+extern fn sys_unset_env(name: str) any as 'q_sys_unset_env'
+extern fn sys_environ() dict as 'q_sys_environ'
 extern fn sys_exit(code: int) any as 'q_sys_exit'
+extern fn sys_cwd() str as 'q_sys_cwd'
+extern fn sys_chdir(path: str) result as 'q_sys_chdir'
+extern fn sys_platform() str as 'q_sys_platform'
+extern fn sys_arch() str as 'q_sys_arch'
+extern fn sys_pid() int as 'q_sys_pid'
+extern fn sys_cpu_count() int as 'q_sys_cpu_count'
+extern fn sys_eprint(x, end: str) any as 'q_sys_eprint'
 
 module sys:
     // Command-line arguments after the program name, as a list of strings.
     fn args() list -> sys_args()
 
+    // The path the program was started as.
+    fn program() str -> sys_program()
+
     // Value of the environment variable `name`, or null when it isn't set.
     fn env(name: str) -> sys_env(name)
 
+    // The value of `name`, or `default` when it isn't set.
+    fn env_or(name: str, default: str) str -> sys_env_or(name, default)
+
+    // Set `name` for this process and the processes it starts.
+    fn set_env(name: str, value: str) -> sys_set_env(name, value)
+
+    // Remove `name`. Removing a variable that isn't set succeeds.
+    fn unset_env(name: str) -> sys_unset_env(name)
+
+    // Every environment variable, as a dict of strings.
+    fn environ() dict -> sys_environ()
+
     // Exit immediately with status `code` (0 means success).
     fn exit(code: int = 0) -> sys_exit(code)
+
+    // The working directory.
+    fn cwd() str -> sys_cwd()
+
+    // Make `path` the working directory. err if it cannot be entered.
+    fn chdir(path: str) result -> sys_chdir(path)
+
+    // 'windows', 'linux', 'darwin', or 'unknown'.
+    fn platform() str -> sys_platform()
+
+    // 'x86_64', 'arm64', 'x86', or 'unknown'.
+    fn arch() str -> sys_arch()
+
+    // The process id.
+    fn pid() int -> sys_pid()
+
+    // Logical CPUs, or 0 when the operating system does not report a count.
+    fn cpu_count() int -> sys_cpu_count()
+
+    // Write `x` to stderr, rendered like print, then `end`.
+    fn eprint(x, end: str = '\n') -> sys_eprint(x, end)

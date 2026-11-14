@@ -1,0 +1,140 @@
+print('== smoke: stdlib expansion ==')
+incl 'std/time' as time
+incl 'std/random' as random
+incl 'std/sys' as sys
+
+print(time::seconds(3))
+print(time::minutes(5))
+print(time::hours(1))
+print(time::days(1))
+print(time::weeks(1))
+print(time::duration(0.25))
+print(time::duration(75.5))
+print(time::duration(93784))
+print(time::duration(0))
+print(time::duration(60))
+print(time::duration(1))
+print(time::duration(90))
+print(time::duration(86400))
+print(time::duration(-0.25))
+print(time::duration(-75.5))
+
+print(time::format(0.0))
+print(time::format(0.0, '%Y-%m-%d'))
+print(time::iso(0.0))
+print(time::iso(0.5))
+print(time::iso(1.25))
+print(time::format(-1.0))
+print(time::iso(-1.5))
+
+p = time::parts(0.0)
+print(p.year)
+print(p.month)
+print(p.day)
+print(p.hour)
+print(p.minute)
+print(p.second)
+print(p.weekday)
+print(p.yearday)
+print(type(p))
+
+print(time::make(1970, 1, 1))
+print(time::make(1970, 1, 1, 0, 0, 0.5))
+print(time::make(1970, 1, 2))
+
+when time::parse('1970-01-01'):
+    ok t -> print(t)
+    err e -> print(e)
+when time::parse('nope'):
+    ok t -> print(t)
+    err e -> print(e)
+when time::parse('1970-01-01 extra'):
+    ok t -> print('trailing-ok')
+    err e -> print('trailing')
+when time::parse('1970-13-01'):
+    ok t -> print('month-ok')
+    err e -> print('month')
+
+when time::parse_iso('1970-01-01T00:00:00Z'):
+    ok t -> print(t)
+    err e -> print(e)
+when time::parse_iso('1970-01-01T01:00:00+01:00'):
+    ok t -> print(t)
+    err e -> print(e)
+when time::parse_iso('1970-01-01T00:00:00.5Z'):
+    ok t -> print(t)
+    err e -> print(e)
+when time::parse_iso('1970-01-01T00:00:00+01'):
+    ok t -> print('offset-ok')
+    err e -> print('offset')
+when time::parse_iso('1970-01-01 00:00:00Z'):
+    ok t -> print(t)
+    err e -> print(e)
+when time::parse_iso('2023-02-29'):
+    ok t -> print('leap-ok')
+    err e -> print('leap')
+when time::parse_iso('2024-02-29'):
+    ok t -> print('leap-ok')
+    err e -> print('leap')
+
+made = time::make(2026, 11, 11, 19, 24, 6.0)
+print(time::format(made))
+print(time::iso(made))
+mon = time::parts(time::make(2024, 1, 1))
+print(mon.weekday)
+leap = time::parts(time::make(2024, 2, 29))
+print(leap.yearday)
+wed = time::parts(time::make(2026, 11, 11))
+print(wed.weekday)
+print(wed.yearday)
+
+local = time::make(2026, 1, 15, 15, 0, 0.0, true)
+print(time::format(local, '%Y-%m-%d %H:%M', true))
+lp = time::parts(local, true)
+print(lp.hour == 15 and lp.day == 15)
+when time::parse('2026-01-15', '%Y-%m-%d', true):
+    ok t -> print(time::format(t, '%Y-%m-%d', true))
+    err e -> print(e)
+
+today = time::today()
+now = time::now()
+print(today <= now and now < today + time::days(1))
+tp = time::parts(today)
+print(tp.hour == 0 and tp.minute == 0 and tp.second == 0.0)
+print(time::since(time::clock()) >= 0.0)
+
+random::seed(7)
+u = random::uniform()
+random::seed(7)
+print(u == random::uniform() and u >= 0.0 and u < 1.0)
+print(random::uniform(3.0, 3.0))
+span = random::uniform(2.0, 5.0)
+print(span >= 2.0 and span < 5.0)
+print(random::normal(10.0, 0.0) == 10.0)
+n = random::normal()
+print(n == n)
+
+xs = list ['a', 'b', 'c', 'd']
+print(len(random::sample(xs, 3)))
+print(xs.join(''))
+print('[' + random::sample(xs, 0).join(',') + ']')
+print(random::sample(xs, 4).sort().join(''))
+print(random::weighted(list ['x', 'y'], list [1, 0]))
+print(random::weighted(list ['x', 'y'], list [0, 5]))
+
+v = random::uniform_vec(4)
+print(len(v))
+in_range = true
+for x in v:
+    if x < 0.0 or x >= 1.0:
+        in_range = false
+print(in_range)
+print(len(random::normal_vec(3)))
+print(random::normal_vec(2, 4.0, 0.0))
+print(random::randint_vec(4, 2, 2))
+print(len(random::uniform_vec(0)))
+
+print(sys::env_or('QK_STDLIB_EXPANSION_UNSET', 'fallback'))
+print(sys::pid() > 0)
+print(sys::cpu_count() >= 0)
+print(len(sys::program()) > 0)

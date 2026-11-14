@@ -974,9 +974,9 @@ which binds `name`.
 |---|---|
 | `io` | `io::open(path, mode = 'r', binary = false)`, `io::read(f, n)`, `io::write(f, s)`, `io::close(f)`, `io::seek(f, offset, whence = 0)` (all return results), `io::exists(path)`, and `io::seek_set()`/`seek_cur()`/`seek_end()` |
 | `fmt` | `fmt::show_list`, `fmt::show_vec`, `fmt::show_dict`, `fmt::table` (a table or a dict of columns), `fmt::head`, `fmt::tail`, `fmt::full` |
-| `sys` | `sys::args()` (arguments after `--`), `sys::env(name)` (`null` if unset), `sys::exit(code = 0)` |
-| `time` | `time::now()` (epoch seconds), `time::clock()` (monotonic seconds), `time::sleep(seconds)` |
-| `random` | `random::seed(n)`, `random::uniform()`, `random::randint(lo, hi)` (both ends included), `random::choice(xs)`, `random::shuffle(xs)` |
+| `sys` | `args()` (arguments after `--`), `program()`, `env` / `env_or` / `set_env` / `unset_env` / `environ()`, `exit(code = 0)`, `cwd()` / `chdir(path)`, `platform()` / `arch()` / `pid()` / `cpu_count()`, `eprint(x)` |
+| `time` | `now()`, `clock()`, `sleep(seconds)`, `since(start)`, `minutes(n)` and the other duration units, `duration(seconds)`, `format` / `iso` / `parse` / `parse_iso`, `parts` / `make` / `today` |
+| `random` | `seed(n)`, `uniform(lo = 0, hi = 1)`, `normal(mean = 0, sd = 1)`, `randint(lo, hi)`, `choice(xs)`, `shuffle(xs)`, `sample(xs, k)`, `weighted(xs, weights)`, `uniform_vec` / `normal_vec` / `randint_vec` |
 | `csv` | `csv::read_file(path, columns = dict {})`, `csv::parse_text(text, columns = dict {})` (tables, typed by where they go), `csv::write_file(t, path)`, `csv::format_text(t)` |
 | `blas` | `blas::dot`, `axpy`, `scal`, `nrm2`, `asum`, `gemv` on `vec[f64]` via OpenBLAS (needs `libopenblas-dev` or `brew install openblas`) |
 
@@ -1036,6 +1036,7 @@ Then run **Extensions: Install from VSIX...** and pick the file it prints.
 |---|---|
 | `-o <name>` | output name (`build`) |
 | `--debug`, `-d` | print the compile and link commands and keep the generated C++ (`run` also keeps the executable next to the source) |
+| `--checked` | check the tag on every read the compiler proved (`run`, `build` and `emit`). A correct program prints the same result, a little slower; a read of the wrong tag is `expected int, got str` instead of a garbage number. See [architecture.md](architecture.md) §12 |
 | `--lto` | link-time optimization |
 | `--no-pch` | don't use the cached precompiled runtime header |
 | `--lib-path <dir>` | search `<dir>` for `extern link` libraries and add it to the rpath (repeatable) |
@@ -1066,9 +1067,14 @@ and don't. An `INV-*` diagnostic is a compiler bug.
 
 **Planned:**
 
-- Tables after v0.1: table literals, joins, `select`/`rename`, `distinct`,
-`summary(t)`, date columns, and compile-time schema inference for CSV files
-([specs/tables_v0_1_spec.md](specs/tables_v0_1_spec.md) §9-10).
+- Tables v0.2, specified and not implemented: `select`, `deselect`, `rename`,
+`distinct`, `n_distinct`, and faster `min`/`max`, `filter`, `mutate`, sort
+and CSV reading
+([specs/tables_v0_2_spec.md](specs/tables_v0_2_spec.md)).
+- Tables still later: the column-wise table literal, joins, `summary(t)`,
+date columns, and compile-time schema inference for CSV files
+([specs/tables_v0_1_spec.md](specs/tables_v0_1_spec.md) §9-10,
+[specs/tables_v0_2_spec.md](specs/tables_v0_2_spec.md) §6).
 - Element types in annotations: `list[T]`.
 - Struct methods and whole-struct equality.
 - Result helpers such as `unwrap_or` and `map_ok`.
@@ -1089,7 +1095,7 @@ a runtime error, not a compile error.
 - Tables: a query needs a row struct the compiler knows (a table read
 without one can be printed and written, or given one with `t: tbl[Row] = ...`); summarize columns aggregate one column each (`mutate` first to
 aggregate a computed value); there are no row reads (`t[i]`), table
-literals or joins yet.
+literals, `select`, `deselect`, `rename`, `distinct` or joins yet.
 
 **Known issues.** Bugs, including the cases where the compiler still gives a
 wrong result without an error, are listed with reproductions in [known_issues.md](known_issues.md).
@@ -1138,8 +1144,9 @@ measured.
 ([modules v0.2](specs/implemented/modules_v0_2_spec.md),
 [structs v0.1](specs/implemented/structs_v0_1_spec.md)), and those with work
 still planned or proposed in `specs/` ([tables v0.1](specs/tables_v0_1_spec.md),
-[FFI v0.1](specs/ffi_v0_1_spec.md), [REPL v0.1](specs/repl_v0_1_spec.md) and
-[stdlib expansion v0.1](specs/stdlib_expansion_v0_1_spec.md), both proposals).
+[tables v0.2](specs/tables_v0_2_spec.md),
+[FFI v0.1](specs/ffi_v0_1_spec.md), [REPL v0.1](specs/repl_v0_1_spec.md) (a proposal) and
+[stdlib expansion v0.1](specs/stdlib_expansion_v0_1_spec.md) (partly implemented)).
 
 If a doc disagrees with the compiler, the compiler is right; please report
 the difference.

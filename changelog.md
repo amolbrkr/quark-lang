@@ -10,6 +10,8 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 
 ## Contents
 
+- [2026-11-14: Standard library: sys, time and random](#2026-11-14-standard-library-sys-time-and-random)
+- [2026-11-14: Checked mode](#2026-11-14-checked-mode)
 - [2026-11-14: VS Code extension 0.2.0 — check diagnostics](#2026-11-14-vs-code-extension-020--check-diagnostics)
 - [2026-11-14: Exact int/float comparison, stack overflow, runtime and GC lookup](#2026-11-14-exact-intfloat-comparison-stack-overflow-runtime-and-gc-lookup)
 - [2026-11-14: Specs move to `specs/`](#2026-11-14-specs-move-to-specs)
@@ -39,6 +41,60 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 - [2026-04-03: Table runtime scaffolding; struct fixes](#2026-04-03-table-runtime-scaffolding-struct-fixes)
 - [2026-04-02: Structs v0.1](#2026-04-02-structs-v01)
 - [2026-03-28: Vector soundness, `std/fmt` on `extern`, build output](#2026-03-28-vector-soundness-stdfmt-on-extern-build-output)
+
+---
+
+## 2026-11-14: Standard library: sys, time and random
+
+The parts of `specs/stdlib_expansion_v0_1_spec.md` that do not wait on FFI phase 2 or 3, or on an open decision. Multi-argument `print`, `fmt::format`, the `std/io` rework, `std/fs`, JSON and subprocesses are unchanged.
+
+### Breaking
+- `sys::args()` is a list of strings. Pushing a non-string fails at runtime (`sys::args().push(1)`). Reading, indexing and `join` are unchanged.
+
+### Added
+- `std/sys`: `program()`, `env_or(name, default)`, `set_env(name, value)`, `unset_env(name)`, `environ()`, `cwd()`, `chdir(path)` (`ok` or `err`), `platform()`, `arch()`, `pid()`, `cpu_count()`, and `eprint(x, end = '\n')`, which writes to stderr the way `print` writes to stdout.
+
+```quark
+incl 'std/sys' as sys
+print(sys::cwd())
+print(sys::env_or('USER', 'unknown'))
+sys::eprint('written to stderr')
+```
+
+- `std/time`: `since(start)`, `seconds` / `minutes` / `hours` / `days` / `weeks`, `duration(seconds)` (`75.5` prints `1m 15.5s`), `format`, `iso`, `parse`, `parse_iso`, `parts` (a `time::Parts` struct; weekday 0 is Monday), `make` and `today`. Dates are UTC unless `local` is true. A date that is not a real calendar day fails.
+
+```quark
+incl 'std/time' as time
+print(time::iso(0.0))                 // 1970-01-01T00:00:00Z
+print(time::parts(0.0).weekday)       // 3
+print(time::make(1970, 1, 2))         // 86400.0
+print(time::duration(time::minutes(5)))  // 5m
+```
+
+- `std/random`: `uniform(lo = 0.0, hi = 1.0)` (a float in `[lo, hi)`; `uniform()` is still `[0, 1)`), `normal(mean = 0.0, sd = 1.0)`, `sample(xs, k)` (a new list, `xs` unchanged), `weighted(xs, weights)`, `uniform_vec(n)`, `normal_vec(n, mean = 0.0, sd = 1.0)` and `randint_vec(n, lo, hi)`.
+
+### Internal
+- The glue is `src/core/stdlib/sys.hpp`, `time.hpp` and `random.hpp`. `time::parts` builds the struct in Quark from the eight numbers the glue returns, because a native function cannot name the compiler's struct definition. UTC dates use civil-date arithmetic; local dates use `mktime` and are read back so a failed conversion is an error.
+
+---
+
+## 2026-11-14: Checked mode
+
+### Added
+- `quark run`, `quark build` and `quark emit` take `--checked`. A read the compiler proved (`ProofType` or `ProofElement` in the IR) then goes through `q_prove_int`, `q_prove_float` or `q_prove_bool`, which require the value's tag to be exactly that scalar. An int is not widened to a float. A program whose proofs hold prints the same result; a wrong proof stops with `expected int, got str` instead of reading the other field of the value.
+
+```quark
+for x in list [1, 2, 3]:
+    print(x)
+```
+
+```cpp
+long long quark_x = (q_list_at(_t3, _t5)).data.int_val;   // default
+long long quark_x = q_prove_int(q_list_at(_t3, _t5));     // --checked
+```
+
+### Internal
+- `TestCheckedMode_SmokeAgrees` runs every `src/testfiles/smoke_*.qrk` with and without `--checked` and requires the same stdout, stderr and exit code. The temporary directory in a clang error is ignored. `TestQueryAgreesWithVec` requires `sum` / `mean` / `min` / `max` / `filter` / `sort` on a column to agree with the same operation written as a query, including a group, a missing value, NaN, an empty table, a bool column, an int that overflows, and an anonymous table stored into `tbl[R]`. `TestStoreAgreesWithBoxed` requires `print(E)` to match `x = E` and a typed declaration of `E`.
 
 ---
 

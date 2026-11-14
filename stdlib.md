@@ -530,13 +530,25 @@ print(fmt::table(dict {x: list [1, 2], y: vec ['a', 'b']}))
 
 ## `std/sys`
 
-Program arguments, environment variables and exit status. Import with `incl 'std/sys' as sys`.
+Program arguments, the environment, the working directory and the process. Import with `incl 'std/sys' as sys`.
 
 | Function | Signature | Description |
 |---|---|---|
-| `args` | `-> list` | Command-line arguments after the program name, as strings. With `quark run`, arguments after `--` are passed: `quark run tool.qrk -- in.csv -v` |
+| `args` | `-> list` | Command-line arguments after the program name, as a list of strings. `sys::args().push(1)` is a runtime error. With `quark run`, arguments after `--` are passed: `quark run tool.qrk -- in.csv -v` |
+| `program` | `-> str` | The path the program was started as |
 | `env` | `name: str -> str or null` | Value of the environment variable `name`, or `null` when it isn't set |
+| `env_or` | `name: str, default: str -> str` | The value of `name`, or `default` when it isn't set. Never `null` |
+| `set_env` | `name: str, value: str` | Set `name` for this process and the processes it starts. An empty name, or a name containing `=`, is a runtime error |
+| `unset_env` | `name: str` | Remove `name`. Removing a variable that isn't set succeeds. The same name rules as `set_env` |
+| `environ` | `-> dict` | Every environment variable, as a dict of strings. `sys::environ().set('X', 1)` is a runtime error. Windows drive entries whose names start with `=` are skipped |
 | `exit` | `code: int = 0` | Flush output and exit with status `code`, between 0 and 255; `0` means success. A code outside that range is a runtime error, since the OS keeps only the low 8 bits (256 would read as success) |
+| `cwd` | `-> str` | The working directory |
+| `chdir` | `path: str -> result` | Make `path` the working directory. `ok(null)`, or `err('chdir: path is empty')` for an empty path, or `err('chdir: <path>: <reason>')` when it cannot be entered |
+| `platform` | `-> str` | `'windows'`, `'linux'`, `'darwin'`, or `'unknown'` |
+| `arch` | `-> str` | `'x86_64'`, `'arm64'`, `'x86'`, or `'unknown'` |
+| `pid` | `-> int` | The process id |
+| `cpu_count` | `-> int` | Logical CPUs, or `0` when the operating system does not report a count |
+| `eprint` | `x, end: str = '\n'` | Write `x` to stderr, rendered the way `print` renders it, then `end` |
 
 ```quark
 incl 'std/sys' as sys
@@ -546,12 +558,13 @@ if len(args) == 0:
     print('usage: tool <file>')
     sys::exit(2)
 print('reading ' + args[0])
-user = sys::env('USER')
-if user != null:
-    print('hello ' + user)
+user = sys::env_or('USER', 'unknown')
+print('hello ' + user)
+print('running in ' + sys::cwd() + ' on ' + sys::platform())
+sys::eprint('progress: ' + args[0])
 ```
 
-Run it with `quark run tool.qrk -- data.csv`, or build it once with `quark build tool.qrk -o tool` and run `./tool data.csv`.
+Run it with `quark run tool.qrk -- data.csv`, or build it once with `quark build tool.qrk -o tool` and run `./tool data.csv`. `chdir` changes the working directory of the process, so later relative paths, including `std/io` and `std/csv`, resolve against the new directory.
 
 ---
 
@@ -611,20 +624,45 @@ print(stats::mean(vec [true, false, false, true]))    // 0.5
 
 ## `std/time`
 
-Wall-clock and monotonic time. Import with `incl 'std/time' as time`.
+Wall-clock and monotonic time, dates and durations. Timestamps and durations are float seconds. Import with `incl 'std/time' as time`.
 
 | Function | Signature | Description |
 |---|---|---|
 | `now` | `-> float` | Seconds since the Unix epoch (wall clock), with sub-second precision |
 | `clock` | `-> float` | Monotonic seconds from an arbitrary starting point; subtract two readings to time code |
 | `sleep` | `seconds: float` | Pause for `seconds` (fractions allowed; zero or negative returns at once) |
+| `since` | `start: float -> float` | Seconds elapsed since a `clock()` reading: `time::clock() - start` |
+| `seconds` | `n: float -> float` | `n` as seconds |
+| `minutes` | `n: float -> float` | `n` minutes, in seconds (`time::minutes(5)` is `300.0`) |
+| `hours` | `n: float -> float` | `n` hours, in seconds |
+| `days` | `n: float -> float` | `n` days, in seconds (`86400.0` each) |
+| `weeks` | `n: float -> float` | `n` weeks, in seconds |
+| `duration` | `seconds: float -> str` | A short reading of a duration. Under a second it is milliseconds (`0.25` → `250ms`, `0` → `0ms`); otherwise zero units are left out (`75.5` → `1m 15.5s`, `93784` → `1d 2h 3m 4s`, `60` → `1m`). A negative duration keeps its sign. A non-finite number is a runtime error |
+| `format` | `ts: float, pattern: str = '%Y-%m-%d %H:%M:%S', local: bool = false -> str` | `ts` with a `strftime` pattern. UTC unless `local` is true. The fractional part of `ts` is dropped. `%z` and `%Z` follow the machine's zone even when the other fields are UTC, because the C library fills them that way. An empty result, or one over 1MB, is a runtime error |
+| `iso` | `ts: float -> str` | ISO 8601 UTC, such as `2026-11-11T19:24:06Z`. A fractional second is kept, trailing zeros dropped (`0.5` → `1970-01-01T00:00:00.5Z`) |
+| `parse` | `text: str, pattern: str = '%Y-%m-%d', local: bool = false -> result` | `ok(timestamp)` when `text` matches a `strftime` pattern, otherwise `err`. The whole string must match; trailing whitespace is accepted and other trailing text is not. An empty pattern is a runtime error. A date that is not a real calendar day is an `err` |
+| `parse_iso` | `text: str -> result` | `ok(timestamp)` for `YYYY-MM-DD`, optionally followed by `T`, `t` or a space and `HH:MM:SS`, an optional fraction, and an optional `Z`/`z` or `±hh:mm` (the colon is required). A missing zone means UTC, and an offset is subtracted. Otherwise `err` |
+| `parts` | `ts: float, local: bool = false -> time::Parts` | The calendar fields of `ts`. UTC unless `local` is true |
+| `make` | `year: int, month: int, day: int, hour: int = 0, minute: int = 0, second: float = 0.0, local: bool = false -> float` | The timestamp for a calendar time, the inverse of `parts`. A date that is not a real calendar time, a year outside −999999..999999, or a non-finite second is a runtime error |
+| `today` | `local: bool = false -> float` | Midnight of the current day, UTC unless `local` is true |
+
+`time::Parts` has `year`, `month`, `day`, `hour`, `minute`, `weekday` and `yearday` as ints, and `second` as a float. `weekday` is 0 for Monday (1970-01-01, a Thursday, is 3). `yearday` is 1 for 1 January. `second` is in `[0, 60)`.
+
+February 29 in a common year, and month 13, fail in `make`, `parse` and `parse_iso`. Only UTC and the machine's local zone are supported. A timestamp whose absolute value is above `3.2e13` seconds, or that is not finite, is a runtime error in `format`, `iso` and `parts`.
 
 ```quark
 incl 'std/time' as time
 
 start = time::clock()
 time::sleep(0.1)
-print(time::clock() - start >= 0.1)   // true
+print(time::since(start) >= 0.1)          // true
+print(time::duration(75.5))                // 1m 15.5s
+print(time::iso(0.0))                      // 1970-01-01T00:00:00Z
+print(time::parts(0.0).weekday)            // 3
+print(time::make(1970, 1, 2))              // 86400.0
+when time::parse('2024-02-29'):
+    ok t -> print(time::format(t, '%Y-%m-%d'))   // 2024-02-29
+    err e -> print(e)
 ```
 
 ---
@@ -636,10 +674,16 @@ Pseudo-random numbers (64-bit Mersenne Twister), seeded randomly at startup; `se
 | Function | Signature | Description |
 |---|---|---|
 | `seed` | `n: int` | Seed the generator; the same seed gives the same sequence |
-| `uniform` | `-> float` | A float in `[0, 1)` |
+| `uniform` | `lo: float = 0.0, hi: float = 1.0 -> float` | A float in `[lo, hi)`. `lo == hi` returns `lo`. `lo > hi`, or a non-finite bound, is a runtime error. `uniform()` is `[0, 1)`. One argument is the low end, so `uniform(2.0)` is `uniform(2.0, 1.0)` and fails |
+| `normal` | `mean: float = 0.0, sd: float = 1.0 -> float` | A normal float. `sd` of 0 returns `mean`. A negative or non-finite `sd` is a runtime error |
 | `randint` | `lo: int, hi: int -> int` | An int in `[lo, hi]`, both ends included; `lo > hi` is a runtime error |
 | `choice` | `xs: list -> any` | A random element; an empty list is a runtime error |
 | `shuffle` | `xs: list -> list` | Shuffle in place and return the list |
+| `sample` | `xs: list, k: int -> list` | `k` elements of `xs`, without replacement, as a new list. `xs` is not modified. The new list keeps the element type of `xs` (`xs = list [1, 2]`, then `random::sample(xs, 1).push('a')` is a runtime error). `k` outside `0 .. len(xs)` is a runtime error; `k` of 0 returns an empty list |
+| `weighted` | `xs: list, weights: list` | One element of `xs`, with probability proportional to the matching weight. Weights are ints or floats. The lists must be the same length and non-empty. A negative, non-finite or all-zero weight is a runtime error |
+| `uniform_vec` | `n: int -> vec` | `n` floats in `[0, 1)`, as a `vec[f64]`. `n` of 0 is an empty vector. A negative `n` is a runtime error |
+| `normal_vec` | `n: int, mean: float = 0.0, sd: float = 1.0 -> vec` | `n` normal floats, as a `vec[f64]`. `sd` of 0 fills the vector with `mean`. The same `sd` rules as `normal` |
+| `randint_vec` | `n: int, lo: int, hi: int -> vec` | `n` ints in `[lo, hi]`, both ends included, as a `vec[i64]`. `lo > hi` is a runtime error |
 
 ```quark
 incl 'std/random' as random
@@ -649,6 +693,10 @@ roll = random::randint(1, 6)
 print(roll >= 1 and roll <= 6)                  // true
 deck = list ['a', 'b', 'c']
 print(random::shuffle(deck).sort().join(''))    // abc
+print(random::uniform(3.0, 3.0))                // 3.0
+print(random::normal(10.0, 0.0) == 10.0)        // true
+print(random::weighted(list ['x', 'y'], list [1, 0]))   // x
+print(random::randint_vec(4, 2, 2))             // [2, 2, 2, 2]
 ```
 
 ---

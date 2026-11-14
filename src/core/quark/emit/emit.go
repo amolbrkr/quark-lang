@@ -12,13 +12,27 @@ import (
 )
 
 type printer struct {
-	b   strings.Builder
-	ind int
+	b       strings.Builder
+	ind     int
+	checked bool
+}
+
+// Options selects how a program is printed. The IR is unchanged either way;
+// checked mode is the one choice emit makes, and only for an Unbox.
+type Options struct {
+	// Checked prints every ProofType and ProofElement unbox as q_prove_*
+	// (architecture.md §12) instead of a raw union-field read.
+	Checked bool
 }
 
 // Program prints p as a C++ translation unit.
 func Program(p *lower.Program) string {
-	w := &printer{}
+	return ProgramOptions(p, Options{})
+}
+
+// ProgramOptions prints p. Checked wraps proven unboxes in q_prove_*.
+func ProgramOptions(p *lower.Program, opt Options) string {
+	w := &printer{checked: opt.Checked}
 	w.raw("#include \"quark/quark.hpp\"\n")
 	if len(p.Includes) > 0 {
 		w.raw("\n// Extension includes\n")
@@ -385,6 +399,14 @@ var unboxFields = map[lower.Rep]string{
 	lower.RepBool:  "bool_val",
 }
 
+// proveFns are the checked-mode form of an Unbox: the tag must be exactly
+// that scalar (q_prove_float does not widen an int).
+var proveFns = map[lower.Rep]string{
+	lower.RepInt:   "q_prove_int",
+	lower.RepFloat: "q_prove_float",
+	lower.RepBool:  "q_prove_bool",
+}
+
 var checkedArith = map[string]string{"+": "q_checked_add", "-": "q_checked_sub", "*": "q_checked_mul", "%": "q_checked_mod"}
 
 func (w *printer) exprs(es []lower.Expr) string {
@@ -424,6 +446,13 @@ func (w *printer) expr(e lower.Expr) string {
 		}
 		return fmt.Sprintf("%s(%s)", fn, w.expr(e.X))
 	case *lower.Unbox:
+		if w.checked {
+			fn, ok := proveFns[e.To]
+			if !ok {
+				panic(fmt.Sprintf("emit: can't prove %s", e.To))
+			}
+			return fmt.Sprintf("%s(%s)", fn, w.expr(e.X))
+		}
 		return fmt.Sprintf("(%s).data.%s", w.expr(e.X), unboxFields[e.To])
 	case *lower.Cast:
 		return fmt.Sprintf("(%s)(%s)", e.To, w.expr(e.X))

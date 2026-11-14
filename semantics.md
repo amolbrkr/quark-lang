@@ -365,7 +365,7 @@ The methods are listed in stdlib.md.
 
 ### 9.5 Tables
 
-A table (`tbl`) is an immutable, in-memory, columnar set of rows: one vec per column, all of one length, in the Arrow layout. Its design and decisions are in `specs/tables_v0_1_spec.md`.
+A table (`tbl`) is an immutable, in-memory, columnar set of rows: one vec per column, all of one length, in the Arrow layout. Its design and decisions are in `specs/tables_v0_1_spec.md`. `select`, `deselect`, `rename`, `distinct`, `n_distinct` and the engine fast paths are specified, and not implemented, in `specs/tables_v0_2_spec.md`. The column-wise table literal is deferred there.
 
 **Types.** `tbl[R]` is a table whose rows are the struct `R`: its columns are `R`'s fields, in field order, with their types, which must be `int`, `float`, `bool` or `str` (`struct S can't be a table row: field 'xs' is list[any]`). A bare `tbl` is a table whose row type the compiler doesn't know: it can be printed, written and passed on, but its columns can't be read and it can't be queried until it reaches a `tbl[R]` slot. A query step's output has an *anonymous* row, written by its shape: `tbl[{dept: str, n: int}]`. A table is never `null`.
 

@@ -57,13 +57,14 @@ func printUsage() {
 	fmt.Println("  lex <file>                    Tokenize a file and print tokens")
 	fmt.Println("  parse <file>                  Parse a file and print the AST")
 	fmt.Println("  check <file>                  Type check a file")
-	fmt.Println("  emit <file>                   Emit C++ code to stdout")
+	fmt.Println("  emit <file> [--checked]       Emit C++ code to stdout")
 	fmt.Println("  build <file> [-o out]         Compile to executable")
 	fmt.Println("  run <file> [--debug] [-- args] Compile and run; arguments after -- go to the program")
 	fmt.Println("  help                          Show this help message")
 	fmt.Println()
 	fmt.Println("Flags (run/build):")
 	fmt.Println("  --debug, -d    Keep the generated C++ file and print compiler commands")
+	fmt.Println("  --checked      Check the tag on every read the compiler proved (slower; same result when the proof holds)")
 	fmt.Println("  --lto          Enable link-time optimization")
 	fmt.Println("  --no-pch       Do not use the cached precompiled runtime header")
 	fmt.Println("  --lib-path <dir>       Search <dir> for extern link libraries (repeatable)")
@@ -107,6 +108,7 @@ func parseCommand(fs *flag.FlagSet, usage string, args []string) (string, bool) 
 // buildFlags are the flags shared by run and build.
 type buildFlags struct {
 	debug        bool
+	checked      bool
 	lto          bool
 	noPCH        bool
 	libPaths     repeatedFlag
@@ -123,6 +125,7 @@ func (r *repeatedFlag) Set(v string) error { *r = append(*r, v); return nil }
 func (f *buildFlags) register(fs *flag.FlagSet) {
 	fs.BoolVar(&f.debug, "debug", false, "")
 	fs.BoolVar(&f.debug, "d", false, "")
+	fs.BoolVar(&f.checked, "checked", false, "")
 	fs.BoolVar(&f.lto, "lto", false, "")
 	fs.BoolVar(&f.noPCH, "no-pch", false, "")
 	fs.Var(&f.libPaths, "lib-path", "")
@@ -191,8 +194,8 @@ func reportBuildError(err error) bool {
 
 // frontEnd runs the compiler front end through upTo and prints diagnostics.
 // It returns nil when compilation failed.
-func frontEnd(file string, upTo driver.Stage) *driver.Unit {
-	u := driver.CompileFile(file, upTo)
+func frontEnd(file string, upTo driver.Stage, opt driver.Options) *driver.Unit {
+	u := driver.CompileFileOptions(file, upTo, opt)
 	u.PrintDiagnostics()
 	if u.Failed() {
 		return nil
@@ -228,7 +231,7 @@ func cmdParse(args []string) int {
 	if !ok {
 		return 1
 	}
-	u := frontEnd(file, driver.StageParse)
+	u := frontEnd(file, driver.StageParse, driver.Options{})
 	if u == nil {
 		return 1
 	}
@@ -244,7 +247,7 @@ func cmdCheck(args []string) int {
 	if !ok {
 		return 1
 	}
-	if frontEnd(file, driver.StageCheck) == nil {
+	if frontEnd(file, driver.StageCheck, driver.Options{}) == nil {
 		return 1
 	}
 	fmt.Println("No errors found.")
@@ -252,11 +255,14 @@ func cmdCheck(args []string) int {
 }
 
 func cmdEmit(args []string) int {
-	file, ok := parseCommand(flag.NewFlagSet("emit", flag.ContinueOnError), "quark emit <file.qrk>", args)
+	var checked bool
+	fs := flag.NewFlagSet("emit", flag.ContinueOnError)
+	fs.BoolVar(&checked, "checked", false, "")
+	file, ok := parseCommand(fs, "quark emit <file.qrk> [--checked]", args)
 	if !ok {
 		return 1
 	}
-	u := frontEnd(file, driver.StageEmit)
+	u := frontEnd(file, driver.StageEmit, driver.Options{Checked: checked})
 	if u == nil {
 		return 1
 	}
@@ -270,7 +276,7 @@ func cmdBuild(args []string) int {
 	fs := flag.NewFlagSet("build", flag.ContinueOnError)
 	flags.register(fs)
 	fs.StringVar(&output, "o", "", "")
-	file, ok := parseCommand(fs, "quark build <file.qrk> [-o output] [--debug] [--lto] [--no-pch] [--lib-path dir] [--include-path dir] [--link-arg arg]", args)
+	file, ok := parseCommand(fs, "quark build <file.qrk> [-o output] [--debug] [--checked] [--lto] [--no-pch] [--lib-path dir] [--include-path dir] [--link-arg arg]", args)
 	if !ok {
 		return 1
 	}
@@ -280,7 +286,7 @@ func cmdBuild(args []string) int {
 	}
 	output = toolchain.ExeName(output)
 
-	u := frontEnd(file, driver.StageEmit)
+	u := frontEnd(file, driver.StageEmit, driver.Options{Checked: flags.checked})
 	if u == nil {
 		return 1
 	}
@@ -325,12 +331,12 @@ func cmdRun(args []string) int {
 	var flags buildFlags
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	flags.register(fs)
-	file, ok := parseCommand(fs, "quark run <file.qrk> [--debug] [--lto] [--no-pch] [--lib-path dir] [--include-path dir] [--link-arg arg] [-- program args...]", args)
+	file, ok := parseCommand(fs, "quark run <file.qrk> [--debug] [--checked] [--lto] [--no-pch] [--lib-path dir] [--include-path dir] [--link-arg arg] [-- program args...]", args)
 	if !ok {
 		return 1
 	}
 
-	u := frontEnd(file, driver.StageEmit)
+	u := frontEnd(file, driver.StageEmit, driver.Options{Checked: flags.checked})
 	if u == nil {
 		return 1
 	}

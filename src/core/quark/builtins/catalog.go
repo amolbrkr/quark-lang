@@ -102,8 +102,8 @@ var catalog = []Spec{
 	{Name: "to_vec", Runtime: "q_to_vec", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeAny, ReceiverType: TypeListAny},
 
 	// Dict methods (receiver = dict)
-	{Name: "get", Runtime: "q_dget", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeAny, ReceiverType: TypeDictAny},
-	{Name: "set", Runtime: "q_dset", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeAny, TypeAny}, ReturnType: TypeDictAny, ReceiverType: TypeDictAny},
+	{Name: "get", Runtime: "q_dget", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeAny, ReceiverType: TypeDictAny},
+	{Name: "set", Runtime: "q_dset", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeString, TypeAny}, ReturnType: TypeDictAny, ReceiverType: TypeDictAny},
 	{Name: "keys", Runtime: "q_dkeys", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeDictAny},
 	{Name: "values", Runtime: "q_dvalues", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeDictAny},
 	{Name: "items", Runtime: "q_ditems", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeDictAny},

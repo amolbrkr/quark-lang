@@ -6,21 +6,25 @@
 #include "../builtins/conversion.hpp"
 #include "../types/dict.hpp"
 
-// dget(dict, key) -> any
-// Key is converted to string via q_str when needed.
-inline QValue q_dget(QValue dict, QValue key) {
-    if (key.type != QValue::VAL_STRING) {
-        key = q_str(key);
+// q_dict_key checks the key of d.get(k) / d.set(k, v): dict keys are str,
+// and a key of another type is an error rather than converted, since
+// converting would make d.set(1, ...) and d.set('1', ...) the same key.
+inline void q_dict_key(QValue key, const char* method) {
+    if (key.type != QValue::VAL_STRING || key.data.string_val == nullptr) {
+        q_runtime_reportf("runtime error: %s: dict keys are str, got %s; convert it with to_str()\n", method, q_type_name(key.type));
+        std::exit(1);
     }
+}
+
+// dget(dict, key) -> any
+inline QValue q_dget(QValue dict, QValue key) {
+    q_dict_key(key, "get()");
     return q_dict_get(dict, key);
 }
 
 // dset(dict, key, value) -> dict
-// Key is converted to string via q_str when needed.
 inline QValue q_dset(QValue dict, QValue key, QValue value) {
-    if (key.type != QValue::VAL_STRING) {
-        key = q_str(key);
-    }
+    q_dict_key(key, "set()");
     return q_dict_set(dict, key, value);
 }
 

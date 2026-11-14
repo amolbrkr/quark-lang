@@ -181,7 +181,21 @@ func isStructType(t Type) bool {
 	return ok
 }
 
-// checkStructEquality rejects == / != on struct operands.
+// holdsStruct reports whether t is a list or dict whose elements are, or
+// hold, structs: == on it would compare structs.
+func holdsStruct(t Type) bool {
+	switch c := t.(type) {
+	case *ListType:
+		return isStructType(c.ElementType) || holdsStruct(c.ElementType)
+	case *DictType:
+		return isStructType(c.ValueType) || holdsStruct(c.ValueType)
+	}
+	return false
+}
+
+// checkStructEquality rejects == / != on struct operands, and on lists and
+// dicts that hold structs. Values the compiler can't see are checked at
+// runtime (values_equal, ops/comparison.hpp).
 func (a *Analyzer) checkStructEquality(node *ast.TreeNode, leftType, rightType Type, op token.TokenType) bool {
 	if isStructType(leftType) || isStructType(rightType) {
 		opStr := "=="
@@ -190,6 +204,16 @@ func (a *Analyzer) checkStructEquality(node *ast.TreeNode, leftType, rightType T
 		}
 		a.errorAt(node, "operator '%s' is not defined for struct values; compare fields explicitly", opStr)
 		return true
+	}
+	for _, t := range []Type{leftType, rightType} {
+		if holdsStruct(t) {
+			opStr := "=="
+			if op == token.NE {
+				opStr = "!="
+			}
+			a.errorAt(node, "operator '%s' is not defined for struct values, so not for a %s either; compare the fields of its elements", opStr, t.String())
+			return true
+		}
 	}
 	_, leftTable := leftType.(*TableType)
 	_, rightTable := rightType.(*TableType)

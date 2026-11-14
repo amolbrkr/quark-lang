@@ -316,13 +316,13 @@ Use the methods when the key is computed:
 
 | Method | Signature | Description |
 |---|---|---|
-| `.get(key)` | `any -> any` | Value for `key`, or `null` when it's missing, so the result has type `any` (`d.key` is the typed read, and errors on a missing key) |
-| `.set(key, val)` | `any, any -> dict` | Set `key`, in place; returns the same dict |
+| `.get(key)` | `str -> any` | Value for `key`, or `null` when it's missing, so the result has type `any` (`d.key` is the typed read, and errors on a missing key) |
+| `.set(key, val)` | `str, any -> dict` | Set `key`, in place; returns the same dict |
 | `.keys()` | `-> list[str]` | The keys |
 | `.values()` | `-> list` | The values, typed like the dict's values |
 | `.items()` | `-> list` | List of `{key, value}` dicts |
 
-`.get` and `.set` convert a non-string key with `to_str`: `d.set(1, 2)` stores the key `'1'`, and `d.get(1)` reads it. Iteration order of `.keys()`, `.values()` and `.items()` is not specified (printing sorts the keys).
+Keys are `str`: another key is a compile-time error when its type is known (`d.set(1, 2)`: `argument 1 of 'set' expects str, got int`), otherwise a runtime error (`set(): dict keys are str, got int; convert it with to_str()`). Convert a number explicitly, `d.set(to_str(id), v)`. Iteration order of `.keys()`, `.values()` and `.items()` is not specified (printing sorts the keys).
 
 ```quark
 mydict = dict { a: 1, b: 2 }
@@ -334,7 +334,6 @@ for item in mydict.items():
     print(item.key)
 ```
 
-Known issues (known_issues.md): `d.set(1, ...)` and `d.set('1', ...)` write the same key.
 
 ---
 

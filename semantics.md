@@ -155,7 +155,7 @@ Ordering any other pair, such as `'a' < 1` or `true < false`, is a runtime error
 | `result` | same tag (`ok`/`err`) and equal payloads |
 | `fn` | the same function value (`f == f`; two lambdas with the same body are different) |
 | `vec` | element-wise, giving `vec[bool]`. A vector nested in a list, dict or result compares as a whole: same dtype, length, null positions and values |
-| `struct` | compile-time error; compare fields explicitly |
+| `struct` | compile-time error, and so is `==` on a list or dict that holds structs; compare fields explicitly. Structs reached through untyped values (`any`, a `list` of any) are a runtime error when two of them are compared (`'==' is not defined for struct values`) |
 | `tbl` | error (compile time, or runtime through `any`); compare columns, `t.col == u.col` |
 
 Comparing a `result` with `null` is a compile-time error, since a result is never null. `==` that nests deeper than 512 levels (a container that contains itself) is a runtime error.
@@ -346,7 +346,7 @@ The methods are listed in stdlib.md.
 
 - Created with `dict { key: value }`; keys in a literal are identifiers.
 - A dict's **value type is fixed when it is created**, like a list's element type: `d = dict { a: 1 }`, then `d.b = 'x'` or `d.set('b', 'x')` is a compile-time error, and a write from untyped code is a runtime error (`can't store a str under key 'k' of a dict of int`). `d: dict = dict { a: 1 }` holds values of any type; an empty `dict {}` takes the type of its first value.
-- Keys are strings. `.get` and `.set` convert a non-string key to its string form, so `d.set(1, 2)` stores the key `'1'` and `d.get(1)` reads it back.
+- Keys are strings. `.get` and `.set` take a `str` key: another type is a compile-time error when the compiler knows it (`argument 1 of 'set' expects str, got int`), otherwise a runtime error (`set(): dict keys are str, got int; convert it with to_str()`). A key is never converted, so `1` and `'1'` can't silently become the same key; convert explicitly (`d.set(to_str(id), v)`).
 - `d.key` names a key in the source, so reading a missing key with it is a runtime error: `dict has no key 'nmae'; use .get('nmae') if the key may be missing`. `d.get(key)` returns `null` for a missing key, so its type is `any`, whatever the dict's value type.
 - `d['key']` is a compile-time error (use `d.key` or `d.get('key')`). A dict isn't iterable; loop over `d.keys()`, `d.values()` or `d.items()`.
 
@@ -526,6 +526,8 @@ A runtime error prints its message and source location to stderr and exits with 
 | A float or string that doesn't fit an int, or NaN, converted with `to_int`, `floor`, `ceil` or `round` | `floor() can't convert 1e+30 to an int: it is outside the int range` |
 | A value of the wrong type reaching an annotated parameter, variable, field or return | `argument 'x' of 'foo' expects int, got str` |
 | A wrong-typed write into a list or dict from untyped code | `push() can't add a str to a list of int` |
+| A dict key that isn't a `str`, from untyped code | `set(): dict keys are str, got int; convert it with to_str()` |
+| `==` on two structs reached through untyped values | `'==' is not defined for struct values; compare their fields (a.x == b.x)` |
 | `d.key` on a missing key | `dict has no key 'b'; use .get('b') if the key may be missing` |
 | Dot access on a value that isn't a dict or struct, or on `null` | `cannot access member 'name' on null` |
 | A method the value's type doesn't have (dynamic dispatch, §15) | `type 'int' has no method 'upper'` |

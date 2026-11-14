@@ -25,14 +25,10 @@ When a change fixes an issue, delete its entry here and describe the fix under F
 
 **The lexer accepts an unclosed string.** It ends at the end of the line with no error: `msg = "hello` then `print(msg)` prints `hello`.
 
-**Structs.**
-- `==` on structs reached through an untyped path is always `false`, with no error: `struct P:` / `x: int`, `fn id(v) -> v`, `a = P { x: 1 }`, then `print(id(a) == id(a))` and `print(list [a] == list [a])` both print `false`. A direct `a == a` is a compile error (structs have no `==`).
-
 **`print`.**
 - A misspelled `print` alignment is ignored: `print('x', '|\n', 5, 'rigth', '.')` prints `x....|` (left-aligned) with no error.
 
 **Runtime numbers and edge cases.**
-- `d.set(1, 'a')` and `d.set('1', 'b')` write the same key: `d` prints `{'1': 'b'}`.
 - `io::read` stops at a NUL byte: on a file containing `ab\0cd`, the first read returns `ab` and the next returns `''`.
 - Two-argument `min`/`max` with NaN depend on the order: `min(n, 1.0)` with `n = to_float('nan')` is `1.0`, but `min(1.0, n)` is `nan` (vec reductions skip NaN). Sorting a list that contains NaN is undefined behavior in the C++ sort.
 

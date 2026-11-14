@@ -979,6 +979,19 @@ func TestSemanticsSafety_Rejected(t *testing.T) {
 		{"fillna_float_into_int_any", "fn id(v) -> v\nprint(vec [1, 2].fillna(id(2.7)))\n", "fillna() can't fill vec[i64] with float"},
 		{"fillna_on_any_vec", "fn id(v) -> v\nprint(id(vec ['a']).fillna(1))\n", "fillna() can't fill vec[str] with int"},
 		{"fillna_null_any", "fn id(v) -> v\nprint(vec [1.5].fillna(id(null)))\n", "fillna() can't fill vec[f64] with null"},
+		// Structs have no ==, wherever the compiler meets them: as operands,
+		// in lists and dicts, and at runtime through untyped values.
+		{"struct_eq_any", "struct P:\n    x: int\nfn id(v) -> v\na = P { x: 1 }\nprint(id(a) == id(a))\n", "'==' is not defined for struct values; compare their fields"},
+		{"struct_ne_any_list", "struct P:\n    x: int\nfn id(v) -> v\na = P { x: 1 }\nprint(id(list [a]) != id(list [a]))\n", "'==' is not defined for struct values"},
+		{"struct_eq_mixed_list", "struct P:\n    x: int\na = P { x: 1 }\nxs: list = list [a]\nys: list = list [a]\nprint(xs == ys)\n", "'==' is not defined for struct values"},
+		{"struct_eq_list_static", "struct P:\n    x: int\na = P { x: 1 }\nprint(list [a] == list [a])\n", "operator '==' is not defined for struct values, so not for a list[P] either"},
+		{"struct_eq_dict_static", "struct P:\n    x: int\na = P { x: 1 }\nprint(dict { k: list [a] } != dict { k: list [a] })\n", "operator '!=' is not defined for struct values, so not for a dict[str, list[P]] either"},
+		// Dict keys are str; another type is an error, not converted.
+		{"dict_set_int_key", "d = dict {}\nd.set(1, 'a')\n", "argument 1 of 'set' expects str, got int"},
+		{"dict_get_int_key", "d = dict { a: 1 }\nprint(d.get(1))\n", "argument 1 of 'get' expects str, got int"},
+		{"dict_set_int_key_any", "fn id(v) -> v\nd = dict {}\nd.set(id(1), 'a')\n", "set(): dict keys are str, got int; convert it with to_str()"},
+		{"dict_get_null_key_any", "fn id(v) -> v\nd = dict { a: 1 }\nprint(d.get(id(null)))\n", "get(): dict keys are str, got null"},
+		{"dict_key_dynamic_receiver", "fn id(v) -> v\nx = id(dict { a: 1 })\nprint(x.get(1))\n", "get(): dict keys are str, got int"},
 		// Exit statuses outside 0-255 would wrap (256 reads as success).
 		{"sys_exit_256", "incl 'std/sys'\nsys::exit(256)\n", "sys::exit() status must be between 0 and 255, got 256"},
 		{"sys_exit_negative", "incl 'std/sys'\nsys::exit(-1)\n", "sys::exit() status must be between 0 and 255, got -1"},

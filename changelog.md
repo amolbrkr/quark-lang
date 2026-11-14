@@ -61,6 +61,8 @@ Fixes from the "Wrong results with no error" section of `known_issues.md`: each 
   for i in range(floor(n / 2)):   // ok
   ```
 - **`fillna`'s value must have the vec's element type**, like a write into a typed list: an int or float for a float vec, an int for an int vec (`vec [1, 2].fillna(2.7)` stored `2`), a bool for a bool vec (an int was accepted), a str for a str vec. It is checked at compile time when both types are known (`fillna() can't fill vec[int] with float`), and at runtime even when nothing is missing, so a wrong fill fails on every input.
+- **Dict keys are `str`, and are never converted.** `.get` and `.set` converted another key to its text, so `d.set(1, 'a')` and `d.set('1', 'b')` wrote the same key. A non-str key is now a compile-time error when its type is known (`argument 1 of 'set' expects str, got int`) and a runtime error otherwise (`set(): dict keys are str, got int; convert it with to_str()`); write `d.set(to_str(id), v)`.
+- **`==` on a list or dict that holds structs is a compile-time error**, as `==` on two structs already was (`operator '==' is not defined for struct values, so not for a list[P] either`).
 - **`sys::exit` takes a status between 0 and 255.** The OS keeps only the low 8 bits, so `sys::exit(256)` exited with 0 (success); a code outside the range is now a runtime error.
 - **The standard library is never taken from near the program.** `std/` imports come from `QUARK_STDLIB_ROOT` or from the stdlib next to the compiler. A directory named `stdlib` in the program's directory or above it is no longer used, and a `QUARK_STDLIB_ROOT` that isn't a directory is an error (`QUARK_STDLIB_ROOT is '/x', which is not a directory`) instead of being skipped.
 
@@ -69,12 +71,14 @@ Fixes from the "Wrong results with no error" section of `known_issues.md`: each 
 - A directory named `stdlib` above a program (`/tmp/x/stdlib/io.qrk` for `/tmp/x/a/main.qrk`) silently replaced the standard library.
 - List and str methods use the whole 64-bit index: `list [10, 20, 30].get(4294967296)` returned `10` and `xs.set(4294967297, 99)` wrote element 1; now they are `null` and an out-of-range error, as for `xs[i]`. The same for `insert`, `remove`, `slice` and `str.slice`.
 - Numbers that don't fit an int are runtime errors instead of wrong values: `abs` of the smallest int (was `0`), `to_int('99999999999999999999')` (was the largest int), and `to_int`, `floor`, `ceil` and `round` of NaN, an infinity or a float outside the int range (`floor(1e30)`: `floor() can't convert 1e+30 to an int: it is outside the int range`).
+- `==` on two structs reached through an untyped path (`fn id(v) -> v`, then `id(a) == id(a)`, or two lists of any holding structs) was always `false`; it is now a runtime error (`'==' is not defined for struct values; compare their fields (a.x == b.x)`). To compare structs, compare their fields: `a.x == b.x and a.y == b.y`.
 - A range near the int64 limits ends: `range(9223372036854775800, 9223372036854775807, 5)` never ended, and a `for` loop over it wrapped around to negative numbers.
 - Assigning the variable of `for i in range(...)` in the loop body changed the iteration (`i = i + 2` made the loop skip values); the loop now visits every value of the range, as a loop over a list does.
 
 ### Internal
 - The loader gives each extern method its file's internal name, `q<N>__<name>__m` (`names.Method`), and renames the method calls of that file to it (`collectMethods`, `renameMethodCall`); the duplicate and prelude-name checks moved there from the analyzer. `findStdlibRoot` takes no path and returns an error naming where it looked. `internal/testutil` sets `QUARK_STDLIB_ROOT` to the repository's stdlib, since a test binary isn't next to it.
 - `core/checked.hpp` gains `q_resolve_index` (64-bit index resolution for lists and strings), `q_checked_abs` and `q_checked_f2i` (the one checked float-to-int conversion). A lowered `range` loop counts its iterations (`q_range_count`, computed in unsigned arithmetic) and computes the variable from the count (`q_range_at`), and the `range` builtins build their lists the same way; the verifier requires the start to be a temporary or constant too. `fillna` gets a compile-time check next to the typed-list writes (`checkMutation`).
+- Dict `.get`/`.set` take a `str` key in the catalog, and `q_dget`/`q_dset` check it (`q_dict_key`) instead of converting it. `values_equal` (`ops/comparison.hpp`) stops at two structs; the analyzer's `checkStructEquality` also rejects lists and dicts that hold structs (`holdsStruct`).
 
 ---
 

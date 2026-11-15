@@ -12,17 +12,17 @@
 inline double q_stats_mean(QVector* v) {
     if (v == nullptr || !q_vec_validate(*v)) {
         q_runtime_reportf("runtime error: stats::mean() expects a vec\n");
-        std::exit(1);
+        q_exit(1);
     }
     if (v->type == QVector::Type::STR) {
         q_runtime_reportf("runtime error: stats::mean() expects a numeric or bool vec, got vec[str]\n");
-        std::exit(1);
+        q_exit(1);
     }
     size_t count = 0;
     const double mean = q_vec_mean_present(*v, &count);
     if (count == 0) {
         q_runtime_reportf("runtime error: stats::mean() of a vec with no present values\n");
-        std::exit(1);
+        q_exit(1);
     }
     return mean;
 }

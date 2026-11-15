@@ -10,6 +10,7 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 
 ## Contents
 
+- [2026-11-14: REPL](#2026-11-14-repl)
 - [2026-11-14: FFI phase 2 (glue sources, handles, results)](#2026-11-14-ffi-phase-2-glue-sources-handles-results)
 - [2026-11-14: Tables v0.2](#2026-11-14-tables-v02)
 - [2026-11-14: Standard library: sys, time and random](#2026-11-14-standard-library-sys-time-and-random)
@@ -43,6 +44,27 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 - [2026-04-03: Table runtime scaffolding; struct fixes](#2026-04-03-table-runtime-scaffolding-struct-fixes)
 - [2026-04-02: Structs v0.1](#2026-04-02-structs-v01)
 - [2026-03-28: Vector soundness, `std/fmt` on `extern`, build output](#2026-03-28-vector-soundness-stdfmt-on-extern-build-output)
+
+## 2026-11-14: REPL
+
+`quark repl` opens an interactive session (`specs/repl_v0_1_spec.md`). Each input is compiled with the same compiler as `quark run` and runs in a long-lived process, so variables, functions and structs survive from one input to the next. A compile error, a runtime error, Ctrl-C or a crash in native code ends that input only. Linux, macOS and Windows.
+
+```
+$ quark repl
+> n = 4
+> fn sq(x: int) int -> x * x
+> sq(n)
+16
+```
+
+The last bare expression of an input is printed. A top-level variable may be given a value of another type later in the session, with a warning, unless a function uses it. An `int`, `float` or `bool` at the top level is stored as a raw number, so `n = n + 1` lowers the way it does in a file. Inputs are compiled at `-O0`; the runtime they call is compiled at `-O3`.
+
+### Internal
+
+- One host process owns the GC and the session slots. On Linux and macOS each input is a shared library and the host forks: the child loads the library and, on success, becomes the host, so a runtime error leaves the previous values in place. On Windows there is no `fork`. The input runs in the host, which copies the session first and puts the copy back if the input fails.
+- The committed inputs are re-analysed with the new one. Only the new input is lowered. `INV-REPL-STABLE` stops the session if that re-analysis renames something an earlier input already compiled.
+
+---
 
 ## 2026-11-14: FFI phase 2 (glue sources, handles, results)
 

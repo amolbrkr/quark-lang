@@ -51,7 +51,7 @@ inline QValue q_lt(QValue a, QValue b) {
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
         q_runtime_reportf("runtime error: operator '<' expects two numbers or two strings\n");
-        std::exit(1);
+        q_exit(1);
     }
     return qv_bool(q_values_ordered(a, b, "<"));
 }
@@ -69,7 +69,7 @@ inline QValue q_lte(QValue a, QValue b) {
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
         q_runtime_reportf("runtime error: operator '<=' expects two numbers or two strings\n");
-        std::exit(1);
+        q_exit(1);
     }
     return qv_bool(q_values_ordered(a, b, "<="));
 }
@@ -87,7 +87,7 @@ inline QValue q_gt(QValue a, QValue b) {
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
         q_runtime_reportf("runtime error: operator '>' expects two numbers or two strings\n");
-        std::exit(1);
+        q_exit(1);
     }
     return qv_bool(q_values_ordered(a, b, ">"));
 }
@@ -105,7 +105,7 @@ inline QValue q_gte(QValue a, QValue b) {
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
         q_runtime_reportf("runtime error: operator '>=' expects two numbers or two strings\n");
-        std::exit(1);
+        q_exit(1);
     }
     return qv_bool(q_values_ordered(a, b, ">="));
 }
@@ -150,7 +150,7 @@ inline bool vectors_identical(const QVector& a, const QVector& b) {
 inline bool values_equal(const QValue& a, const QValue& b, int depth) {
     if (depth > kMaxEqualityDepth) {
         q_runtime_reportf("runtime error: '==' nesting too deep (cyclic list or dict?)\n");
-        std::exit(1);
+        q_exit(1);
     }
     if (a.type != b.type) {
         if ((a.type == QValue::VAL_INT || a.type == QValue::VAL_FLOAT) &&
@@ -222,11 +222,11 @@ inline bool values_equal(const QValue& a, const QValue& b, int depth) {
             // Rejected at compile time where the types are known; reached
             // through untyped values (any, a list of any).
             q_runtime_reportf("runtime error: '==' is not defined for struct values; compare their fields (a.x == b.x)\n");
-            std::exit(1);
+            q_exit(1);
         case QValue::VAL_TABLE:
             // Rejected at compile time where the types are known.
             q_runtime_reportf("runtime error: '==' is not defined for tables; compare their columns (t.col == u.col compares elementwise)\n");
-            std::exit(1);
+            q_exit(1);
         default:
             return false;
     }
@@ -248,7 +248,7 @@ inline QValue q_eq(QValue a, QValue b) {
 inline bool q_match_eq(QValue a, QValue b) {
     if (a.type == QValue::VAL_VECTOR || b.type == QValue::VAL_VECTOR) {
         q_runtime_reportf("runtime error: when can't match a vec (== on a vec compares elementwise); test all(v == x) or any(v == x) with if instead\n");
-        std::exit(1);
+        q_exit(1);
     }
     return quark::detail::values_equal(a, b, 0);
 }

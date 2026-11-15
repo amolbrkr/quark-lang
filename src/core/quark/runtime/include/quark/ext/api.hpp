@@ -59,14 +59,14 @@ inline char* strdup(const char* s)   { return q_strdup(s); }
 // Terminate the program with a plain error message.
 [[noreturn]] inline void panic(const char* msg) {
     q_runtime_reportf("extension error: %s\n", msg);
-    std::exit(1);
+    q_exit(1);
 }
 
 // Terminate the program with a printf-style formatted message.
 template <typename... Args>
 [[noreturn]] inline void panicf(const char* fmt, Args... args) {
     q_runtime_reportf(fmt, args...);
-    std::exit(1);
+    q_exit(1);
 }
 
 // ------------------------------------------------------------
@@ -502,7 +502,7 @@ inline const char* q_as_type_name(QValue::ValueType t) {
 
 [[noreturn]] inline void q_as_type_panic(const char* expected, QValue::ValueType got) {
     q_runtime_reportf("runtime error: expected %s, got %s\n", expected, q_as_type_name(got));
-    std::exit(1);
+    q_exit(1);
 }
 
 inline int64_t q_as_int(QValue v) {
@@ -562,7 +562,7 @@ inline QTable* q_as_table(QValue v) {
 // fn that returns nullptr is an error: those types don't include null.
 [[noreturn]] inline void q_native_null_return(const char* type) {
     q_runtime_reportf("runtime error: a native function declared to return %s returned a null pointer\n", type);
-    std::exit(1);
+    q_exit(1);
 }
 
 inline QValue q_box_native_str(const char* v) {

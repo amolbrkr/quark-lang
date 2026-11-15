@@ -9,6 +9,7 @@ import (
 
 	"quark/ir"
 	"quark/lower"
+	"quark/types"
 )
 
 type printer struct {
@@ -40,28 +41,40 @@ func ProgramOptions(p *lower.Program, opt Options) string {
 			w.raw("#include \"%s\"\n", esc(inc))
 		}
 	}
+	if p.Session != nil {
+		w.raw("#include \"quark/repl/state.hpp\"\n")
+		w.sessionExterns(p)
+	}
 	w.raw("\n// Forward declarations\n")
 	for _, f := range p.Decls {
-		types := []string{"QClosure*"}
-		for _, prm := range f.Params {
-			types = append(types, prm.CType)
-		}
-		w.line("%s %s(%s);", f.Ret, f.CName, strings.Join(types, ", "))
+		w.fnDecl(f)
 	}
 	w.raw("\n")
 	for _, fi := range p.FnInfos {
 		defaults := "nullptr"
 		if fi.DefaultsFn != "" {
-			w.line("static QValue %s(int index);", fi.DefaultsFn)
+			dkw := "static "
+			if fi.Exported {
+				dkw = ""
+			}
+			w.line("%sQValue %s(int index);", dkw, fi.DefaultsFn)
 			defaults = fi.DefaultsFn
 		}
-		w.line("static const QFnInfo %s = {\"%s\", %d, %d, %s};", fi.CName, esc(fi.Display), fi.Min, fi.Max, defaults)
+		kw := "static "
+		if fi.Exported {
+			kw = ""
+		}
+		w.line("%sconst QFnInfo %s = {\"%s\", %d, %d, %s};", kw, fi.CName, esc(fi.Display), fi.Min, fi.Max, defaults)
 	}
 	w.raw("\n")
 	if len(p.Structs) > 0 {
 		w.raw("// Struct type definitions\n")
+		sk := "static "
+		if p.Session != nil {
+			sk = ""
+		}
 		for _, s := range p.Structs {
-			w.line("static const char* _sfields_%s[] = {", s.CName)
+			w.line("%sconst char* _sfields_%s[] = {", sk, s.CName)
 			w.ind++
 			for _, f := range s.Fields {
 				w.line("\"%s\",", esc(f))
@@ -69,15 +82,15 @@ func ProgramOptions(p *lower.Program, opt Options) string {
 			w.ind--
 			w.line("};")
 			if s.Dtypes == nil {
-				w.line("static const QStructDef _sdef_%s = {\"%s\", _sfields_%s, %d};", s.CName, esc(s.Display), s.CName, len(s.Fields))
+				w.line("%sconst QStructDef _sdef_%s = {\"%s\", _sfields_%s, %d};", sk, s.CName, esc(s.Display), s.CName, len(s.Fields))
 				continue
 			}
 			dts := make([]string, len(s.Dtypes))
 			for i, d := range s.Dtypes {
 				dts[i] = fmt.Sprint(d)
 			}
-			w.line("static const signed char _sdtypes_%s[] = {%s};", s.CName, strings.Join(dts, ", "))
-			w.line("static const QStructDef _sdef_%s = {\"%s\", _sfields_%s, %d, _sdtypes_%s, %t};", s.CName, esc(s.Display), s.CName, len(s.Fields), s.CName, s.Anonymous)
+			w.line("%sconst signed char _sdtypes_%s[] = {%s};", sk, s.CName, strings.Join(dts, ", "))
+			w.line("%sconst QStructDef _sdef_%s = {\"%s\", _sfields_%s, %d, _sdtypes_%s, %t};", sk, s.CName, esc(s.Display), s.CName, len(s.Fields), s.CName, s.Anonymous)
 		}
 		w.raw("\n")
 	}
@@ -97,7 +110,11 @@ func ProgramOptions(p *lower.Program, opt Options) string {
 		w.raw("\n")
 	}
 	for _, df := range p.DefaultArgFns {
-		w.raw("static QValue %s(int index) {\n", df.CName)
+		kw := "static "
+		if p.Session != nil && !df.Internal {
+			kw = ""
+		}
+		w.raw("%sQValue %s(int index) {\n", kw, df.CName)
 		w.ind++
 		w.line("switch (index) {")
 		for _, c := range df.Cases {
@@ -114,6 +131,10 @@ func ProgramOptions(p *lower.Program, opt Options) string {
 	}
 	for _, f := range p.Funcs {
 		w.fn(f)
+	}
+	if p.Session != nil {
+		w.sessionEntry(p)
+		return w.b.String()
 	}
 	w.raw("static void quark__entry() {\n")
 	w.ind++
@@ -150,18 +171,37 @@ func (w *printer) line(format string, args ...interface{}) {
 	w.b.WriteByte('\n')
 }
 
+func (w *printer) fnDecl(f *lower.Func) {
+	kw := ""
+	if f.Internal {
+		kw = "static "
+	}
+	types := []string{"QClosure*"}
+	for _, prm := range f.Params {
+		types = append(types, prm.CType)
+	}
+	w.line("%s%s %s(%s);", kw, f.Ret, f.CName, strings.Join(types, ", "))
+}
+
 func (w *printer) fn(f *lower.Func) {
+	kw := ""
+	if f.Internal {
+		kw = "static "
+	}
 	params := []string{"QClosure* _cl"}
 	for _, p := range f.Params {
 		params = append(params, p.CType+" "+p.CName)
 	}
-	w.raw("%s %s(%s) {\n", f.Ret, f.CName, strings.Join(params, ", "))
+	w.raw("%s%s %s(%s) {\n", kw, f.Ret, f.CName, strings.Join(params, ", "))
 	w.ind++
 	if f.LocGuard {
 		w.line("QSourceLocGuard _loc_guard;")
 	}
 	for i, sym := range f.Captures {
 		w.line("QCell* %s = _cl->captures[%d];", sym.CName, i)
+	}
+	for _, sym := range f.Session {
+		w.bindSlot(sym)
 	}
 	w.block(f.Body)
 	w.ind--
@@ -210,6 +250,9 @@ func (w *printer) stmt(s lower.Stmt) {
 			w.line("%s->value = %s;", s.Sym.CName, w.expr(s.Value))
 		} else {
 			w.line("%s = %s;", s.Sym.CName, w.expr(s.Value))
+		}
+		if s.Sym.Session && s.Sym.Storage.IsScalar() {
+			w.line("q_repl_%s_live[%d] = 1;", slotKind(s.Sym), s.Sym.Slot)
 		}
 	case *lower.SetField:
 		w.line("%s->fields[%d] = %s;", w.expr(s.Obj), s.Index, w.expr(s.Value))
@@ -431,6 +474,9 @@ func (w *printer) expr(e lower.Expr) string {
 			}
 			return e.Sym.CName + "->value"
 		}
+		if e.Sym.Session && e.Checked && e.Sym.Storage.IsScalar() {
+			return fmt.Sprintf("q_repl_%s_get(%d, \"%s\")", slotKind(e.Sym), e.Sym.Slot, esc(e.Display))
+		}
 		return e.Sym.CName
 	case *lower.ParamRef:
 		return e.P.CName
@@ -532,4 +578,60 @@ func (w *printer) expr(e lower.Expr) string {
 		panic("emit: a closure must be bound by a Let")
 	}
 	panic(fmt.Sprintf("emit: unhandled expression %T", e))
+}
+
+func (w *printer) sessionExterns(p *lower.Program) {
+	s := p.Session
+	for _, st := range s.ExternStructs {
+		w.line("extern const QStructDef _sdef_%s;", st.CName)
+	}
+	for _, name := range s.ExternDefaults {
+		w.line("extern QValue %s(int index);", name)
+	}
+	for _, fi := range s.ExternInfos {
+		w.line("extern const QFnInfo %s;", fi.CName)
+	}
+	for _, f := range s.Extern {
+		w.fnDecl(f)
+	}
+	if len(s.ExternStructs)+len(s.ExternDefaults)+len(s.ExternInfos)+len(s.Extern) > 0 {
+		w.raw("\n")
+	}
+}
+
+func (w *printer) sessionEntry(p *lower.Program) {
+	s := p.Session
+	w.raw("#ifdef _WIN32\nextern \"C\" __declspec(dllexport) void quark_input_%d() {\n#else\nextern \"C\" void quark_input_%d() {\n#endif\n", s.Input, s.Input)
+	w.ind++
+	w.line("q_repl_ensure(%d, %d, %d, %d);", s.NInt, s.NFloat, s.NBool, s.NCell)
+	for _, sym := range s.Binds {
+		w.bindSlot(sym)
+	}
+	w.block(p.Main)
+	w.ind--
+	w.raw("}\n")
+}
+
+func (w *printer) bindSlot(sym *types.Symbol) {
+	switch sym.Storage {
+	case ir.StorageInt:
+		w.line("long long& %s = q_repl_i64[%d];", sym.CName, sym.Slot)
+	case ir.StorageFloat:
+		w.line("double& %s = q_repl_f64[%d];", sym.CName, sym.Slot)
+	case ir.StorageBool:
+		w.line("bool& %s = q_repl_bool[%d];", sym.CName, sym.Slot)
+	default:
+		w.line("QCell* %s = q_repl_cell[%d];", sym.CName, sym.Slot)
+	}
+}
+
+func slotKind(sym *types.Symbol) string {
+	switch sym.Storage {
+	case ir.StorageFloat:
+		return "f64"
+	case ir.StorageBool:
+		return "bool"
+	default:
+		return "i64"
+	}
 }

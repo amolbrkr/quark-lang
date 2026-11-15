@@ -36,7 +36,7 @@ inline QCell* q_new_unassigned_cell() {
 inline QValue q_cell_get(QCell* cell, const char* name) {
     if (cell->value.type == QValue::VAL_NULL && cell->value.data.func_val == &q_unassigned_tag) {
         q_runtime_reportf("runtime error: '%s' is used before it is assigned\n", name);
-        std::exit(1);
+        q_exit(1);
     }
     return cell->value;
 }

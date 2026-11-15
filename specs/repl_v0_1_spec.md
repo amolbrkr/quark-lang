@@ -1,7 +1,7 @@
 # Quark REPL v0.1 Spec
 
-Status: Proposal; nothing is implemented. Open: the line-editing dependency (§8, decision 11).
-Last Updated: 2026-11-13
+Status: Implemented. On Windows an input runs in the host process and a failed input is rolled back from a copy of the session (§5.6); on Linux and macOS the host uses `fork`.
+Last Updated: 2026-11-14
 Scope: `quark repl`, an interactive session that compiles each input with the normal compiler and runs it in a long-lived process. Notebooks and Jupyter kernels are out of scope (§7).
 
 ## Contents
@@ -182,7 +182,7 @@ If an untyped path (`any`) put a value in the container before the input that fi
 - **The host** (C++, a new `runtime/repl/host.cpp`): the runtime and the GC with a loop that runs inputs. It is built once and cached (§5.2). It gets commands and sends results over two pipes; its standard output and error are the terminal's, so program output is never relayed.
 - **Running an input.** The host flushes its output and forks. The child `dlopen`s the input's library (`RTLD_NOW | RTLD_GLOBAL`), calls its entry function, flushes its output, reports success and becomes the waiting host; the parent learns of the success through a private pipe and exits. If the child exits instead (a runtime error prints its message and calls `exit(1)`, as in a program), the parent reports the failure and keeps waiting with the state from before the input. Runtime errors need no change in the runtime.
 - **Ctrl-C.** While an input runs, the terminal sends `SIGINT` to the whole process group. `quark repl` and the waiting host ignore it; the child keeps the default action and stops. At the prompt the terminal is in raw mode, so Ctrl-C is a key, not a signal.
-- **GC.** The host enables the GC's fork handling (`GC_set_handle_fork`) before initializing it, so every child can collect. Session variables live in a table of `QCell*` that the host owns (`q_repl_slots`, scanned by the GC). The libraries of inputs hold no GC roots of their own.
+- **GC.** The host enables the GC's fork handling (`GC_set_handle_fork`) before initializing it, so every child can collect. Session variables live in the host. An `int`, `float` or `bool` is a raw slot (`long long`, `double`, `bool`); every other value is a `QCell*`. The cell array is scanned by the GC. The scalar arrays are atomic, so they are not. The libraries of inputs hold no GC roots of their own.
 - **Libraries are never unloaded**, so the code and static data of every input (source locations, `QFnInfo`, `QStructDef`) stay valid for the whole session.
 - **Cost.** A fork copies the process's page tables, so it grows with the heap; the tests measure it on a heap of several GB.
 
@@ -208,7 +208,7 @@ If an untyped path (`any`) put a value in the container before the input that fi
 ### 5.4 Lowering and emission in session mode
 
 - The entry function is `extern "C" void quark_input_<N>()` instead of `main`; the host has already initialized the GC and the arguments.
-- Every variable assigned at the top level of an input is a session variable: a cell in the host's table, read with `q_cell_get` (with the check for "used before assigned", which a function called earlier in the input than the assignment needs, as for a captured variable in a file). Arithmetic on session variables is therefore boxed; raw scalar storage is deferred (§7).
+- Every variable assigned at the top level of an input is a session variable in the host's table. An `int`, `float` or `bool` is a raw slot, so arithmetic on it lowers the way it does in a file (`q_checked_add` on a `long long`, a C++ operator on a `double`). Anything else is a `QCell*`, read with `q_cell_get` when a function in the same input may run before the assignment, the same check a captured variable gets in a file. Each function binds the slots it uses once, at entry.
 - Top-level `fn` declarations read session variables from the table instead of capturing them, so every one is a plain C++ function (`DispatchDirect`, or `DispatchNative` when fully annotated), called directly from later inputs as well. Closures inside functions work as in a file.
 - What later inputs refer to by name gets external linkage under its internal name: top-level functions, their thunks and default-argument functions, `_qfi_` infos, `_sdef_` struct definitions. Later inputs declare these `extern`, and the dynamic linker binds them when the input is loaded. Everything else (temporaries, lambdas, location tables) has internal linkage, so the counters that name them can restart with every input.
 - A last statement shown by §3.3 is lowered as `q_print` of its value.
@@ -218,12 +218,14 @@ If an untyped path (`any`) put a value in the container before the input that fi
 
 ### 5.5 Line input
 
-- Raw mode, line editing, history and bracketed paste come from `golang.org/x/term` (decision 11). When standard input isn't a terminal, lines are read as they come.
+- Raw mode, line editing, history within the session and bracketed paste are built on `golang.org/x/term`. When standard input isn't a terminal, lines are read as they come, with no prompts.
 - Whether an input goes on (§3.6) is decided from the lexer's tokens: an open bracket, or a first line whose last token is `:` or `->`.
 
 ### 5.6 Platforms
 
-Linux and macOS. Windows is deferred: it has no `fork`, and loading inputs would need the host to export the runtime from an executable as DLL symbols.
+Linux, macOS and Windows.
+
+On Linux and macOS the host forks for each input, as in §5.1. Windows has no `fork`. There the input runs in the host process. Before it runs, the host copies the session values (lists, dicts, structs and closures are copied; strings, vectors and tables are immutable and are shared). `q_exit`, which is what a runtime error calls, returns to the host instead of ending the process, and an access violation is caught the same way. The host then puts the copy back, so the input leaves no values behind. Ctrl-C does the same and is reported as `interrupted`. A file the input already wrote is not undone, same as on Unix. Closing a file that was open before the input does close it: the host and the input are one process, so there is no second file descriptor to keep.
 
 ## 6. Tests
 
@@ -243,8 +245,6 @@ An integration test file (`integration_repl_test.go`) runs `quark repl` with inp
 
 - Notebooks, a Jupyter kernel and rich output (HTML tables, plots): when the language surface is stable.
 - Redefining a `fn` or `struct`, and a type change of a variable that a function uses: both need the functions that use the old definition recompiled against the new one.
-- Raw scalar storage for session variables.
-- Windows.
 - REPL commands (`:help`, `:reset`, `:type x`), completion, history kept between sessions.
 - Continuing a typed input with an indented pipe line.
 - The optimization level of inputs, and using the runtime object for `quark run`: in the pipeline review, after the table work lands.
@@ -253,12 +253,12 @@ An integration test file (`integration_repl_test.go`) runs `quark repl` with inp
 
 1. **A host process plus one shared library per input** (§2): the REPL runs the same compiled code as a program.
 2. **A session follows the rules of a file**; the differences are only those in §3.8.
-3. **Fork per input**, not unwinding to the start of the input: runtime errors keep calling `exit(1)`, Ctrl-C and native crashes stop only the input, and no input is ever half-applied. The costs: Linux and macOS only, and a fork whose time grows with the heap.
+3. **Fork per input on Linux and macOS**, not unwinding to the start of the input: runtime errors keep calling `exit`, Ctrl-C and native crashes stop only the input, and no input is ever half-applied. The cost is a fork whose time grows with the heap. Windows has no `fork`; it copies the session and restores the copy (§5.6). `exit` there returns to the host.
 4. **Redefining `fn` and `struct` is an error**, as in a file.
 5. **A variable may change type with a warning**, but only when no function uses it; otherwise those functions would compute with the old value.
 6. **The last bare expression is shown.**
 7. **An empty container's element type is fixed by its first write**, even in a later input, as in a file; a runtime check covers writes the analyser can't see.
 8. **Re-analysis of the committed inputs** for every new input, not analyser state kept between inputs: a failed input needs no undo.
 9. **Inputs compile at `-O0`** against the `-O3` runtime: about 0.2 s per input. Revisited in the pipeline review.
-10. **Session variables are cells** (boxed) in v0.1.
-11. **Open:** line editing with `golang.org/x/term`, which would be the module's first dependency. The alternative is no line editing (users wrap the REPL in `rlwrap`).
+10. **Session `int`, `float` and `bool` variables are raw slots** in the host. Every other session variable is a `QCell*`. A top-level numeric loop then lowers like the same loop in a file, and differs by the input's `-O0`.
+11. **Line editing uses `golang.org/x/term`** for raw mode and to tell a terminal from a pipe. The editor (cursor keys, history within the session, bracketed paste) is part of the REPL. History is not kept after the session ends.

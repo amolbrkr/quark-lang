@@ -36,7 +36,7 @@ type FixedFn struct {
 
 	Sym      *Symbol // the declaration's symbol (its binding, when it needs a closure)
 	scope    *Scope
-	topLevel bool // declared in the root scope or a module body
+	TopLevel bool // declared in the root scope or a module body
 }
 
 // HoistScope is what lowering emits at the start of a scope that declares
@@ -110,7 +110,7 @@ func (a *Analyzer) declareFixedFns(scopeNode *ast.TreeNode, stmts []*ast.TreeNod
 		}
 		if prev := a.currentScope.LookupLocal(name); prev != nil {
 			if f := a.fixedBySym[prev]; f != nil {
-				a.errorAt(nameNode, "'%s' is already defined on line %d", name, f.Line)
+				a.errorAt(nameNode, "'%s' is already defined %s", name, definedWhere(f.Decl, f.Line))
 			} else {
 				a.errorAt(nameNode, "'%s' is already defined in this scope", name)
 			}
@@ -137,7 +137,7 @@ func (a *Analyzer) declareFixedFns(scopeNode *ast.TreeNode, stmts []*ast.TreeNod
 			Type:     ft,
 			Sym:      sym,
 			scope:    a.currentScope,
-			topLevel: a.currentScope == a.rootScope,
+			TopLevel: a.currentScope == a.rootScope,
 		}
 		a.fixedBySym[sym] = f
 		a.fixedByLambda[f.Lambda] = f
@@ -208,7 +208,7 @@ func (a *Analyzer) finalizeFixedFns() {
 	// 2. C++ names and native signatures.
 	seq := 0
 	for _, f := range a.fixedList {
-		if f.topLevel && !f.Captures {
+		if f.TopLevel && !f.Captures {
 			f.CName = f.Name
 		} else {
 			seq++
@@ -304,6 +304,11 @@ func (a *Analyzer) checkDefiniteAssignment() {
 					needs[f][s] = f
 				}
 			}
+			for _, s := range a.sessionUses[f.Lambda] {
+				if isScopeVar(s) {
+					needs[f][s] = f
+				}
+			}
 			a.walkFixedCalls(f.Lambda, true, func(_ *ast.TreeNode, g *FixedFn) {
 				if inScope[g] && g != f {
 					callees[f] = append(callees[f], g)
@@ -349,9 +354,9 @@ func (a *Analyzer) checkDefiniteAssignment() {
 					}
 					at := call.Children[0]
 					if via == f {
-						a.errorAt(at, "'%s' uses '%s', which is assigned on line %d, after this call", f.Name, s.Name, d.line)
+						a.errorAt(at, "'%s' uses '%s', which is assigned %s, after this call", f.Name, s.Name, definedWhere(s.Decl, d.line))
 					} else {
-						a.errorAt(at, "'%s' uses '%s' (through '%s'), which is assigned on line %d, after this call", f.Name, s.Name, via.Name, d.line)
+						a.errorAt(at, "'%s' uses '%s' (through '%s'), which is assigned %s, after this call", f.Name, s.Name, via.Name, definedWhere(s.Decl, d.line))
 					}
 				}
 			})
@@ -370,6 +375,18 @@ func (a *Analyzer) checkDefiniteAssignment() {
 				if hoistVar(s) && !s.Hoisted {
 					s.Hoisted = true
 					hs.Cells = append(hs.Cells, s)
+				}
+			}
+		}
+		if a.session {
+			for _, f := range sc.fns {
+				for _, s := range a.sessionUses[f.Lambda] {
+					if !hoistVar(s) || s.Hoisted {
+						continue
+					}
+					if d, ok := a.symDefs[s]; ok && d.list == sc.node {
+						s.Hoisted = true
+					}
 				}
 			}
 		}
@@ -393,20 +410,25 @@ func (a *Analyzer) finalizeSymbols() {
 		}
 	}
 	taken := map[string]bool{}
+	if a.session {
+		a.assignSessionSlots()
+	}
 	for _, s := range a.symbols {
-		switch {
-		case captured[s]:
-			s.Storage = ir.StorageCell
-		case s.Kind == SymFn || s.StoreType == nil:
-			s.Storage = ir.StorageValue
-		case s.StoreType.Equals(TypeInt):
-			s.Storage = ir.StorageInt
-		case s.StoreType.Equals(TypeFloat):
-			s.Storage = ir.StorageFloat
-		case s.StoreType.Equals(TypeBool):
-			s.Storage = ir.StorageBool
-		default:
-			s.Storage = ir.StorageValue
+		if !s.Session {
+			switch {
+			case captured[s]:
+				s.Storage = ir.StorageCell
+			case s.Kind == SymFn || s.StoreType == nil:
+				s.Storage = ir.StorageValue
+			case s.StoreType.Equals(TypeInt):
+				s.Storage = ir.StorageInt
+			case s.StoreType.Equals(TypeFloat):
+				s.Storage = ir.StorageFloat
+			case s.StoreType.Equals(TypeBool):
+				s.Storage = ir.StorageBool
+			default:
+				s.Storage = ir.StorageValue
+			}
 		}
 		if !taken[s.Name] {
 			taken[s.Name] = true

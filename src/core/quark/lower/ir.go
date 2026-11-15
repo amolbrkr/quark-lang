@@ -434,7 +434,13 @@ type Func struct {
 	// LocGuard restores the caller's source location on return (every
 	// function compiled from Quark code; not thunks).
 	LocGuard bool
-	Body     *Block
+	// Internal is static linkage. A REPL input gives it to lambdas and nested
+	// functions, whose names restart every input. Top-level functions stay
+	// external so a later input can call them.
+	Internal bool
+	// Session is the host slots this function reads or writes, bound on entry.
+	Session []*types.Symbol
+	Body    *Block
 }
 
 // FnInfo is the static QFnInfo of a function that can become a value.
@@ -443,13 +449,17 @@ type FnInfo struct {
 	Display    string
 	Min, Max   int
 	DefaultsFn string // "" for none
+	// Exported is a REPL top-level function's info: later inputs declare it
+	// extern. Other infos are private to the input.
+	Exported bool
 }
 
 // DefaultArgFn builds a function's omitted default arguments for calls
 // through a function value: one case per parameter with a default.
 type DefaultArgFn struct {
-	CName string
-	Cases []DefaultCase
+	CName    string
+	Internal bool
+	Cases    []DefaultCase
 }
 
 // DefaultCase is the default of parameter Index; Body ends with a Return.
@@ -506,4 +516,18 @@ type Program struct {
 	DefaultArgFns []DefaultArgFn
 	Funcs         []*Func
 	Main          *Block
+	// Session is set when the program is one REPL input. Nil for a file,
+	// which emits main.
+	Session *SessionEmit
+}
+
+// SessionEmit is the host-side shape of one REPL input.
+type SessionEmit struct {
+	Input                      int
+	NInt, NFloat, NBool, NCell int
+	Binds                      []*types.Symbol
+	Extern                     []*Func
+	ExternInfos                []FnInfo
+	ExternDefaults             []string
+	ExternStructs              []StructDef
 }

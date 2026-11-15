@@ -12,7 +12,7 @@
 inline void q_dict_key(QValue key, const char* method) {
     if (key.type != QValue::VAL_STRING || key.data.string_val == nullptr) {
         q_runtime_reportf("runtime error: %s: dict keys are str, got %s; convert it with to_str()\n", method, q_type_name(key.type));
-        std::exit(1);
+        q_exit(1);
     }
 }
 
@@ -32,7 +32,7 @@ inline QValue q_dset(QValue dict, QValue key, QValue value) {
 inline QValue q_dkeys(QValue dict) {
     if (dict.type != QValue::VAL_DICT || !dict.data.dict_val) {
         q_runtime_reportf("runtime error: dkeys() expects dict\n");
-        std::exit(1);
+        q_exit(1);
     }
 
     QValue out = qv_list(static_cast<int>(dict.data.dict_val->entries.size()), &q_elem_str);
@@ -46,7 +46,7 @@ inline QValue q_dkeys(QValue dict) {
 inline QValue q_dvalues(QValue dict) {
     if (dict.type != QValue::VAL_DICT || !dict.data.dict_val) {
         q_runtime_reportf("runtime error: dvalues() expects dict\n");
-        std::exit(1);
+        q_exit(1);
     }
 
     QValue out = qv_list(static_cast<int>(dict.data.dict_val->entries.size()), dict.data.dict_val->elem);
@@ -60,7 +60,7 @@ inline QValue q_dvalues(QValue dict) {
 inline QValue q_ditems(QValue dict) {
     if (dict.type != QValue::VAL_DICT || !dict.data.dict_val) {
         q_runtime_reportf("runtime error: ditems() expects dict\n");
-        std::exit(1);
+        q_exit(1);
     }
 
     QValue out = qv_list(static_cast<int>(dict.data.dict_val->entries.size()));

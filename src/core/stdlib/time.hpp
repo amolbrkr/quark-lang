@@ -52,7 +52,7 @@ constexpr int q_time_year_max = 999999;
 
 [[noreturn]] inline void q_time_fail(const char* fn, const char* msg) {
     q_runtime_reportf("runtime error: time::%s() %s\n", fn, msg);
-    std::exit(1);
+    q_exit(1);
 }
 
 inline const char* q_time_copy(const std::string& s) {

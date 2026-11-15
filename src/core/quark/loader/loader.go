@@ -263,7 +263,10 @@ func (ml *ModuleLoader) checkNestedDirectives(node *ast.TreeNode, currentFilePat
 			walk(c)
 		}
 	}
-	for _, c := range node.Children {
+	for _, c := range statements(node) {
+		if c != nil && c.NodeType == ast.InputBlockNode {
+			continue
+		}
 		if isBuildDirective(c.NodeType) {
 			continue // top level: allowed
 		}

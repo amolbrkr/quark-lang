@@ -12,6 +12,7 @@ import (
 
 	"quark/driver"
 	"quark/lexer"
+	"quark/repl"
 	"quark/toolchain"
 )
 
@@ -35,6 +36,8 @@ func main() {
 		os.Exit(cmdBuild(args))
 	case "run":
 		os.Exit(cmdRun(args))
+	case "repl":
+		os.Exit(cmdRepl(args))
 	case "help", "-h", "--help":
 		printUsage()
 	default:
@@ -60,6 +63,7 @@ func printUsage() {
 	fmt.Println("  emit <file> [--checked]       Emit C++ code to stdout")
 	fmt.Println("  build <file> [-o out]         Compile to executable")
 	fmt.Println("  run <file> [--debug] [-- args] Compile and run; arguments after -- go to the program")
+	fmt.Println("  repl                          Interactive session")
 	fmt.Println("  help                          Show this help message")
 	fmt.Println()
 	fmt.Println("Flags (run/build):")
@@ -409,4 +413,25 @@ func compileProgram(tc *toolchain.Toolchain, u *driver.Unit, cppFile, workDir, e
 		return err
 	}
 	return tc.Link(append([]string{objFile}, srcObjs...), exe, opts)
+}
+
+func cmdRepl(args []string) int {
+	if len(args) != 0 {
+		fmt.Fprintln(os.Stderr, "Usage: quark repl")
+		return 1
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error[QK-REPL-002] (repl): %s\n", err)
+		return 1
+	}
+	interactive := repl.IsTerminal(os.Stdin)
+	if interactive {
+		fmt.Fprintln(os.Stderr, "Quark REPL. Ctrl-D exits.")
+	}
+	if err := repl.Run(wd, os.Stdin, os.Stdout, interactive); err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		return 1
+	}
+	return 0
 }

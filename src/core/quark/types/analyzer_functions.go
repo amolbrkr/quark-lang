@@ -5,6 +5,15 @@ import (
 )
 
 func (a *Analyzer) analyzeCompilationUnit(node *ast.TreeNode) Type {
+	for _, c := range node.Children {
+		if c != nil && c.NodeType == ast.InputBlockNode {
+			a.session = true
+			break
+		}
+	}
+	if a.session {
+		return a.analyzeSession(node)
+	}
 	// Structs of every file and module body (the loader gave each a unique
 	// internal name), so any of them can be used before its definition.
 	structs := append([]*ast.TreeNode(nil), node.Children...)
@@ -213,7 +222,23 @@ func (a *Analyzer) analyzeLambda(node *ast.TreeNode) Type {
 	freeSyms := []*Symbol{}
 	seen := map[string]bool{}
 	a.collectFreeVars(bodyNode, lambdaScope, paramNames, seen, &freeVars, &freeSyms)
-	if len(freeSyms) > 0 {
+	if a.session {
+		var caps []*Symbol
+		var uses []*Symbol
+		for _, s := range freeSyms {
+			if s.Session {
+				uses = append(uses, s)
+			} else {
+				caps = append(caps, s)
+			}
+		}
+		if len(caps) > 0 {
+			a.captureSyms[node] = caps
+		}
+		if len(uses) > 0 {
+			a.sessionUses[node] = uses
+		}
+	} else if len(freeSyms) > 0 {
 		a.captureSyms[node] = freeSyms
 	}
 

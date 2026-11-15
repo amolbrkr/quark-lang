@@ -64,7 +64,7 @@ static inline bool q_fmt_is_numeric(QValue v) {
 inline const char* q_fmt_list(QList* lst, int64_t max_rows, bool show_index) {
     if (!lst) {
         q_runtime_reportf("runtime error: fmt.show_list() expects list\n");
-        std::exit(1);
+        q_exit(1);
     }
 
     const QList& items = *lst;
@@ -122,7 +122,7 @@ inline const char* q_fmt_list(QList* lst, int64_t max_rows, bool show_index) {
 inline const char* q_fmt_vec(QVector* vec, int64_t max_rows, bool show_index) {
     if (!vec) {
         q_runtime_reportf("runtime error: fmt.show_vec() expects vec\n");
-        std::exit(1);
+        q_exit(1);
     }
 
     const QVector& qvec = *vec;
@@ -202,7 +202,7 @@ inline const char* q_fmt_vec(QVector* vec, int64_t max_rows, bool show_index) {
 inline const char* q_fmt_dict(QDict* dct, int64_t max_rows, bool show_index) {
     if (!dct) {
         q_runtime_reportf("runtime error: fmt.show_dict() expects dict\n");
-        std::exit(1);
+        q_exit(1);
     }
 
     std::vector<std::pair<std::string, QValue>> raw_rows;
@@ -338,14 +338,14 @@ inline const char* q_fmt_table(QValue df, int64_t max_rows, bool show_index) {
             } else {
                 q_runtime_reportf("runtime error: fmt.table() column '%s' must be vec or list\n",
                                   cname.c_str());
-                std::exit(1);
+                q_exit(1);
             }
             if (cols.empty()) {
                 nrows = col_len;
             } else if (col_len != nrows) {
                 q_runtime_reportf("runtime error: fmt.table() column '%s' has length %zu, expected %zu\n",
                                   cname.c_str(), col_len, nrows);
-                std::exit(1);
+                q_exit(1);
             }
             cols.push_back(col);
         }
@@ -368,7 +368,7 @@ inline const char* q_fmt_table(QValue df, int64_t max_rows, bool show_index) {
         }
     } else {
         q_runtime_reportf("runtime error: fmt.table() expects table or dict of columns\n");
-        std::exit(1);
+        q_exit(1);
     }
 
     size_t ncols = col_names.size();

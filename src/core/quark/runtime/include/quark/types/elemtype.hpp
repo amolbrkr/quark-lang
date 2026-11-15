@@ -123,7 +123,7 @@ inline const char* q_value_type_name(const QValue& v, char* buf, size_t n) {
     } else {
         q_runtime_reportf("runtime error: %s can't add a %s to a list of %s: a list keeps the element type it was created with (create it as 'xs: list = list [...]' to hold mixed values)\n", what, got, t->name);
     }
-    std::exit(1);
+    q_exit(1);
 }
 
 // q_elem_store returns v as stored into a container with element type t: an

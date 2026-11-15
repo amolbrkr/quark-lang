@@ -170,6 +170,70 @@ func GenerateOptions(tree *ast.TreeNode, an *types.Analysis, sourceName string, 
 	return emit.ProgramOptions(prog, emit.Options{Checked: opt.Checked}), nil
 }
 
+// CompileSession compiles a REPL session. inputs are the committed inputs
+// plus the one being compiled, in order; only the last is emitted. dir is
+// the working directory incl paths are relative to. Diagnostics of input N
+// are located at <input N>.
+func CompileSession(dir string, inputs []string) *Unit {
+	u := &Unit{File: "<session>"}
+	if len(inputs) == 0 {
+		u.Err = fmt.Errorf("internal compiler error [INV-REPL]: empty session")
+		return u
+	}
+	if dir == "" {
+		dir = "."
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		u.Err = fmt.Errorf("Error resolving path: %s", err)
+		return u
+	}
+	root := ast.NewNode(ast.CompilationUnitNode, nil)
+	for i, src := range inputs {
+		label := fmt.Sprintf("<input %d>", i+1)
+		p := parser.New(lexer.New(src).Tokenize())
+		tree := p.Parse()
+		if len(p.Errors()) > 0 {
+			u.addDiags(diagnostics.WithDefaultFile(p.Diagnostics(), label), true)
+			return u
+		}
+		block := ast.NewNode(ast.InputBlockNode, nil)
+		if tree != nil {
+			block.Children = tree.Children
+		}
+		ast.SetSourceFile(block, label)
+		root.Children = append(root.Children, block)
+	}
+	u.AST = root
+	file := filepath.Join(abs, "session.qrk")
+	native, table, loadDiags := ResolveImports(root, file)
+	u.Native = native
+	u.Names = table
+	if len(loadDiags) > 0 {
+		u.addDiags(loadDiags, true)
+		return u
+	}
+	analyzer := types.NewAnalyzer()
+	analyzer.SetNames(u.Names)
+	analyzer.Analyze(u.AST)
+	u.addDiags(analyzer.Diagnostics(), analyzer.HasErrors())
+	if analyzer.HasErrors() {
+		return u
+	}
+	u.Analysis = analyzer.Analysis(u.AST)
+	if err := Validate(u.AST, u.Analysis); err != nil {
+		u.Err = err
+		return u
+	}
+	cpp, err := Generate(u.AST, u.Analysis, "<session>")
+	if err != nil {
+		u.Err = err
+		return u
+	}
+	u.CPP = cpp
+	return u
+}
+
 // PrintDiagnostics writes u's diagnostics and error to stderr.
 func (u *Unit) PrintDiagnostics() {
 	for _, d := range u.Diagnostics {

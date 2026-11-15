@@ -111,10 +111,58 @@ type modScope struct {
 	line     int
 }
 
-// errIn reports a load error located at node in file f.
+// statements is a file's top-level statements. A REPL session's compilation
+// unit is a list of input blocks; their statements, in order, are the file's.
+func statements(n *ast.TreeNode) []*ast.TreeNode {
+	if n == nil {
+		return nil
+	}
+	blocks := false
+	for _, c := range n.Children {
+		if c != nil && c.NodeType == ast.InputBlockNode {
+			blocks = true
+			break
+		}
+	}
+	if !blocks {
+		return n.Children
+	}
+	var out []*ast.TreeNode
+	for _, c := range n.Children {
+		if c != nil && c.NodeType == ast.InputBlockNode {
+			out = append(out, c.Children...)
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+func hasInputBlocks(n *ast.TreeNode) bool {
+	if n == nil {
+		return false
+	}
+	for _, c := range n.Children {
+		if c != nil && c.NodeType == ast.InputBlockNode {
+			return true
+		}
+	}
+	return false
+}
+
+// definedWhere is "on line N", or "on line N of <input K>" for a REPL input.
+func definedWhere(n *ast.TreeNode, line int) string {
+	if n != nil && n.SourceFile != "" {
+		return fmt.Sprintf("on line %d of %s", line, n.SourceFile)
+	}
+	return fmt.Sprintf("on line %d", line)
+}
+
 func (ml *ModuleLoader) errIn(f *srcFile, node *ast.TreeNode, format string, args ...interface{}) {
 	loc := &diagnostics.Location{}
-	if f != nil && !f.info.Main {
+	if node != nil && node.SourceFile != "" {
+		loc.File = node.SourceFile
+	} else if f != nil && !f.info.Main {
 		loc.File = f.info.Display
 	}
 	if node != nil && node.Token != nil {
@@ -205,7 +253,7 @@ func (ml *ModuleLoader) loadImports(f *srcFile) {
 	ml.checkNestedDirectives(f.ast, path)
 	ml.checkNestedIncl(f)
 
-	for _, child := range f.ast.Children {
+	for _, child := range statements(f.ast) {
 		switch {
 		case isBuildDirective(child.NodeType):
 			ml.recordExternDirective(child, path)
@@ -362,7 +410,7 @@ func (ml *ModuleLoader) checkNestedIncl(f *srcFile) {
 			walk(c)
 		}
 	}
-	for _, c := range f.ast.Children {
+	for _, c := range statements(f.ast) {
 		if c.NodeType != ast.InclNode {
 			walk(c)
 		}
@@ -551,28 +599,47 @@ func (ml *ModuleLoader) collect(f *srcFile) {
 			ml.errIn(f, d.node, "the %s '%s' (line %d) conflicts with import '%s' on line %d; incl '%s' as other_name",
 				d.describe(), d.name, d.line, prev.name, prev.line, prev.imp.path)
 		case prev.kind == kModule && d.kind == kModule:
-			ml.errIn(f, d.node, "module '%s' is already defined on line %d", d.name, prev.line)
+			ml.errIn(f, d.node, "module '%s' is already defined %s", d.name, definedWhere(prev.node, prev.line))
 		default:
-			ml.errIn(f, d.node, "'%s' is already defined on line %d", d.name, prev.line)
+			ml.errIn(f, d.node, "'%s' is already defined %s", d.name, definedWhere(prev.node, prev.line))
 		}
 	}
 
 	// Import bindings, then definitions in source order (an import binding
 	// clashing with a definition is reported at the definition or import,
-	// whichever comes second).
+	// whichever comes second). A session's line numbers restart with each
+	// input, so its definitions stay in source order instead of being sorted
+	// by line.
 	var defs []*def
-	for _, imp := range f.imports {
-		defs = append(defs, &def{name: imp.name, kind: kImport, file: f, node: imp.node, line: lineOf(imp.node), imp: imp})
-	}
-	for _, stmt := range f.ast.Children {
-		if d := ml.topDef(f, stmt, prefix); d != nil {
-			defs = append(defs, d)
+	if hasInputBlocks(f.ast) {
+		impByNode := map[*ast.TreeNode]*fileImport{}
+		for _, imp := range f.imports {
+			impByNode[imp.node] = imp
 		}
-	}
-	// Keep source order across both kinds.
-	for i := 1; i < len(defs); i++ {
-		for j := i; j > 0 && defs[j].line < defs[j-1].line; j-- {
-			defs[j], defs[j-1] = defs[j-1], defs[j]
+		for _, stmt := range statements(f.ast) {
+			if stmt != nil && stmt.NodeType == ast.InclNode {
+				if imp := impByNode[stmt]; imp != nil {
+					defs = append(defs, &def{name: imp.name, kind: kImport, file: f, node: imp.node, line: lineOf(imp.node), imp: imp})
+				}
+				continue
+			}
+			if d := ml.topDef(f, stmt, prefix); d != nil {
+				defs = append(defs, d)
+			}
+		}
+	} else {
+		for _, imp := range f.imports {
+			defs = append(defs, &def{name: imp.name, kind: kImport, file: f, node: imp.node, line: lineOf(imp.node), imp: imp})
+		}
+		for _, stmt := range f.ast.Children {
+			if d := ml.topDef(f, stmt, prefix); d != nil {
+				defs = append(defs, d)
+			}
+		}
+		for i := 1; i < len(defs); i++ {
+			for j := i; j > 0 && defs[j].line < defs[j-1].line; j-- {
+				defs[j], defs[j-1] = defs[j-1], defs[j]
+			}
 		}
 	}
 	for _, d := range defs {
@@ -664,7 +731,7 @@ func (ml *ModuleLoader) collectMethods(f *srcFile) {
 		f.methods[name] = internal
 		ml.names[internal] = &names.Origin{File: f.info, Name: name, Kind: names.Method, Def: stmt}
 	}
-	for _, stmt := range f.ast.Children {
+	for _, stmt := range statements(f.ast) {
 		add(stmt)
 		if stmt != nil && stmt.NodeType == ast.ModuleNode && len(stmt.Children) >= 2 && stmt.Children[1] != nil {
 			for _, member := range stmt.Children[1].Children {

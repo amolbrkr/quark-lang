@@ -18,7 +18,7 @@
 // ------------------------------------------------------------
 [[noreturn]] inline void q_int_overflow(const char* op) {
     q_runtime_reportf("runtime error: integer overflow in '%s'\n", op);
-    std::exit(1);
+    q_exit(1);
 }
 
 // q_resolve_index is a list or string index as written (negative counts from
@@ -54,7 +54,7 @@ inline long long q_checked_neg(long long a) {
 inline long long q_checked_mod(long long a, long long b) {
     if (b == 0) {
         q_runtime_reportf("runtime error: modulo by zero\n");
-        std::exit(1);
+        q_exit(1);
     }
     // LLONG_MIN % -1 is undefined in C++; the mathematical result is 0.
     if (b == -1) return 0;
@@ -75,7 +75,7 @@ inline long long q_checked_f2i(double x, const char* what) {
         char fbuf[32];
         q_runtime_reportf("runtime error: %s can't convert %s to an int: %s\n", what, q_format_float(x, fbuf, sizeof(fbuf)),
                           x != x ? "it is not a number" : "it is outside the int range");
-        std::exit(1);
+        q_exit(1);
     }
     return static_cast<long long>(x);
 }
@@ -83,7 +83,7 @@ inline long long q_checked_f2i(double x, const char* what) {
 inline double q_checked_fdiv(double a, double b) {
     if (b == 0.0) {
         q_runtime_reportf("runtime error: division by zero\n");
-        std::exit(1);
+        q_exit(1);
     }
     return a / b;
 }
@@ -94,7 +94,7 @@ inline long long q_checked_ipow(long long base, long long exp) {
     if (exp < 0) {
         if (base == 0) {
             q_runtime_reportf("runtime error: division by zero in '**'\n");
-            std::exit(1);
+            q_exit(1);
         }
         if (base == 1) return 1;
         if (base == -1) return (exp % 2 == 0) ? 1 : -1;

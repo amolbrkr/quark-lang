@@ -50,32 +50,32 @@ inline QValue q_print(QValue v) {
 inline QValue q_print_impl(QValue v, QValue end, QValue width, QValue align, QValue pad) {
     if (end.type != QValue::VAL_STRING || !end.data.string_val) {
         q_runtime_reportf("runtime error: print() end must be str\n");
-        std::exit(1);
+        q_exit(1);
     }
     if (width.type != QValue::VAL_INT) {
         q_runtime_reportf("runtime error: print() width must be int\n");
-        std::exit(1);
+        q_exit(1);
     }
     if (align.type != QValue::VAL_STRING || !align.data.string_val) {
         q_runtime_reportf("runtime error: print() align must be str\n");
-        std::exit(1);
+        q_exit(1);
     }
     // Checked on every call, whether or not the text is padded, so a
     // misspelled alignment fails on every input instead of aligning left.
     if (std::strcmp(align.data.string_val, "left") != 0 && std::strcmp(align.data.string_val, "right") != 0 &&
         std::strcmp(align.data.string_val, "center") != 0) {
         q_runtime_reportf("runtime error: print() align must be 'left', 'right' or 'center', got '%s'\n", align.data.string_val);
-        std::exit(1);
+        q_exit(1);
     }
     if (pad.type != QValue::VAL_STRING || !pad.data.string_val) {
         q_runtime_reportf("runtime error: print() pad must be str\n");
-        std::exit(1);
+        q_exit(1);
     }
 
     QValue sv = q_str(v);
     if (sv.type != QValue::VAL_STRING || !sv.data.string_val) {
         q_runtime_reportf("runtime error: print() failed to stringify value\n");
-        std::exit(1);
+        q_exit(1);
     }
 
     std::string text = sv.data.string_val;
@@ -127,7 +127,7 @@ inline QValue q_print(QValue v, QValue end, QValue width, QValue align, QValue p
 inline QValue q_input(QValue prompt) {
     if (prompt.type != QValue::VAL_NULL && prompt.type != QValue::VAL_STRING) {
         q_runtime_reportf("runtime error: input() optional prompt must be str\n");
-        std::exit(1);
+        q_exit(1);
     }
     // Print prompt if it's a string
     if (prompt.type == QValue::VAL_STRING && prompt.data.string_val) {

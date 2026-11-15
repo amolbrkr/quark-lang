@@ -16,7 +16,7 @@
     QValue got = q_type(v);
     q_runtime_reportf("runtime error: argument '%s' of '%s' expects %s, got %s\n",
                       param, fn, expected, got.data.string_val ? got.data.string_val : "unknown");
-    std::exit(1);
+    q_exit(1);
 }
 
 inline long long q_param_int(QValue v, const char* fn, const char* param) {
@@ -73,7 +73,7 @@ inline QValue q_param_table(QValue v, const QStructDef* def, const char* expecte
     QValue got = q_type(v);
     q_runtime_reportf("runtime error: field '%s' of %s expects %s, got %s\n",
                       field, structName, expected, got.data.string_val ? got.data.string_val : "unknown");
-    std::exit(1);
+    q_exit(1);
 }
 
 inline QValue q_field_int(QValue v, const char* structName, const char* field) {
@@ -119,7 +119,7 @@ inline QValue q_field_table(QValue v, const QStructDef* def, const char* expecte
     QValue got = q_type(v);
     q_runtime_reportf("runtime error: variable '%s' is declared %s but got %s\n",
                       var, expected, got.data.string_val ? got.data.string_val : "unknown");
-    std::exit(1);
+    q_exit(1);
 }
 
 inline long long q_var_int(QValue v, const char* var) {
@@ -165,7 +165,7 @@ inline QValue q_var_table(QValue v, const QStructDef* def, const char* expected,
     QValue got = q_type(v);
     q_runtime_reportf("runtime error: function '%s' declares return type %s but returned %s\n",
                       fn, expected, got.data.string_val ? got.data.string_val : "unknown");
-    std::exit(1);
+    q_exit(1);
 }
 
 inline long long q_ret_int(QValue v, const char* fn) {

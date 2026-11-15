@@ -59,6 +59,9 @@ type Analysis struct {
 	FnRefs      map[*ast.TreeNode]*FixedFn
 	HoistScopes map[*ast.TreeNode]*HoistScope
 
+	// Session is set for a REPL compilation and nil for a file.
+	Session *SessionInfo
+
 	// TableReads are the calls of csv::read_file and csv::parse_text, which
 	// lowering turns into calls of the native reader with the row type.
 	TableReads map[*ast.TreeNode]*TableRead
@@ -85,6 +88,7 @@ func (a *Analyzer) Analysis(root *ast.TreeNode) *Analysis {
 		FixedFns:         a.fixedByLambda,
 		FnRefs:           a.fixedRefs,
 		HoistScopes:      a.hoistScopes,
+		Session:          a.sessionInfo(root),
 		TableReads:       a.tableReads,
 		Queries:          a.queries,
 		ColumnRefs:       a.columnRefs,

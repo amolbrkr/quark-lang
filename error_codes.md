@@ -26,7 +26,7 @@ warning[CODE] (stage): message at file:line:col
 
 The location is `file:line` when there is no column, and is left out when unknown. Notes follow on their own lines. Every name in a message is shown as written in the source (`geo::Point`), never as a compiler-internal name.
 
-Stages: `parse`, `load`, `check`, `build` (clang++ compile and link), `runtime`. Errors stop `check`, `emit`, `build` and `run`; warnings are printed and don't.
+Stages: `parse`, `load`, `check`, `build` (clang++ compile and link), `runtime`, `repl`. Errors stop `check`, `emit`, `build` and `run`; warnings are printed and don't. A REPL input that fails to compile or exits at runtime does not end the session (`specs/repl_v0_1_spec.md`).
 
 ## QK codes
 
@@ -35,12 +35,14 @@ Stages: `parse`, `load`, `check`, `build` (clang++ compile and link), `runtime`.
 | `QK-PARSE-001` | `parse` | Syntax error. Also covers lexer errors, reported with the lexer's message: `unexpected indent`, `expected indented block`, `inconsistent indentation`, `unexpected character '#'`, `'\0' is not supported in string literals`. A bad character inside an expression is reported by the parser instead (`expected RPAR but got ILLEGAL`). Also a pipe target that isn't a call, and anything after an `extern` directive's string. | `src/core/quark/parser/parser.go` |
 | `QK-LOAD-001` | `load` | Import and name resolution (modules v0.2): a file that can't be found, an unsupported import path, an import cycle; an imported file or directory name that isn't `[a-z][a-z0-9_]*`; a statement (anything but a definition or constant) in an imported file; a name defined twice at the top level of a file, a module member named like a top-level name, an import binding named like a definition or another binding, two names that would get the same internal name; a name containing `__`; an unknown or malformed qualified name (`'fmt' (std/fmt) has no 'show_vector'; did you mean 'show_vec'?`, a re-export like `geo::io::open`); `.` on an import binding or module (`'io' is an imported file; use io::exists`); assigning an imported name or constant; a bare name in an imported file that the file doesn't define; `incl` of a same-file module or `incl` outside the top level; an `extern link` / `extern include_path` / `extern source` inside a block or module; an extern method declared twice for one receiver in a file, or named like a prelude method of any type; a `QUARK_STDLIB_ROOT` that isn't a directory, or no stdlib next to the compiler. | `src/core/quark/loader/files.go`, `loader.go`, `resolve.go` |
 | `QK-CHECK-001` | `check` | Semantic or type error found by the analyzer: wrong argument types or counts, unknown methods, wrong-typed writes into lists and dicts, `null` where an annotation rejects it, call-shape mismatches of callbacks, return annotations, redefined builtins, duplicate or reassigned `fn` declarations in a nested scope, and so on. | `src/core/quark/types/analyzer.go` |
-| `QK-CHECK-002` | `check` | Warning (does not stop compilation). Currently emitted for one case: the two branches of `x if c else y` have incompatible types (`ternary branches have incompatible types: 'int' and 'str'`). | `src/core/quark/types/analyzer.go` (`warnAt`), called from `analyzer_controlflow.go` |
+| `QK-CHECK-002` | `check` | Warning (does not stop compilation). The two branches of `x if c else y` have incompatible types (`ternary branches have incompatible types: 'int' and 'str'`). In the REPL, a top-level variable changes type (`'x' changes type from int to str; a compiled program rejects this`). | `src/core/quark/types/analyzer.go` (`warnAt`) |
 | `QK-RUNTIME-001` | `runtime` | Any runtime failure; see [Runtime errors](#runtime-errors). | `src/core/quark/runtime/include/quark/core/diagnostics.hpp` |
 | `QK-FFI-001` | `load` | An `extern include_path` directory that doesn't exist, an `extern source` file that doesn't exist, or a `std/` path when no stdlib directory can be found. | `src/core/quark/loader/loader.go` |
 | `QK-FFI-002` | `build` | An `extern link` library that can't be found. Notes list the file names tried and the directories searched. | `src/core/quark/toolchain/native.go` |
 | `QK-FFI-003` | `build` | A C++ compile error inside an extern glue header, an extern glue source, or a file one of them includes (for example a missing `#include`). Names the glue file and line; clang's full output is printed above it. | `src/core/quark/toolchain/native.go` |
 | `QK-FFI-004` | `runtime` | A native handle of the wrong kind, a closed handle, or a value that is not a resource, reported by `qext::handle_get` and `qext::handle_close` (`expected qffi.item, got file`, `qffi.item is closed`). | `src/core/quark/runtime/include/quark/ext/api.hpp` |
+| `QK-REPL-001` | `repl` | An input stopped with a signal, or its library could not be loaded (`the input stopped with signal SIGSEGV; the session is as it was before the input`). The session keeps the values from before that input. | `src/core/quark/runtime/repl/host.cpp` |
+| `QK-REPL-002` | `repl` | The host could not be built or started, or it stopped outside an input. The session ends. | `src/core/quark/repl/session.go` |
 
 A C++ compile or link error outside glue code has no code: `quark` prints clang's output and `Compilation failed: ...`. It means a wrong `extern fn` symbol or header, or a compiler bug.
 
@@ -105,6 +107,8 @@ Raised while lowering the analyzed tree to the IR (`src/core/quark/lower/`). Pri
 | `INV-QUERY` | A query was analyzed, and each of its steps is a known verb | `lower/query.go` |
 | `INV-QUERY-REP` | A verb expression's value has a scalar or `QValue` representation that converts to its column's | `lower/query.go` |
 | `INV-QUERY-COLUMN` | A column read (`e.col`) is lowered inside the row loop that binds the column | `lower/query.go` |
+| `INV-REPL` | A REPL session has an input block to emit | `lower/session.go` |
+| `INV-REPL-STABLE` | Re-analysing the committed inputs assigns the same slots, function names and struct names as the previous analysis | `repl/session.go` |
 
 ### IR verification
 

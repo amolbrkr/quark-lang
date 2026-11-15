@@ -57,7 +57,7 @@ inline QValue read(const char* text, size_t len, const std::string& source, char
     if (row) {
         if (row->field_dtypes == nullptr) {
             q_runtime_reportf("runtime error: internal: csv read with row %s, which has no column types\n", row->name);
-            std::exit(1);
+            q_exit(1);
         }
         for (int f = 0; f < row->field_count; f++) {
             quark::csv::Column c;

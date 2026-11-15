@@ -49,7 +49,7 @@ inline const char* q_sys_env_or(const char* name, const char* fallback) {
 
 [[noreturn]] inline void q_sys_fail(const char* fn, const char* msg) {
     q_runtime_reportf("runtime error: sys::%s() %s\n", fn, msg);
-    std::exit(1);
+    q_exit(1);
 }
 
 inline void q_sys_check_name(const char* name, const char* fn) {
@@ -73,7 +73,7 @@ inline QValue q_sys_set_env(const char* name, const char* value) {
 #else
     if (setenv(name, value, 1) != 0) {
         q_runtime_reportf("runtime error: sys::set_env() failed: %s\n", std::strerror(errno));
-        std::exit(1);
+        q_exit(1);
     }
 #endif
     return qv_null();
@@ -90,7 +90,7 @@ inline QValue q_sys_unset_env(const char* name) {
 #else
     if (unsetenv(name) != 0) {
         q_runtime_reportf("runtime error: sys::unset_env() failed: %s\n", std::strerror(errno));
-        std::exit(1);
+        q_exit(1);
     }
 #endif
     return qv_null();
@@ -124,11 +124,11 @@ inline QDict* q_sys_environ() {
 [[noreturn]] inline QValue q_sys_exit(int64_t code) {
     if (code < 0 || code > 255) {
         q_runtime_reportf("runtime error: sys::exit() status must be between 0 and 255, got %lld\n", static_cast<long long>(code));
-        std::exit(1);
+        q_exit(1);
     }
     std::fflush(stdout);
     std::fflush(stderr);
-    std::exit(static_cast<int>(code));
+    q_exit(static_cast<int>(code));
 }
 
 inline const char* q_sys_cwd() {
@@ -144,7 +144,7 @@ inline const char* q_sys_cwd() {
         if (got != nullptr) return q_strdup(got);
         if (errno != ERANGE || cap > 1024 * 1024) {
             q_runtime_reportf("runtime error: sys::cwd() failed: %s\n", std::strerror(errno));
-            std::exit(1);
+            q_exit(1);
         }
         cap *= 2;
     }

@@ -42,7 +42,7 @@ using Type = QVector::Type;
 
 [[noreturn]] inline void fail(const char* what) {
     q_runtime_reportf("runtime error: %s\n", what);
-    std::exit(1);
+    q_exit(1);
 }
 
 inline int32_t* alloc_i32(size_t n) {
@@ -649,7 +649,7 @@ inline QVector* agg_sum(const QVector& col, const Grouping& g) {
                 int64_t& acc = d[group_of(g, r)];
                 if (__builtin_add_overflow(acc, x[r], &acc)) {
                     q_runtime_reportf("runtime error: integer overflow in 'sum'\n");
-                    std::exit(1);
+                    q_exit(1);
                 }
             }
             return out;

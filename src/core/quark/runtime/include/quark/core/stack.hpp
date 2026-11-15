@@ -15,7 +15,7 @@
 inline void q_stack_overflow_exit() {
     std::fflush(stdout);
     q_runtime_reportf("runtime error: stack overflow\n");
-    std::exit(1);
+    q_exit(1);
 }
 
 #if defined(_WIN32)

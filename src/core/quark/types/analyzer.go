@@ -92,6 +92,16 @@ type Analyzer struct {
 	columnRefs  map[*ast.TreeNode]int
 	rowCtx      *rowContext
 	lambdaDepth int
+
+	// REPL session (specs/repl_v0_1_spec.md). session is set when the tree's
+	// children are input blocks. sessionUses lists the session variables a
+	// lambda reads; they are not captures, so the function stays a plain C++
+	// function and reads the host table. curBlock is the input being analyzed.
+	session     bool
+	sessionUses map[*ast.TreeNode][]*Symbol
+	curBlock    string
+	structHome  map[string]string
+	settles     []SessionSettle
 }
 
 func NewAnalyzer() *Analyzer {
@@ -150,6 +160,8 @@ func NewAnalyzer() *Analyzer {
 		anonRows:        make(map[string]*StructType),
 		queries:         make(map[*ast.TreeNode]*Query),
 		columnRefs:      make(map[*ast.TreeNode]int),
+		sessionUses:     make(map[*ast.TreeNode][]*Symbol),
+		structHome:      make(map[string]string),
 	}
 }
 
@@ -162,6 +174,9 @@ func (a *Analyzer) declareSym(name string, typ Type, mutable bool, kind SymKind,
 	sym.Kind = kind
 	sym.StoreType = store
 	sym.Decl = at
+	if a.session && a.currentScope == a.rootScope && kind == SymLocal {
+		sym.Session = true
+	}
 	a.symbols = append(a.symbols, sym)
 	if at != nil {
 		a.refs[at] = sym

@@ -5,7 +5,7 @@ How the compiler and runtime work: the pipeline, the runtime value system, code 
 ## Contents
 
 1. [Compilation pipeline](#1-compilation-pipeline)
-   - [1.1 Lexer](#11-lexer--token-stream) · [1.2 Parser](#12-parser--ast) · [1.3 Loader](#13-loader--one-tree-and-a-name-table) · [1.4 Analyzer](#14-analyzer--typesanalysis) · [1.5 Invariants](#15-invariants) · [1.6 Lower, verify, emit](#16-lower--ir--verify--emit) · [1.7 C++ compiler](#17-c-compiler--binary)
+   - [1.1 Lexer](#11-lexer--token-stream) · [1.2 Parser](#12-parser--ast) · [1.3 Loader](#13-loader--one-tree-and-a-name-table) · [1.4 Analyzer](#14-analyzer--typesanalysis) · [1.5 Invariants](#15-invariants) · [1.6 Lower, verify, emit](#16-lower--ir--verify--emit) · [1.7 C++ compiler](#17-c-compiler--binary) · [1.8 REPL](#18-repl)
 2. [Runtime value system](#2-runtime-value-system)
 3. [Memory management](#3-memory-management)
 4. [Naming conventions](#4-naming-conventions)
@@ -194,6 +194,12 @@ An unexpected dispatch mode, runtime symbol or missing analyzer output stops low
 Intermediate files go in a fresh `os.MkdirTemp` directory per build, so concurrent builds never collide.
 
 **Precompiled runtime header.** `toolchain/pch.go` precompiles `quark/quark.hpp` into `$XDG_CACHE_HOME/quark/pch/<key>.pch` (`os.UserCacheDir()`), where the key hashes the compiler binary, the compile flags, and the path, size and mtime of every runtime and GC header. A PCH clang rejects (for example after a system header update) is deleted and the compile retried without it. This roughly halves compile time for small programs.
+
+### 1.8 REPL
+
+`quark repl` (`repl/`, `toolchain/repl.go`, `runtime/repl/host.cpp`, `runtime/repl/host_win.cpp`) compiles each input as a shared library and runs it in one host process. On Linux and macOS the host forks for every input: the child loads the library and, if the input returns, becomes the host; the parent keeps the previous values when the child exits. Windows has no `fork`. The input runs in the host, which copies the session values first and restores that copy if the input fails. The design is in `specs/repl_v0_1_spec.md`.
+
+A session is re-analysed as one file of input blocks. Only the new block is lowered. Its entry is `quark_input_<N>`, not `main`. A top-level `int`, `float` or `bool` is a raw slot in the host (`q_repl_i64`, `q_repl_f64`, `q_repl_bool`); any other top-level variable is a `QCell*` in `q_repl_cell`. A top-level `fn` reads those slots instead of capturing them, so it stays a direct call. Inputs are compiled at `-O0` against a runtime object compiled once at `-O3`.
 
 ---
 

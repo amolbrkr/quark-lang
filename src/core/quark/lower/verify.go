@@ -41,6 +41,11 @@ func Verify(p *Program) error {
 	}
 	v.where, v.fn = "main", nil
 	v.push()
+	if p.Session != nil {
+		for _, s := range p.Session.Binds {
+			v.declare(s, symName(s))
+		}
+	}
 	v.block(p.Main)
 	v.pop()
 	return v.err
@@ -95,6 +100,9 @@ func (v *verifier) function(f *Func) {
 		if s.Storage != ir.StorageCell {
 			v.fail("INV-IR-REP", "captured %s is not a cell", symName(s))
 		}
+		v.declare(s, symName(s))
+	}
+	for _, s := range f.Session {
 		v.declare(s, symName(s))
 	}
 	v.block(f.Body)
@@ -309,7 +317,7 @@ func (v *verifier) expr(e Expr) {
 		if !v.inScope(e.Sym) {
 			v.fail("INV-IR-SCOPE", "%s read outside its scope", symName(e.Sym))
 		}
-		if e.Checked && e.Sym.Storage != ir.StorageCell {
+		if e.Checked && e.Sym.Storage != ir.StorageCell && !(e.Sym.Session && e.Sym.Storage.IsScalar()) {
 			v.fail("INV-IR-REP", "checked read of %s, which is not a cell", symName(e.Sym))
 		}
 	case *ParamRef:

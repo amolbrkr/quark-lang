@@ -46,7 +46,7 @@ func (c rctx) with(shadow ...string) rctx {
 // are replaced by their value.
 func (ml *ModuleLoader) rename(f *srcFile) {
 	c := rctx{f: f}
-	for _, stmt := range f.ast.Children {
+	for _, stmt := range statements(f.ast) {
 		ml.walk(stmt, c)
 	}
 }
@@ -776,6 +776,11 @@ func (ml *ModuleLoader) splice(main *srcFile) {
 	}
 	visit(main)
 
+	if hasInputBlocks(main.ast) {
+		ml.spliceSession(main)
+		return
+	}
+
 	var out []*ast.TreeNode
 	for _, f := range order {
 		for _, stmt := range f.ast.Children {
@@ -808,4 +813,50 @@ func (ml *ModuleLoader) keepStatement(f *srcFile, stmt *ast.TreeNode) bool {
 		body.Children = kept
 	}
 	return true
+}
+
+// spliceSession keeps each input block and inserts the files it includes at
+// the incl, so a later input's import is not visible to an earlier input and
+// is emitted with the input that included it.
+func (ml *ModuleLoader) spliceSession(main *srcFile) {
+	seen := map[*srcFile]bool{main: true}
+	var take func(*srcFile) []*ast.TreeNode
+	take = func(f *srcFile) []*ast.TreeNode {
+		if f == nil || seen[f] {
+			return nil
+		}
+		seen[f] = true
+		var out []*ast.TreeNode
+		for _, imp := range f.imports {
+			out = append(out, take(imp.file)...)
+		}
+		for _, stmt := range f.ast.Children {
+			if ml.keepStatement(f, stmt) {
+				out = append(out, stmt)
+			}
+		}
+		return out
+	}
+	impByNode := map[*ast.TreeNode]*srcFile{}
+	for _, imp := range main.imports {
+		if imp != nil && imp.node != nil {
+			impByNode[imp.node] = imp.file
+		}
+	}
+	for _, block := range main.ast.Children {
+		if block == nil || block.NodeType != ast.InputBlockNode {
+			continue
+		}
+		var kept []*ast.TreeNode
+		for _, stmt := range block.Children {
+			if stmt != nil && stmt.NodeType == ast.InclNode {
+				kept = append(kept, take(impByNode[stmt])...)
+				continue
+			}
+			if ml.keepStatement(main, stmt) {
+				kept = append(kept, stmt)
+			}
+		}
+		block.Children = kept
+	}
 }

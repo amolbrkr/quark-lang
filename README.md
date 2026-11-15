@@ -1037,6 +1037,7 @@ Then run **Extensions: Install from VSIX...** and pick the file it prints.
 | Command | Does |
 |---|---|
 | `quark run <file> [-- args...]` | compile and run; arguments after `--` go to the program |
+| `quark repl` | interactive session. Each input is compiled and run; values survive to the next input. See [REPL v0.1](specs/repl_v0_1_spec.md) |
 | `quark build <file> [-o out]` | compile to an executable |
 | `quark <file>.qrk` | shorthand for `quark run` |
 | `quark check <file>` | parse, load and analyze; report diagnostics only |
@@ -1152,7 +1153,7 @@ measured.
 [structs v0.1](specs/implemented/structs_v0_1_spec.md)), and those with work
 still planned or proposed in `specs/` ([tables v0.1](specs/tables_v0_1_spec.md),
 [tables v0.2](specs/tables_v0_2_spec.md),
-[FFI v0.1](specs/ffi_v0_1_spec.md), [REPL v0.1](specs/repl_v0_1_spec.md) (a proposal) and
+[FFI v0.1](specs/ffi_v0_1_spec.md), [REPL v0.1](specs/repl_v0_1_spec.md) and
 [stdlib expansion v0.1](specs/stdlib_expansion_v0_1_spec.md) (partly implemented)).
 
 If a doc disagrees with the compiler, the compiler is right; please report

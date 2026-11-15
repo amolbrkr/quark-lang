@@ -16,7 +16,7 @@ constexpr int Q_MAX_CALL_ARGS = 12;
 inline QClosure* q_require_closure(const QValue& f) {
     if (f.type != QValue::VAL_FUNC) {
         q_runtime_reportf("runtime error: attempted to call a non-function value\n");
-        std::exit(1);
+        q_exit(1);
     }
     return static_cast<QClosure*>(f.data.func_val);
 }
@@ -33,7 +33,7 @@ inline QClosure* q_require_closure(const QValue& f) {
     } else {
         q_runtime_reportf("runtime error: function '%s' expects %s but got %d\n", info->name, expects, argc);
     }
-    std::exit(1);
+    q_exit(1);
 }
 
 // q_call_adapt is the slow path of a call whose argument count differs from
@@ -63,7 +63,7 @@ inline QValue q_call_adapt(QClosure* cl, int argc, QValue* argv) {
         default:
             q_runtime_reportf("runtime error: a function value can take at most %d parameters to be called, '%s' has %d\n",
                               Q_MAX_CALL_ARGS, info->name, info->max_arity);
-            std::exit(1);
+            q_exit(1);
     }
 }
 
@@ -101,7 +101,7 @@ inline QValue q_call12(QValue f, QValue a, QValue b, QValue c, QValue d, QValue 
 inline QValue q_calln(QValue f, const std::vector<QValue>& args) {
     if (args.size() > static_cast<size_t>(Q_MAX_CALL_ARGS)) {
         q_runtime_reportf("runtime error: function call supports up to %d arguments, got %zu\n", Q_MAX_CALL_ARGS, args.size());
-        std::exit(1);
+        q_exit(1);
     }
     QValue argv[Q_MAX_CALL_ARGS] = {};
     for (size_t i = 0; i < args.size(); i++) argv[i] = args[i];

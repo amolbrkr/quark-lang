@@ -15,7 +15,7 @@
 inline QValue q_member_get(QValue obj, const char* member) {
     if (obj.type == QValue::VAL_NULL) {
         q_runtime_reportf("runtime error: cannot access member '%s' on null\n", member);
-        std::exit(1);
+        q_exit(1);
     }
 
     if (obj.type == QValue::VAL_DICT) {
@@ -29,7 +29,7 @@ inline QValue q_member_get(QValue obj, const char* member) {
             }
         }
         q_runtime_reportf("runtime error: dict has no key '%s'; use .get('%s') if the key may be missing\n", member, member);
-        std::exit(1);
+        q_exit(1);
     }
 
     // t.col on a table whose type the compiler didn't know: the column by
@@ -43,13 +43,13 @@ inline QValue q_member_get(QValue obj, const char* member) {
             cols += t->def->field_names[c];
         }
         q_runtime_reportf("runtime error: %s has no column '%s' (columns: %s)\n", q_table_type_name(t), member, cols.c_str());
-        std::exit(1);
+        q_exit(1);
     }
 
     const char* type_names[] = {"int", "float", "string", "bool", "null", "list", "vec", "dict", "fn", "result", "resource", "struct", "tbl"};
     const char* type_name = (obj.type >= 0 && obj.type <= 12) ? type_names[obj.type] : "unknown";
     q_runtime_reportf("runtime error: dot access is only supported on dict; got type '%s'\n", type_name);
-    std::exit(1);
+    q_exit(1);
 }
 
 // Dict member write: d.key = value → q_member_set(d, "key", value)
@@ -58,7 +58,7 @@ inline QValue q_member_set(QValue obj, const char* member, QValue value) {
         return q_dict_set(obj, qv_string(member), value);
     }
     q_runtime_reportf("runtime error: cannot set member '%s' on non-dict type\n", member);
-    std::exit(1);
+    q_exit(1);
 }
 
 #endif // QUARK_OPS_MEMBER_HPP

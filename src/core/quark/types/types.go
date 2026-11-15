@@ -84,7 +84,10 @@ type pending struct {
 	// FixedLine is the line of the write that fixed the element type (0 when
 	// the type came from the literal itself), for messages.
 	FixedLine int
-	peers     []Type
+	// FixedAt is that write, when the analyzer had the node. The REPL reports
+	// a later input's element-type check there.
+	FixedAt *ast.TreeNode
+	peers   []Type
 }
 
 // NewPendingList is the type of an empty `list []` literal.
@@ -433,8 +436,18 @@ type Symbol struct {
 	CName   string // C++ variable name
 	// Hoisted marks a captured variable whose cell is created unassigned at
 	// the start of its scope (a hoisted fn captures it); closures read it
-	// with q_cell_get.
+	// with q_cell_get. A session variable a function may read before its
+	// assignment is hoisted the same way: the read checks that it was assigned.
 	Hoisted bool
+
+	// Session marks a variable assigned at the top level of a REPL input. It
+	// lives in the host process. Slot is its index in the host array for its
+	// storage: a raw scalar for int, float and bool, a QCell for everything
+	// else. Replaces is the previous symbol when this assignment changed the
+	// variable's type (specs/repl_v0_1_spec.md §3.4).
+	Session  bool
+	Slot     int
+	Replaces *Symbol
 }
 
 // IsVariable reports whether the symbol has a C++ variable of its own.
@@ -675,9 +688,9 @@ func settleElems(d, s Type, dp, sp *pending, de, se Type) {
 		dp.peers = append(dp.peers, s)
 		sp.peers = append(sp.peers, d)
 	case sp.Pending:
-		FixElementType(s, de, 0)
+		FixElementType(s, de, 0, nil)
 	case dp.Pending:
-		FixElementType(d, se, 0)
+		FixElementType(d, se, 0, nil)
 	default:
 		SettleContainers(de, se)
 	}
@@ -686,7 +699,7 @@ func settleElems(d, s Type, dp, sp *pending, de, se Type) {
 // FixElementType gives the pending list or dict type t (and its peers) the
 // element type elem, at the write on line. A null or void write doesn't
 // decide anything.
-func FixElementType(t Type, elem Type, line int) {
+func FixElementType(t Type, elem Type, line int, at *ast.TreeNode) {
 	if elem == nil || IsErrorType(elem) || elem.Equals(TypeNull) || elem.Equals(TypeVoid) {
 		return
 	}
@@ -710,10 +723,13 @@ func FixElementType(t Type, elem Type, line int) {
 	}
 	p.Pending = false
 	p.FixedLine = line
+	if at != nil {
+		p.FixedAt = at
+	}
 	peers := p.peers
 	p.peers = nil
 	for _, peer := range peers {
-		FixElementType(peer, elem, line)
+		FixElementType(peer, elem, line, at)
 	}
 }
 

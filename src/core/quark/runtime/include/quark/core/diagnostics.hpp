@@ -73,13 +73,39 @@ inline void q_runtime_reportf(const char* fmt, ...) {
     va_end(args);
 }
 
+// q_exit ends a failed program. A REPL host on Windows sets q_exit_hook so a
+// runtime error can return to the host instead of killing the process; the
+// hook must not return. Everywhere else the hook is null and this is exit.
+#if defined(QUARK_REPL) && defined(_WIN32)
+#if defined(QUARK_REPL_BUILD)
+#define QREPL_API __declspec(dllexport)
+#else
+#define QREPL_API __declspec(dllimport)
+#endif
+#else
+#define QREPL_API
+#endif
+
+#if defined(QUARK_REPL)
+extern "C" QREPL_API void (*q_exit_hook)(int);
+#else
+inline void (*q_exit_hook)(int) = nullptr;
+#endif
+
+[[noreturn]] inline void q_exit(int code) {
+    if (q_exit_hook != nullptr) {
+        q_exit_hook(code);
+    }
+    ::exit(code);
+}
+
 // QK-FFI-004: a handle of the wrong kind, or use of a handle that is closed.
 [[noreturn]] inline void q_ffi_fail(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
     q_format_report("QK-FFI-004", fmt, args);
     va_end(args);
-    std::exit(1);
+    q_exit(1);
 }
 
 #endif // QUARK_CORE_DIAGNOSTICS_HPP

@@ -31,6 +31,7 @@ type fnDecl struct {
 	paramCount int
 	display    string
 	native     *ir.CallPlan
+	exported   bool // a top-level declaration a later REPL input may call
 	fn, thunk  *Func
 }
 
@@ -106,6 +107,10 @@ func (l *lowerer) ice(code string, node *ast.TreeNode, format string, args ...in
 // Program
 
 func (l *lowerer) program(root *ast.TreeNode) {
+	if l.an.Session != nil {
+		l.sessionProgram()
+		return
+	}
 	p := l.prog
 	p.Includes = collectExternSources(root)
 	l.collectFunctions(root)
@@ -227,7 +232,7 @@ func (l *lowerer) collectFunctions(node *ast.TreeNode) {
 		lambda := node.Children[1]
 		l.lambdaUserNames[lambda] = node.Children[0].TokenLiteral()
 		if f := l.an.FixedFns[lambda]; f != nil {
-			l.addFn(&fnDecl{name: f.CName, lambda: lambda, display: l.names.Display(f.Name), native: f.Native})
+			l.addFn(&fnDecl{name: f.CName, lambda: lambda, display: l.names.Display(f.Name), native: f.Native, exported: f.TopLevel})
 			for _, child := range lambda.Children {
 				l.collectFunctions(child)
 			}
@@ -339,6 +344,7 @@ func (l *lowerer) funcShell(fd *fnDecl) {
 			thunk.Params = append(thunk.Params, &Param{CName: fmt.Sprintf("_a%d", i), CType: "QValue"})
 		}
 		fd.thunk = thunk
+		l.finishShell(fd)
 		return
 	}
 	f := &Func{CName: "quark_" + fd.name, Ret: "QValue", LocGuard: true, Captures: l.an.Captures[fd.lambda]}
@@ -346,6 +352,21 @@ func (l *lowerer) funcShell(fd *fnDecl) {
 		f.Params = append(f.Params, &Param{Sym: sym, CName: "_arg_" + sym.CName, CType: "QValue"})
 	}
 	fd.fn = f
+	l.finishShell(fd)
+}
+
+// finishShell sets linkage and session-slot bindings for a REPL input.
+func (l *lowerer) finishShell(fd *fnDecl) {
+	if l.an.Session == nil || fd.fn == nil {
+		return
+	}
+	fd.fn.Internal = !fd.exported
+	if fd.thunk != nil {
+		fd.thunk.Internal = !fd.exported
+	}
+	if uses := l.an.Session.Uses[fd.lambda]; len(uses) > 0 {
+		fd.fn.Session = append([]*types.Symbol(nil), uses...)
+	}
 }
 
 // externThunks are the QValue wrappers of free extern fns, so they can be
@@ -366,7 +387,7 @@ func (l *lowerer) externThunks() []*Func {
 			continue
 		}
 		seen[proto.RuntimeSymbol] = true
-		f := &Func{CName: "_thunk_" + proto.RuntimeSymbol, Ret: "QValue"}
+		f := &Func{CName: "_thunk_" + proto.RuntimeSymbol, Ret: "QValue", Internal: l.an.Session != nil}
 		args := make([]Expr, len(proto.NativeParamTypes))
 		for i, ct := range proto.NativeParamTypes {
 			p := &Param{CName: fmt.Sprintf("_a%d", i), CType: "QValue"}
@@ -388,7 +409,7 @@ func (l *lowerer) fnInfos() {
 		}
 		seen[fd.name] = true
 		min, max := paramArity(lambdaParams(fd.lambda), fd.paramCount)
-		info := FnInfo{CName: fnInfoName(fd.name), Display: fd.display, Min: min, Max: max}
+		info := FnInfo{CName: fnInfoName(fd.name), Display: fd.display, Min: min, Max: max, Exported: l.an.Session != nil && fd.exported}
 		if info.Display == "" {
 			info.Display = l.names.Display(fd.name)
 		}
@@ -421,6 +442,10 @@ func (l *lowerer) structDefs() {
 	sort.Strings(keys)
 	for _, k := range keys {
 		st := l.an.StructTypes[k]
+		if sess := l.an.Session; sess != nil && sess.Emit != nil && sess.StructHome[st.Name] != "" && sess.StructHome[st.Name] != sess.Emit.SourceFile {
+			l.prog.Session.ExternStructs = append(l.prog.Session.ExternStructs, StructDef{CName: structCName(st.Name)})
+			continue
+		}
 		d := StructDef{CName: structCName(st.Name), Display: l.names.Display(st.Name), Anonymous: st.Anonymous}
 		if st.Anonymous {
 			d.Display = l.names.DisplayText(st.String())
@@ -457,7 +482,7 @@ func (l *lowerer) defaultArgFns() {
 		if min, max := paramArity(params, fd.paramCount); min == max {
 			continue
 		}
-		df := DefaultArgFn{CName: defaultArgFnName(fd.name)}
+		df := DefaultArgFn{CName: defaultArgFnName(fd.name), Internal: l.an.Session != nil && !fd.exported}
 		for i, p := range params.Children {
 			if p == nil || p.DefaultValue == nil {
 				continue
@@ -488,6 +513,13 @@ func (l *lowerer) funcBody(fd *fnDecl) {
 		for _, sym := range f.Captures {
 			if sym.Hoisted {
 				l.checkedCells[sym] = true
+			}
+		}
+		if l.an.Session != nil {
+			for _, sym := range l.an.Session.Uses[fd.lambda] {
+				if sym.Hoisted {
+					l.checkedCells[sym] = true
+				}
 			}
 		}
 		if fd.native != nil {

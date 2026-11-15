@@ -13,7 +13,7 @@
 inline QValue q_push(QValue list, QValue item) {
     if (list.type != QValue::VAL_LIST || !list.data.list_val) {
         q_runtime_reportf("runtime error: push() expects list as first argument\n");
-        std::exit(1);
+        q_exit(1);
     }
     list.data.list_val->push_back(q_elem_store(list.data.list_val->elem, item, "push()"));
     return list;
@@ -23,11 +23,11 @@ inline QValue q_push(QValue list, QValue item) {
 inline QValue q_pop(QValue list) {
     if (list.type != QValue::VAL_LIST || !list.data.list_val) {
         q_runtime_reportf("runtime error: pop() expects list argument\n");
-        std::exit(1);
+        q_exit(1);
     }
     if (list.data.list_val->empty()) {
         q_runtime_reportf("runtime error: pop() on empty list\n");
-        std::exit(1);
+        q_exit(1);
     }
     QValue item = list.data.list_val->back();
     list.data.list_val->pop_back();
@@ -48,15 +48,15 @@ inline QValue q_get(QValue list, QValue index) {
             return q_vec_mask_filter(list, index);
         }
         q_runtime_reportf("runtime error: vec index must be int or bool vec\n");
-        std::exit(1);
+        q_exit(1);
     }
     if (list.type != QValue::VAL_LIST || !list.data.list_val) {
         q_runtime_reportf("runtime error: get() expects list/string/vec as first argument\n");
-        std::exit(1);
+        q_exit(1);
     }
     if (index.type != QValue::VAL_INT) {
         q_runtime_reportf("runtime error: get() index must be int\n");
-        std::exit(1);
+        q_exit(1);
     }
     const long long len = static_cast<long long>(list.data.list_val->size());
     const long long idx = q_resolve_index(index.data.int_val, len);
@@ -79,12 +79,12 @@ inline QValue q_index(QValue target, QValue index) {
     const bool is_str = target.type == QValue::VAL_STRING && target.data.string_val != nullptr;
     if (!is_list && !is_str) {
         q_runtime_reportf("runtime error: cannot index a %s; only list, str and vec can be indexed\n", q_type_name(target.type));
-        std::exit(1);
+        q_exit(1);
     }
     const char* kind = is_list ? "list" : "str";
     if (index.type != QValue::VAL_INT) {
         q_runtime_reportf("runtime error: %s index must be int, got %s\n", kind, q_type_name(index.type));
-        std::exit(1);
+        q_exit(1);
     }
     const long long len = is_list ? static_cast<long long>(target.data.list_val->size())
                                   : static_cast<long long>(strlen(target.data.string_val));
@@ -93,7 +93,7 @@ inline QValue q_index(QValue target, QValue index) {
     if (idx < 0 || idx >= len) {
         q_runtime_reportf("runtime error: %s index %lld out of range (%s length %lld)%s\n", kind, given, kind, len,
                           is_list ? "; use .get(i) when the index may be past the end" : "");
-        std::exit(1);
+        q_exit(1);
     }
     if (is_list) {
         return (*target.data.list_val)[static_cast<size_t>(idx)];
@@ -106,17 +106,17 @@ inline QValue q_index(QValue target, QValue index) {
 inline QValue q_set(QValue list, QValue index, QValue value) {
     if (list.type != QValue::VAL_LIST || !list.data.list_val) {
         q_runtime_reportf("runtime error: set() expects list as first argument\n");
-        std::exit(1);
+        q_exit(1);
     }
     if (index.type != QValue::VAL_INT) {
         q_runtime_reportf("runtime error: set() index must be int\n");
-        std::exit(1);
+        q_exit(1);
     }
     const long long len = static_cast<long long>(list.data.list_val->size());
     const long long idx = q_resolve_index(index.data.int_val, len);
     if (idx < 0 || idx >= len) {
         q_runtime_reportf("runtime error: set() index %lld out of range (list length %lld)\n", index.data.int_val, len);
-        std::exit(1);
+        q_exit(1);
     }
     value = q_elem_store(list.data.list_val->elem, value, "set()");
     (*list.data.list_val)[static_cast<size_t>(idx)] = value;
@@ -127,11 +127,11 @@ inline QValue q_set(QValue list, QValue index, QValue value) {
 inline QValue q_insert(QValue list, QValue index, QValue item) {
     if (list.type != QValue::VAL_LIST || !list.data.list_val) {
         q_runtime_reportf("runtime error: insert() expects list as first argument\n");
-        std::exit(1);
+        q_exit(1);
     }
     if (index.type != QValue::VAL_INT) {
         q_runtime_reportf("runtime error: insert() index must be int\n");
-        std::exit(1);
+        q_exit(1);
     }
     const long long len = static_cast<long long>(list.data.list_val->size());
     long long idx = q_resolve_index(index.data.int_val, len);
@@ -146,17 +146,17 @@ inline QValue q_insert(QValue list, QValue index, QValue item) {
 inline QValue q_remove(QValue list, QValue index) {
     if (list.type != QValue::VAL_LIST || !list.data.list_val) {
         q_runtime_reportf("runtime error: remove() expects list as first argument\n");
-        std::exit(1);
+        q_exit(1);
     }
     if (index.type != QValue::VAL_INT) {
         q_runtime_reportf("runtime error: remove() index must be int\n");
-        std::exit(1);
+        q_exit(1);
     }
     const long long len = static_cast<long long>(list.data.list_val->size());
     const long long idx = q_resolve_index(index.data.int_val, len);
     if (idx < 0 || idx >= len) {
         q_runtime_reportf("runtime error: remove() index %lld out of range (list length %lld)\n", index.data.int_val, len);
-        std::exit(1);
+        q_exit(1);
     }
     QValue item = (*list.data.list_val)[static_cast<size_t>(idx)];
     list.data.list_val->erase(list.data.list_val->begin() + idx);
@@ -168,7 +168,7 @@ inline QValue q_remove(QValue list, QValue index) {
 inline QValue q_list_concat(QValue a, QValue b) {
     if (a.type != QValue::VAL_LIST || !a.data.list_val || b.type != QValue::VAL_LIST || !b.data.list_val) {
         q_runtime_reportf("runtime error: concat() expects two lists, got %s and %s\n", q_type_name(a.type), q_type_name(b.type));
-        std::exit(1);
+        q_exit(1);
     }
     const QElemType* elem = a.data.list_val->elem;
     QValue result = qv_list(static_cast<int>(a.data.list_val->size() + b.data.list_val->size()), elem);
@@ -186,11 +186,11 @@ inline QValue q_list_concat(QValue a, QValue b) {
 inline QValue q_slice(QValue list, QValue start, QValue end) {
     if (list.type != QValue::VAL_LIST || !list.data.list_val) {
         q_runtime_reportf("runtime error: slice() expects list as first argument\n");
-        std::exit(1);
+        q_exit(1);
     }
     if (start.type != QValue::VAL_INT || end.type != QValue::VAL_INT) {
         q_runtime_reportf("runtime error: slice() start and end indices must be int\n");
-        std::exit(1);
+        q_exit(1);
     }
     const long long len = static_cast<long long>(list.data.list_val->size());
     long long s = q_resolve_index(start.data.int_val, len);
@@ -212,7 +212,7 @@ inline QValue q_slice(QValue list, QValue start, QValue end) {
 inline QValue q_reverse(QValue list) {
     if (list.type != QValue::VAL_LIST || !list.data.list_val) {
         q_runtime_reportf("runtime error: reverse() expects list argument\n");
-        std::exit(1);
+        q_exit(1);
     }
     std::reverse(list.data.list_val->begin(), list.data.list_val->end());
     return list;
@@ -230,7 +230,7 @@ inline QValue q_enumerate(QValue seq) {
         len = q_vec_size(seq);
     } else {
         q_runtime_reportf("runtime error: enumerate() expects list, string, or vec\n");
-        std::exit(1);
+        q_exit(1);
     }
 
     QValue out = qv_list(len);
@@ -254,17 +254,17 @@ inline long long q_range_arg(QValue v, const char* sig, const char* what) {
     }
     if (v.type == QValue::VAL_FLOAT) {
         q_runtime_reportf("runtime error: %s takes ints, got a float for %s; convert it with floor(), ceil(), round() or to_int()\n", sig, what);
-        std::exit(1);
+        q_exit(1);
     }
     q_runtime_reportf("runtime error: %s takes ints, got %s for %s\n", sig, q_type_name(v.type), what);
-    std::exit(1);
+    q_exit(1);
 }
 
 // q_range_step validates the step of range(start, end, step).
 inline long long q_range_step(long long step) {
     if (step == 0) {
         q_runtime_reportf("runtime error: range() step must not be zero\n");
-        std::exit(1);
+        q_exit(1);
     }
     return step;
 }

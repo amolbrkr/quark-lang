@@ -297,6 +297,9 @@ func (a *Analyzer) checkReassign(target *ast.TreeNode, sym *Symbol, rightType Ty
 	if CanAssign(sym.Type, rightType) {
 		return
 	}
+	if a.session && sym.Session && a.allowTypeChange(target, sym, rightType) {
+		return
+	}
 	name := target.TokenLiteral()
 	if _, isFn := sym.Type.(*FunctionType); isFn {
 		a.errorAt(target, "cannot assign %s to '%s', which holds %s: a variable keeps the type of its first value; declare it '%s: fn = ...' to hold any function", rightType.String(), name, sym.Type.String(), name)
@@ -329,7 +332,7 @@ func (a *Analyzer) checkElemWrite(container, valueType Type, at *ast.TreeNode, k
 		if isUnknownType(valueType) {
 			valueType = TypeAny
 		}
-		FixElementType(container, valueType, nodeLine(at))
+		FixElementType(container, valueType, nodeLine(at), at)
 		return
 	}
 	if isUnknownType(elem) {
@@ -365,11 +368,11 @@ func escapePending(t Type) {
 	switch c := t.(type) {
 	case *ListType:
 		if c.Pending {
-			FixElementType(c, TypeAny, 0)
+			FixElementType(c, TypeAny, 0, nil)
 		}
 	case *DictType:
 		if c.Pending {
-			FixElementType(c, TypeAny, 0)
+			FixElementType(c, TypeAny, 0, nil)
 		}
 	}
 }

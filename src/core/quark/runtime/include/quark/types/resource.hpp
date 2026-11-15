@@ -114,18 +114,18 @@ inline void q_resource_set_close(uint16_t kind, QResourceCloseFn fn) {
 inline uint16_t q_define_handle_kind(const char* name, QResourceCloseFn close_fn) {
     if (name == nullptr || name[0] == '\0') {
         q_runtime_reportf("runtime error: define_handle_kind needs a non-empty name\n");
-        std::exit(1);
+        q_exit(1);
     }
     auto& kinds = q_resource_kinds();
     for (const auto& k : kinds) {
         if (k.name == name) {
             q_runtime_reportf("runtime error: handle kind '%s' is already defined\n", name);
-            std::exit(1);
+            q_exit(1);
         }
     }
     if (kinds.size() >= 65535) {
         q_runtime_reportf("runtime error: too many handle kinds\n");
-        std::exit(1);
+        q_exit(1);
     }
     kinds.push_back(QResourceKindInfo{name, close_fn});
     return static_cast<uint16_t>(kinds.size() - 1);

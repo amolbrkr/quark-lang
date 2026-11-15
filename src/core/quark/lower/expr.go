@@ -46,7 +46,7 @@ func isStable(v Expr) bool {
 	case *Const, *TempRef, *ParamRef, *FuncValue:
 		return true
 	case *VarRef:
-		return e.Sym.Storage != ir.StorageCell
+		return e.Sym.Storage != ir.StorageCell && !e.Sym.Session
 	case *Box:
 		return isStable(e.X)
 	case *Cast:
@@ -260,7 +260,7 @@ func (l *lowerer) varSym(node *ast.TreeNode) *types.Symbol {
 
 func (l *lowerer) readVar(sym *types.Symbol) Expr {
 	r := &VarRef{Sym: sym}
-	if sym.Storage == ir.StorageCell && l.checkedCells[sym] {
+	if l.checkedCells[sym] && (sym.Storage == ir.StorageCell || (sym.Session && sym.Storage.IsScalar())) {
 		r.Checked = true
 		r.Display = l.names.Display(sym.Name)
 	}
@@ -1020,6 +1020,13 @@ func (l *lowerer) assign(node *ast.TreeNode) Expr {
 func (l *lowerer) assignVar(target, valueNode *ast.TreeNode) Expr {
 	sym := l.varSym(target)
 	declare := sym.Decl == target && !sym.Hoisted
+	if sym.Session {
+		if sym.Replaces != nil {
+			l.clearSlot(sym.Replaces)
+		}
+		l.add(&SetVar{Sym: sym, Value: l.storeValue(sym, valueNode, l.expr(valueNode))})
+		return l.readVar(sym)
+	}
 	if sym.Storage == ir.StorageCell {
 		if declare {
 			l.add(&DeclVar{Sym: sym, Value: nullValue()})

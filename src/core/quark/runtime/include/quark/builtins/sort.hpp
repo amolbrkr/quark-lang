@@ -47,14 +47,14 @@ inline bool q_sort_less(const QValue& a, const QValue& b, const char* method) {
     QValue bn = q_type(b);
     q_runtime_reportf("runtime error: %s() can't compare %s and %s; sort keys must all be numbers, all strings or all bools\n",
                       method, an.data.string_val, bn.data.string_val);
-    std::exit(1);
+    q_exit(1);
 }
 
 // list.sort(): sorts the list in place (stable, ascending) and returns it.
 inline QValue q_sort(QValue list) {
     if (list.type != QValue::VAL_LIST || !list.data.list_val) {
         q_runtime_reportf("runtime error: sort() expects list argument\n");
-        std::exit(1);
+        q_exit(1);
     }
     QList& items = *list.data.list_val;
     std::stable_sort(items.begin(), items.end(), [](const QValue& a, const QValue& b) {
@@ -68,11 +68,11 @@ inline QValue q_sort(QValue list) {
 inline QValue q_sort_by(QValue list, QValue key) {
     if (list.type != QValue::VAL_LIST || !list.data.list_val) {
         q_runtime_reportf("runtime error: sort_by() expects list argument\n");
-        std::exit(1);
+        q_exit(1);
     }
     if (key.type != QValue::VAL_FUNC) {
         q_runtime_reportf("runtime error: sort_by() expects a function as its argument\n");
-        std::exit(1);
+        q_exit(1);
     }
     QList& items = *list.data.list_val;
     const size_t n = items.size();

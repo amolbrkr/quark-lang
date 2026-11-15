@@ -35,12 +35,12 @@ inline const char* q_type_name_arith(QValue::ValueType t) {
 
 inline void q_arith_type_error(const char* op, QValue a, QValue b) {
     q_runtime_reportf("runtime error: operator '%s' expects numeric operands (or str+str for '+'), got %s and %s\n", op, q_type_name_arith(a.type), q_type_name_arith(b.type));
-    std::exit(1);
+    q_exit(1);
 }
 
 inline void q_unary_type_error(const char* op, QValue a) {
     q_runtime_reportf("runtime error: unary operator '%s' expects numeric operand, got %s\n", op, q_type_name_arith(a.type));
-    std::exit(1);
+    q_exit(1);
 }
 
 // Addition: int + int = int, float promotion, string + string = concat
@@ -52,18 +52,18 @@ inline QValue q_add(QValue a, QValue b) {
     if (a.type == QValue::VAL_STRING && b.type == QValue::VAL_STRING) {
         if (!a.data.string_val || !b.data.string_val) {
             q_runtime_reportf("runtime error: operator '+' on strings requires non-null string values\n");
-            std::exit(1);
+            q_exit(1);
         }
         size_t alen = strlen(a.data.string_val);
         size_t blen = strlen(b.data.string_val);
         if (alen > SIZE_MAX - blen - 1) {
             q_runtime_reportf("runtime error: operator '+' overflow while building string result\n");
-            std::exit(1);
+            q_exit(1);
         }
         char* result = static_cast<char*>(q_malloc_atomic(alen + blen + 1));
         if (!result) {
             q_runtime_reportf("runtime error: operator '+' failed to allocate string result\n");
-            std::exit(1);
+            q_exit(1);
         }
         memcpy(result, a.data.string_val, alen);
         memcpy(result + alen, b.data.string_val, blen);
@@ -130,7 +130,7 @@ inline QValue q_div(QValue a, QValue b) {
     // Check for division by zero
     if (bv == 0.0) {
         q_runtime_reportf("runtime error: division by zero\n");
-        std::exit(1);
+        q_exit(1);
     }
     return qv_float(quark::detail::to_double(a) / bv);
 }
@@ -140,7 +140,7 @@ inline QValue q_mod(QValue a, QValue b) {
     // Type guard for modulo: only INT is valid
     if (a.type != QValue::VAL_INT || b.type != QValue::VAL_INT) {
         q_runtime_reportf("runtime error: operator '%%' expects int operands, got %s and %s\n", q_type_name_arith(a.type), q_type_name_arith(b.type));
-        std::exit(1);
+        q_exit(1);
     }
     return qv_int(q_checked_mod(a.data.int_val, b.data.int_val));
 }

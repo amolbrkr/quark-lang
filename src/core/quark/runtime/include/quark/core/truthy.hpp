@@ -33,7 +33,7 @@ inline bool q_truthy(QValue v) {
         case QValue::VAL_VECTOR:
             q_runtime_reportf("runtime error: vec used as a condition; "
                               "use all(v), any(v) or len(v) > 0\n");
-            std::exit(1);
+            q_exit(1);
         case QValue::VAL_DICT:
             return v.data.dict_val && !v.data.dict_val->entries.empty();
         case QValue::VAL_FUNC:
@@ -41,7 +41,7 @@ inline bool q_truthy(QValue v) {
         case QValue::VAL_RESULT:
             q_runtime_reportf("runtime error: result used as a condition; "
                               "use is_ok(r), is_err(r) or when\n");
-            std::exit(1);
+            q_exit(1);
         case QValue::VAL_RESOURCE:
             return q_resource_is_alive(v);
         case QValue::VAL_STRUCT:
@@ -49,7 +49,7 @@ inline bool q_truthy(QValue v) {
         case QValue::VAL_TABLE:
             q_runtime_reportf("runtime error: a table used as a condition; "
                               "test a column, such as len(t.col) > 0 or any(t.col > 0)\n");
-            std::exit(1);
+            q_exit(1);
         default:
             return false;
     }

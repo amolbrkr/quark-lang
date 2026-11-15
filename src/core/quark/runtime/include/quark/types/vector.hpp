@@ -86,7 +86,7 @@ inline uint8_t* alloc(size_t bytes, void** base_out) {
     void* base = q_malloc_atomic(bytes + kAlign);
     if (!base) {
         q_runtime_reportf("runtime error: out of memory allocating vec buffer\n");
-        std::exit(1);
+        q_exit(1);
     }
     const uintptr_t p = reinterpret_cast<uintptr_t>(base);
     const uintptr_t aligned = (p + kAlign - 1) & ~static_cast<uintptr_t>(kAlign - 1);
@@ -381,11 +381,11 @@ inline bool q_boolish_value(QValue v) {
 inline QValue q_vec_push(QValue vec, QValue value) {
     if (!q_vec_has_valid_handle(vec) || vec.data.vector_val->type != QVector::Type::F64) {
         q_runtime_reportf("runtime error: vec push expects vec[f64]\n");
-        std::exit(1);
+        q_exit(1);
     }
     if (!q_is_numeric_scalar(value)) {
         q_runtime_reportf("runtime error: vec push expects numeric scalar value\n");
-        std::exit(1);
+        q_exit(1);
     }
     QVector& v = *vec.data.vector_val;
     quark::vec::reserve_one(v);
@@ -397,11 +397,11 @@ inline QValue q_vec_push(QValue vec, QValue value) {
 inline QValue q_vec_push_i64(QValue vec, QValue value) {
     if (!q_vec_has_valid_handle(vec) || vec.data.vector_val->type != QVector::Type::I64) {
         q_runtime_reportf("runtime error: vec push expects vec[i64]\n");
-        std::exit(1);
+        q_exit(1);
     }
     if (!(value.type == QValue::VAL_INT || value.type == QValue::VAL_FLOAT || value.type == QValue::VAL_BOOL)) {
         q_runtime_reportf("runtime error: vec[i64] push expects int, float, or bool scalar value\n");
-        std::exit(1);
+        q_exit(1);
     }
     QVector& v = *vec.data.vector_val;
     quark::vec::reserve_one(v);
@@ -413,11 +413,11 @@ inline QValue q_vec_push_i64(QValue vec, QValue value) {
 inline QValue q_vec_push_bool(QValue vec, QValue value) {
     if (!q_vec_has_valid_handle(vec) || vec.data.vector_val->type != QVector::Type::BOOL) {
         q_runtime_reportf("runtime error: vec push expects vec[bool]\n");
-        std::exit(1);
+        q_exit(1);
     }
     if (!q_is_boolish_scalar(value)) {
         q_runtime_reportf("runtime error: vec[bool] push expects bool or int scalar value\n");
-        std::exit(1);
+        q_exit(1);
     }
     QVector& v = *vec.data.vector_val;
     quark::vec::reserve_one(v);
@@ -432,7 +432,7 @@ inline void q_vec_str_append(QVector& v, const char* s, size_t len) {
     const size_t used = static_cast<size_t>(v.offsets[v.count]);
     if (used + len > static_cast<size_t>(INT32_MAX)) {
         q_runtime_reportf("runtime error: vec[str] data exceeds 2 GiB\n");
-        std::exit(1);
+        q_exit(1);
     }
     v.values = quark::vec::grow(v.values, used, v.values_cap, used + len, &v.values_base);
     if (len > 0) std::memcpy(v.values + used, s, len);
@@ -479,7 +479,7 @@ inline void q_vec_and_validity(QVector& dst, const QVector* a, const QVector* b)
 inline QValue q_vec_clone(QValue vec) {
     if (!q_vec_has_valid_handle(vec) || !q_vec_validate(*vec.data.vector_val)) {
         q_runtime_reportf("runtime error: cannot clone invalid vec\n");
-        std::exit(1);
+        q_exit(1);
     }
     const QVector& src = *vec.data.vector_val;
     const size_t str_bytes = src.type == QVector::Type::STR ? static_cast<size_t>(src.offsets[src.count]) : 0;
@@ -618,7 +618,7 @@ inline size_t binary_len(QValue a, QValue b, const char* what) {
     const QVector* bv = as_vec(b);
     if (av && bv && av->count != bv->count) {
         q_runtime_reportf("runtime error: vec size mismatch in %s: %zu vs %zu\n", what, av->count, bv->count);
-        std::exit(1);
+        q_exit(1);
     }
     return av ? av->count : bv->count;
 }
@@ -643,16 +643,16 @@ inline QValue q_vec_binary_numeric(QValue a, QValue b, QVecArithOp op) {
         const QVector* xv = as_vec(x);
         if (xv && !q_vec_validate(*xv)) {
             q_runtime_reportf("runtime error: vec arithmetic expects valid vectors\n");
-            std::exit(1);
+            q_exit(1);
         }
         if (xv ? !q_vec_is_numeric_dtype(*xv) : !q_is_numeric_scalar(x)) {
             q_runtime_reportf("runtime error: vec arithmetic requires numeric vectors and scalars\n");
-            std::exit(1);
+            q_exit(1);
         }
     }
     if (av && bv && av->count != bv->count) {
         q_runtime_reportf("runtime error: vec size mismatch in arithmetic: %zu vs %zu\n", av->count, bv->count);
-        std::exit(1);
+        q_exit(1);
     }
 
     const size_t n = av ? av->count : bv->count;
@@ -678,7 +678,7 @@ inline QValue q_vec_binary_numeric(QValue a, QValue b, QVecArithOp op) {
                             const double y = rb(i);
                             if (y == 0.0) {
                                 q_runtime_reportf("runtime error: vec division by zero (f64)\n");
-                                std::exit(1);
+                                q_exit(1);
                             }
                             od[i] = ra(i) / y;
                         }
@@ -797,7 +797,7 @@ inline double q_vec_mean_present(const QVector& v, size_t* count) {
 inline QValue q_vec_sum(QValue vec) {
     if (!q_vec_has_valid_handle(vec) || !q_vec_validate(*vec.data.vector_val)) {
         q_runtime_reportf("runtime error: sum() requires numeric or bool vec\n");
-        std::exit(1);
+        q_exit(1);
     }
     const QVector& v = *vec.data.vector_val;
     switch (v.type) {
@@ -809,7 +809,7 @@ inline QValue q_vec_sum(QValue vec) {
                 if (!dense && q_vec_is_null_at(v, i)) continue;
                 if (__builtin_add_overflow(acc, d[i], &acc)) {
                     q_runtime_reportf("runtime error: integer overflow in 'sum'\n");
-                    std::exit(1);
+                    q_exit(1);
                 }
             }
             return qv_int(acc);
@@ -827,7 +827,7 @@ inline QValue q_vec_sum(QValue vec) {
             break;
     }
     q_runtime_reportf("runtime error: sum() requires numeric or bool vec, got vec[str]\n");
-    std::exit(1);
+    q_exit(1);
 }
 
 // q_vec_compare orders entries i and j of v: numbers by value, bools false
@@ -858,7 +858,7 @@ inline int q_vec_compare(const QVector& v, size_t i, size_t j) {
 inline QValue q_vec_extremum(QValue vec, bool want_min, const char* name) {
     if (!q_vec_has_valid_handle(vec) || !q_vec_validate(*vec.data.vector_val)) {
         q_runtime_reportf("runtime error: %s() requires a vec\n", name);
-        std::exit(1);
+        q_exit(1);
     }
     const QVector& v = *vec.data.vector_val;
     // Dense numeric vectors compare values directly (the generic loop below
@@ -895,7 +895,7 @@ inline QValue q_vec_extremum(QValue vec, bool want_min, const char* name) {
     }
     if (!found) {
         q_runtime_reportf("runtime error: %s() of a vec with no present values\n", name);
-        std::exit(1);
+        q_exit(1);
     }
     return q_vec_box_at(v, best);
 }
@@ -910,7 +910,7 @@ inline QValue q_vec_max(QValue vec) { return q_vec_extremum(vec, false, "max"); 
 inline QValue q_fillna(QValue vec, QValue value) {
     if (!q_vec_has_valid_handle(vec) || !q_vec_validate(*vec.data.vector_val)) {
         q_runtime_reportf("runtime error: fillna() expects valid vec as first argument\n");
-        std::exit(1);
+        q_exit(1);
     }
     const QVector& src = *vec.data.vector_val;
     // The fill value must have the vec's element type, as a write into a
@@ -928,7 +928,7 @@ inline QValue q_fillna(QValue vec, QValue value) {
     }
     if (!fits) {
         q_runtime_reportf("runtime error: fillna() can't fill vec[%s] with %s: the fill value must have the element type (an int may fill a vec of float)\n", dtype, q_type_name(value.type));
-        std::exit(1);
+        q_exit(1);
     }
     if (src.null_count == 0) {
         return vec;  // immutable: sharing the same vector is safe
@@ -975,17 +975,17 @@ inline QValue q_fillna(QValue vec, QValue value) {
         }
     }
     q_runtime_reportf("runtime error: fillna() unsupported vec dtype\n");
-    std::exit(1);
+    q_exit(1);
 }
 
 inline QValue q_astype(QValue vec, QValue dtype) {
     if (!q_vec_has_valid_handle(vec) || !q_vec_validate(*vec.data.vector_val)) {
         q_runtime_reportf("runtime error: astype() expects valid vec as first argument\n");
-        std::exit(1);
+        q_exit(1);
     }
     if (dtype.type != QValue::VAL_STRING || dtype.data.string_val == nullptr) {
         q_runtime_reportf("runtime error: astype() expects dtype string as second argument\n");
-        std::exit(1);
+        q_exit(1);
     }
 
     const QVector& src = *vec.data.vector_val;
@@ -996,7 +996,7 @@ inline QValue q_astype(QValue vec, QValue dtype) {
         if (src.type == QVector::Type::F64) return q_vec_clone(vec);
         if (src.type != QVector::Type::I64 && src.type != QVector::Type::BOOL) {
             q_runtime_reportf("runtime error: astype() cannot cast source vec to f64\n");
-            std::exit(1);
+            q_exit(1);
         }
         QVector* out = q_vec_alloc(QVector::Type::F64, n);
         double* d = q_vec_f64_data_mut(*out);
@@ -1014,7 +1014,7 @@ inline QValue q_astype(QValue vec, QValue dtype) {
         if (src.type == QVector::Type::I64) return q_vec_clone(vec);
         if (src.type != QVector::Type::F64 && src.type != QVector::Type::BOOL) {
             q_runtime_reportf("runtime error: astype() cannot cast source vec to i64\n");
-            std::exit(1);
+            q_exit(1);
         }
         QVector* out = q_vec_alloc(QVector::Type::I64, n);
         int64_t* d = q_vec_i64_data_mut(*out);
@@ -1027,7 +1027,7 @@ inline QValue q_astype(QValue vec, QValue dtype) {
                 if (!(x >= -9223372036854775808.0 && x < 9223372036854775808.0)) {
                     char fbuf[32];
                     q_runtime_reportf("runtime error: astype('i64'): value %s at index %zu is out of i64 range\n", q_format_float(x, fbuf, sizeof(fbuf)), i);
-                    std::exit(1);
+                    q_exit(1);
                 }
                 d[i] = static_cast<int64_t>(x);
             }
@@ -1042,7 +1042,7 @@ inline QValue q_astype(QValue vec, QValue dtype) {
         if (src.type == QVector::Type::BOOL) return q_vec_clone(vec);
         if (src.type != QVector::Type::F64 && src.type != QVector::Type::I64) {
             q_runtime_reportf("runtime error: astype() cannot cast source vec to bool\n");
-            std::exit(1);
+            q_exit(1);
         }
         QVector* out = q_vec_alloc(QVector::Type::BOOL, n);
         if (src.type == QVector::Type::F64) {
@@ -1057,7 +1057,7 @@ inline QValue q_astype(QValue vec, QValue dtype) {
     }
 
     q_runtime_reportf("runtime error: astype() unsupported target dtype '%s'\n", target);
-    std::exit(1);
+    q_exit(1);
 }
 
 // ============================================================
@@ -1071,7 +1071,7 @@ inline QValue q_to_vec(QValue input) {
 
     if (input.type != QValue::VAL_LIST || !input.data.list_val) {
         q_runtime_reportf("runtime error: to_vec expects list or vec input\n");
-        std::exit(1);
+        q_exit(1);
     }
 
     const QList& items = *input.data.list_val;
@@ -1114,13 +1114,13 @@ inline QValue q_to_vec(QValue input) {
                 break;
             default:
                 q_runtime_reportf("runtime error: to_vec only supports int/float/bool/str lists (null allowed), got %s at index %zu\n", type_name(item.type), i);
-                std::exit(1);
+                q_exit(1);
         }
         if (mode == Mode::UNKNOWN) {
             mode = want;
         } else if (mode != want) {
             q_runtime_reportf("runtime error: to_vec requires homogeneous element types (all int, all float, all bool, or all str)\n");
-            std::exit(1);
+            q_exit(1);
         }
     }
 
@@ -1131,7 +1131,7 @@ inline QValue q_to_vec(QValue input) {
     if (mode == Mode::STR) {
         if (str_bytes > static_cast<size_t>(INT32_MAX)) {
             q_runtime_reportf("runtime error: vec[str] data exceeds 2 GiB\n");
-            std::exit(1);
+            q_exit(1);
         }
         QVector* out = q_vec_alloc(QVector::Type::STR, n, str_bytes);
         int32_t pos = 0;
@@ -1175,7 +1175,7 @@ inline QValue q_to_list(QValue input) {
     }
     if (!q_vec_has_valid_handle(input)) {
         q_runtime_reportf("runtime error: to_list expects a vec or list input\n");
-        std::exit(1);
+        q_exit(1);
     }
     const QVector& v = *input.data.vector_val;
     // The list holds the vec's dtype (to_list() is typed list[int] for a
@@ -1183,7 +1183,7 @@ inline QValue q_to_list(QValue input) {
     if (v.null_count > 0) {
         q_runtime_reportf("runtime error: to_list() of a vec with %zu missing %s; use fillna or drop_na first\n",
                           v.null_count, v.null_count == 1 ? "entry" : "entries");
-        std::exit(1);
+        q_exit(1);
     }
     const QElemType* elem = nullptr;
     switch (v.type) {
@@ -1279,7 +1279,7 @@ inline QValue cmp_str(QValue a, QValue b, Op op) {
 
 [[noreturn]] inline void cmp_unsupported(const char* op) {
     q_runtime_reportf("runtime error: operator '%s' not supported for these vec types\n", op);
-    std::exit(1);
+    q_exit(1);
 }
 
 template <typename Op>
@@ -1315,11 +1315,11 @@ inline QValue q_vec_neq(QValue a, QValue b) { return quark::vec::cmp_equality(a,
 inline QValue q_vec_get(QValue vec, QValue index) {
     if (!q_vec_has_valid_handle(vec)) {
         q_runtime_reportf("runtime error: vec index expects valid vec\n");
-        std::exit(1);
+        q_exit(1);
     }
     if (index.type != QValue::VAL_INT) {
         q_runtime_reportf("runtime error: vec index must be int\n");
-        std::exit(1);
+        q_exit(1);
     }
     const QVector& v = *vec.data.vector_val;
     long long idx = index.data.int_val;
@@ -1327,7 +1327,7 @@ inline QValue q_vec_get(QValue vec, QValue index) {
     if (idx < 0) idx = len + idx;
     if (idx < 0 || idx >= len) {
         q_runtime_reportf("runtime error: vec index %lld out of range (len=%lld)\n", idx, len);
-        std::exit(1);
+        q_exit(1);
     }
     return q_vec_box_at(v, static_cast<size_t>(idx));
 }
@@ -1336,7 +1336,7 @@ inline QValue q_vec_get(QValue vec, QValue index) {
 // (specs/tables_v0_1_spec.md D12): it is an error, never a null read as a number.
 [[noreturn]] inline void q_vec_missing(long long index) {
     q_runtime_reportf("runtime error: vec element %lld is missing; use fillna or drop_na first\n", index);
-    std::exit(1);
+    q_exit(1);
 }
 
 // q_vec_get_scalar is v[i]: like v.get(i), but a missing entry is an error.
@@ -1400,17 +1400,17 @@ inline QValue q_vec_keep(const QVector& dv, Keep keep) {
 inline QValue q_vec_mask_filter(QValue data, QValue mask) {
     if (!q_vec_has_valid_handle(data) || !q_vec_has_valid_handle(mask)) {
         q_runtime_reportf("runtime error: mask filter expects vec operands\n");
-        std::exit(1);
+        q_exit(1);
     }
     const QVector& dv = *data.data.vector_val;
     const QVector& mv = *mask.data.vector_val;
     if (mv.type != QVector::Type::BOOL) {
         q_runtime_reportf("runtime error: mask index must be a bool vec, got vec[%s]\n", q_vec_dtype_name(mv));
-        std::exit(1);
+        q_exit(1);
     }
     if (dv.count != mv.count) {
         q_runtime_reportf("runtime error: mask length (%zu) does not match vec length (%zu)\n", mv.count, dv.count);
-        std::exit(1);
+        q_exit(1);
     }
 
     return q_vec_keep(dv, [&](size_t i) { return q_vec_mask_selects(mv, i); });
@@ -1420,7 +1420,7 @@ inline QValue q_vec_mask_filter(QValue data, QValue mask) {
 inline QValue q_drop_na(QValue vec) {
     if (!q_vec_has_valid_handle(vec)) {
         q_runtime_reportf("runtime error: drop_na() expects a vec\n");
-        std::exit(1);
+        q_exit(1);
     }
     const QVector& v = *vec.data.vector_val;
     if (v.null_count == 0) return vec;  // vectors are immutable, so it can be shared

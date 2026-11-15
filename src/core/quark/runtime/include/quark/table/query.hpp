@@ -43,7 +43,7 @@ struct ColOut {
 inline QTable* q_tbl_of(QValue v) {
     if (v.type != QValue::VAL_TABLE || !v.data.table_val) {
         q_runtime_reportf("runtime error: internal: a query's source is a %s, not a table\n", q_type_name(v.type));
-        std::exit(1);
+        q_exit(1);
     }
     return v.data.table_val;
 }
@@ -101,7 +101,7 @@ inline bool q_sv_cmp_val(std::string_view a, QValue b, const char* op) {
     if (b.type != QValue::VAL_STRING || b.data.string_val == nullptr) {
         if (!ordered) return op[0] == '!';
         q_runtime_reportf("runtime error: operator '%s' expects two numbers or two strings\n", op);
-        std::exit(1);
+        q_exit(1);
     }
     return q_sv_holds(q_sv_ord(a, std::string_view(b.data.string_val)), op);
 }
@@ -151,7 +151,7 @@ inline void q_col_push_bool(quark::tbl::ColOut& b, bool x) {
 inline void q_col_push_str(quark::tbl::ColOut& b, QValue s) {
     if (s.type != QValue::VAL_STRING || !s.data.string_val) {
         q_runtime_reportf("runtime error: internal: a str column got a %s\n", q_type_name(s.type));
-        std::exit(1);
+        q_exit(1);
     }
     b.bytes += s.data.string_val;
     if (b.bytes.size() > static_cast<size_t>(INT32_MAX)) quark::tbl::fail("a str column holds more than 2 GiB of text");
@@ -198,7 +198,7 @@ inline QTable* q_tbl_sort(QTable* t, std::initializer_list<int> keys) {
 inline QTable* q_tbl_slice(QTable* t, long long n, bool from_end, const char* verb) {
     if (n < 0) {
         q_runtime_reportf("runtime error: %s(n) needs n >= 0, got %lld\n", verb, n);
-        std::exit(1);
+        q_exit(1);
     }
     const int32_t rows = t->nrows;
     const int32_t take = n < rows ? static_cast<int32_t>(n) : rows;
@@ -259,7 +259,7 @@ inline QTable* q_tbl_make(const QStructDef* def, std::initializer_list<QVector*>
 inline long long q_tbl_method_count(QValue n, const char* method) {
     if (n.type != QValue::VAL_INT) {
         q_runtime_reportf("runtime error: %s(n) expects an int, got %s\n", method, q_type_name(n.type));
-        std::exit(1);
+        q_exit(1);
     }
     return n.data.int_val;
 }
@@ -281,7 +281,7 @@ inline QValue q_tbl_describe(QValue tv, QValue nv) {
     const long long n = q_tbl_method_count(nv, "describe");
     if (n < 0) {
         q_runtime_reportf("runtime error: describe(n) needs n >= 0, got %lld\n", n);
-        std::exit(1);
+        q_exit(1);
     }
     std::string out = t->def->anonymous ? "tbl" : q_table_type_name(t);
     out += ": ";

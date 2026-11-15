@@ -23,7 +23,7 @@ inline QValue q_random_seed(int64_t seed) {
 
 [[noreturn]] inline void q_random_fail(const char* msg) {
     q_runtime_reportf("runtime error: %s\n", msg);
-    std::exit(1);
+    q_exit(1);
 }
 
 // Uniform float in [lo, hi). lo == hi returns lo. lo > hi, or a non-finite
@@ -34,7 +34,7 @@ inline double q_random_uniform_range(double lo, double hi) {
         q_format_float(lo, a, sizeof(a));
         q_format_float(hi, b, sizeof(b));
         q_runtime_reportf("runtime error: random::uniform() needs a finite lo <= hi, got %s and %s\n", a, b);
-        std::exit(1);
+        q_exit(1);
     }
     if (lo == hi) return lo;
     return std::uniform_real_distribution<double>(lo, hi)(q_random_engine());
@@ -47,7 +47,7 @@ inline double q_random_normal(double mean, double sd) {
         q_format_float(mean, a, sizeof(a));
         q_format_float(sd, b, sizeof(b));
         q_runtime_reportf("runtime error: random::normal() needs a finite mean and sd >= 0, got %s and %s\n", a, b);
-        std::exit(1);
+        q_exit(1);
     }
     if (sd == 0) return mean;
     return std::normal_distribution<double>(mean, sd)(q_random_engine());
@@ -58,7 +58,7 @@ inline int64_t q_random_randint(int64_t lo, int64_t hi) {
     if (lo > hi) {
         q_runtime_reportf("runtime error: random.randint(lo, hi) needs lo <= hi, got %lld and %lld\n",
                           static_cast<long long>(lo), static_cast<long long>(hi));
-        std::exit(1);
+        q_exit(1);
     }
     return std::uniform_int_distribution<int64_t>(lo, hi)(q_random_engine());
 }
@@ -66,11 +66,11 @@ inline int64_t q_random_randint(int64_t lo, int64_t hi) {
 inline void q_random_check_count(int64_t n, const char* fn) {
     if (n < 0) {
         q_runtime_reportf("runtime error: %s() count must be >= 0, got %lld\n", fn, static_cast<long long>(n));
-        std::exit(1);
+        q_exit(1);
     }
     if (static_cast<unsigned long long>(n) > static_cast<unsigned long long>(SIZE_MAX / 8)) {
         q_runtime_reportf("runtime error: %s() count is too large\n", fn);
-        std::exit(1);
+        q_exit(1);
     }
 }
 
@@ -78,7 +78,7 @@ inline void q_random_check_count(int64_t n, const char* fn) {
 inline QValue q_random_choice(QList* list) {
     if (!list || list->empty()) {
         q_runtime_reportf("runtime error: random.choice() on an empty list\n");
-        std::exit(1);
+        q_exit(1);
     }
     std::uniform_int_distribution<size_t> pick(0, list->size() - 1);
     return (*list)[pick(q_random_engine())];
@@ -102,7 +102,7 @@ inline QList* q_random_sample(QList* xs, int64_t k) {
     if (k < 0 || k > n) {
         q_runtime_reportf("runtime error: random::sample() needs 0 <= k <= len(xs), got k=%lld and len=%lld\n",
                           static_cast<long long>(k), static_cast<long long>(n));
-        std::exit(1);
+        q_exit(1);
     }
     const int cap = k > 0 && k <= 0x7fffffffLL ? static_cast<int>(k) : 0;
     QValue outv = qv_list(cap, xs->elem);
@@ -125,7 +125,7 @@ inline double q_random_weight_at(QList* weights, size_t i) {
     if (v.type == QValue::VAL_FLOAT) return v.data.float_val;
     q_runtime_reportf("runtime error: random::weighted() weight %zu must be a number, got %s\n", i,
                       q_type_name(v.type));
-    std::exit(1);
+    q_exit(1);
 }
 
 // One element of xs, chosen with probability proportional to weights.
@@ -137,7 +137,7 @@ inline QValue q_random_weighted(QList* xs, QList* weights) {
     if (xs->size() != weights->size()) {
         q_runtime_reportf("runtime error: random::weighted() needs one weight per element, got %zu elements and %zu weights\n",
                           xs->size(), weights->size());
-        std::exit(1);
+        q_exit(1);
     }
     if (xs->empty()) {
         q_random_fail("random::weighted() on an empty list");
@@ -150,7 +150,7 @@ inline QValue q_random_weighted(QList* xs, QList* weights) {
             char buf[32];
             q_format_float(x, buf, sizeof(buf));
             q_runtime_reportf("runtime error: random::weighted() weight %zu must be a finite number >= 0, got %s\n", i, buf);
-            std::exit(1);
+            q_exit(1);
         }
         w[i] = x;
         sum += x;
@@ -184,7 +184,7 @@ inline QVector* q_random_normal_vec(int64_t n, double mean, double sd) {
         q_format_float(mean, a, sizeof(a));
         q_format_float(sd, b, sizeof(b));
         q_runtime_reportf("runtime error: random::normal_vec() needs a finite mean and sd >= 0, got %s and %s\n", a, b);
-        std::exit(1);
+        q_exit(1);
     }
     QVector* v = q_vec_alloc(QVector::Type::F64, static_cast<size_t>(n));
     if (n == 0) return v;
@@ -203,7 +203,7 @@ inline QVector* q_random_randint_vec(int64_t n, int64_t lo, int64_t hi) {
     if (lo > hi) {
         q_runtime_reportf("runtime error: random::randint_vec() needs lo <= hi, got %lld and %lld\n",
                           static_cast<long long>(lo), static_cast<long long>(hi));
-        std::exit(1);
+        q_exit(1);
     }
     QVector* v = q_vec_alloc(QVector::Type::I64, static_cast<size_t>(n));
     if (n == 0) return v;

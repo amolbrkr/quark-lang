@@ -74,7 +74,7 @@ inline T* q_new(Args&&... args) {
     void* mem = q_malloc(sizeof(T));
     if (!mem) {
         q_runtime_reportf("runtime error: allocation failed\n");
-        std::exit(1);
+        q_exit(1);
     }
     return ::new(mem) T(std::forward<Args>(args)...);
 }

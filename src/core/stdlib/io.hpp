@@ -109,11 +109,11 @@ inline QFilePayload* q_expect_file_payload(QValue file, const char* op) {
     const char* err = nullptr;
     if (!q_resource_resolve(file, QRES_KIND_FILE, slot, handle, err)) {
         q_runtime_reportf("runtime error: %s() expects an open file (%s)\n", op, err ? err : "invalid handle");
-        std::exit(1);
+        q_exit(1);
     }
     if (!slot || !slot->payload) {
         q_runtime_reportf("runtime error: %s() file has no payload\n", op);
-        std::exit(1);
+        q_exit(1);
     }
     return static_cast<QFilePayload*>(slot->payload);
 }
@@ -137,7 +137,7 @@ inline QValue q_file_open(const char* path, const char* mode, bool binary) {
         ::close(fd);
 #endif
         q_runtime_reportf("runtime error: io.open() failed to allocate payload\n");
-        std::exit(1);
+        q_exit(1);
     }
 
     payload->fd = fd;
@@ -152,7 +152,7 @@ inline QValue q_file_open(const char* path, const char* mode, bool binary) {
 #endif
         // payload is GC-managed, no manual free needed
         q_runtime_reportf("runtime error: io.open() failed to allocate resource handle\n");
-        std::exit(1);
+        q_exit(1);
     }
 
     return qv_ok(qv_resource(handle));
@@ -162,7 +162,7 @@ inline QValue q_file_open(const char* path, const char* mode, bool binary) {
 inline QValue q_file_read(QValue file, int64_t n) {
     if (n < 0) {
         q_runtime_reportf("runtime error: io.read() argument 2 must be >= 0\n");
-        std::exit(1);
+        q_exit(1);
     }
 
     QFilePayload* payload = q_expect_file_payload(file, "io.read");
@@ -263,7 +263,7 @@ inline QValue q_file_seek(QValue file, int64_t offset, int64_t whence) {
         cWhence = SEEK_END;
     } else {
         q_runtime_reportf("runtime error: io.seek() whence must be 0, 1, or 2\n");
-        std::exit(1);
+        q_exit(1);
     }
 
     QFilePayload* payload = q_expect_file_payload(file, "io.seek");

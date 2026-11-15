@@ -20,11 +20,11 @@
 inline QValue q_str_slice(QValue str, QValue start, QValue end) {
     if (str.type != QValue::VAL_STRING || !str.data.string_val) {
         q_runtime_reportf("runtime error: sslice() expects str as first argument\n");
-        std::exit(1);
+        q_exit(1);
     }
     if (start.type != QValue::VAL_INT || end.type != QValue::VAL_INT) {
         q_runtime_reportf("runtime error: sslice() start and end must be int\n");
-        std::exit(1);
+        q_exit(1);
     }
     const long long len = static_cast<long long>(strlen(str.data.string_val));
     long long s = q_resolve_index(start.data.int_val, len);
@@ -37,7 +37,7 @@ inline QValue q_str_slice(QValue str, QValue start, QValue end) {
     char* result = static_cast<char*>(q_malloc_atomic(rlen + 1));
     if (!result) {
         q_runtime_reportf("runtime error: sslice() failed to allocate result\n");
-        std::exit(1);
+        q_exit(1);
     }
     memcpy(result, str.data.string_val + s, rlen);
     result[rlen] = '\0';
@@ -50,11 +50,11 @@ inline QValue q_str_slice(QValue str, QValue start, QValue end) {
 inline QValue q_str_join(QValue lst, QValue sep) {
     if (lst.type != QValue::VAL_LIST) {
         q_runtime_reportf("runtime error: sjoin() expects list as first argument\n");
-        std::exit(1);
+        q_exit(1);
     }
     if (sep.type != QValue::VAL_STRING || !sep.data.string_val) {
         q_runtime_reportf("runtime error: sjoin() expects str as second argument\n");
-        std::exit(1);
+        q_exit(1);
     }
     if (!lst.data.list_val || lst.data.list_val->empty()) {
         return qv_string("");
@@ -78,7 +78,7 @@ inline QValue q_str_join(QValue lst, QValue sep) {
     char* result = static_cast<char*>(q_malloc_atomic(total + 1));
     if (!result) {
         q_runtime_reportf("runtime error: sjoin() failed to allocate result\n");
-        std::exit(1);
+        q_exit(1);
     }
 
     char* dest = result;
@@ -106,11 +106,11 @@ inline QValue q_str_join(QValue lst, QValue sep) {
 inline QValue q_split(QValue str, QValue sep) {
     if (str.type != QValue::VAL_STRING || sep.type != QValue::VAL_STRING) {
         q_runtime_reportf("runtime error: split() expects (str, str)\n");
-        std::exit(1);
+        q_exit(1);
     }
     if (!str.data.string_val || !sep.data.string_val) {
         q_runtime_reportf("runtime error: split() expects non-null string arguments\n");
-        std::exit(1);
+        q_exit(1);
     }
 
     const char* s = str.data.string_val;

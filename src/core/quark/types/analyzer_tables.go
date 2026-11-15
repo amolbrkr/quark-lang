@@ -157,6 +157,7 @@ func (a *Analyzer) anonRow(fields []StructField) *StructType {
 		return st
 	}
 	st := &StructType{Name: "row__" + strconv.Itoa(len(a.anonRows)+1), Fields: fields, Anonymous: true}
+	a.tagAnonHome(st)
 	a.anonRows[key] = st
 	a.structTypes[st.Name] = st
 	return st

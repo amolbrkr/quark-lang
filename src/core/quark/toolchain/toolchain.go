@@ -24,6 +24,7 @@ type Toolchain struct {
 	GCLib          string // static libgc archive
 
 	defaultDirs []string // linker's default library directories, computed on first use
+	replLib     string   // Windows REPL runtime import library, set by HostPath
 }
 
 // Options control a single build.

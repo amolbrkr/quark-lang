@@ -28,3 +28,10 @@ module fmt:
 
     fn tail(lst: list, n: int = 5) str ->
         fmt_list(lst.slice(len(lst) - n, len(lst)), 0, true)
+
+
+fn my_transform(x) -> x * 2
+
+mtcars | c ->
+    mutate(new_mpg = my_transform(x))
+    | sort(c.new_mpg)

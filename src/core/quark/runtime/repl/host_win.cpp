@@ -305,6 +305,10 @@ int main() {
             continue;
         }
         int rc = run_library(rest.substr(0, tab), rest.substr(tab + 1));
+        // The input's output is shown before the status that ends it. The
+        // host and every input share one C runtime (toolchain/repl.go), so
+        // this is the stdout that print wrote to.
+        std::fflush(stdout);
         if (rc == 0) write_status("ok");
         else if (rc == 3) write_status("interrupted");
         else if (rc == 2) write_status("signal");

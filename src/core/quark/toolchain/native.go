@@ -219,9 +219,11 @@ func glueErrorDiagnostic(output string, glueFiles []string) *diagnostics.Diagnos
 	if len(glueFiles) == 0 {
 		return nil
 	}
-	isGlue := map[string]bool{}
+	// Paths are compared cleaned (clang may print either separator on
+	// Windows), and a glue file is reported as the caller spelled it.
+	glue := map[string]string{}
 	for _, f := range glueFiles {
-		isGlue[filepath.Clean(f)] = true
+		glue[filepath.Clean(f)] = f
 	}
 	type site struct {
 		file      string
@@ -233,7 +235,7 @@ func glueErrorDiagnostic(output string, glueFiles []string) *diagnostics.Diagnos
 		line := sc.Text()
 		if m := includedFrom.FindStringSubmatch(line); m != nil {
 			n, _ := strconv.Atoi(m[2])
-			chain = append(chain, site{file: filepath.Clean(m[1]), line: n})
+			chain = append(chain, site{file: m[1], line: n})
 			continue
 		}
 		m := clangError.FindStringSubmatch(line)
@@ -241,18 +243,18 @@ func glueErrorDiagnostic(output string, glueFiles []string) *diagnostics.Diagnos
 			chain = nil
 			continue
 		}
-		errFile := filepath.Clean(m[1])
+		errFile := m[1]
 		ln, _ := strconv.Atoi(m[2])
 		col, _ := strconv.Atoi(m[3])
 		var at *site
 		var notes []string
-		if isGlue[errFile] {
-			at = &site{file: errFile, line: ln, col: col}
+		if g, ok := glue[filepath.Clean(errFile)]; ok {
+			at = &site{file: g, line: ln, col: col}
 		} else {
 			// Innermost glue header on the include chain, if any.
 			for i := len(chain) - 1; i >= 0; i-- {
-				if isGlue[chain[i].file] {
-					at = &chain[i]
+				if g, ok := glue[filepath.Clean(chain[i].file)]; ok {
+					at = &site{file: g, line: chain[i].line}
 					notes = append(notes, fmt.Sprintf("the error is in %s:%d, included from here", errFile, ln))
 					break
 				}

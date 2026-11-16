@@ -246,6 +246,9 @@ func TestExtensionData_UpToDate(t *testing.T) {
 		return
 	}
 	got, err := os.ReadFile(path)
+	// A Windows checkout with core.autocrlf (the GitHub runners' default)
+	// has CRLF line ends; the generator writes LF.
+	got = bytes.ReplaceAll(got, []byte("\r\n"), []byte("\n"))
 	if err != nil || !bytes.Equal(got, buf.Bytes()) {
 		t.Fatalf("%s is out of date with the compiler; run: cd src/core/quark && go test ./internal/editordata -update", path)
 	}

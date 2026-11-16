@@ -291,6 +291,11 @@ inline void q_resource_on_unreachable(QResourceHandle* handle) {
         return;
     }
     q_resource_release(handle);
+    // The parent was kept alive for this finalizer only. The handle's memory
+    // can outlive it: a stale word on the stack that looks like a pointer to
+    // it keeps it from being freed. Without this, that word would keep the
+    // parent open too.
+    handle->parent = q_resource_no_parent();
 }
 
 inline bool q_resource_is_alive(QValue value) {

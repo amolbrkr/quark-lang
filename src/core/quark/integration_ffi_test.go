@@ -478,6 +478,14 @@ print(handles::release_both_again())
 `), "0\n1 0\n1 1")
 	})
 
+	t.Run("a finalized child stops keeping its parent alive", func(t *testing.T) {
+		mustOK(t, run(`incl './handles'
+print(handles::hold_pair())
+print(handles::release_child_keep_stale())
+print(handles::release_parent())
+`), "0\n1 0\n1 1")
+	})
+
 	t.Run("file handle is closed when it becomes unreachable", func(t *testing.T) {
 		root := repoRootFromThisFile(t)
 		stdlib := filepath.Join(root, "src", "core", "stdlib")
@@ -569,6 +577,7 @@ int64_t qffi_hold_item();
 int64_t qffi_release_item();
 int64_t qffi_hold_pair();
 const char* qffi_release_child();
+const char* qffi_release_child_keep_stale();
 const char* qffi_release_parent();
 const char* qffi_release_both_once();
 const char* qffi_release_both_again();
@@ -608,9 +617,16 @@ static void drop_value(QValue& v) {
     v.data.resource_val = nullptr;
 }
 
-static void scrub_and_collect() {
+// Zeroes the stack below the caller, where the collector's frames run next,
+// so a pointer that an earlier collection or finalizer left there isn't
+// taken for a live reference.
+__attribute__((noinline)) static void clear_stack_below() {
     volatile char sink[65536];
     for (int i = 0; i < 65536; i++) sink[i] = 0;
+}
+
+static void scrub_and_collect() {
+    clear_stack_below();
     GC_gcollect();
     GC_invoke_finalizers();
 }
@@ -673,6 +689,26 @@ const char* qffi_release_child() {
     return pair_status();
 }
 
+// The child handle's address, hidden from the collector.
+static GC_hidden_pointer hidden_child = 0;
+// Scanned by the collector, like a stale word on the stack.
+static void* volatile stale_child = nullptr;
+
+__attribute__((noinline)) static void hide_and_drop_child() {
+    hidden_child = GC_HIDE_POINTER(held_child.data.resource_val);
+    drop_value(held_child);
+}
+
+// Drops the child and collects, so its finalizer runs, then points a scanned
+// word at the finalized child's memory, which keeps that memory from being
+// freed. The child must no longer keep its parent alive.
+const char* qffi_release_child_keep_stale() {
+    hide_and_drop_child();
+    scrub_and_collect();
+    stale_child = GC_REVEAL_POINTER(hidden_child);
+    return pair_status();
+}
+
 const char* qffi_release_parent() {
     drop_value(held_parent);
     scrub_and_collect();
@@ -716,6 +752,7 @@ extern fn hold_item() int as 'qffi_hold_item'
 extern fn release_item() int as 'qffi_release_item'
 extern fn hold_pair() int as 'qffi_hold_pair'
 extern fn release_child() str as 'qffi_release_child'
+extern fn release_child_keep_stale() str as 'qffi_release_child_keep_stale'
 extern fn release_parent() str as 'qffi_release_parent'
 extern fn release_both_once() str as 'qffi_release_both_once'
 extern fn release_both_again() str as 'qffi_release_both_again'
@@ -749,9 +786,16 @@ static void drop_value(QValue& v) {
     v.data.resource_val = nullptr;
 }
 
-static void scrub_and_collect() {
+// Zeroes the stack below the caller, where the collector's frames run next,
+// so a pointer that an earlier collection or finalizer left there isn't
+// taken for a live reference.
+__attribute__((noinline)) static void clear_stack_below() {
     volatile char sink[65536];
     for (int i = 0; i < 65536; i++) sink[i] = 0;
+}
+
+static void scrub_and_collect() {
+    clear_stack_below();
     GC_gcollect();
     GC_invoke_finalizers();
 }

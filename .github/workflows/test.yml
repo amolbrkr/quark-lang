@@ -12,9 +12,9 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    # Windows reports but doesn't block yet: three tests in ./toolchain fail
-    # there on path separators (known_issues.md, "go test ./toolchain fails on
-    # Windows"). Drop this line once they are fixed.
+    # Windows reports but doesn't block yet: the REPL's Windows build (DLL C
+    # runtime, 2026-11-16) has only been checked here, not on a Windows
+    # machine. Drop this line once the Windows job passes.
     continue-on-error: ${{ matrix.os == 'windows-latest' }}
     timeout-minutes: 75
     defaults:

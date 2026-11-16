@@ -34,24 +34,14 @@ inline const char* q_sys_program() {
     return q_strdup(q_process_argv[0]);
 }
 
-// Value of an environment variable, or null when it isn't set.
-inline QValue q_sys_env(const char* name) {
-    const char* value = (name != nullptr && name[0] != '\0') ? std::getenv(name) : nullptr;
-    return value ? qv_string(value) : qv_null();
-}
-
-// The value, or fallback when the variable is unset. Never null.
-inline const char* q_sys_env_or(const char* name, const char* fallback) {
-    const char* value = (name != nullptr && name[0] != '\0') ? std::getenv(name) : nullptr;
-    if (value == nullptr) value = fallback != nullptr ? fallback : "";
-    return q_strdup(value);
-}
-
 [[noreturn]] inline void q_sys_fail(const char* fn, const char* msg) {
     q_runtime_reportf("runtime error: sys::%s() %s\n", fn, msg);
     q_exit(1);
 }
 
+// The name rules of every env function. getenv matches a name that contains
+// '=' against the start of another variable ("QA=B" finds QA=B=c and
+// returns "c"), and on Windows "=C:" is a drive entry, not a variable.
 inline void q_sys_check_name(const char* name, const char* fn) {
     if (name == nullptr || name[0] == '\0') {
         q_sys_fail(fn, "name must not be empty");
@@ -59,6 +49,21 @@ inline void q_sys_check_name(const char* name, const char* fn) {
     if (std::strchr(name, '=') != nullptr) {
         q_sys_fail(fn, "name must not contain '='");
     }
+}
+
+// Value of an environment variable, or null when it isn't set.
+inline QValue q_sys_env(const char* name) {
+    q_sys_check_name(name, "env");
+    const char* value = std::getenv(name);
+    return value ? qv_string(value) : qv_null();
+}
+
+// The value, or fallback when the variable is unset. Never null.
+inline const char* q_sys_env_or(const char* name, const char* fallback) {
+    q_sys_check_name(name, "env_or");
+    const char* value = std::getenv(name);
+    if (value == nullptr) value = fallback != nullptr ? fallback : "";
+    return q_strdup(value);
 }
 
 // Set a variable for this process. A failure (the OS refused the name) is a

@@ -132,6 +132,7 @@ func (tc *Toolchain) CompileInput(cppPath, soPath, pch string, opts Options) err
 		link = append(link, opts.PrevLibs...)
 		link = append(link, "-Wl,/IMPLIB:"+strings.TrimSuffix(soPath, filepath.Ext(soPath))+".lib")
 		link = append(link, tc.replLib)
+		link = append(link, replWindowsCRTLink...)
 	}
 	link = append(link, "-o", soPath)
 	link = append(link, nativeLinkArgs(libs, opts)...)
@@ -235,14 +236,16 @@ func (tc *Toolchain) hostPathWindows(verbose bool) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	dllArgs := []string{"-shared", "-std=c++17", "-O3", "-DQUARK_USE_GC", "-DQUARK_REPL", "-DQUARK_REPL_BUILD", "-fms-extensions",
+	dllArgs := []string{"-shared", "-std=c++17", "-O3", replWindowsCRT, "-DQUARK_USE_GC", "-DQUARK_REPL", "-DQUARK_REPL_BUILD", "-fms-extensions",
 		"-Wno-deprecated-declarations", "-I" + tc.RuntimeInclude, "-I" + tc.GCInclude,
 		slotsSrc, obj, tc.GCLib, "-Wl,/DEF:" + def, "-o", dll}
+	dllArgs = append(dllArgs, replWindowsCRTLink...)
 	if err := tc.buildFile(opts, dllArgs); err != nil {
 		return "", "", err
 	}
-	hostArgs := []string{"-std=c++17", "-O3", "-DQUARK_USE_GC", "-DQUARK_REPL", "-fms-extensions",
+	hostArgs := []string{"-std=c++17", "-O3", replWindowsCRT, "-DQUARK_USE_GC", "-DQUARK_REPL", "-fms-extensions",
 		"-Wno-deprecated-declarations", "-I" + tc.RuntimeInclude, "-I" + tc.GCInclude, hostSrc, lib, "-o", host}
+	hostArgs = append(hostArgs, replWindowsCRTLink...)
 	if err := tc.buildFile(opts, hostArgs); err != nil {
 		return "", "", err
 	}
@@ -250,12 +253,29 @@ func (tc *Toolchain) hostPathWindows(verbose bool) (string, string, error) {
 	return host, pch, nil
 }
 
+// The Windows REPL's host, quarkrepl.dll and every input use the DLL C
+// runtime (ucrtbase, vcruntime140, msvcp140), so the process has one: one
+// stdout buffer, heap, environment and file descriptor table. With clang's
+// default static runtime each DLL had its own copy, so the host couldn't
+// flush what print wrote, and an input whose glue pulled in a static runtime
+// object (std::thread::hardware_concurrency, _putenv_s) got a second
+// definition of inline code quarkrepl.dll exports (std::string's
+// constructor, snprintf): LNK2005. quark run and quark build keep the
+// static runtime.
+const replWindowsCRT = "-fms-runtime-lib=dll"
+
+// replWindowsCRTLink goes on every Windows REPL link. clang's driver names
+// libcmt (the static runtime) on every link even with -fms-runtime-lib=dll,
+// and the prebuilt GC library names it too; with msvcrt also named, both
+// runtimes would be linked.
+var replWindowsCRTLink = []string{"-Wl,/NODEFAULTLIB:libcmt.lib"}
+
 // replWindowsPCHFlags are the flags of the precompiled header each input
 // compiles against. They match replPCHFlags on the codegen options, and add
-// the Windows REPL macros. -DQUARK_REPL_BUILD is not one of them: an input
-// imports the session, it does not define it.
+// the Windows REPL macros and runtime. -DQUARK_REPL_BUILD is not one of them:
+// an input imports the session, it does not define it.
 func (tc *Toolchain) replWindowsPCHFlags() []string {
-	args := []string{"-std=c++17", "-O0", "-DQUARK_USE_GC", "-DQUARK_REPL", "-fms-extensions",
+	args := []string{"-std=c++17", "-O0", replWindowsCRT, "-DQUARK_USE_GC", "-DQUARK_REPL", "-fms-extensions",
 		"-Wno-deprecated-declarations", "-fpch-instantiate-templates", "-fpch-codegen",
 		"-I" + tc.RuntimeInclude, "-I" + tc.GCInclude}
 	if runtime.GOARCH == "amd64" {

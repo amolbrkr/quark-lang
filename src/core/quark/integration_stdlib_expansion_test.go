@@ -133,6 +133,90 @@ func TestStdlibExpansion_Sys(t *testing.T) {
 	}
 }
 
+// TestStdlibExpansion_Limits checks std/random and std/time at the edges of
+// the float range and under a local time zone: uniform stays below hi when
+// hi - lo overflows or the range is one float wide, weighted works when the
+// weights' sum overflows and never picks a zero weight, and a UTC time is
+// formatted as UTC (%s, %Z, %z) whatever TZ says, while a local one keeps its
+// zone. TZ=EST5EDT is a POSIX zone string, so the C library reads it the same
+// way on every platform.
+func TestStdlibExpansion_Limits(t *testing.T) {
+	tmp := t.TempDir()
+	source := strings.Join([]string{
+		"incl 'std/random' as random",
+		"incl 'std/time' as time",
+		"random::seed(7)",
+		"wide = 0",
+		"for i in range(2000):",
+		"    x = random::uniform(-1e308, 1e308)",
+		"    if x < -1e308 or x >= 1e308:",
+		"        wide = wide + 1",
+		"print('wide ' + to_str(wide))",
+		"hi = 1.0000000000000002",
+		"narrow = 0",
+		"for i in range(2000):",
+		"    if random::uniform(1.0, hi) != 1.0:",
+		"        narrow = narrow + 1",
+		"print('narrow ' + to_str(narrow))",
+		"v = random::uniform_vec(100000)",
+		"print('unit ' + to_str(max(v) < 1.0 and min(v) >= 0.0))",
+		"counts = dict { a: 0, b: 0, c: 0 }",
+		"for i in range(2000):",
+		"    k = random::weighted(list ['a', 'b', 'c'], list [1e308, 0, 1e308])",
+		"    counts.set(k, counts.get(k) + 1)",
+		"print('big b ' + to_str(counts.get('b')))",
+		"print('big a ' + to_str(counts.get('a') > 800))",
+		"print('big c ' + to_str(counts.get('c') > 800))",
+		"zero = 0",
+		"for i in range(2000):",
+		"    if random::weighted(list ['a', 'b'], list [1, 0]) == 'b':",
+		"        zero = zero + 1",
+		"print('zero ' + to_str(zero))",
+		"print('utc ' + time::format_time(-1.5, '%s %S %Z %z'))",
+		"print('date ' + time::format(time::from_days(1), '%s %Z %z %d'))",
+		"print('local ' + time::format_time(0.0, '%s %Z %z', true))",
+		"print('literal ' + time::format_time(90061.0, '%%s %%Z 100%%'))",
+		"time::sleep(-1.0)",
+		"time::sleep(0.0)",
+		"time::sleep(0.001)",
+		"print('slept')",
+		"",
+	}, "\n")
+	program := filepath.Join(tmp, "limits.qrk")
+	if err := os.WriteFile(program, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	exe := filepath.Join(tmp, "limits")
+	runQuark(t, "build", program, "-o", exe)
+
+	cmd := exec.Command(exe)
+	cmd.Env = append(os.Environ(), "TZ=EST5EDT")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("run: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	want := strings.Join([]string{
+		"wide 0",
+		"narrow 0",
+		"unit true",
+		"big b 0",
+		"big a true",
+		"big c true",
+		"zero 0",
+		"utc -2 58 UTC +0000",
+		"date 86400 UTC +0000 02",
+		"local 0 EST -0500",
+		"literal %s %Z 100%",
+		"slept",
+		"",
+	}, "\n")
+	if got := normalizeNewlines(stdout.String()); got != want {
+		t.Fatalf("output:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 func wantPlatform() string {
 	switch runtime.GOOS {
 	case "windows", "linux", "darwin":
@@ -225,6 +309,18 @@ func TestStdlibExpansion_Rejected(t *testing.T) {
 		{"weighted_zero", "incl 'std/random' as random\nprint(random::weighted(list ['a'], list [0]))\n", "weights must sum to a positive number"},
 		{"set_env_empty", "incl 'std/sys' as sys\nsys::set_env('', 'a')\n", "sys::set_env() name must not be empty"},
 		{"set_env_eq", "incl 'std/sys' as sys\nsys::set_env('A=B', 'a')\n", "sys::set_env() name must not contain '='"},
+		{"env_eq", "incl 'std/sys' as sys\nsys::set_env('QA', 'B=c')\nprint(sys::env('QA=B'))\n", "sys::env() name must not contain '='"},
+		{"env_or_eq", "incl 'std/sys' as sys\nprint(sys::env_or('QA=B', 'd'))\n", "sys::env_or() name must not contain '='"},
+		{"env_empty", "incl 'std/sys' as sys\nprint(sys::env(''))\n", "sys::env() name must not be empty"},
+		{"env_any_eq", "incl 'std/sys' as sys\nfn id(v) -> v\nprint(sys::env(id('A=B')))\n", "sys::env() name must not contain '='"},
+		{"env_int", "incl 'std/sys' as sys\nprint(sys::env(1))\n", "argument 1 of 'sys::env' expects str, got int"},
+		{"sleep_inf", "incl 'std/time' as time\ntime::sleep(to_float('inf'))\nprint('woke')\n", "time::sleep() seconds must be a finite number"},
+		{"sleep_nan", "incl 'std/time' as time\ntime::sleep(to_float('nan'))\nprint('woke')\n", "time::sleep() seconds must be a finite number"},
+		{"sleep_neg_inf", "incl 'std/time' as time\ntime::sleep(-to_float('inf'))\nprint('woke')\n", "time::sleep() seconds must be a finite number"},
+		{"format_s_flag", "incl 'std/time' as time\nprint(time::format_time(0.0, '%-s'))\n", "time::format() %s, %Z and %z can't take a flag or a width"},
+		{"format_z_width", "incl 'std/time' as time\nprint(time::format(time::from_days(0), '%10Z'))\n", "time::format() %s, %Z and %z can't take a flag or a width"},
+		{"normal_overflow", "incl 'std/random' as random\nrandom::seed(1)\nfor i in range(1000):\n    x = random::normal(1e308, 1e308)\nprint('no error')\n", "random::normal() drew a value too large for a float, with mean 1e+308 and sd 1e+308"},
+		{"normal_vec_overflow", "incl 'std/random' as random\nrandom::seed(1)\nprint(random::normal_vec(1000, 1e308, 1e308))\n", "random::normal_vec() drew a value too large for a float"},
 		{"duration_nan", "incl 'std/time' as time\nprint(time::duration(to_float('nan')))\n", "time::duration() seconds must be a finite number"},
 		{"make_month", "incl 'std/time' as time\nprint(time::timestamp(1970, 13, 1))\n", "date is not a real calendar time"},
 		{"iso_inf", "incl 'std/time' as time\nprint(time::iso(to_float('inf')))\n", "time::iso() timestamp is not a finite time it can show"},

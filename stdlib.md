@@ -536,10 +536,10 @@ Program arguments, the environment, the working directory and the process. Impor
 |---|---|---|
 | `args` | `-> list` | Command-line arguments after the program name, as a list of strings. `sys::args().push(1)` is a runtime error. With `quark run`, arguments after `--` are passed: `quark run tool.qrk -- in.csv -v` |
 | `program` | `-> str` | The path the program was started as |
-| `env` | `name: str -> str or null` | Value of the environment variable `name`, or `null` when it isn't set |
-| `env_or` | `name: str, default: str -> str` | The value of `name`, or `default` when it isn't set. Never `null` |
-| `set_env` | `name: str, value: str` | Set `name` for this process and the processes it starts. An empty name, or a name containing `=`, is a runtime error |
-| `unset_env` | `name: str` | Remove `name`. Removing a variable that isn't set succeeds. The same name rules as `set_env` |
+| `env` | `name: str -> str or null` | Value of the environment variable `name`, or `null` when it isn't set. An empty name, or a name containing `=`, is a runtime error |
+| `env_or` | `name: str, default: str -> str` | The value of `name`, or `default` when it isn't set. Never `null`. The same name rules as `env` |
+| `set_env` | `name: str, value: str` | Set `name` for this process and the processes it starts. The same name rules as `env` |
+| `unset_env` | `name: str` | Remove `name`. Removing a variable that isn't set succeeds. The same name rules as `env` |
 | `environ` | `-> dict` | Every environment variable, as a dict of strings. `sys::environ().set('X', 1)` is a runtime error. Windows drive entries whose names start with `=` are skipped |
 | `exit` | `code: int = 0` | Flush output and exit with status `code`, between 0 and 255; `0` means success. A code outside that range is a runtime error, since the OS keeps only the low 8 bits (256 would read as success) |
 | `cwd` | `-> str` | The working directory |
@@ -630,7 +630,7 @@ Clocks, calendar dates and instants. Import with `incl 'std/time' as time`. A `d
 |---|---|---|
 | `now` | `-> float` | Seconds since the Unix epoch (wall clock), with sub-second precision |
 | `clock` | `-> float` | Monotonic seconds from an arbitrary starting point; subtract two readings to time code |
-| `sleep` | `seconds: float` | Pause for `seconds` (fractions allowed; zero or negative returns at once) |
+| `sleep` | `seconds: float` | Pause for `seconds` (fractions allowed; zero or negative returns at once). NaN or an infinite number is a runtime error |
 | `since` | `start: float -> float` | Seconds elapsed since a `clock()` reading |
 | `seconds` / `minutes` / `hours` | `n: float -> float` | `n` of that unit, in seconds (`time::minutes(5)` is `300.0`) |
 | `duration` | `seconds: float -> str` | A short reading of a duration in seconds (`75.5` → `1m 15.5s`). A non-finite number is a runtime error |
@@ -640,12 +640,12 @@ Clocks, calendar dates and instants. Import with `incl 'std/time' as time`. A `d
 | `year` / `month` / `day` / `weekday` | `d: date -> int` | A field of `d`. `weekday` is 0 for Monday |
 | `parts` | `d: date -> time::DateParts` | `year`, `month`, `day`, `weekday`, `yearday` (1 = 1 January) |
 | `from_days` / `to_days` | day index ↔ `date` | Days since 1970-01-01. `to_int` does not accept a date |
-| `format` | `d: date, pattern: str = '%Y-%m-%d' -> str` | `d` with a `strftime` pattern |
+| `format` | `d: date, pattern: str = '%Y-%m-%d' -> str` | `d` with a `strftime` pattern. `%s`, `%Z` and `%z` show midnight UTC, with the rules of `format_time` |
 | `parse` | `text: str, pattern: str = '%Y-%m-%d' -> result` | `ok(date)` or `err`. The whole string must match. An empty pattern is a runtime error |
 | `days` / `weeks` / `months` / `quarters` / `years` | `n: int -> period` | A calendar offset. `d + time::months(1)` rolls an impossible day back (31 January + 1 month is 28 or 29 February). `d + 3` adds days, the same as `d + time::days(3)`. `d2 - d1` is an `int` |
 | `timestamp` | `year, month, day, hour = 0, minute = 0, second = 0.0, local = false -> float` | An instant. A time that is not a real calendar time is a runtime error. The name is not `time`: a module member cannot share the module's name |
 | `iso` | `ts: float -> str` | ISO 8601 UTC, such as `2026-11-11T19:24:06Z` |
-| `format_time` | `ts: float, pattern: str = '%Y-%m-%d %H:%M:%S', local: bool = false -> str` | An instant with a `strftime` pattern |
+| `format_time` | `ts: float, pattern: str = '%Y-%m-%d %H:%M:%S', local: bool = false -> str` | An instant with a `strftime` pattern. `%s` is the whole seconds since the epoch, rounded down (`-1.5` is `-2`); a UTC time shows `%Z` as `UTC` and `%z` as `+0000` whatever `TZ` says, and a local one shows the local zone. `%s`, `%Z` and `%z` take no flag or width (`%-s` is a runtime error) |
 | `parse_time` | `text: str, pattern: str = '%Y-%m-%d %H:%M:%S', local: bool = false -> result` | `ok(timestamp)` or `err` |
 | `parse_iso` | `text: str -> result` | `ok(timestamp)` for ISO 8601 with `Z` or `±hh:mm`, otherwise `err` |
 | `parts_time` | `ts: float, local: bool = false -> time::Parts` | The calendar fields of an instant, including `hour`, `minute` and `second` |
@@ -675,14 +675,14 @@ Pseudo-random numbers (64-bit Mersenne Twister), seeded randomly at startup; `se
 | Function | Signature | Description |
 |---|---|---|
 | `seed` | `n: int` | Seed the generator; the same seed gives the same sequence |
-| `uniform` | `lo: float = 0.0, hi: float = 1.0 -> float` | A float in `[lo, hi)`. `lo == hi` returns `lo`. `lo > hi`, or a non-finite bound, is a runtime error. `uniform()` is `[0, 1)`. One argument is the low end, so `uniform(2.0)` is `uniform(2.0, 1.0)` and fails |
-| `normal` | `mean: float = 0.0, sd: float = 1.0 -> float` | A normal float. `sd` of 0 returns `mean`. A negative or non-finite `sd` is a runtime error |
+| `uniform` | `lo: float = 0.0, hi: float = 1.0 -> float` | A float in `[lo, hi)`, never `hi`, for any finite bounds (`uniform(-1e308, 1e308)` too). `lo == hi` returns `lo`. `lo > hi`, or a non-finite bound, is a runtime error. `uniform()` is `[0, 1)`. One argument is the low end, so `uniform(2.0)` is `uniform(2.0, 1.0)` and fails |
+| `normal` | `mean: float = 0.0, sd: float = 1.0 -> float` | A normal float. `sd` of 0 returns `mean`. A negative or non-finite `sd` is a runtime error, and so is a draw too large for a float (`normal(1e308, 1e308)` can give one) |
 | `randint` | `lo: int, hi: int -> int` | An int in `[lo, hi]`, both ends included; `lo > hi` is a runtime error |
 | `choice` | `xs: list -> any` | A random element; an empty list is a runtime error |
 | `shuffle` | `xs: list -> list` | Shuffle in place and return the list |
 | `sample` | `xs: list, k: int -> list` | `k` elements of `xs`, without replacement, as a new list. `xs` is not modified. The new list keeps the element type of `xs` (`xs = list [1, 2]`, then `random::sample(xs, 1).push('a')` is a runtime error). `k` outside `0 .. len(xs)` is a runtime error; `k` of 0 returns an empty list |
-| `weighted` | `xs: list, weights: list` | One element of `xs`, with probability proportional to the matching weight. Weights are ints or floats. The lists must be the same length and non-empty. A negative, non-finite or all-zero weight is a runtime error |
-| `uniform_vec` | `n: int -> vec` | `n` floats in `[0, 1)`, as a `vec[f64]`. `n` of 0 is an empty vector. A negative `n` is a runtime error |
+| `weighted` | `xs: list, weights: list` | One element of `xs`, with probability proportional to the matching weight. Weights are ints or floats. The lists must be the same length and non-empty. A negative, non-finite or all-zero weight is a runtime error. An element whose weight is 0 is never chosen. Weights whose sum is too large for a float (`list [1e308, 1e308]`) work |
+| `uniform_vec` | `n: int -> vec` | `n` floats in `[0, 1)` (never 1), as a `vec[f64]`. `n` of 0 is an empty vector. A negative `n` is a runtime error |
 | `normal_vec` | `n: int, mean: float = 0.0, sd: float = 1.0 -> vec` | `n` normal floats, as a `vec[f64]`. `sd` of 0 fills the vector with `mean`. The same `sd` rules as `normal` |
 | `randint_vec` | `n: int, lo: int, hi: int -> vec` | `n` ints in `[lo, hi]`, both ends included, as a `vec[i64]`. `lo > hi` is a runtime error |
 

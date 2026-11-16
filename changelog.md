@@ -10,6 +10,8 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 
 ## Contents
 
+- [2026-11-16: CI on Linux and Windows](#2026-11-16-ci-on-linux-and-windows)
+- [2026-11-16: std/random, std/sys and std/time at their edges](#2026-11-16-stdrandom-stdsys-and-stdtime-at-their-edges)
 - [2026-11-16: CI, current editor data](#2026-11-16-ci-current-editor-data)
 - [2026-11-16: Stack overflow is reported on Linux](#2026-11-16-stack-overflow-is-reported-on-linux)
 - [2026-11-16: REPL: type changes, unassigned slots, included files, function-made lists, internal errors](#2026-11-16-repl-type-changes-unassigned-slots-included-files-function-made-lists-internal-errors)
@@ -52,7 +54,50 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 - [2026-04-02: Structs v0.1](#2026-04-02-structs-v01)
 - [2026-03-28: Vector soundness, `std/fmt` on `extern`, build output](#2026-03-28-vector-soundness-stdfmt-on-extern-build-output)
 
+## 2026-11-16: CI on Linux and Windows
+
+### Fixed
+
+- **A finalized handle no longer keeps its parent open.** When a child handle (`qext::new_handle(kind, payload, parent)`) became unreachable, its finalizer ran the close function, but the handle's memory still pointed at the parent. The collector scans the stack conservatively, so a stale word left pointing at the finalized child kept the parent reachable, and the parent's close function never ran. Glue built at `-O0` hit this every time; on the Linux CI runner (clang 18) it failed `TestFFI_Phase2` at `-O3`. The finalizer now clears the child's parent.
+- **Windows `quark repl`: inputs that include `std/sys` or read with `std/csv` link, and output appears when each input ends.** `incl 'std/sys' as sys` failed with `LNK2005: ... already defined in quarkrepl.lib(quarkrepl.dll)`, and so did the first `std/csv` read. With stdout piped, `print` output appeared only when the session ended. The host, `quarkrepl.dll` and every input now use the DLL C runtime instead of each linking its own static copy, and the host flushes stdout after each input. This hasn't been run on a Windows machine; the Windows CI job is the first check.
+
+### Internal
+
+- `q_resource_on_unreachable` (`types/resource.hpp`) clears `parent` after releasing the handle. A new `TestFFI_Phase2` subtest, "a finalized child stops keeping its parent alive", points a scanned word at a finalized child and checks that the parent is still finalized. It fails on the old runtime at `-O0` and `-O3`.
+- The FFI tests' stack scrub zeroes the stack where the collector's frames run: a `noinline` helper called just before `GC_gcollect`. It used to clear the scrub function's own frame, which sits above them.
+- Windows REPL builds (`toolchain/repl.go`) compile with `-fms-runtime-lib=dll` and link with `/NODEFAULTLIB:libcmt.lib`: clang's driver names `libcmt` on every link, even with the DLL runtime, and so does the prebuilt GC library. The flags are part of the precompiled header's cache key, so the REPL runtime is rebuilt once. `quark run` and `quark build` still link the static runtime.
+- `glueErrorDiagnostic` (`toolchain/native.go`) reports the glue file as the caller spelled it, and the failing header as clang printed it. It still compares cleaned paths. On Windows it used to report `\src\glue.hpp` for `/src/glue.hpp`.
+- Tests that failed only on Windows: `TestNativeLinkArgs_OrderAndRpath` builds its directories with `filepath.FromSlash`; `TestNativeDeps_Sources` expects the source's real path (the runner's temporary directory is the short name `RUNNER~1`); `TestExtensionData_UpToDate` ignores CRLF line ends, which a Windows checkout with `core.autocrlf` has.
+
+---
+
+## 2026-11-16: std/random, std/sys and std/time at their edges
+
+### Breaking
+
+- **`sys::env` and `sys::env_or` follow `set_env`'s name rules.** An empty name, or one that contains `=`, is a runtime error: `sys::env('A=B')` says `sys::env() name must not contain '='`. It used to return part of another variable (after `sys::set_env('QA', 'B=c')`, `sys::env('QA=B')` was `'c'`), and `sys::env('')` was `null`.
+- **`time::sleep` of NaN or an infinite number is a runtime error** (`time::sleep() seconds must be a finite number`). It used to return at once.
+- **`random::normal` and `random::normal_vec` fail on a draw too large for a float** instead of returning `inf`: `random::normal(1e308, 1e308)` can say `random::normal() drew a value too large for a float, with mean 1e+308 and sd 1e+308`.
+- **A flag or width on `%s`, `%Z` or `%z` in `time::format` and `time::format_time` is a runtime error** (`%-s`, `%10Z`). Quark writes these three itself now (see Fixed), and doesn't drop a flag silently.
+
+### Fixed
+
+- **`random::uniform(lo, hi)` is always in `[lo, hi)`.** `uniform(-1e308, 1e308)` returned `inf` (`hi - lo` overflowed), and `uniform(1.0, 1.0000000000000002)` returned `hi` about half the time. A seeded program gets the same numbers as before, except where a draw used to reach `hi`.
+- **`random::weighted` works when the weights' sum is too large for a float**: `random::weighted(list ['a', 'b'], list [1e308, 1e308])` picks `a` or `b`, where it said `weights must sum to a positive number`. An element whose weight is 0 is never picked.
+- **A UTC time shows `%s`, `%Z` and `%z` as UTC whatever `TZ` says.** With `TZ=America/New_York`, `time::format(time::from_days(0), '%s %Z')` and `time::format_time(0.0, '%s %Z')` printed `18000 EST`; they print `0 UTC`. `%s` is the whole seconds since the epoch, rounded down, for local times too (Windows' C library has no `%s`).
+- **`time::sleep` of a huge number sleeps.** `time::sleep(1e300)` returned at once (the conversion to the clock's nanoseconds overflowed).
+
+### Internal
+
+- `q_random_below` (`stdlib/random.hpp`) redraws a uniform draw that reaches `hi`; `uniform`, `uniform_vec` and `weighted` use it. When `hi - lo` overflows, `uniform` draws from `[lo/2, hi/2)` and doubles the result, which is exact.
+- `q_time_zone_pattern` (`stdlib/time.hpp`) writes `%s`, and for a UTC time `%Z` and `%z`, into the pattern before `strftime` sees it (glibc computes `%s` with `mktime`, which reads the fields as local time). `q_time_sleep` sleeps in steps of at most a million seconds.
+- `TestStdlibExpansion_Limits` runs the edge cases under `TZ=EST5EDT`; `TestStdlibExpansion_Rejected` has the new errors.
+
+---
+
 ## 2026-11-16: CI, current editor data
+
+Commits: `c2650af`
 
 ### Fixed
 

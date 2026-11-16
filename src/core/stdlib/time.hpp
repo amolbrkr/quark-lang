@@ -24,14 +24,6 @@ inline double q_time_clock() {
     return duration<double>(steady_clock::now().time_since_epoch()).count();
 }
 
-// Pause for the given number of seconds (fractions allowed; negative is 0).
-inline QValue q_time_sleep(double seconds) {
-    if (seconds > 0) {
-        std::this_thread::sleep_for(std::chrono::duration<double>(seconds));
-    }
-    return qv_null();
-}
-
 // A broken-down UTC or local time. weekday is 0 = Monday .. 6 = Sunday.
 // yearday is 1 = 1 January. second is in [0, 60) and may be fractional.
 struct QTimeParts {
@@ -57,6 +49,22 @@ constexpr int q_time_year_max = 999999;
 
 inline const char* q_time_copy(const std::string& s) {
     return q_strdup(s.c_str());
+}
+
+// Pause for the given number of seconds (fractions allowed; zero or negative
+// returns at once). NaN and inf are errors. sleep_for converts its argument to
+// the clock's 64-bit nanoseconds, which overflows past about 292 years, so a
+// long pause is taken in steps of at most a million seconds.
+inline QValue q_time_sleep(double seconds) {
+    if (!std::isfinite(seconds)) {
+        q_time_fail("sleep", "seconds must be a finite number");
+    }
+    while (seconds > 0) {
+        const double step = seconds < 1e6 ? seconds : 1e6;
+        std::this_thread::sleep_for(std::chrono::duration<double>(step));
+        seconds -= step;
+    }
+    return qv_null();
 }
 
 // A real calendar day. An impossible day (31 February) does not round-trip
@@ -276,10 +284,53 @@ inline void q_time_fill_tm(const QTimeParts& p, std::tm& tm) {
     tm.tm_isdst = 0;
 }
 
+// The pattern with %s (whole seconds since the epoch) written out, and, for a
+// UTC time, %Z and %z too. strftime takes them from the local zone: glibc
+// computes %s with mktime, which reads the fields as local time, and %Z from
+// tzname when tm_zone is unset, so with TZ=America/New_York a UTC midnight
+// showed "18000 EST"; Windows has no %s and takes %z from the local zone.
+// A flag or width on one of them (%-s, %10Z) is an error rather than dropped.
+inline std::string q_time_zone_pattern(const char* pattern, int64_t epoch, bool local) {
+    std::string out;
+    for (const char* p = pattern; *p != '\0'; ++p) {
+        if (*p != '%') {
+            out += *p;
+            continue;
+        }
+        const char* q = p + 1;
+        while (*q == '_' || *q == '-' || *q == '0' || *q == '^' || *q == '#') ++q;
+        while (*q >= '0' && *q <= '9') ++q;
+        if (*q == 'E' || *q == 'O') ++q;
+        const bool ours = *q == 's' || (!local && (*q == 'Z' || *q == 'z'));
+        if (!ours) {
+            if (*q == '\0') {
+                out.append(p, static_cast<size_t>(q - p));
+                break;
+            }
+            out.append(p, static_cast<size_t>(q - p) + 1);
+            p = q;
+            continue;
+        }
+        if (q != p + 1) {
+            q_time_fail("format", "%s, %Z and %z can't take a flag or a width");
+        }
+        if (*q == 's') {
+            out += std::to_string(epoch);
+        } else if (*q == 'Z') {
+            out += "UTC";
+        } else {
+            out += "+0000";
+        }
+        p = q;
+    }
+    return out;
+}
+
 inline const char* q_time_format(double ts, const char* pattern, bool local) {
     std::tm tm{};
+    int64_t epoch = 0;
+    double frac = 0;
     if (local) {
-        double frac = 0;
         if (!q_time_local_tm(ts, tm, frac)) {
             q_time_fail("format", "timestamp is not a finite time it can show");
         }
@@ -290,7 +341,9 @@ inline const char* q_time_format(double ts, const char* pattern, bool local) {
         }
         q_time_fill_tm(p, tm);
     }
-    return q_time_copy(q_time_strftime(tm, pattern));
+    q_time_split(ts, epoch, frac);
+    const std::string zoned = q_time_zone_pattern(pattern != nullptr ? pattern : "", epoch, local);
+    return q_time_copy(q_time_strftime(tm, zoned.c_str()));
 }
 
 // Fractional seconds as ".5" or ".25", up to microseconds, or "" for a whole

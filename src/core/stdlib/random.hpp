@@ -26,6 +26,18 @@ inline QValue q_random_seed(int64_t seed) {
     q_exit(1);
 }
 
+// A draw of dist, which is below hi. The distribution computes
+// lo + u * (hi - lo), which rounds up to hi when u is close to 1 or the range
+// is a few floats wide (and some standard libraries' u can be 1), so a draw
+// that reaches hi is drawn again. At least half the draws are below hi, and
+// a seeded program gets the same values as before wherever no draw reached hi.
+inline double q_random_below(std::uniform_real_distribution<double>& dist, double scale, double hi) {
+    for (;;) {
+        const double x = scale * dist(q_random_engine());
+        if (x < hi) return x;
+    }
+}
+
 // Uniform float in [lo, hi). lo == hi returns lo. lo > hi, or a non-finite
 // bound, is an error. uniform() is this with lo = 0 and hi = 1.
 inline double q_random_uniform_range(double lo, double hi) {
@@ -37,10 +49,28 @@ inline double q_random_uniform_range(double lo, double hi) {
         q_exit(1);
     }
     if (lo == hi) return lo;
-    return std::uniform_real_distribution<double>(lo, hi)(q_random_engine());
+    if (std::isfinite(hi - lo)) {
+        std::uniform_real_distribution<double> dist(lo, hi);
+        return q_random_below(dist, 1.0, hi);
+    }
+    // hi - lo overflows (uniform(-1e308, 1e308)): draw in [lo/2, hi/2) and
+    // double it. Both bounds are then far from the subnormals, so halving and
+    // doubling are exact.
+    std::uniform_real_distribution<double> dist(lo / 2, hi / 2);
+    return q_random_below(dist, 2.0, hi);
 }
 
-// Normal float. sd == 0 returns mean. A negative or non-finite sd is an error.
+[[noreturn]] inline void q_random_normal_overflow(const char* fn, double mean, double sd) {
+    char a[32], b[32];
+    q_format_float(mean, a, sizeof(a));
+    q_format_float(sd, b, sizeof(b));
+    q_runtime_reportf("runtime error: %s() drew a value too large for a float, with mean %s and sd %s\n", fn, a, b);
+    q_exit(1);
+}
+
+// Normal float. sd == 0 returns mean. A negative or non-finite sd is an error,
+// and so is a draw too large for a float (mean + sd * z overflows when mean
+// and sd are near the float limit), which would otherwise be inf.
 inline double q_random_normal(double mean, double sd) {
     if (!std::isfinite(mean) || !std::isfinite(sd) || sd < 0) {
         char a[32], b[32];
@@ -50,7 +80,9 @@ inline double q_random_normal(double mean, double sd) {
         q_exit(1);
     }
     if (sd == 0) return mean;
-    return std::normal_distribution<double>(mean, sd)(q_random_engine());
+    const double x = std::normal_distribution<double>(mean, sd)(q_random_engine());
+    if (!std::isfinite(x)) q_random_normal_overflow("random::normal", mean, sd);
+    return x;
 }
 
 // Uniform int in [lo, hi], both ends included.
@@ -155,16 +187,33 @@ inline QValue q_random_weighted(QList* xs, QList* weights) {
         w[i] = x;
         sum += x;
     }
-    if (!(sum > 0.0) || !std::isfinite(sum)) {
+    if (std::isinf(sum)) {
+        // Every weight is finite, so only the sum overflowed
+        // (list [1e308, 1e308]). Dividing by the largest weight keeps the
+        // proportions and makes the sum at most the number of weights.
+        const double top = *std::max_element(w.begin(), w.end());
+        sum = 0;
+        for (double& x : w) {
+            x /= top;
+            sum += x;
+        }
+    }
+    if (!(sum > 0.0)) {
         q_random_fail("random::weighted() weights must sum to a positive number");
     }
-    double pick = std::uniform_real_distribution<double>(0.0, sum)(q_random_engine());
+    // pick < sum, and acc reaches sum by the same additions, so some element
+    // whose weight is positive is always chosen.
+    std::uniform_real_distribution<double> dist(0.0, sum);
+    const double pick = q_random_below(dist, 1.0, sum);
     double acc = 0;
+    size_t last = 0;
     for (size_t i = 0; i < w.size(); i++) {
+        if (w[i] == 0) continue;
         acc += w[i];
+        last = i;
         if (pick < acc) return (*xs)[i];
     }
-    return xs->back();
+    return (*xs)[last];
 }
 
 inline QVector* q_random_uniform_vec(int64_t n) {
@@ -173,7 +222,7 @@ inline QVector* q_random_uniform_vec(int64_t n) {
     if (n == 0) return v;
     double* d = q_vec_f64_data_mut(*v);
     std::uniform_real_distribution<double> dist(0.0, 1.0);
-    for (int64_t i = 0; i < n; i++) d[i] = dist(q_random_engine());
+    for (int64_t i = 0; i < n; i++) d[i] = q_random_below(dist, 1.0, 1.0);
     return v;
 }
 
@@ -194,7 +243,11 @@ inline QVector* q_random_normal_vec(int64_t n, double mean, double sd) {
         return v;
     }
     std::normal_distribution<double> dist(mean, sd);
-    for (int64_t i = 0; i < n; i++) d[i] = dist(q_random_engine());
+    for (int64_t i = 0; i < n; i++) {
+        const double x = dist(q_random_engine());
+        if (!std::isfinite(x)) q_random_normal_overflow("random::normal_vec", mean, sd);
+        d[i] = x;
+    }
     return v;
 }
 

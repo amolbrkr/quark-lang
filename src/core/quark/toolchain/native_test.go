@@ -54,16 +54,19 @@ func TestGlueErrorDiagnostic_IgnoresOtherErrors(t *testing.T) {
 }
 
 func TestNativeLinkArgs_OrderAndRpath(t *testing.T) {
+	// Directories are passed on in the platform's form (backslashes on
+	// Windows), as filepath.Clean gives them.
+	userLib, sysLib := filepath.FromSlash("/user/lib"), filepath.FromSlash("/usr/lib")
 	libs := []resolvedLib{
-		{Lib: Lib{Name: "shared_user"}, Dir: "/user/lib", Shared: true},
-		{Lib: Lib{Name: "static_user"}, Dir: "/user/lib", Shared: false},
-		{Lib: Lib{Name: "system"}, Dir: "/usr/lib", Shared: true},
+		{Lib: Lib{Name: "shared_user"}, Dir: userLib, Shared: true},
+		{Lib: Lib{Name: "static_user"}, Dir: userLib, Shared: false},
+		{Lib: Lib{Name: "system"}, Dir: sysLib, Shared: true},
 	}
-	opts := Options{LibDirs: []string{"/user/lib", "/user/lib"}, LinkArgs: []string{"-Wl,--as-needed"}}
+	opts := Options{LibDirs: []string{userLib, userLib}, LinkArgs: []string{"-Wl,--as-needed"}}
 	got := strings.Join(nativeLinkArgs(libs, opts), " ")
-	want := "-L/user/lib -Wl,-rpath,/user/lib -lshared_user -lstatic_user -lsystem -Wl,--as-needed"
+	want := "-L" + userLib + " -Wl,-rpath," + userLib + " -lshared_user -lstatic_user -lsystem -Wl,--as-needed"
 	if runtime.GOOS == "windows" {
-		want = "-L/user/lib -lshared_user -lstatic_user -lsystem -Wl,--as-needed"
+		want = "-L" + userLib + " -lshared_user -lstatic_user -lsystem -Wl,--as-needed"
 	}
 	if got != want {
 		t.Fatalf("link args:\n got  %s\n want %s", got, want)

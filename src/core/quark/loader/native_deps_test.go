@@ -120,9 +120,16 @@ func TestNativeDeps_Sources(t *testing.T) {
 	if len(diags) != 1 || diags[0].Code != "QK-FFI-001" || diags[0].Location == nil || diags[0].Location.Line != 1 {
 		t.Fatalf("expected QK-FFI-001 at line 1, got %v", ml.Errors())
 	}
+	// A source is identified by its real path: links resolved, and on
+	// Windows the long form of a short (8.3) name such as RUNNER~1, which
+	// the temporary directory can have.
+	want, err := filepath.EvalSymlinks(src)
+	if err != nil {
+		t.Fatal(err)
+	}
 	deps := ml.NativeDeps()
-	if len(deps.Sources) != 1 || deps.Sources[0] != src {
-		t.Fatalf("sources: got %v, want [%s]", deps.Sources, src)
+	if len(deps.Sources) != 1 || deps.Sources[0] != want {
+		t.Fatalf("sources: got %v, want [%s]", deps.Sources, want)
 	}
 }
 

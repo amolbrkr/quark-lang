@@ -10,6 +10,7 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 
 ## Contents
 
+- [2026-11-15: REPL on Windows](#2026-11-15-repl-on-windows)
 - [2026-11-14: REPL](#2026-11-14-repl)
 - [2026-11-14: FFI phase 2 (glue sources, handles, results)](#2026-11-14-ffi-phase-2-glue-sources-handles-results)
 - [2026-11-14: Tables v0.2](#2026-11-14-tables-v02)
@@ -44,6 +45,34 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 - [2026-04-03: Table runtime scaffolding; struct fixes](#2026-04-03-table-runtime-scaffolding-struct-fixes)
 - [2026-04-02: Structs v0.1](#2026-04-02-structs-v01)
 - [2026-03-28: Vector soundness, `std/fmt` on `extern`, build output](#2026-03-28-vector-soundness-stdfmt-on-extern-build-output)
+
+## 2026-11-15: REPL on Windows
+
+### Fixed
+
+- A line after `incl 'std/sys'` compiles. The C++ behind that module is built in the input that included it. A later line calls the Quark function from that input; it does not compile the C++ again.
+
+```quark
+incl 'std/sys' as sys
+sys::cwd()
+```
+
+- A function defined on one line can be called on the next. On Windows each input is a DLL, and a DLL does not see another DLL's functions unless it is linked against them. Each input now links the import libraries of the inputs before it.
+
+```quark
+fn sq(x: int) int -> x * x
+sq(4)
+```
+
+### Changed
+
+- On Windows the Quark runtime is compiled once into `quarkrepl.dll`. An input calls those functions instead of compiling them into itself. The first `quark repl` still builds that DLL; later lines do not.
+
+### Internal
+
+- The runtime object is the same precompiled-header object Linux links into the host. Windows exports the functions that object compiled (not the local destructor thunks, which the linker cannot export). Session functions are `dllexport` in the input that defines them and `dllimport` afterwards.
+
+---
 
 ## 2026-11-14: REPL
 

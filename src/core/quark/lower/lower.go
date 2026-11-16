@@ -62,6 +62,12 @@ type lowerer struct {
 	row      *rowLoop
 	rowSubst map[*ast.TreeNode]Expr
 	included map[string]bool
+
+	// externHome is the C++ symbols of extern fns declared in this REPL
+	// input. Nil for an ordinary program, where every extern fn is local.
+	// foreignThunk records wrappers from earlier inputs that this input uses.
+	externHome   map[string]bool
+	foreignThunk map[string]bool
 }
 
 // Lower lowers an analyzed, validated tree to a Program. sourceName labels
@@ -370,7 +376,9 @@ func (l *lowerer) finishShell(fd *fnDecl) {
 }
 
 // externThunks are the QValue wrappers of free extern fns, so they can be
-// used as function values.
+// used as function values. In a REPL input, only extern fns declared in that
+// input are wrapped: the header that defines the C++ function is included
+// there. A later input calls the wrapper, it does not compile it again.
 func (l *lowerer) externThunks() []*Func {
 	keys := make([]string, 0, len(l.an.ExternFns))
 	for k, proto := range l.an.ExternFns {
@@ -383,22 +391,66 @@ func (l *lowerer) externThunks() []*Func {
 	seen := map[string]bool{}
 	for _, k := range keys {
 		proto := l.an.ExternFns[k]
-		if seen[proto.RuntimeSymbol] {
+		if seen[proto.RuntimeSymbol] || !l.externDefinedHere(proto.RuntimeSymbol) {
 			continue
 		}
 		seen[proto.RuntimeSymbol] = true
-		f := &Func{CName: "_thunk_" + proto.RuntimeSymbol, Ret: "QValue", Internal: l.an.Session != nil}
-		args := make([]Expr, len(proto.NativeParamTypes))
-		for i, ct := range proto.NativeParamTypes {
-			p := &Param{CName: fmt.Sprintf("_a%d", i), CType: "QValue"}
-			f.Params = append(f.Params, p)
-			args[i] = adaptTo(&ParamRef{P: p}, RepOfCType(ct))
-		}
-		call := &Call{Fn: proto.RuntimeSymbol, Args: args, R: RepOfCType(proto.NativeReturnType)}
-		f.Body = &Block{Stmts: []Stmt{&Return{Value: boxed(call)}}}
-		out = append(out, f)
+		out = append(out, externThunkFunc(proto))
 	}
 	return out
+}
+
+// externThunkFunc is the wrapper around one extern fn. It is external, so a
+// later REPL input can call it.
+func externThunkFunc(proto *ir.CallPlan) *Func {
+	f := &Func{CName: "_thunk_" + proto.RuntimeSymbol, Ret: "QValue"}
+	args := make([]Expr, len(proto.NativeParamTypes))
+	for i, ct := range proto.NativeParamTypes {
+		p := &Param{CName: fmt.Sprintf("_a%d", i), CType: "QValue"}
+		f.Params = append(f.Params, p)
+		args[i] = adaptTo(&ParamRef{P: p}, RepOfCType(ct))
+	}
+	call := &Call{Fn: proto.RuntimeSymbol, Args: args, R: RepOfCType(proto.NativeReturnType)}
+	f.Body = &Block{Stmts: []Stmt{&Return{Value: boxed(call)}}}
+	return f
+}
+
+// externDefinedHere reports whether this translation unit includes the header
+// that defines symbol. An ordinary program does. A REPL input does only for
+// the extern fns its own block declares.
+func (l *lowerer) externDefinedHere(symbol string) bool {
+	if l.an.Session == nil {
+		return true
+	}
+	return l.externHome[symbol]
+}
+
+// useForeignThunk records that this input calls an extern fn declared in an
+// earlier input, and returns true when the call must go through that input's
+// wrapper. The wrapper's C++ function is not visible here.
+func (l *lowerer) useForeignThunk(proto *ir.CallPlan) bool {
+	if proto == nil || proto.IsMethod || proto.RuntimeSymbol == "" || l.externDefinedHere(proto.RuntimeSymbol) {
+		return false
+	}
+	if l.foreignThunk[proto.RuntimeSymbol] {
+		return true
+	}
+	if l.foreignThunk == nil {
+		l.foreignThunk = map[string]bool{}
+	}
+	l.foreignThunk[proto.RuntimeSymbol] = true
+	thunk := externThunkFunc(proto)
+	thunk.Imported = true
+	l.prog.Session.Extern = append(l.prog.Session.Extern, thunk)
+	n := len(proto.NativeParamTypes)
+	l.prog.Session.ExternInfos = append(l.prog.Session.ExternInfos, FnInfo{
+		CName:    externFnInfoName(proto.RuntimeSymbol),
+		Display:  l.names.Display(proto.CalleeName),
+		Min:      n,
+		Max:      n,
+		Exported: true,
+	})
+	return true
 }
 
 func (l *lowerer) fnInfos() {
@@ -428,9 +480,18 @@ func (l *lowerer) fnInfos() {
 		if proto.IsMethod || seen["extern:"+proto.RuntimeSymbol] {
 			continue
 		}
+		if !l.externDefinedHere(proto.RuntimeSymbol) {
+			continue
+		}
 		seen["extern:"+proto.RuntimeSymbol] = true
 		n := len(proto.NativeParamTypes)
-		l.prog.FnInfos = append(l.prog.FnInfos, FnInfo{CName: externFnInfoName(proto.RuntimeSymbol), Display: l.names.Display(k), Min: n, Max: n})
+		l.prog.FnInfos = append(l.prog.FnInfos, FnInfo{
+			CName:    externFnInfoName(proto.RuntimeSymbol),
+			Display:  l.names.Display(k),
+			Min:      n,
+			Max:      n,
+			Exported: l.an.Session != nil,
+		})
 	}
 }
 

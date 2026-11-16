@@ -438,6 +438,9 @@ type Func struct {
 	// functions, whose names restart every input. Top-level functions stay
 	// external so a later input can call them.
 	Internal bool
+	// Imported is a function defined by an earlier REPL input. The declaration
+	// is dllimport on Windows; the definition lives in that input's library.
+	Imported bool
 	// Session is the host slots this function reads or writes, bound on entry.
 	Session []*types.Symbol
 	Body    *Block

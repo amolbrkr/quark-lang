@@ -279,6 +279,7 @@ func (l *lowerer) identifier(node *ast.TreeNode) Expr {
 		return l.readVar(sym)
 	}
 	if proto, ok := l.an.ExternFns[name]; ok && !proto.IsMethod {
+		l.useForeignThunk(proto)
 		return &FuncValue{Fn: "_thunk_" + proto.RuntimeSymbol, Info: externFnInfoName(proto.RuntimeSymbol)}
 	}
 	// A prelude builtin used as a value (changelog.md, Known issues): there

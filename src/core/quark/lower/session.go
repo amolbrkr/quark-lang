@@ -23,6 +23,7 @@ func (l *lowerer) sessionProgram() {
 	p.Session = &SessionEmit{Input: inputNumber(block.SourceFile)}
 	p.Session.NInt, p.Session.NFloat, p.Session.NBool, p.Session.NCell = slotCounts(sess.Slots)
 	p.Includes = collectExternSources(block)
+	l.externHome = externSymbols(block)
 
 	l.collectFunctions(block)
 	for _, fd := range l.fns {
@@ -95,6 +96,27 @@ func (l *lowerer) sessionProgram() {
 	}
 }
 
+// externSymbols is the C++ names of extern fns declared in this input,
+// including a module the input included. The header is part of this input,
+// so the wrappers are compiled here.
+func externSymbols(block *ast.TreeNode) map[string]bool {
+	syms := map[string]bool{}
+	var walk func(*ast.TreeNode)
+	walk = func(n *ast.TreeNode) {
+		if n == nil {
+			return
+		}
+		if n.NodeType == ast.ExternFnNode && n.ExternSymbol != "" {
+			syms[n.ExternSymbol] = true
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(block)
+	return syms
+}
+
 func (l *lowerer) externShells() {
 	p := l.prog.Session
 	for _, f := range l.an.Session.Fns {
@@ -110,8 +132,10 @@ func (l *lowerer) externShells() {
 		fd := &fnDecl{name: f.CName, lambda: f.Lambda, display: l.names.Display(f.Name), native: f.Native, exported: true}
 		l.funcShell(fd)
 		fd.fn.Session = nil
+		fd.fn.Imported = true
 		if fd.thunk != nil {
 			fd.thunk.Session = nil
+			fd.thunk.Imported = true
 		}
 		p.Extern = append(p.Extern, fd.fn)
 		if fd.thunk != nil {

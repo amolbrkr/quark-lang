@@ -96,13 +96,15 @@ func (tc *Toolchain) HostPath(verbose bool) (string, string, error) {
 // CompileInput compiles one REPL input into a shared library against pch.
 func (tc *Toolchain) CompileInput(cppPath, soPath, pch string, opts Options) error {
 	obj := strings.TrimSuffix(soPath, filepath.Ext(soPath)) + ".o"
-	args := []string{"-std=c++17", "-O0", "-DQUARK_USE_GC", "-I" + tc.RuntimeInclude, "-I" + tc.GCInclude}
-	if runtime.GOARCH == "amd64" {
-		args = append(args, "-march=x86-64-v3")
-	}
+	var args []string
 	if runtime.GOOS == "windows" {
-		args = append(args, "-DQUARK_REPL", "-fms-extensions")
+		// Same flags as the input precompiled header, or clang rejects it.
+		args = append([]string{}, tc.replWindowsPCHFlags()...)
 	} else {
+		args = []string{"-std=c++17", "-O0", "-DQUARK_USE_GC", "-I" + tc.RuntimeInclude, "-I" + tc.GCInclude}
+		if runtime.GOARCH == "amd64" {
+			args = append(args, "-march=x86-64-v3")
+		}
 		args = append(args, "-fPIC")
 	}
 	for _, dir := range opts.IncludeDirs {
@@ -123,10 +125,15 @@ func (tc *Toolchain) CompileInput(cppPath, soPath, pch string, opts Options) err
 	if runtime.GOOS != "windows" {
 		link = append(link, "-fPIC")
 	}
-	link = append(link, obj, "-o", soPath)
+	link = append(link, obj)
 	if runtime.GOOS == "windows" {
+		// Earlier inputs export the functions this one calls. The runtime
+		// DLL comes last: those imports are resolved there.
+		link = append(link, opts.PrevLibs...)
+		link = append(link, "-Wl,/IMPLIB:"+strings.TrimSuffix(soPath, filepath.Ext(soPath))+".lib")
 		link = append(link, tc.replLib)
 	}
+	link = append(link, "-o", soPath)
 	link = append(link, nativeLinkArgs(libs, opts)...)
 	return tc.buildFile(opts, link)
 }
@@ -163,10 +170,7 @@ func (tc *Toolchain) hostPathWindows(verbose bool) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	flags := []string{"-std=c++17", "-O0", "-DQUARK_USE_GC", "-DQUARK_REPL", "-fms-extensions", "-I" + tc.RuntimeInclude, "-I" + tc.GCInclude}
-	if runtime.GOARCH == "amd64" {
-		flags = append(flags, "-march=x86-64-v3")
-	}
+	flags := tc.replWindowsPCHFlags()
 	key, err := tc.pchKey(flags)
 	if err != nil {
 		return "", "", err
@@ -192,65 +196,170 @@ func (tc *Toolchain) hostPathWindows(verbose bool) (string, string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", "", err
 	}
-	fmt.Fprintln(os.Stderr, "Building the REPL runtime (about 10 seconds)...")
+	fmt.Fprintln(os.Stderr, "Building the REPL runtime (once, about a minute)...")
 	opts := Options{Verbose: verbose}
-	def, err := gcDefFile(dir, tc.GCLib)
+	header := filepath.Join(tc.RuntimeInclude, "quark", "quark.hpp")
+	// The input PCH references runtime functions instead of compiling them.
+	// A second PCH, built with QUARK_REPL_BUILD, is compiled into the DLL so
+	// those functions call q_exit_hook directly rather than through an import.
+	if err := tc.buildFile(opts, append(flags, "-x", "c++-header", header, "-o", pch)); err != nil {
+		return "", "", err
+	}
+	buildFlags := append([]string{}, flags...)
+	buildFlags = append(buildFlags, "-DQUARK_REPL_BUILD")
+	buildPCH := filepath.Join(dir, "runtime-build.pch")
+	if err := tc.buildFile(opts, append(buildFlags, "-x", "c++-header", header, "-o", buildPCH)); err != nil {
+		return "", "", err
+	}
+	objFlags := append([]string{}, buildFlags...)
+	for i, f := range objFlags {
+		if f == "-O0" {
+			objFlags[i] = "-O3"
+		}
+	}
+	obj := filepath.Join(dir, "runtime.obj")
+	objArgs := append(objFlags, "-Wno-unused-command-line-argument", "-c", buildPCH, "-o", obj)
+	if err := tc.buildFile(opts, objArgs); err != nil {
+		// The PCH was built at -O0. Some clang versions refuse to codegen it
+		// at -O3; the object is then the -O0 copy, and inputs still call it.
+		for i, f := range objArgs {
+			if f == "-O3" {
+				objArgs[i] = "-O0"
+			}
+		}
+		if err2 := tc.buildFile(opts, objArgs); err2 != nil {
+			return "", "", err
+		}
+	}
+	def, err := tc.replDefFile(dir, obj)
 	if err != nil {
 		return "", "", err
 	}
 	dllArgs := []string{"-shared", "-std=c++17", "-O3", "-DQUARK_USE_GC", "-DQUARK_REPL", "-DQUARK_REPL_BUILD", "-fms-extensions",
-		"-I" + tc.RuntimeInclude, "-I" + tc.GCInclude, slotsSrc, tc.GCLib, "-Wl,/DEF:" + def, "-o", dll}
+		"-Wno-deprecated-declarations", "-I" + tc.RuntimeInclude, "-I" + tc.GCInclude,
+		slotsSrc, obj, tc.GCLib, "-Wl,/DEF:" + def, "-o", dll}
 	if err := tc.buildFile(opts, dllArgs); err != nil {
 		return "", "", err
 	}
 	hostArgs := []string{"-std=c++17", "-O3", "-DQUARK_USE_GC", "-DQUARK_REPL", "-fms-extensions",
-		"-I" + tc.RuntimeInclude, "-I" + tc.GCInclude, hostSrc, lib, "-o", host}
+		"-Wno-deprecated-declarations", "-I" + tc.RuntimeInclude, "-I" + tc.GCInclude, hostSrc, lib, "-o", host}
 	if err := tc.buildFile(opts, hostArgs); err != nil {
-		return "", "", err
-	}
-	if err := tc.buildFile(opts, append(flags, "-x", "c++-header", filepath.Join(tc.RuntimeInclude, "quark", "quark.hpp"), "-o", pch)); err != nil {
 		return "", "", err
 	}
 	tc.replLib = lib
 	return host, pch, nil
 }
 
-// gcDefFile writes a module definition that re-exports the GC, so an input
-// DLL allocates from the same collector as the host.
-func gcDefFile(dir, gcLib string) (string, error) {
-	nm, err := exec.LookPath("llvm-nm")
-	if err != nil {
-		return "", fmt.Errorf("llvm-nm is required to build the REPL runtime: %s", err)
+// replWindowsPCHFlags are the flags of the precompiled header each input
+// compiles against. They match replPCHFlags on the codegen options, and add
+// the Windows REPL macros. -DQUARK_REPL_BUILD is not one of them: an input
+// imports the session, it does not define it.
+func (tc *Toolchain) replWindowsPCHFlags() []string {
+	args := []string{"-std=c++17", "-O0", "-DQUARK_USE_GC", "-DQUARK_REPL", "-fms-extensions",
+		"-Wno-deprecated-declarations", "-fpch-instantiate-templates", "-fpch-codegen",
+		"-I" + tc.RuntimeInclude, "-I" + tc.GCInclude}
+	if runtime.GOARCH == "amd64" {
+		args = append(args, "-march=x86-64-v3")
 	}
-	out, err := exec.Command(nm, "--defined-only", gcLib).Output()
-	if err != nil {
-		return "", fmt.Errorf("reading %s: %s", gcLib, err)
-	}
+	return args
+}
+
+// replDefFile writes the exports of quarkrepl.dll: the GC, so every input
+// allocates from the host's collector, and the runtime functions compiled
+// into runtimeObj, so an input calls those instead of compiling them.
+func (tc *Toolchain) replDefFile(dir, runtimeObj string) (string, error) {
 	var b strings.Builder
 	b.WriteString("LIBRARY quarkrepl\nEXPORTS\n")
-	seen := map[string]bool{}
-	for _, line := range strings.Split(string(out), "\n") {
-		f := strings.Fields(line)
-		if len(f) < 3 {
-			continue
-		}
-		kind, name := f[len(f)-2], f[len(f)-1]
-		if kind != "T" && kind != "D" && kind != "B" && kind != "C" && kind != "R" {
-			continue
-		}
-		if !strings.HasPrefix(name, "GC_") || seen[name] {
-			continue
-		}
-		seen[name] = true
-		if kind == "T" {
-			fmt.Fprintf(&b, "  %s\n", name)
-		} else {
-			fmt.Fprintf(&b, "  %s DATA\n", name)
-		}
+	if err := writeGCExports(&b, tc.GCLib); err != nil {
+		return "", err
+	}
+	if err := writeRuntimeExports(&b, runtimeObj); err != nil {
+		return "", err
 	}
 	path := filepath.Join(dir, "quarkrepl.def")
 	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
 		return "", err
 	}
 	return path, nil
+}
+
+// writeGCExports appends the GC's public symbols. A static library does not
+// export them from the DLL on its own.
+func writeGCExports(b *strings.Builder, gcLib string) error {
+	nm, err := exec.LookPath("llvm-nm")
+	if err != nil {
+		return fmt.Errorf("llvm-nm is required to build the REPL runtime: %s", err)
+	}
+	out, err := exec.Command(nm, "--defined-only", gcLib).Output()
+	if err != nil {
+		return fmt.Errorf("reading %s: %s", gcLib, err)
+	}
+	seen := map[string]bool{}
+	for _, line := range strings.Split(string(out), "\n") {
+		kind, name, ok := nmSymbol(line)
+		if !ok || seen[name] || !strings.HasPrefix(name, "GC_") {
+			continue
+		}
+		if kind != "T" && kind != "D" && kind != "B" && kind != "C" && kind != "R" {
+			continue
+		}
+		seen[name] = true
+		if kind == "T" {
+			fmt.Fprintf(b, "  %s\n", name)
+		} else {
+			fmt.Fprintf(b, "  %s DATA\n", name)
+		}
+	}
+	return nil
+}
+
+// writeRuntimeExports appends the globals compiled into the runtime object.
+// The input precompiled header is built with -fpch-codegen, so an input
+// calls those functions (q_print, the QSourceLocGuard constructor, the
+// std::vector methods the runtime instantiates) instead of compiling them.
+// Destructor thunks and thread-local guards that llvm-nm lists are not
+// symbols the linker can export; naming them in the .def file fails the link.
+func writeRuntimeExports(b *strings.Builder, obj string) error {
+	nm, err := exec.LookPath("llvm-nm")
+	if err != nil {
+		return fmt.Errorf("llvm-nm is required to build the REPL runtime: %s", err)
+	}
+	out, err := exec.Command(nm, "--defined-only", obj).Output()
+	if err != nil {
+		return fmt.Errorf("reading %s: %s", obj, err)
+	}
+	seen := map[string]bool{}
+	for _, line := range strings.Split(string(out), "\n") {
+		kind, name, ok := nmSymbol(line)
+		if !ok || seen[name] || !runtimeExport(name, kind) {
+			continue
+		}
+		seen[name] = true
+		if kind == "T" {
+			fmt.Fprintf(b, "  %s\n", name)
+		} else {
+			fmt.Fprintf(b, "  %s DATA\n", name)
+		}
+	}
+	return nil
+}
+
+func nmSymbol(line string) (kind, name string, ok bool) {
+	f := strings.Fields(line)
+	if len(f) < 3 {
+		return "", "", false
+	}
+	return f[len(f)-2], f[len(f)-1], true
+}
+
+func runtimeExport(name, kind string) bool {
+	if kind != "T" && kind != "D" && kind != "B" && kind != "R" {
+		return false
+	}
+	// llvm-nm prints these as defined, but they are local labels. A .def
+	// entry for one of them is an undefined symbol at link time.
+	if strings.Contains(name, "dtor") || strings.Contains(name, "TSS") || strings.Contains(name, "catch$") {
+		return false
+	}
+	return true
 }

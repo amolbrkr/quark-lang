@@ -16,6 +16,7 @@ type printer struct {
 	b       strings.Builder
 	ind     int
 	checked bool
+	session bool
 }
 
 // Options selects how a program is printed. The IR is unchanged either way;
@@ -33,7 +34,7 @@ func Program(p *lower.Program) string {
 
 // ProgramOptions prints p. Checked wraps proven unboxes in q_prove_*.
 func ProgramOptions(p *lower.Program, opt Options) string {
-	w := &printer{checked: opt.Checked}
+	w := &printer{checked: opt.Checked, session: p.Session != nil}
 	w.raw("#include \"quark/quark.hpp\"\n")
 	if len(p.Includes) > 0 {
 		w.raw("\n// Extension includes\n")
@@ -43,6 +44,7 @@ func ProgramOptions(p *lower.Program, opt Options) string {
 	}
 	if p.Session != nil {
 		w.raw("#include \"quark/repl/state.hpp\"\n")
+		w.raw("#ifdef _WIN32\n#define QREPL_EXPORT __declspec(dllexport)\n#define QREPL_IMPORT __declspec(dllimport)\n#else\n#define QREPL_EXPORT\n#define QREPL_IMPORT\n#endif\n")
 		w.sessionExterns(p)
 	}
 	w.raw("\n// Forward declarations\n")
@@ -54,17 +56,25 @@ func ProgramOptions(p *lower.Program, opt Options) string {
 		defaults := "nullptr"
 		if fi.DefaultsFn != "" {
 			dkw := "static "
+			dattr := ""
 			if fi.Exported {
 				dkw = ""
+				dattr = "QREPL_EXPORT "
 			}
-			w.line("%sQValue %s(int index);", dkw, fi.DefaultsFn)
+			w.line("%s%sQValue %s(int index);", dkw, dattr, fi.DefaultsFn)
 			defaults = fi.DefaultsFn
 		}
 		kw := "static "
+		exp := ""
+		linkage := ""
 		if fi.Exported {
+			// extern: a const at namespace scope is otherwise private to this
+			// input, and a later input's declaration could not link to it.
 			kw = ""
+			exp = "QREPL_EXPORT "
+			linkage = "extern "
 		}
-		w.line("%sconst QFnInfo %s = {\"%s\", %d, %d, %s};", kw, fi.CName, esc(fi.Display), fi.Min, fi.Max, defaults)
+		w.line("%s%s%sconst QFnInfo %s = {\"%s\", %d, %d, %s};", kw, linkage, exp, fi.CName, esc(fi.Display), fi.Min, fi.Max, defaults)
 	}
 	w.raw("\n")
 	if len(p.Structs) > 0 {
@@ -81,8 +91,14 @@ func ProgramOptions(p *lower.Program, opt Options) string {
 			}
 			w.ind--
 			w.line("};")
+			exp := ""
+			linkage := ""
+			if p.Session != nil {
+				exp = "QREPL_EXPORT "
+				linkage = "extern "
+			}
 			if s.Dtypes == nil {
-				w.line("%sconst QStructDef _sdef_%s = {\"%s\", _sfields_%s, %d};", sk, s.CName, esc(s.Display), s.CName, len(s.Fields))
+				w.line("%s%s%sconst QStructDef _sdef_%s = {\"%s\", _sfields_%s, %d};", sk, linkage, exp, s.CName, esc(s.Display), s.CName, len(s.Fields))
 				continue
 			}
 			dts := make([]string, len(s.Dtypes))
@@ -90,7 +106,7 @@ func ProgramOptions(p *lower.Program, opt Options) string {
 				dts[i] = fmt.Sprint(d)
 			}
 			w.line("%sconst signed char _sdtypes_%s[] = {%s};", sk, s.CName, strings.Join(dts, ", "))
-			w.line("%sconst QStructDef _sdef_%s = {\"%s\", _sfields_%s, %d, _sdtypes_%s, %t};", sk, s.CName, esc(s.Display), s.CName, len(s.Fields), s.CName, s.Anonymous)
+			w.line("%s%s%sconst QStructDef _sdef_%s = {\"%s\", _sfields_%s, %d, _sdtypes_%s, %t};", sk, linkage, exp, s.CName, esc(s.Display), s.CName, len(s.Fields), s.CName, s.Anonymous)
 		}
 		w.raw("\n")
 	}
@@ -111,10 +127,12 @@ func ProgramOptions(p *lower.Program, opt Options) string {
 	}
 	for _, df := range p.DefaultArgFns {
 		kw := "static "
+		exp := ""
 		if p.Session != nil && !df.Internal {
 			kw = ""
+			exp = "QREPL_EXPORT "
 		}
-		w.raw("%sQValue %s(int index) {\n", kw, df.CName)
+		w.raw("%s%sQValue %s(int index) {\n", kw, exp, df.CName)
 		w.ind++
 		w.line("switch (index) {")
 		for _, c := range df.Cases {
@@ -176,23 +194,34 @@ func (w *printer) fnDecl(f *lower.Func) {
 	if f.Internal {
 		kw = "static "
 	}
+	// The declaration and the definition must carry the same attribute.
+	// Clang rejects a definition that adds dllexport to a plain declaration.
+	attr := ""
+	if f.Imported {
+		attr = "QREPL_IMPORT "
+	} else if w.session && !f.Internal {
+		attr = "QREPL_EXPORT "
+	}
 	types := []string{"QClosure*"}
 	for _, prm := range f.Params {
 		types = append(types, prm.CType)
 	}
-	w.line("%s%s %s(%s);", kw, f.Ret, f.CName, strings.Join(types, ", "))
+	w.line("%s%s%s %s(%s);", kw, attr, f.Ret, f.CName, strings.Join(types, ", "))
 }
 
 func (w *printer) fn(f *lower.Func) {
 	kw := ""
+	exp := ""
 	if f.Internal {
 		kw = "static "
+	} else if w.session && !f.Imported {
+		exp = "QREPL_EXPORT "
 	}
 	params := []string{"QClosure* _cl"}
 	for _, p := range f.Params {
 		params = append(params, p.CType+" "+p.CName)
 	}
-	w.raw("%s%s %s(%s) {\n", kw, f.Ret, f.CName, strings.Join(params, ", "))
+	w.raw("%s%s%s %s(%s) {\n", kw, exp, f.Ret, f.CName, strings.Join(params, ", "))
 	w.ind++
 	if f.LocGuard {
 		w.line("QSourceLocGuard _loc_guard;")
@@ -583,13 +612,13 @@ func (w *printer) expr(e lower.Expr) string {
 func (w *printer) sessionExterns(p *lower.Program) {
 	s := p.Session
 	for _, st := range s.ExternStructs {
-		w.line("extern const QStructDef _sdef_%s;", st.CName)
+		w.line("extern QREPL_IMPORT const QStructDef _sdef_%s;", st.CName)
 	}
 	for _, name := range s.ExternDefaults {
-		w.line("extern QValue %s(int index);", name)
+		w.line("extern QREPL_IMPORT QValue %s(int index);", name)
 	}
 	for _, fi := range s.ExternInfos {
-		w.line("extern const QFnInfo %s;", fi.CName)
+		w.line("extern QREPL_IMPORT const QFnInfo %s;", fi.CName)
 	}
 	for _, f := range s.Extern {
 		w.fnDecl(f)

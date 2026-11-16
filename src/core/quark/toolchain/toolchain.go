@@ -38,7 +38,10 @@ type Options struct {
 	LibDirs     []string // library directories, searched before the linker's defaults
 	Libs        []Lib    // libraries to link, in link order
 	LinkArgs    []string // passed to the linker as-is
-	GlueFiles   []string // extern glue headers and sources; errors in them are reported as QK-FFI-003
+	// PrevLibs are import libraries of earlier REPL inputs (Windows). A new
+	// input calls their functions, so it links them.
+	PrevLibs  []string
+	GlueFiles []string // extern glue headers and sources; errors in them are reported as QK-FFI-003
 }
 
 // ErrNoClang is returned by Find when clang++ is not on PATH.

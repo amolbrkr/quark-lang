@@ -104,6 +104,18 @@ func (l *lowerer) call(node *ast.TreeNode) Expr {
 		if plan.RuntimeSymbol == "" {
 			l.ice("INV-CALLPLAN-RUNTIME", node, "extern call '%s' missing runtime symbol", plan.CalleeName)
 		}
+		if l.useForeignThunk(plan) {
+			// The C++ function lives in the input that included the header.
+			// Its wrapper takes Quark values and returns a Quark value.
+			out := []Expr{nullptrExpr}
+			if recvIdx >= 0 {
+				out = append(out, boxed(vals[recvIdx]))
+			}
+			for _, a := range args {
+				out = append(out, boxed(a))
+			}
+			return &Call{Fn: "_thunk_" + plan.RuntimeSymbol, Args: out, R: RepValue}
+		}
 		var out []Expr
 		if recvIdx >= 0 {
 			r := boxed(vals[recvIdx])

@@ -28,6 +28,7 @@ type Session struct {
 	inputs  []string
 	fp      string
 	work    string
+	libs    []string // import libraries of inputs that ran, Windows only
 	host    *exec.Cmd
 	stdin   io.WriteCloser
 	result  *bufio.Reader
@@ -243,6 +244,7 @@ func (s *Session) eval(src string) error {
 		return err
 	}
 	opts := toolchain.Options{}
+	opts.PrevLibs = append([]string{}, s.libs...)
 	opts.IncludeDirs = append(opts.IncludeDirs, u.Native.IncludeDirs...)
 	for _, lib := range u.Native.Libs {
 		opts.Libs = append(opts.Libs, toolchain.Lib{Name: lib.Name, Origin: lib.Origin()})
@@ -261,6 +263,9 @@ func (s *Session) eval(src string) error {
 	case "ok":
 		s.inputs = all
 		s.fp = fingerprint(u.Analysis, len(all))
+		if runtime.GOOS == "windows" {
+			s.libs = append(s.libs, strings.TrimSuffix(so, ext)+".lib")
+		}
 	case "interrupted":
 		fmt.Fprintln(os.Stderr, "interrupted")
 	case "fail", "signal":

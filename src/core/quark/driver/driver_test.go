@@ -54,6 +54,26 @@ func TestCompileSource_ReportsErrorsPerStage(t *testing.T) {
 	}
 }
 
+func TestCompileSession_LaterInputImportsEarlierFunction(t *testing.T) {
+	first := driver.CompileSession(".", []string{"fn sq(x: int) int -> x * x\n"})
+	if first.Failed() || !strings.Contains(first.CPP, "QREPL_EXPORT") || !strings.Contains(first.CPP, "quark_sq(") {
+		t.Fatalf("first input: failed=%v err=%v\n%s", first.Failed(), first.Err, first.CPP)
+	}
+	second := driver.CompileSession(".", []string{
+		"fn sq(x: int) int -> x * x\n",
+		"sq(4)\n",
+	})
+	if second.Failed() {
+		t.Fatalf("second input: %v\n%s", second.Err, second.CPP)
+	}
+	if !strings.Contains(second.CPP, "QREPL_IMPORT") || !strings.Contains(second.CPP, "quark_sq(") {
+		t.Fatalf("second input does not import sq\n%s", second.CPP)
+	}
+	if strings.Contains(second.CPP, "quark_sq(QClosure* _cl") {
+		t.Fatalf("second input defines sq\n%s", second.CPP)
+	}
+}
+
 func TestCompileFile_MissingFile(t *testing.T) {
 	u := driver.CompileFile("no/such/file.qrk", driver.StageEmit)
 	if !u.Failed() || u.Err == nil || !strings.Contains(u.Err.Error(), "Error reading file") {

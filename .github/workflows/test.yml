@@ -1,0 +1,48 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: go test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    # Windows reports but doesn't block yet: three tests in ./toolchain fail
+    # there on path separators (known_issues.md, "go test ./toolchain fails on
+    # Windows"). Drop this line once they are fixed.
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
+    timeout-minutes: 75
+    defaults:
+      run:
+        working-directory: src/core/quark
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: src/core/quark/go.mod
+          cache-dependency-path: src/core/quark/go.sum
+
+      # clang++ is required (g++ is not supported). OpenBLAS lets TestStdBlas
+      # run instead of skipping. The Windows image ships LLVM.
+      - name: Install clang and OpenBLAS
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y clang libopenblas-dev
+
+      - name: Toolchain versions
+        run: |
+          go version
+          clang++ --version
+
+      - name: go vet
+        run: go vet ./...
+
+      # The integration tests compile and run several hundred programs one
+      # after another; the default 10-minute timeout is too short for them.
+      - name: go test
+        run: go test -count=1 -timeout 60m ./...

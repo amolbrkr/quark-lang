@@ -1075,6 +1075,7 @@ and don't. An `INV-*` diagnostic is a compiler bug.
 | `src/benchmarks` | the benchmark suite against Python and R (`bench.py`; see its `README.md`) |
 | `src/devtools/vscode-extension/quark` | the editor extension |
 | `deps/bdwgc` | the vendored Boehm GC (see `VENDORED.md`) |
+| `.github/workflows/test.yml` | CI: `go vet` and the whole test suite on Linux and Windows, for every push and pull request |
 
 ## Status
 

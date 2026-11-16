@@ -35,6 +35,11 @@ test_*
 # Compiled binary
 quark.exe
 
+# Scratch build of src/testfiles/test.qrk
+src/testfiles/test.exe
+src/testfiles/test.cpp
+src/testfiles/mtcars.csv
+
 # Go build artifacts
 *.o
 *.a

@@ -10,6 +10,7 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 
 ## Contents
 
+- [2026-11-16: CI, current editor data](#2026-11-16-ci-current-editor-data)
 - [2026-11-16: Stack overflow is reported on Linux](#2026-11-16-stack-overflow-is-reported-on-linux)
 - [2026-11-16: REPL: type changes, unassigned slots, included files, function-made lists, internal errors](#2026-11-16-repl-type-changes-unassigned-slots-included-files-function-made-lists-internal-errors)
 - [2026-11-16: Date vecs, date lists, date text and date overflow](#2026-11-16-date-vecs-date-lists-date-text-and-date-overflow)
@@ -51,7 +52,22 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 - [2026-04-02: Structs v0.1](#2026-04-02-structs-v01)
 - [2026-03-28: Vector soundness, `std/fmt` on `extern`, build output](#2026-03-28-vector-soundness-stdfmt-on-extern-build-output)
 
+## 2026-11-16: CI, current editor data
+
+### Fixed
+
+- **The editor extension's completion and hover show the current `std/time`.** They still showed the float-based API (`days(n: float) float`, `make`, `today() float`); they show `date`, `period`, `ymd`, `timestamp`, `months` and the rest as they are now.
+
+### Internal
+
+- `.github/workflows/test.yml` runs `go vet ./...` and `go test -count=1 -timeout 60m ./...` on Linux (with clang and OpenBLAS, so `TestStdBlas` runs) and Windows for every push and pull request. The Windows job reports but doesn't fail the run until the `./toolchain` path tests are fixed (`known_issues.md`).
+- `data/quark.json` regenerated, so `TestExtensionData_UpToDate` passes. `src/testfiles/test.exe` and `test.cpp`, a build of `test.qrk` committed by accident, are removed and ignored.
+
+---
+
 ## 2026-11-16: Stack overflow is reported on Linux
+
+Commits: `771bf84`
 
 ### Fixed
 
@@ -64,6 +80,8 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 ---
 
 ## 2026-11-16: REPL: type changes, unassigned slots, included files, function-made lists, internal errors
+
+Commits: `771bf84`
 
 ### Fixed
 
@@ -90,6 +108,8 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 ---
 
 ## 2026-11-16: Date vecs, date lists, date text and date overflow
+
+Commits: `771bf84`
 
 ### Breaking
 
@@ -124,6 +144,8 @@ print(min(t.d))                         // 2021-03-01
 
 ## 2026-11-16: Native handles stay open during native calls
 
+Commits: `771bf84`
+
 ### Fixed
 
 - **A handle could be closed while a native function it was passed to was still using it.** When the glue kept only the payload from `qext::handle_get` and the program didn't use the handle after the call, a collection during the call finalized the handle and ran its close function on the payload in use: a glue `build(h)` that read 200000 values from the payload while allocating saw 199986 of them closed, and a close function that frees its payload turned that into a crash. Every argument of an `extern fn` call that refers to GC memory now stays reachable until the call returns, whether the extern fn is called directly, as a value (`f = build`) or through an untyped value.
@@ -135,6 +157,8 @@ print(min(t.d))                         // 2021-03-01
 ---
 
 ## 2026-11-16: Int/float comparisons: right vec results, speed restored
+
+Commits: `771bf84`
 
 ### Fixed
 

@@ -581,88 +581,138 @@
       "functions": [
         {
           "name": "now",
-          "signature": "now() float",
-          "doc": "Seconds since the Unix epoch (wall-clock time), as a float."
+          "signature": "now() float"
         },
         {
           "name": "clock",
-          "signature": "clock() float",
-          "doc": "Monotonic seconds, for measuring durations: end - start."
+          "signature": "clock() float"
         },
         {
           "name": "sleep",
-          "signature": "sleep(seconds: float)",
-          "doc": "Pause for `seconds` (fractions allowed)."
+          "signature": "sleep(seconds: float)"
         },
         {
           "name": "since",
-          "signature": "since(start: float) float",
-          "doc": "Seconds elapsed since a clock() reading."
+          "signature": "since(start: float) float"
         },
         {
           "name": "seconds",
-          "signature": "seconds(n: float) float",
-          "doc": "`n` as seconds."
+          "signature": "seconds(n: float) float"
         },
         {
           "name": "minutes",
-          "signature": "minutes(n: float) float",
-          "doc": "`n` minutes, in seconds."
+          "signature": "minutes(n: float) float"
         },
         {
           "name": "hours",
-          "signature": "hours(n: float) float",
-          "doc": "`n` hours, in seconds."
-        },
-        {
-          "name": "days",
-          "signature": "days(n: float) float",
-          "doc": "`n` days, in seconds."
-        },
-        {
-          "name": "weeks",
-          "signature": "weeks(n: float) float",
-          "doc": "`n` weeks, in seconds."
+          "signature": "hours(n: float) float"
         },
         {
           "name": "duration",
-          "signature": "duration(seconds: float) str",
-          "doc": "A short reading of a duration in seconds, such as '250ms' or '1d 2h 3m 4s'."
+          "signature": "duration(seconds: float) str"
         },
         {
-          "name": "format",
-          "signature": "format(ts: float, pattern: str = '%Y-%m-%d %H:%M:%S', local: bool = false) str",
-          "doc": "`ts` formatted with a strftime pattern. UTC unless `local` is true."
+          "name": "date",
+          "signature": "date(year: int, month: int, day: int) date",
+          "doc": "Calendar day."
         },
         {
-          "name": "iso",
-          "signature": "iso(ts: float) str",
-          "doc": "ISO 8601 UTC, with fractional seconds when `ts` is not a whole second."
-        },
-        {
-          "name": "parse",
-          "signature": "parse(text: str, pattern: str = '%Y-%m-%d', local: bool = false) result",
-          "doc": "ok(timestamp) when `text` matches a strftime pattern, otherwise err."
-        },
-        {
-          "name": "parse_iso",
-          "signature": "parse_iso(text: str) result",
-          "doc": "ok(timestamp) for ISO 8601 text with Z or a ±hh:mm offset, otherwise err."
-        },
-        {
-          "name": "parts",
-          "signature": "parts(ts: float, local: bool = false) Parts",
-          "doc": "The calendar fields of `ts`. UTC unless `local` is true."
-        },
-        {
-          "name": "make",
-          "signature": "make(year: int, month: int, day: int, hour: int = 0, minute: int = 0, second: float = 0.0, local: bool = false) float",
-          "doc": "The timestamp for a calendar time. The inverse of parts."
+          "name": "ymd",
+          "signature": "ymd(text: str) date"
         },
         {
           "name": "today",
-          "signature": "today(local: bool = false) float",
-          "doc": "Midnight of the current day, UTC unless `local` is true."
+          "signature": "today(local: bool = false) date"
+        },
+        {
+          "name": "year",
+          "signature": "year(d: date) int"
+        },
+        {
+          "name": "month",
+          "signature": "month(d: date) int"
+        },
+        {
+          "name": "day",
+          "signature": "day(d: date) int"
+        },
+        {
+          "name": "weekday",
+          "signature": "weekday(d: date) int"
+        },
+        {
+          "name": "parts",
+          "signature": "parts(d: date) DateParts"
+        },
+        {
+          "name": "from_days",
+          "signature": "from_days(n: int) date"
+        },
+        {
+          "name": "to_days",
+          "signature": "to_days(d: date) int"
+        },
+        {
+          "name": "format",
+          "signature": "format(d: date, pattern: str = '%Y-%m-%d') str"
+        },
+        {
+          "name": "parse",
+          "signature": "parse(text: str, pattern: str = '%Y-%m-%d') result"
+        },
+        {
+          "name": "days",
+          "signature": "days(n: int) period",
+          "doc": "Calendar offsets. Adding one to a date rolls an impossible day back."
+        },
+        {
+          "name": "weeks",
+          "signature": "weeks(n: int) period"
+        },
+        {
+          "name": "months",
+          "signature": "months(n: int) period"
+        },
+        {
+          "name": "quarters",
+          "signature": "quarters(n: int) period"
+        },
+        {
+          "name": "years",
+          "signature": "years(n: int) period"
+        },
+        {
+          "name": "timestamp",
+          "signature": "timestamp(year: int, month: int, day: int, hour: int = 0, minute: int = 0, second: float = 0.0, local: bool = false) float",
+          "doc": "Named timestamp, not time: a member can't share the module's name."
+        },
+        {
+          "name": "iso",
+          "signature": "iso(ts: float) str"
+        },
+        {
+          "name": "format_time",
+          "signature": "format_time(ts: float, pattern: str = '%Y-%m-%d %H:%M:%S', local: bool = false) str"
+        },
+        {
+          "name": "parse_time",
+          "signature": "parse_time(text: str, pattern: str = '%Y-%m-%d %H:%M:%S', local: bool = false) result"
+        },
+        {
+          "name": "parse_iso",
+          "signature": "parse_iso(text: str) result"
+        },
+        {
+          "name": "parts_time",
+          "signature": "parts_time(ts: float, local: bool = false) Parts"
+        },
+        {
+          "name": "date_from_ts",
+          "signature": "date_from_ts(ts: float, local: bool = false) date"
+        },
+        {
+          "name": "ts_from_date",
+          "signature": "ts_from_date(d: date, local: bool = false) float"
         }
       ]
     }

@@ -89,6 +89,7 @@ func TestVerify_RejectsMalformedIR(t *testing.T) {
 		{"QValue condition", mainProgram(&lower.If{Cond: &lower.Const{R: lower.RepValue, Text: "qv_null()"}, Then: &lower.Block{}}), "INV-IR-REP"},
 		{"q_truthy of a raw bool", mainProgram(&lower.Do{X: &lower.Truthy{X: &lower.Const{R: lower.RepBool, Text: "true"}}}), "INV-IR-REP"},
 		{"unbox of a raw int", mainProgram(&lower.Do{X: &lower.Unbox{X: one, To: lower.RepInt}}), "INV-IR-REP"},
+		{"raw compare of an int and a float", mainProgram(&lower.Do{X: &lower.Compare{Op: "<", L: one, X: &lower.Const{R: lower.RepFloat, Text: "0.5"}}}), "INV-IR-REP"},
 		{"break outside a loop", mainProgram(&lower.Break{}), "INV-IR-LOOP"},
 		{"return in main", mainProgram(&lower.Return{Value: one}), "INV-IR-RETURN"},
 		{"closure not bound by a let", mainProgram(&lower.Do{X: &lower.MakeClosure{Fn: "quark_f", Info: "_qfi_f"}}), "INV-IR-NODE"},

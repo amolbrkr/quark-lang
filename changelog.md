@@ -10,6 +10,11 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 
 ## Contents
 
+- [2026-11-16: Stack overflow is reported on Linux](#2026-11-16-stack-overflow-is-reported-on-linux)
+- [2026-11-16: REPL: type changes, unassigned slots, included files, function-made lists, internal errors](#2026-11-16-repl-type-changes-unassigned-slots-included-files-function-made-lists-internal-errors)
+- [2026-11-16: Date vecs, date lists, date text and date overflow](#2026-11-16-date-vecs-date-lists-date-text-and-date-overflow)
+- [2026-11-16: Native handles stay open during native calls](#2026-11-16-native-handles-stay-open-during-native-calls)
+- [2026-11-16: Int/float comparisons: right vec results, speed restored](#2026-11-16-intfloat-comparisons-right-vec-results-speed-restored)
 - [2026-11-15: Dates, and the REPL on Windows](#2026-11-15-dates-and-the-repl-on-windows)
 - [2026-11-14: REPL](#2026-11-14-repl)
 - [2026-11-14: FFI phase 2 (glue sources, handles, results)](#2026-11-14-ffi-phase-2-glue-sources-handles-results)
@@ -46,7 +51,114 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 - [2026-04-02: Structs v0.1](#2026-04-02-structs-v01)
 - [2026-03-28: Vector soundness, `std/fmt` on `extern`, build output](#2026-03-28-vector-soundness-stdfmt-on-extern-build-output)
 
+## 2026-11-16: Stack overflow is reported on Linux
+
+### Fixed
+
+- **Unbounded recursion is a runtime error on Linux too.** `print('before')`, `fn f(n) -> 1 + f(n)`, `f(0)` prints `before` and `error[QK-RUNTIME-001] (runtime): stack overflow at ...` and exits with status 1. On Linux with the default 8 MB stack the guard added on 2026-11-14 never fired: the binary died with a segmentation fault, and `quark run` printed nothing and exited 255.
+
+### Internal
+
+- The guard (`core/stack.hpp`) takes the thread's stack bounds from `pthread_getattr_np`, which for the main thread covers the whole stack the limit allows, instead of the `[stack]` line of `/proc/self/maps`, which covers only the part used so far. `TestStackOverflow_Reports` passes on Linux.
+
+---
+
+## 2026-11-16: REPL: type changes, unassigned slots, included files, function-made lists, internal errors
+
+### Fixed
+
+- **A type change read the variable after its old value was cleared.** `t = 'abc'`, then `t = t == 'abc'` made `t` `false`; it is `true` (with the type-change warning). `xs = len(xs)` on a list failed with `len() expects str, list, dict, or vec`; it is the length.
+- **A top-level `int`, `float` or `bool` of a later input started with a random value instead of unassigned**, so a function that read it before its first assignment got garbage (`1`, or a large number) instead of `'n' is used before it is assigned`, which a file gives.
+- **An included file was read again for every input**, so editing it in the middle of a session called already-compiled code through the new definition (a function changed to return a float printed `0.0`), or made every later input fail. A session reads each file once, when an input that includes it first succeeds, as `specs/repl_v0_1_spec.md` §3.7 says.
+- **A list made by an earlier input's function could be read as the wrong type.** With `fn mk() -> list []` in one input, a later `zs = mk()` and `zs.push(1)` typed every list `mk` makes as a list of ints, but `mk` was already compiled and kept making lists that take anything: a string pushed into one through an untyped function was then read as an int (`y: int = ws[0]` printed pointer bits). An empty `list []` or `dict {}` inside a function of an input that has run now holds any value, and a typed read of one is checked (`variable 'y' is declared int but got str`). This differs from a file, where the first write types every list the function makes (`specs/repl_v0_1_spec.md` §3.5, §3.8). A top-level `xs = list []` still takes its type from a later input's first write.
+- **Two internal compiler errors on ordinary inputs.** After a later input fixed the element type of an earlier `list []`, every following input failed with `INV-IR-SCOPE` (the spec's first example did); a function from an earlier input used as a value (`g = sq`) failed with `INV-IR-CALL`.
+
+```
+> xs = list []
+> xs.push(1)
+[1]
+> fn sq(x: int) int -> x * x
+> g = sq
+> g(3)
+9
+```
+
+### Internal
+
+- Only the last input's element-type settles are emitted, and a committed input's pending containers inside functions are fixed as holding any value (`freezeFunctionContainers`, `types/analyzer_session.go`); `Verify` knows the earlier inputs' functions (`SessionEmit.Extern`). The loader takes a snapshot of file texts (`SetSnapshot`, `FilesRead`) and `driver.CompileSessionFiles` passes the session's, which the REPL keeps when an input succeeds. `q_repl_ensure` zeroes the slots it adds. `TestRepl_SessionValuesAndCompiledCode`, `TestRepl_IncludedFileReadOnce` and `TestRepl_FunctionMadeListStaysUntyped` cover these.
+
+---
+
+## 2026-11-16: Date vecs, date lists, date text and date overflow
+
+### Breaking
+
+- **A date's text needs a year of at least four digits.** `time::ymd('25-12-22')` is a runtime error, a typed `date` CSV cell `01-02-03` is `is not a date`, and an untyped CSV column of such text is read as `str` instead of dates in the years 25 and 1. Write `2025-12-22`; years before 1000 are `0025-12-22`.
+- **A negative year prints with four digits**: `-0044-03-15`, was `-44-03-15`.
+
+### Fixed
+
+- **`to_list()` of a `vec[date]` made a list that took any value**, so an int or a string pushed into it through an untyped function was read back as a date (a string printed as `5102814-03-15`). It is a `list[date]`, and such a push is an error.
+- **`fmt::table` and `fmt::show_vec` printed date cells blank.** They print the dates.
+- **Date and period arithmetic overflowed silently.** `time::years(4) * 4611686018427387904` was `0 days`; it is `period is too large`. `d + 9223372036854775807` and `time::date(0, 1, 1) + time::years(-2147483648)` gave the right error only by luck (undefined behaviour); they are now checked.
+- **Comparisons, `min`, `max` and `fillna` of a `vec[date]` work, as the dates spec (D9) says.** `t.d == d` and `t.d.fillna(d)` compiled and then failed, `min(t.d)` and `t.d < d` were compile errors. A `vec[date]` compares with a date or a `vec[date]` (with anything else it is a compile error), `min` and `max` give a date, `fillna` takes a date. `list[date].sort()` and `sort_by` with a date key sort by day; they compiled and then failed. `stats::mean` of a `vec[date]` says `dates can't be averaged` (it said `of a vec with no present values`).
+
+```quark
+incl 'std/time' as time
+incl 'std/csv' as csv
+struct E:
+    d: date
+t: tbl[E] = unwrap(csv::parse_text('d\n2022-01-05\n2021-03-01\n'))
+print(t.d >= time::ymd('2022-01-01'))   // [true, false]
+print(min(t.d))                         // 2021-03-01
+```
+
+- **Every date reads back.** A date written by `print`, `to_str` or `csv::write_file` parses as the same day for the whole range of dates (about ±5.88 million years); reading stopped at year ±999999.
+- **Errors on a date or a period reached through an untyped value named the type `unknown`** (`abs()`, two-argument `min`/`max`, a field read). They say `date` and `period`; a field read on a str says `str` (was `string`).
+
+### Internal
+
+- The switches over the vec dtype that had no `DATE` case (`to_list`, `fillna`, the mean, `to_vec`, `std/fmt`'s two cell formatters) handle it, so the runtime builds again under `-Werror` and `TestTableEngine` passes. `q_days_from_civil` computes in 64 bits; `q_date_add_days` and `q_period_scale` check for overflow. `q_type_name_math` and the member-access message use `q_type_name`.
+
+---
+
+## 2026-11-16: Native handles stay open during native calls
+
+### Fixed
+
+- **A handle could be closed while a native function it was passed to was still using it.** When the glue kept only the payload from `qext::handle_get` and the program didn't use the handle after the call, a collection during the call finalized the handle and ran its close function on the payload in use: a glue `build(h)` that read 200000 values from the payload while allocating saw 199986 of them closed, and a close function that frees its payload turned that into a crash. Every argument of an `extern fn` call that refers to GC memory now stays reachable until the call returns, whether the extern fn is called directly, as a value (`f = build`) or through an untyped value.
+
+### Internal
+
+- Lowering binds the arguments of an extern call to temporaries, in order, when one of them refers to GC memory, and calls `q_keep_alive` (`core/value.hpp`, `GC_reachable_here`) on each after the call (`keepArgsAlive`, `lower/calls.go`); the extern fn's wrapper does the same for its parameters. `TestFFI_HandleLiveDuringNativeCall` covers a direct call, a stored handle, a call through a function value, an untyped argument and a handle inside a list.
+
+---
+
+## 2026-11-16: Int/float comparisons: right vec results, speed restored
+
+### Fixed
+
+- **An ordered comparison of a vec with a number of the other kind gave the reversed answer when the float side was on the left.** `v = vec [-1.5, 0.5, 2.5]`: `v > 0` was `[true, false, false]` and `v[v > 0]` was `[-1.5]`; they are `[false, true, true]` and `[0.5, 2.5]`. The same for `1.5 < vec [1, 2, 3]` and for a `vec[f64]` compared with a `vec[i64]`. On a table, `t.id[t.salary > 100000]` now picks the rows `t | e -> filter(e.salary > 100000)` picks. `==` and `!=` were right.
+
+```quark
+v = vec [-1.5, 0.5, 2.5]
+print(v[v > 0])   // [0.5, 2.5]
+```
+
+- **Comparing an int with a float is as fast again as before comparisons became exact (2026-11-14).** The results are unchanged (exact, `semantics.md` §2). On a 10M-element vec, `fa > 0` takes 8.4 ms (84 ms before this fix), `ia > 499.5` 8.5 ms (83 ms) and `ia < fa` 16 ms (82 ms). A float compared with an int literal, as in `x > 0` or `filter(e.y * 2 > 1)`, costs what a float compare costs. Two-argument `min`/`max` of two floats is back to its old speed, `list.sort()` of ints or floats too, and untyped `+`, `-`, `*`, `==` and ordered comparisons are faster than before 2026-11-14 (`fn gadd(a, b) -> a + b` in a loop: 67 ms, against 154 ms). `min`/`max` of an int and a float through untyped values stays slower, by choice: an int past 2^53 that wins is still returned exactly (`architecture.md` §15).
+
+### Internal
+
+- Lowering, not emit, decides how a raw int is compared with a raw float (`mixedCompare`, `lower/expr.go`): an int literal within ±2^53 becomes a float literal (`quark_x > 0.0`); any other int goes through `q_int_float_<op>` (`core/numcmp.hpp`), which converts an int within ±2^53 and compares floats, and compares a larger one exactly. The verifier rejects a raw `Compare` of an int and a float (`INV-IR-REP`).
+- The vec comparison kernels (`types/vector.hpp`) choose their loop once per operator. An int vec against a float compares ints with `floor` or `ceil` of the float; an int vec against a float vec checks each block of 1024 ints for ±2^53 and compares floats where it holds.
+- `q_add`, `q_sub` and `q_mul` test two numbers first and keep vecs, dates, strings and errors in `q_add_other` etc., so they inline; `q_lt`, `q_lte`, `q_gt`, `q_gte` and `q_eq` test two ints and two floats first; `q_minmax` and `q_sort_less` likewise.
+- `TestIntFloatCompare_VecAgreesWithScalar` checks all six comparisons, in every vec shape and both operand orders, against the scalar comparison and the untyped one, on values at ±2^53, past it, at ±2^63, NaN, the infinities and -0.0. `TestQueryAgreesWithVec` also compares with an int literal.
+
+---
+
 ## 2026-11-15: Dates, and the REPL on Windows
+
+Commits: `715bd06`, `768ab47`, `dbc5789`
 
 ### Breaking
 
@@ -113,6 +225,8 @@ $ quark repl
 
 The last bare expression of an input is printed. A top-level variable may be given a value of another type later in the session, with a warning, unless a function uses it. An `int`, `float` or `bool` at the top level is stored as a raw number, so `n = n + 1` lowers the way it does in a file. Inputs are compiled at `-O0`; the runtime they call is compiled at `-O3`.
 
+Commits: `87a01d1`
+
 ### Internal
 
 - One host process owns the GC and the session slots. On Linux and macOS each input is a shared library and the host forks: the child loads the library and, on success, becomes the host, so a runtime error leaves the previous values in place. On Windows there is no `fork`. The input runs in the host, which copies the session first and puts the copy back if the input fails.
@@ -123,6 +237,8 @@ The last bare expression of an input is printed. A top-level variable may be giv
 ## 2026-11-14: FFI phase 2 (glue sources, handles, results)
 
 The runtime half of FFI phase 2 (`specs/ffi_v0_1_spec.md` P2, P3, P4). `std/sqlite` is not part of this: its column-type rule is still an open question in that spec.
+
+Commits: `11df436`
 
 ### Added
 
@@ -148,6 +264,8 @@ print(double_it(21))   // 42
 ---
 
 ## 2026-11-14: Tables v0.2
+
+Commits: `65e9988` (merged in `1fe57d9`)
 
 ### Added
 
@@ -176,6 +294,8 @@ print(staff | e -> summarize(depts = n_distinct(e.dept)))
 ## 2026-11-14: Standard library: sys, time and random
 
 The parts of `specs/stdlib_expansion_v0_1_spec.md` that do not wait on FFI phase 2 or 3, or on an open decision. Multi-argument `print`, `fmt::format`, the `std/io` rework, `std/fs`, JSON and subprocesses are unchanged.
+
+Commits: `687a147`
 
 ### Breaking
 - `sys::args()` is a list of strings. Pushing a non-string fails at runtime (`sys::args().push(1)`). Reading, indexing and `join` are unchanged.
@@ -209,6 +329,8 @@ print(time::duration(time::minutes(5)))  // 5m
 
 ## 2026-11-14: Checked mode
 
+Commits: `687a147`
+
 ### Added
 - `quark run`, `quark build` and `quark emit` take `--checked`. A read the compiler proved (`ProofType` or `ProofElement` in the IR) then goes through `q_prove_int`, `q_prove_float` or `q_prove_bool`, which require the value's tag to be exactly that scalar. An int is not widened to a float. A program whose proofs hold prints the same result; a wrong proof stops with `expected int, got str` instead of reading the other field of the value.
 
@@ -229,6 +351,8 @@ long long quark_x = q_prove_int(q_list_at(_t3, _t5));     // --checked
 
 ## 2026-11-14: VS Code extension 0.2.0 — check diagnostics
 
+Commits: `64ad613`, `b1bae8f`
+
 ### Added
 - The editor extension runs `quark check` on open, save and (debounced) as you type, and shows errors and warnings as squiggles. **Quark: Check Current File** (`Ctrl+Shift+B`) forces a check; `quark.checkOnType` turns off the while-typing pass.
 - Snippet `query` inserts a table filter/summarize pipeline; `incl` offers `std/stats`.
@@ -242,6 +366,8 @@ long long quark_x = q_prove_int(q_list_at(_t3, _t5));     // --checked
 ---
 
 ## 2026-11-14: Exact int/float comparison, stack overflow, runtime and GC lookup
+
+Commits: `b1bae8f`
 
 ### Breaking
 - **An int and a float compare exactly.** `<`, `<=`, `>`, `>=`, `==` and `!=` compare the mathematical values, including in a list or dict, in `list.sort`, and between a `vec[i64]` and a float. An int past 2^53 is no longer rounded to a float first, so `9007199254740993 == 9007199254740992.0` is false and `9007199254740993 > 9007199254740992.0` is true. Values a float can hold exactly are unchanged (`1 == 1.0`, `2 < 2.5`). NaN still compares as in IEEE 754. Arithmetic is unchanged: `9007199254740993 + 0.0` is still the float `9007199254740992.0`.
@@ -257,6 +383,8 @@ long long quark_x = q_prove_int(q_list_at(_t3, _t5));     // --checked
 ---
 
 ## 2026-11-14: Specs move to `specs/`
+
+Commits: `31abf4c`
 
 ### Changed
 - The feature specs leave the repository root. Specs whose design is fully implemented are in `specs/implemented/` (`modules_v0_2_spec.md`, `structs_v0_1_spec.md`); proposals and specs with work still planned are in `specs/` (`tables_v0_1_spec.md`, `ffi_v0_1_spec.md`, `repl_v0_1_spec.md`, `stdlib_expansion_v0_1_spec.md`). Every link and mention in the docs, code comments and this changelog points to the new paths.

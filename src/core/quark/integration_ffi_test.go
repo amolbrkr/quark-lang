@@ -303,6 +303,87 @@ func TestStdBlas(t *testing.T) {
 	}
 }
 
+// TestFFI_HandleLiveDuringNativeCall requires a handle passed to a native
+// function to stay open until the function returns, however the call is
+// made. The glue reads the payload after a collection, having dropped its
+// own copy of the handle (as an optimizer may), so only the caller keeps it
+// reachable; the close function zeroes the payload, so a handle closed
+// during the call shows as a short count.
+func TestFFI_HandleLiveDuringNativeCall(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, src string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("live.hpp", `#pragma once
+#include "quark/quark.hpp"
+#include <cstdint>
+QValue ql_make(int64_t n);
+int64_t ql_count(QValue h);
+int64_t ql_count_list(QList* hs);
+`)
+	write("live.cpp", `#include "live.hpp"
+#include "quark/ext/api.hpp"
+#include <cstdlib>
+struct Data { int64_t n; int64_t* vals; };
+static void close_data(void* p) {
+    auto* d = static_cast<Data*>(p);
+    for (int64_t i = 0; i < d->n; i++) d->vals[i] = 0;
+}
+static const uint16_t K = qext::define_handle_kind("qlive.data", close_data);
+QValue ql_make(int64_t n) {
+    auto* d = static_cast<Data*>(std::malloc(sizeof(Data)));
+    d->n = n;
+    d->vals = static_cast<int64_t*>(std::malloc(sizeof(int64_t) * n));
+    for (int64_t i = 0; i < n; i++) d->vals[i] = 1;
+    return qext::new_handle(K, d, qext::null_val());
+}
+static int64_t count(Data* d) {
+    volatile char sink[65536];
+    for (int i = 0; i < 65536; i++) sink[i] = 0;
+    GC_gcollect();
+    GC_invoke_finalizers();
+    int64_t c = 0;
+    for (int64_t i = 0; i < d->n; i++) c += d->vals[i];
+    return c;
+}
+int64_t ql_count(QValue h) {
+    Data* d = qext::handle_get<Data>(h, K);
+    h.data.resource_val = nullptr;
+    return count(d);
+}
+int64_t ql_count_list(QList* hs) {
+    Data* d = qext::handle_get<Data>((*hs)[0], K);
+    hs = nullptr;
+    return count(d);
+}
+`)
+	write("main.qrk", `extern 'live.hpp'
+extern source 'live.cpp'
+extern fn make(n: int) resource as 'ql_make'
+extern fn count(h: resource) int as 'ql_count'
+extern fn count_list(hs: list) int as 'ql_count_list'
+print(count(make(1000)))
+h = make(1000)
+print(count(h))
+f = count
+print(f(make(1000)))
+fn id(v) -> v
+print(count(id(make(1000))))
+print(count_list(list [make(1000)]))
+`)
+	r := runIn(dir, cleanEnv(), quarkExePath, "run", filepath.Join(dir, "main.qrk"))
+	if r.err != nil {
+		t.Fatalf("run failed: %v\n%s", r.err, r.stderr)
+	}
+	want := "1000\n1000\n1000\n1000\n1000"
+	if got := strings.TrimSpace(normalizeNewlines(r.stdout)); got != want {
+		t.Fatalf("a handle was closed while a native call used it:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 // TestFFI_Phase2 covers separately compiled glue (P2), extension handles and
 // finalizers (P3) and qext result helpers (P4). It does not need a system
 // library, so it runs on every platform the compiler does.

@@ -81,7 +81,7 @@ func (a *Analyzer) inferBuiltinReturnType(name string, argTypes []Type, callNode
 				if isUnknownType(el) {
 					return TypeAny
 				}
-				if IsNumeric(el) || el.Equals(TypeBool) || el.Equals(TypeString) {
+				if IsNumeric(el) || el.Equals(TypeBool) || el.Equals(TypeString) || el.Equals(TypeDate) {
 					return el
 				}
 				a.errorAt(callNode, "argument 1 of '%s' with single argument expects a vec, got %s", name, t.String())

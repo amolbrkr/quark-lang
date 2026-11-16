@@ -594,6 +594,26 @@ func (a *Analyzer) analyzeOrdering(node *ast.TreeNode, leftType, rightType Type)
 	leftVec, leftIsVec := leftType.(*VectorType)
 	rightVec, rightIsVec := rightType.(*VectorType)
 	if leftIsVec || rightIsVec {
+		// A vec[date] orders by day, against a date or another vec[date] (D9).
+		dateSide := func(t Type, vec *VectorType, isVec bool) bool {
+			if isVec {
+				return vec.ElementType.Equals(TypeDate)
+			}
+			return t.Equals(TypeDate)
+		}
+		unknownSide := func(t Type, vec *VectorType, isVec bool) bool {
+			if isVec {
+				return isUnknownType(vec.ElementType)
+			}
+			return isUnknownType(t)
+		}
+		ld, rd := dateSide(leftType, leftVec, leftIsVec), dateSide(rightType, rightVec, rightIsVec)
+		if ld || rd {
+			if !(ld && rd) && !unknownSide(leftType, leftVec, leftIsVec) && !unknownSide(rightType, rightVec, rightIsVec) {
+				a.errorAt(node, "cannot compare %s with %s; dates compare with dates", leftType.String(), rightType.String())
+			}
+			return &VectorType{ElementType: TypeBool}
+		}
 		if leftIsVec && !IsNumeric(leftVec.ElementType) && !isUnknownType(leftVec.ElementType) {
 			a.errorAt(node, "ordering comparison requires numeric vec, got %s", leftType.String())
 		}

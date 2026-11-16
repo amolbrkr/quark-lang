@@ -49,6 +49,9 @@ inline void q_repl_ensure(int ni, int nf, int nb, int nc) {
     if (ni > q_repl_ni) {
         auto* n = static_cast<long long*>(q_malloc_atomic(sizeof(long long) * ni));
         auto* live = static_cast<unsigned char*>(q_malloc_atomic(ni));
+        // Atomic memory isn't zeroed: a new slot starts unassigned.
+        std::memset(n, 0, sizeof(long long) * ni);
+        std::memset(live, 0, ni);
         if (q_repl_ni > 0) {
             std::memcpy(n, q_repl_i64, sizeof(long long) * q_repl_ni);
             std::memcpy(live, q_repl_i64_live, q_repl_ni);
@@ -60,6 +63,9 @@ inline void q_repl_ensure(int ni, int nf, int nb, int nc) {
     if (nf > q_repl_nf) {
         auto* n = static_cast<double*>(q_malloc_atomic(sizeof(double) * nf));
         auto* live = static_cast<unsigned char*>(q_malloc_atomic(nf));
+        // Atomic memory isn't zeroed: a new slot starts unassigned.
+        std::memset(n, 0, sizeof(double) * nf);
+        std::memset(live, 0, nf);
         if (q_repl_nf > 0) {
             std::memcpy(n, q_repl_f64, sizeof(double) * q_repl_nf);
             std::memcpy(live, q_repl_f64_live, q_repl_nf);
@@ -71,6 +77,9 @@ inline void q_repl_ensure(int ni, int nf, int nb, int nc) {
     if (nb > q_repl_nb) {
         auto* n = static_cast<bool*>(q_malloc_atomic(sizeof(bool) * nb));
         auto* live = static_cast<unsigned char*>(q_malloc_atomic(nb));
+        // Atomic memory isn't zeroed: a new slot starts unassigned.
+        std::memset(n, 0, sizeof(bool) * nb);
+        std::memset(live, 0, nb);
         if (q_repl_nb > 0) {
             std::memcpy(n, q_repl_bool, sizeof(bool) * q_repl_nb);
             std::memcpy(live, q_repl_bool_live, q_repl_nb);

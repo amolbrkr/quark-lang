@@ -160,6 +160,10 @@ inline const char* q_fmt_vec(QVector* vec, int64_t max_rows, bool show_index) {
                 cells[i] = std::string(sv);
                 break;
             }
+            case QVector::Type::DATE:
+                q_format_date(q_vec_date_data(qvec)[i], buf, sizeof(buf));
+                cells[i] = buf;
+                break;
         }
     }
 
@@ -294,6 +298,9 @@ inline void q_fmt_vector_cells(const QVector& qv, size_t nrows,
                 out[r] = std::string(sv);
                 break;
             }
+            case QVector::Type::DATE:
+                q_format_date(q_vec_date_data(qv)[r], buf, sizeof(buf));
+                out[r] = buf; break;
         }
     }
 }

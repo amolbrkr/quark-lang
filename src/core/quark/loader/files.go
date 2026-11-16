@@ -327,15 +327,20 @@ func (ml *ModuleLoader) loadImports(f *srcFile) {
 
 // loadFile reads, parses and checks an imported file, then its own imports.
 func (ml *ModuleLoader) loadFile(from *srcFile, inclNode *ast.TreeNode, importPath, absPath string) *srcFile {
-	if _, err := os.Stat(absPath); os.IsNotExist(err) {
-		ml.errIn(from, inclNode, "cannot find module '%s': file '%s' does not exist", importPath, absPath)
-		return nil
+	content, ok := ml.snapshot[absPath]
+	if !ok {
+		if _, err := os.Stat(absPath); os.IsNotExist(err) {
+			ml.errIn(from, inclNode, "cannot find module '%s': file '%s' does not exist", importPath, absPath)
+			return nil
+		}
+		var err error
+		content, err = os.ReadFile(absPath)
+		if err != nil {
+			ml.errIn(from, inclNode, "cannot read '%s': %s", absPath, err)
+			return nil
+		}
 	}
-	content, err := os.ReadFile(absPath)
-	if err != nil {
-		ml.errIn(from, inclNode, "cannot read '%s': %s", absPath, err)
-		return nil
-	}
+	ml.read[absPath] = content
 	p := parser.New(lexer.New(string(content)).Tokenize())
 	tree := p.Parse()
 	if len(p.Errors()) > 0 {

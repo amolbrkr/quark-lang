@@ -69,15 +69,15 @@ inline int32_t q_prove_date(QValue v) { return q_as_date(v); }
     q_exit(1);
 }
 
-// Days since 1970-01-01 (Howard Hinnant, public domain). month is 1-12.
-inline int64_t q_days_from_civil(int year, int month, int day) {
+// Days since 1970-01-01 (Howard Hinnant, public domain). month is 1-12. The
+// arithmetic is 64-bit, so no int year overflows it.
+inline int64_t q_days_from_civil(int64_t year, int month, int day) {
     year -= month <= 2;
-    const int era = (year >= 0 ? year : year - 399) / 400;
-    const unsigned yoe = static_cast<unsigned>(year - era * 400);
-    const unsigned doy = (153u * static_cast<unsigned>(month + (month > 2 ? -3 : 9)) + 2) / 5 +
-                         static_cast<unsigned>(day) - 1;
-    const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    return static_cast<int64_t>(era) * 146097 + static_cast<int64_t>(doe) - 719468;
+    const int64_t era = (year >= 0 ? year : year - 399) / 400;
+    const int64_t yoe = year - era * 400;
+    const int64_t doy = (153 * static_cast<int64_t>(month + (month > 2 ? -3 : 9)) + 2) / 5 + day - 1;
+    const int64_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097 + doe - 719468;
 }
 
 inline void q_civil_from_days(int64_t z, int& year, int& month, int& day) {
@@ -117,7 +117,11 @@ inline int32_t q_date_fit(int64_t days) {
 }
 
 inline int32_t q_date_add_days(int32_t days, long long n) {
-    return q_date_fit(static_cast<int64_t>(days) + static_cast<int64_t>(n));
+    int64_t sum = 0;
+    if (__builtin_add_overflow(static_cast<int64_t>(days), static_cast<int64_t>(n), &sum)) {
+        q_date_fail("date is outside the range of dates");
+    }
+    return q_date_fit(sum);
 }
 
 inline long long q_date_diff(int32_t a, int32_t b) {
@@ -195,18 +199,25 @@ inline QValue q_period_sub(QValue a, QValue b) {
 
 inline QValue q_period_scale(QValue period, long long n) {
     const QPeriod* p = q_period_get(period);
-    return qv_period(q_period_fit(static_cast<int64_t>(p->years) * n),
-                     q_period_fit(static_cast<int64_t>(p->months) * n),
-                     q_period_fit(static_cast<int64_t>(p->days) * n));
+    auto scaled = [n](int32_t part) {
+        int64_t out = 0;
+        if (__builtin_mul_overflow(static_cast<int64_t>(part), static_cast<int64_t>(n), &out)) {
+            q_date_fail("period is too large");
+        }
+        return q_period_fit(out);
+    };
+    return qv_period(scaled(p->years), scaled(p->months), scaled(p->days));
 }
 
 inline void q_format_date(int32_t days, char* buf, size_t n) {
     int year = 0, month = 0, day = 0;
     q_civil_from_days(days, year, month, day);
-    if (year >= 0 && year <= 9999) {
+    // At least four year digits, so the text reads back as the same date
+    // (q_parse_ymd): 0044-03-15, -0044-03-15, 12345-01-01.
+    if (year >= 0) {
         std::snprintf(buf, n, "%04d-%02d-%02d", year, month, day);
     } else {
-        std::snprintf(buf, n, "%d-%02d-%02d", year, month, day);
+        std::snprintf(buf, n, "-%04lld-%02d-%02d", -static_cast<long long>(year), month, day);
     }
 }
 
@@ -227,8 +238,11 @@ inline std::string q_format_period(const QPeriod& p) {
 }
 
 // ISO-like year-month-day. seps is the set of accepted separators (CSV uses
-// "-", ymd() also accepts '/' and '.'). Unpadded month and day are accepted.
-// The whole string must be the date, aside from surrounding spaces.
+// "-", ymd() also accepts '/' and '.'). The year has at least four digits
+// (YYYY, or more for a year past 9999) and may be negative; unpadded month
+// and day are accepted. The whole string must be the date, aside from
+// surrounding spaces. Any day in the range of dates parses, so every printed
+// date reads back.
 inline bool q_parse_ymd(const char* text, const char* seps, int32_t* out) {
     if (text == nullptr) return false;
     const char* s = text;
@@ -238,16 +252,14 @@ inline bool q_parse_ymd(const char* text, const char* seps, int32_t* out) {
         sign = -1;
         s++;
     }
-    if (*s < '0' || *s > '9') return false;
     int64_t year = 0;
     int nd = 0;
     while (*s >= '0' && *s <= '9') {
         year = year * 10 + (*s - '0');
-        if (year > 1000000) return false;
-        nd++;
+        if (++nd > 7) return false;  // past the range of dates (about ±5.88M years)
         s++;
     }
-    if (nd == 0) return false;
+    if (nd < 4) return false;
     year *= sign;
     if (*s == '\0' || std::strchr(seps, *s) == nullptr) return false;
     const char sep = *s++;
@@ -268,10 +280,15 @@ inline bool q_parse_ymd(const char* text, const char* seps, int32_t* out) {
     if (!piece(day)) return false;
     while (*s == ' ' || *s == '\t') s++;
     if (*s != '\0') return false;
-    if (year < -999999 || year > 999999 || month < 1 || month > 12 || day < 1 || day > q_days_in_month(static_cast<int>(year), month)) {
+    if (month < 1 || month > 12 || day < 1 || day > q_days_in_month(static_cast<int>(year), month)) {
         return false;
     }
-    *out = q_date_fit(q_days_from_civil(static_cast<int>(year), month, day));
+    const int64_t days = q_days_from_civil(year, month, day);
+    if (days < static_cast<int64_t>(std::numeric_limits<int32_t>::min()) ||
+        days > static_cast<int64_t>(std::numeric_limits<int32_t>::max())) {
+        return false;
+    }
+    *out = static_cast<int32_t>(days);
     return true;
 }
 

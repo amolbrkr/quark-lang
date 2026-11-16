@@ -41,6 +41,24 @@ type ModuleLoader struct {
 	seenHeaders  map[string]bool
 	sources      []string // absolute extern source paths, first-seen order
 	seenSources  map[string]bool
+
+	// snapshot, when set, holds the text of files read earlier: a REPL
+	// session reads each included file once (specs/repl_v0_1_spec.md §3.7).
+	// read is every imported file's text this load used, by absolute path.
+	snapshot map[string][]byte
+	read     map[string][]byte
+}
+
+// SetSnapshot makes the loader take an imported file's text from files when
+// it is there, instead of reading the file again.
+func (ml *ModuleLoader) SetSnapshot(files map[string][]byte) {
+	ml.snapshot = files
+}
+
+// FilesRead returns the text of every imported file this load used, by
+// absolute path: the snapshot entries it used and the files it read.
+func (ml *ModuleLoader) FilesRead() map[string][]byte {
+	return ml.read
 }
 
 // NativeLib is one `extern link 'name'` request.
@@ -78,6 +96,7 @@ func NewModuleLoader() *ModuleLoader {
 		seenIncludes: make(map[string]bool),
 		seenHeaders:  make(map[string]bool),
 		seenSources:  make(map[string]bool),
+		read:         make(map[string][]byte),
 	}
 }
 

@@ -41,6 +41,7 @@ type Unit struct {
 	Names       names.Table              // internal name -> where it was defined (modules v0.2)
 	Diagnostics []diagnostics.Diagnostic // errors and warnings, in stage order
 	Err         error                    // I/O or invariant failure
+	Files       map[string][]byte        // a session's imported files, by absolute path (CompileSessionFiles)
 	failed      bool
 }
 
@@ -175,6 +176,14 @@ func GenerateOptions(tree *ast.TreeNode, an *types.Analysis, sourceName string, 
 // the working directory incl paths are relative to. Diagnostics of input N
 // are located at <input N>.
 func CompileSession(dir string, inputs []string) *Unit {
+	return CompileSessionFiles(dir, inputs, nil)
+}
+
+// CompileSessionFiles is CompileSession with the text of files the session
+// has already read (Unit.Files of the last committed input): an imported file
+// is read from disk once per session, so editing it doesn't change code that
+// is already compiled (specs/repl_v0_1_spec.md §3.7).
+func CompileSessionFiles(dir string, inputs []string, files map[string][]byte) *Unit {
 	u := &Unit{File: "<session>"}
 	if len(inputs) == 0 {
 		u.Err = fmt.Errorf("internal compiler error [INV-REPL]: empty session")
@@ -206,9 +215,17 @@ func CompileSession(dir string, inputs []string) *Unit {
 	}
 	u.AST = root
 	file := filepath.Join(abs, "session.qrk")
-	native, table, loadDiags := ResolveImports(root, file)
-	u.Native = native
-	u.Names = table
+	ml := loader.NewModuleLoader()
+	ml.SetSnapshot(files)
+	ml.ResolveImports(root, file)
+	u.Files = ml.FilesRead()
+	u.Names = ml.Names()
+	var loadDiags []diagnostics.Diagnostic
+	if len(ml.Errors()) > 0 {
+		loadDiags = ml.Diagnostics()
+	} else {
+		u.Native = ml.NativeDeps()
+	}
 	if len(loadDiags) > 0 {
 		u.addDiags(loadDiags, true)
 		return u

@@ -30,18 +30,19 @@ inline bool either_float(const QValue& a, const QValue& b) {
 
 inline const char* q_type_name_arith(QValue::ValueType t) { return q_type_name(t); }
 
-inline void q_arith_type_error(const char* op, QValue a, QValue b) {
+[[noreturn]] inline void q_arith_type_error(const char* op, QValue a, QValue b) {
     q_runtime_reportf("runtime error: operator '%s' expects numeric operands (or str+str for '+'), got %s and %s\n", op, q_type_name_arith(a.type), q_type_name_arith(b.type));
     q_exit(1);
 }
 
-inline void q_unary_type_error(const char* op, QValue a) {
+[[noreturn]] inline void q_unary_type_error(const char* op, QValue a) {
     q_runtime_reportf("runtime error: unary operator '%s' expects numeric operand, got %s\n", op, q_type_name_arith(a.type));
     q_exit(1);
 }
 
-// Addition: int + int = int, float promotion, string + string = concat
-inline QValue q_add(QValue a, QValue b) {
+// q_add_other is q_add for operands that aren't two numbers: vecs, dates and
+// periods, two strings (concatenation), or a type error.
+inline QValue q_add_other(QValue a, QValue b) {
     if (a.type == QValue::VAL_VECTOR || b.type == QValue::VAL_VECTOR) {
         return q_vec_add(a, b);
     }
@@ -73,53 +74,57 @@ inline QValue q_add(QValue a, QValue b) {
         q.data.string_val = result;
         return q;
     }
-    // Type guard: only INT and FLOAT are valid for numeric addition
-    if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
-        (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
-        q_arith_type_error("+", a, b);
-    }
-    if (quark::detail::either_float(a, b)) {
-        return qv_float(quark::detail::to_double(a) + quark::detail::to_double(b));
-    }
-    return qv_int(q_checked_add(a.data.int_val, b.data.int_val));
+    q_arith_type_error("+", a, b);
 }
 
-// Subtraction: int - int = int, otherwise float
-inline QValue q_sub(QValue a, QValue b) {
+// Addition: int + int = int, float promotion, string + string = concat.
+// Two numbers are tested first and the rest is out of line, so this inlines.
+inline QValue q_add(QValue a, QValue b) {
+    if (a.type == QValue::VAL_INT && b.type == QValue::VAL_INT) return qv_int(q_checked_add(a.data.int_val, b.data.int_val));
+    if ((a.type == QValue::VAL_INT || a.type == QValue::VAL_FLOAT) && (b.type == QValue::VAL_INT || b.type == QValue::VAL_FLOAT)) {
+        return qv_float(quark::detail::to_double(a) + quark::detail::to_double(b));
+    }
+    return q_add_other(a, b);
+}
+
+// q_sub_other is q_sub for operands that aren't two numbers.
+inline QValue q_sub_other(QValue a, QValue b) {
     if (a.type == QValue::VAL_VECTOR || b.type == QValue::VAL_VECTOR) {
         return q_vec_sub(a, b);
     }
     if (a.type == QValue::VAL_DATE || b.type == QValue::VAL_DATE || a.type == QValue::VAL_PERIOD || b.type == QValue::VAL_PERIOD) {
         return q_temporal_sub(a, b);
     }
-    // Type guard: only INT and FLOAT are valid
-    if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
-        (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
-        q_arith_type_error("-", a, b);
-    }
-    if (quark::detail::either_float(a, b)) {
-        return qv_float(quark::detail::to_double(a) - quark::detail::to_double(b));
-    }
-    return qv_int(q_checked_sub(a.data.int_val, b.data.int_val));
+    q_arith_type_error("-", a, b);
 }
 
-// Multiplication: int * int = int, otherwise float
-inline QValue q_mul(QValue a, QValue b) {
+// Subtraction: int - int = int, otherwise float.
+inline QValue q_sub(QValue a, QValue b) {
+    if (a.type == QValue::VAL_INT && b.type == QValue::VAL_INT) return qv_int(q_checked_sub(a.data.int_val, b.data.int_val));
+    if ((a.type == QValue::VAL_INT || a.type == QValue::VAL_FLOAT) && (b.type == QValue::VAL_INT || b.type == QValue::VAL_FLOAT)) {
+        return qv_float(quark::detail::to_double(a) - quark::detail::to_double(b));
+    }
+    return q_sub_other(a, b);
+}
+
+// q_mul_other is q_mul for operands that aren't two numbers.
+inline QValue q_mul_other(QValue a, QValue b) {
     if (a.type == QValue::VAL_VECTOR || b.type == QValue::VAL_VECTOR) {
         return q_vec_mul(a, b);
     }
     if (a.type == QValue::VAL_DATE || b.type == QValue::VAL_DATE || a.type == QValue::VAL_PERIOD || b.type == QValue::VAL_PERIOD) {
         return q_temporal_mul(a, b);
     }
-    // Type guard: only INT and FLOAT are valid
-    if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
-        (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
-        q_arith_type_error("*", a, b);
-    }
-    if (quark::detail::either_float(a, b)) {
+    q_arith_type_error("*", a, b);
+}
+
+// Multiplication: int * int = int, otherwise float.
+inline QValue q_mul(QValue a, QValue b) {
+    if (a.type == QValue::VAL_INT && b.type == QValue::VAL_INT) return qv_int(q_checked_mul(a.data.int_val, b.data.int_val));
+    if ((a.type == QValue::VAL_INT || a.type == QValue::VAL_FLOAT) && (b.type == QValue::VAL_INT || b.type == QValue::VAL_FLOAT)) {
         return qv_float(quark::detail::to_double(a) * quark::detail::to_double(b));
     }
-    return qv_int(q_checked_mul(a.data.int_val, b.data.int_val));
+    return q_mul_other(a, b);
 }
 
 // Division: always returns float for precision

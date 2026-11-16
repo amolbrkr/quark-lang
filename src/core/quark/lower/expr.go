@@ -2,6 +2,8 @@ package lower
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 
 	"quark/ast"
 	"quark/ir"
@@ -511,6 +513,11 @@ func (l *lowerer) binary(node *ast.TreeNode) Expr {
 		ordered := op == token.LT || op == token.LTE || op == token.GT || op == token.GTE
 		dateMix := (a.Rep() == RepDate) != (b.Rep() == RepDate)
 		numeric := a.Rep() != RepBool && b.Rep() != RepBool && !dateMix
+		if numeric {
+			if e := mixedCompare(cop, a, b); e != nil {
+				return e
+			}
+		}
 		if numeric || (!ordered && a.Rep() == b.Rep()) {
 			return &Compare{Op: cop, L: a, X: b}
 		}
@@ -520,6 +527,88 @@ func (l *lowerer) binary(node *ast.TreeNode) Expr {
 		l.ice("INV-OPERATOR", node, "unhandled binary operator '%s'", op.String())
 	}
 	return &Call{Fn: fn, Args: []Expr{boxed(a), boxed(b)}, R: RepValue}
+}
+
+// mixedCompare lowers a comparison of a raw int with a raw float, or returns
+// nil when the operands are not one of each. An int literal within ±2^53 is
+// exactly a float, so it is written as one and the comparison stays a raw
+// float compare (`x > 0`); any other int goes through q_int_float_<op>
+// (core/numcmp.hpp), which compares the mathematical values, since a raw C++
+// compare would round an int past 2^53.
+func mixedCompare(op string, a, b Expr) Expr {
+	ar, br := a.Rep(), b.Rep()
+	if !(ar == RepInt && br == RepFloat) && !(ar == RepFloat && br == RepInt) {
+		return nil
+	}
+	if ar == RepInt {
+		if c, ok := exactFloatLiteral(a); ok {
+			return &Compare{Op: op, L: c, X: b}
+		}
+	} else if c, ok := exactFloatLiteral(b); ok {
+		return &Compare{Op: op, L: a, X: c}
+	}
+	// q_int_float_<op> takes the int first; a float on the left flips the
+	// operator. The operands are already safe to evaluate in either order
+	// (operands/sequence), as they are for a raw compare.
+	if ar == RepFloat {
+		a, b, op = b, a, flipCmp(op)
+	}
+	return &Call{Fn: "q_int_float_" + cmpSuffix(op), Args: []Expr{a, b}, R: RepBool}
+}
+
+// exactFloatLiteral returns an int literal (or a negated one) as the float
+// literal with the same value, when the int is within ±2^53.
+func exactFloatLiteral(e Expr) (Expr, bool) {
+	neg := false
+	if n, ok := e.(*Neg); ok {
+		neg, e = true, n.X
+	}
+	c, ok := e.(*Const)
+	if !ok || c.R != RepInt {
+		return nil, false
+	}
+	v, err := strconv.ParseInt(strings.ReplaceAll(c.Text, "_", ""), 10, 64)
+	const exact = 1 << 53
+	if err != nil || v > exact {
+		return nil, false
+	}
+	if neg {
+		v = -v
+	}
+	return &Const{R: RepFloat, Text: fmt.Sprintf("%d.0", v)}, true
+}
+
+func cmpSuffix(op string) string {
+	switch op {
+	case "<":
+		return "lt"
+	case "<=":
+		return "le"
+	case ">":
+		return "gt"
+	case ">=":
+		return "ge"
+	case "==":
+		return "eq"
+	default:
+		return "ne"
+	}
+}
+
+// flipCmp is the operator with its operands swapped: a < b is b > a.
+func flipCmp(op string) string {
+	switch op {
+	case "<":
+		return ">"
+	case "<=":
+		return ">="
+	case ">":
+		return "<"
+	case ">=":
+		return "<="
+	default:
+		return op
+	}
 }
 
 // logical lowers `and` / `or`, which return one of their operands; the right
@@ -1093,10 +1182,14 @@ func (l *lowerer) assignVar(target, valueNode *ast.TreeNode) Expr {
 	sym := l.varSym(target)
 	declare := sym.Decl == target && !sym.Hoisted
 	if sym.Session {
+		v := l.storeValue(sym, valueNode, l.expr(valueNode))
 		if sym.Replaces != nil {
+			// The value may read the variable's old value (t = t == 'abc'), so
+			// it is computed before the old slot is cleared.
+			v = l.stable(v)
 			l.clearSlot(sym.Replaces)
 		}
-		l.add(&SetVar{Sym: sym, Value: l.storeValue(sym, valueNode, l.expr(valueNode))})
+		l.add(&SetVar{Sym: sym, Value: v})
 		return l.readVar(sym)
 	}
 	if sym.Storage == ir.StorageCell {

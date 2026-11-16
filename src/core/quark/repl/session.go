@@ -26,6 +26,7 @@ import (
 type Session struct {
 	Dir     string
 	inputs  []string
+	files   map[string][]byte // text of the imported files, read once per session
 	fp      string
 	work    string
 	libs    []string // import libraries of inputs that ran, Windows only
@@ -223,7 +224,7 @@ func (s *Session) loopTerminal(in *os.File, prompt io.Writer) error {
 
 func (s *Session) eval(src string) error {
 	all := append(append([]string{}, s.inputs...), src)
-	u := driver.CompileSession(s.Dir, all)
+	u := driver.CompileSessionFiles(s.Dir, all, s.files)
 	if u.Failed() {
 		u.PrintDiagnostics()
 		return nil
@@ -262,6 +263,7 @@ func (s *Session) eval(src string) error {
 	switch status {
 	case "ok":
 		s.inputs = all
+		s.files = u.Files
 		s.fp = fingerprint(u.Analysis, len(all))
 		if runtime.GOOS == "windows" {
 			s.libs = append(s.libs, strings.TrimSuffix(so, ext)+".lib")

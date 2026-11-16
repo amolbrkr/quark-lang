@@ -12,10 +12,7 @@
 #include <cmath>
 
 // Helper: type name lookup for error messages
-inline const char* q_type_name_math(QValue::ValueType t) {
-    static const char* names[] = {"int", "float", "str", "bool", "null", "list", "vec", "dict", "fn", "result"};
-    return (t >= 0 && t <= 9) ? names[t] : "unknown";
-}
+inline const char* q_type_name_math(QValue::ValueType t) { return q_type_name(t); }
 
 // Helper to_double() and either_float() are defined in arithmetic.hpp
 
@@ -36,29 +33,37 @@ inline QValue q_abs(QValue v) {
 // argument is a float and the winning int fits in a float (min(1, 2.5) is
 // 1.0); an int that wins and does not fit is returned as that int, so the
 // result is not a nearby float. NaN wins, in either order.
+inline QValue q_minmax_wide(long long i, double f, bool want_min);
+
 inline QValue q_minmax(QValue a, QValue b, bool want_min) {
-    const bool a_nan = a.type == QValue::VAL_FLOAT && a.data.float_val != a.data.float_val;
-    const bool b_nan = b.type == QValue::VAL_FLOAT && b.data.float_val != b.data.float_val;
-    if (a_nan) return a;
-    if (b_nan) return b;
     if (a.type == QValue::VAL_INT && b.type == QValue::VAL_INT) {
         const long long x = a.data.int_val, y = b.data.int_val;
-        const bool a_wins = want_min ? x < y : x > y;
-        return qv_int(a_wins ? x : y);
-    }
-    if (a.type == QValue::VAL_FLOAT && b.type == QValue::VAL_FLOAT) {
-        const double x = a.data.float_val, y = b.data.float_val;
-        const bool a_wins = want_min ? x < y : x > y;
-        return qv_float(a_wins ? x : y);
+        return qv_int((want_min ? x < y : x > y) ? x : y);
     }
     const bool a_int = a.type == QValue::VAL_INT;
-    const long long i = a_int ? a.data.int_val : b.data.int_val;
-    const double f = a_int ? b.data.float_val : a.data.float_val;
+    const bool b_int = b.type == QValue::VAL_INT;
+    // An int past 2^53 isn't exactly a float; the rest compare as floats.
+    if ((a_int && !q_int_exact_in_float(a.data.int_val)) || (b_int && !q_int_exact_in_float(b.data.int_val))) {
+        return a_int ? q_minmax_wide(a.data.int_val, b.data.float_val, want_min)
+                     : q_minmax_wide(b.data.int_val, a.data.float_val, want_min);
+    }
+    const double x = a_int ? static_cast<double>(a.data.int_val) : a.data.float_val;
+    const double y = b_int ? static_cast<double>(b.data.int_val) : b.data.float_val;
+    if (x != x) return qv_float(x);
+    if (y != y) return qv_float(y);
+    // A tie keeps the float operand (min(0, -0.0) is -0.0); two floats keep y.
+    const bool a_wins = want_min ? x < y : x > y;
+    return qv_float((a_wins || (b_int && x == y)) ? x : y);
+}
+
+// q_minmax_wide is q_minmax of an int past 2^53 and a float.
+inline QValue q_minmax_wide(long long i, double f, bool want_min) {
+    if (f != f) return qv_float(f);
     const int c = q_cmp_int_float(i, f);
     const bool int_wins = want_min ? c < 0 : c > 0;
-    if (!int_wins) return a_int ? b : a;
+    if (!int_wins) return qv_float(f);
     if (q_int_fits_float(i)) return qv_float(static_cast<double>(i));
-    return a_int ? a : b;
+    return qv_int(i);
 }
 
 // Minimum of two values

@@ -44,6 +44,7 @@
 #include <vector>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 struct QVector {
@@ -804,6 +805,9 @@ inline double q_vec_mean_present(const QVector& v, size_t* count) {
         }
         case QVector::Type::STR:
             break;
+        case QVector::Type::DATE:
+            q_runtime_reportf("runtime error: mean of a vec[date]: dates can't be averaged\n");
+            q_exit(1);
     }
     *count = 0;
     return 0.0;
@@ -946,7 +950,7 @@ inline QValue q_fillna(QValue vec, QValue value) {
         case QVector::Type::I64: fits = value.type == QValue::VAL_INT; dtype = "i64"; break;
         case QVector::Type::BOOL: fits = value.type == QValue::VAL_BOOL; dtype = "bool"; break;
         case QVector::Type::STR: fits = value.type == QValue::VAL_STRING && value.data.string_val != nullptr; dtype = "str"; break;
-        default: break;
+        case QVector::Type::DATE: fits = value.type == QValue::VAL_DATE; dtype = "date"; break;
     }
     if (!fits) {
         q_runtime_reportf("runtime error: fillna() can't fill vec[%s] with %s: the fill value must have the element type (an int may fill a vec of float)\n", dtype, q_type_name(value.type));
@@ -981,6 +985,15 @@ inline QValue q_fillna(QValue vec, QValue value) {
             for (size_t i = 0; i < src.count; i++) {
                 if (q_vec_is_null_at(src, i)) q_vec_bool_put(*out.data.vector_val, i, fill);
             }
+            out.data.vector_val->validity = nullptr;
+            out.data.vector_val->null_count = 0;
+            return out;
+        }
+        case QVector::Type::DATE: {
+            QValue out = q_vec_clone(vec);
+            int32_t* d = q_vec_date_data_mut(*out.data.vector_val);
+            const int32_t fill = static_cast<int32_t>(value.data.int_val);
+            for (size_t i = 0; i < src.count; i++) if (q_vec_is_null_at(src, i)) d[i] = fill;
             out.data.vector_val->validity = nullptr;
             out.data.vector_val->null_count = 0;
             return out;
@@ -1102,23 +1115,6 @@ inline QValue q_to_vec(QValue input) {
     enum class Mode { UNKNOWN, I64, F64, BOOL, STR, INVALID };
     Mode mode = Mode::UNKNOWN;
 
-    auto type_name = [](QValue::ValueType t) -> const char* {
-        switch (t) {
-            case QValue::VAL_INT: return "int";
-            case QValue::VAL_FLOAT: return "float";
-            case QValue::VAL_STRING: return "str";
-            case QValue::VAL_BOOL: return "bool";
-            case QValue::VAL_NULL: return "null";
-            case QValue::VAL_LIST: return "list";
-            case QValue::VAL_VECTOR: return "vec";
-            case QValue::VAL_DICT: return "dict";
-            case QValue::VAL_FUNC: return "fn";
-            case QValue::VAL_RESULT: return "result";
-            case QValue::VAL_RESOURCE: return "resource";
-            default: return "unknown";
-        }
-    };
-
     size_t str_bytes = 0;
     for (size_t i = 0; i < n; i++) {
         const QValue& item = items[i];
@@ -1185,7 +1181,8 @@ inline QValue q_to_vec(QValue input) {
             case QVector::Type::F64: q_vec_f64_data_mut(*out)[i] = item.data.float_val; break;
             case QVector::Type::I64: q_vec_i64_data_mut(*out)[i] = static_cast<int64_t>(item.data.int_val); break;
             case QVector::Type::BOOL: q_vec_bool_put(*out, i, item.data.bool_val); break;
-            case QVector::Type::STR: break;
+            case QVector::Type::STR:
+            case QVector::Type::DATE: break;  // not built here
         }
     }
     return qv_vector_from(out);
@@ -1213,6 +1210,7 @@ inline QValue q_to_list(QValue input) {
         case QVector::Type::I64: elem = &q_elem_int; break;
         case QVector::Type::BOOL: elem = &q_elem_bool; break;
         case QVector::Type::STR: elem = &q_elem_str; break;
+        case QVector::Type::DATE: elem = &q_elem_date; break;
     }
     QValue out = qv_list(static_cast<int>(v.count), elem);
     QList& items = *out.data.list_val;
@@ -1238,23 +1236,167 @@ inline QValue cmp_finish(QValue a, QValue b, size_t n, ReaderA ra, ReaderB rb, O
     return qv_vector_from(out);
 }
 
-// cmp_exact_int_float is an element-wise compare of an int operand with a
-// float operand. Casting the int to double would collapse ints past 2^53.
-inline QValue cmp_exact_int_float(QValue a, QValue b, size_t n, bool a_is_int, const char* name) {
-    const QValue int_side = a_is_int ? a : b;
-    const QValue float_side = a_is_int ? b : a;
+// The six comparison operators, for kernels that pick their loop once
+// instead of testing the operator per element.
+enum class CmpKind { LT, LE, GT, GE, EQ, NE };
+
+inline CmpKind cmp_kind(const char* name) {
+    switch (name[0]) {
+        case '<': return name[1] == '=' ? CmpKind::LE : CmpKind::LT;
+        case '>': return name[1] == '=' ? CmpKind::GE : CmpKind::GT;
+        case '=': return CmpKind::EQ;
+        default: return CmpKind::NE;
+    }
+}
+
+// cmp_flip is the operator with its operands swapped: a < b is b > a.
+inline CmpKind cmp_flip(CmpKind k) {
+    switch (k) {
+        case CmpKind::LT: return CmpKind::GT;
+        case CmpKind::LE: return CmpKind::GE;
+        case CmpKind::GT: return CmpKind::LT;
+        case CmpKind::GE: return CmpKind::LE;
+        default: return k;
+    }
+}
+
+template <CmpKind K, typename X, typename Y>
+inline bool cmp_apply(X x, Y y) {
+    if constexpr (K == CmpKind::LT) return x < y;
+    else if constexpr (K == CmpKind::LE) return x <= y;
+    else if constexpr (K == CmpKind::GT) return x > y;
+    else if constexpr (K == CmpKind::GE) return x >= y;
+    else if constexpr (K == CmpKind::EQ) return x == y;
+    else return x != y;
+}
+
+// with_cmp_kind calls f with k as a compile-time constant.
+template <typename F>
+inline void with_cmp_kind(CmpKind k, F&& f) {
+    switch (k) {
+        case CmpKind::LT: f(std::integral_constant<CmpKind, CmpKind::LT>{}); break;
+        case CmpKind::LE: f(std::integral_constant<CmpKind, CmpKind::LE>{}); break;
+        case CmpKind::GT: f(std::integral_constant<CmpKind, CmpKind::GT>{}); break;
+        case CmpKind::GE: f(std::integral_constant<CmpKind, CmpKind::GE>{}); break;
+        case CmpKind::EQ: f(std::integral_constant<CmpKind, CmpKind::EQ>{}); break;
+        case CmpKind::NE: f(std::integral_constant<CmpKind, CmpKind::NE>{}); break;
+    }
+}
+
+// cmp_int_float_exact is `i K f` on the mathematical values (core/numcmp.hpp).
+template <CmpKind K>
+inline bool cmp_int_float_exact(long long i, double f) {
+    if (__builtin_expect(q_int_exact_in_float(i), 1)) return cmp_apply<K>(static_cast<double>(i), f);
+    const int c = q_cmp_int_float_slow(i, f);
+    if constexpr (K == CmpKind::LT) return c == -1;
+    else if constexpr (K == CmpKind::LE) return c == -1 || c == 0;
+    else if constexpr (K == CmpKind::GT) return c == 1;
+    else if constexpr (K == CmpKind::GE) return c == 1 || c == 0;
+    else if constexpr (K == CmpKind::EQ) return c == 0;
+    else return c != 0;
+}
+
+// cmp_int_vec_float_scalar is `iv[j] K f` for an int vec and one float. An
+// int compares with a float exactly as it compares with the float rounded
+// to an int in the direction that keeps the answer (i < f is i < ceil(f),
+// i <= f is i <= floor(f)), so the loop compares ints. A float outside the
+// int range, or NaN, gives the same answer for every element.
+template <CmpKind K>
+inline void cmp_int_vec_float_scalar(uint8_t* bits, const int64_t* iv, double f, size_t n) {
+    constexpr double k2_63 = 9223372036854775808.0;
+    bool constant = false, value = false;
+    if (f != f) {
+        constant = true;
+        value = K == CmpKind::NE;
+    } else if (f >= k2_63) {
+        constant = true;
+        value = K == CmpKind::LT || K == CmpKind::LE || K == CmpKind::NE;
+    } else if (f < -k2_63) {
+        constant = true;
+        value = K == CmpKind::GT || K == CmpKind::GE || K == CmpKind::NE;
+    }
+    if (constant) {
+        fill_bits(bits, n, [value](size_t) { return value; });
+        return;
+    }
+    // f is in [-2^63, 2^63), so floor(f) and ceil(f) are ints.
+    const double fl = std::floor(f), ce = std::ceil(f);
+    const int64_t lo = static_cast<int64_t>(fl), hi = static_cast<int64_t>(ce);
+    if constexpr (K == CmpKind::LT) {
+        fill_bits(bits, n, [iv, hi](size_t j) { return iv[j] < hi; });
+    } else if constexpr (K == CmpKind::LE) {
+        fill_bits(bits, n, [iv, lo](size_t j) { return iv[j] <= lo; });
+    } else if constexpr (K == CmpKind::GT) {
+        fill_bits(bits, n, [iv, lo](size_t j) { return iv[j] > lo; });
+    } else if constexpr (K == CmpKind::GE) {
+        fill_bits(bits, n, [iv, hi](size_t j) { return iv[j] >= hi; });
+    } else {
+        const bool whole = fl == f;
+        constexpr bool ne = K == CmpKind::NE;
+        if (!whole) {
+            fill_bits(bits, n, [](size_t) { return ne; });
+        } else if (ne) {
+            fill_bits(bits, n, [iv, lo](size_t j) { return iv[j] != lo; });
+        } else {
+            fill_bits(bits, n, [iv, lo](size_t j) { return iv[j] == lo; });
+        }
+    }
+}
+
+// all_exact_in_float reports whether every entry of iv[0, n) is within
+// ±2^53, where converting to float loses nothing (entries behind a missing
+// slot are included: they are ignored, but only make the check stricter).
+inline bool all_exact_in_float(const int64_t* iv, size_t n) {
+    bool out_of_range = false;
+    for (size_t j = 0; j < n; j++) {
+        out_of_range |= !q_int_exact_in_float(static_cast<long long>(iv[j]));
+    }
+    return !out_of_range;
+}
+
+// cmp_int_vec_float_vec is `iv[j] K fv[j]`, in blocks: a block whose ints
+// are all within ±2^53 compares as floats, the rest exactly.
+template <CmpKind K>
+inline void cmp_int_vec_float_vec(uint8_t* bits, const int64_t* iv, const double* fv, size_t n) {
+    constexpr size_t kBlock = 1024;  // a multiple of 8, so each block starts on a byte
+    for (size_t base = 0; base < n; base += kBlock) {
+        const size_t m = n - base < kBlock ? n - base : kBlock;
+        const int64_t* ib = iv + base;
+        const double* fb = fv + base;
+        if (all_exact_in_float(ib, m)) {
+            fill_bits(bits + base / 8, m, [ib, fb](size_t j) { return cmp_apply<K>(static_cast<double>(ib[j]), fb[j]); });
+        } else {
+            fill_bits(bits + base / 8, m, [ib, fb](size_t j) { return cmp_int_float_exact<K>(static_cast<long long>(ib[j]), fb[j]); });
+        }
+    }
+}
+
+// cmp_exact_int_float is an element-wise `int_side K float_side`, where
+// one side is an int (vec or scalar) and the other a float (vec or scalar).
+// Casting every int to double would collapse ints past 2^53; each case
+// below takes a float loop only where the conversion is exact.
+inline QValue cmp_exact_int_float(QValue int_side, QValue float_side, size_t n, CmpKind kind) {
     QVector* out = q_vec_alloc(QVector::Type::BOOL, n);
-    q_vec_and_validity(*out, as_vec(a), as_vec(b));
+    q_vec_and_validity(*out, as_vec(int_side), as_vec(float_side));
     const QVector* iv = as_vec(int_side);
     const QVector* fv = as_vec(float_side);
-    const long long iscalar = iv ? 0 : int_side.data.int_val;
-    const double fscalar = fv ? 0.0 : float_side.data.float_val;
     const int64_t* idata = iv ? q_vec_i64_data(*iv) : nullptr;
     const double* fdata = fv ? q_vec_f64_data(*fv) : nullptr;
-    fill_bits(out->values, n, [&](size_t i) {
-        const long long ivv = idata ? static_cast<long long>(idata[i]) : iscalar;
-        const double fvv = fdata ? fdata[i] : fscalar;
-        return q_cmp_holds(q_cmp_int_float(ivv, fvv), name);
+    with_cmp_kind(kind, [&](auto kc) {
+        constexpr CmpKind K = decltype(kc)::value;
+        if (!fdata) {
+            cmp_int_vec_float_scalar<K>(out->values, idata, float_side.data.float_val, n);
+        } else if (!idata) {
+            const long long i = q_to_i64_scalar(int_side);
+            if (q_int_exact_in_float(i)) {
+                const double d = static_cast<double>(i);
+                fill_bits(out->values, n, [d, fdata](size_t j) { return cmp_apply<K>(d, fdata[j]); });
+            } else {
+                fill_bits(out->values, n, [i, fdata](size_t j) { return cmp_int_float_exact<K>(i, fdata[j]); });
+            }
+        } else {
+            cmp_int_vec_float_vec<K>(out->values, idata, fdata, n);
+        }
     });
     return qv_vector_from(out);
 }
@@ -1271,7 +1413,10 @@ inline QValue cmp_numeric(QValue a, QValue b, Op op, const char* name) {
         });
         return result;
     }
-    if (a_int || b_int) return cmp_exact_int_float(a, b, n, a_int, name);
+    // Mixed: compare as `int K float`, flipping the operator when the float
+    // is on the left (a > b is b < a).
+    if (a_int) return cmp_exact_int_float(a, b, n, cmp_kind(name));
+    if (b_int) return cmp_exact_int_float(b, a, n, cmp_flip(cmp_kind(name)));
     QValue result = qv_null();
     with_f64_reader(a, [&](auto ra) {
         with_f64_reader(b, [&](auto rb) { result = cmp_finish(a, b, n, ra, rb, op); });
@@ -1287,6 +1432,23 @@ inline QValue cmp_bool(QValue a, QValue b, Op op) {
         with_bool_reader(b, [&](auto rb) { result = cmp_finish(a, b, n, ra, rb, op); });
     });
     return result;
+}
+
+inline bool is_date_operand(QValue x) {
+    return is_vec_of(x, QVector::Type::DATE) || x.type == QValue::VAL_DATE;
+}
+
+// A date vec compares by day number (D9), with a date or another date vec.
+template <typename Op>
+inline QValue cmp_date(QValue a, QValue b, Op op) {
+    const size_t n = binary_len(a, b, "comparison");
+    auto reader = [](QValue x) {
+        const QVector* v = as_vec(x);
+        const int32_t* d = v ? q_vec_date_data(*v) : nullptr;
+        const int32_t s = v ? 0 : static_cast<int32_t>(x.data.int_val);
+        return [d, s](size_t i) { return d ? d[i] : s; };
+    };
+    return cmp_finish(a, b, n, reader(a), reader(b), op);
 }
 
 template <typename Op>
@@ -1307,6 +1469,7 @@ inline QValue cmp_str(QValue a, QValue b, Op op) {
 template <typename Op>
 inline QValue cmp_ordered(QValue a, QValue b, Op op, const char* name) {
     if (is_numeric_operand(a) && is_numeric_operand(b)) return cmp_numeric(a, b, op, name);
+    if (is_date_operand(a) && is_date_operand(b)) return cmp_date(a, b, op);
     cmp_unsupported(name);
 }
 
@@ -1315,6 +1478,7 @@ inline QValue cmp_equality(QValue a, QValue b, Op op, const char* name) {
     if (is_numeric_operand(a) && is_numeric_operand(b)) return cmp_numeric(a, b, op, name);
     if (is_bool_operand(a) && is_bool_operand(b)) return cmp_bool(a, b, op);
     if (is_str_operand(a) && is_str_operand(b)) return cmp_str(a, b, op);
+    if (is_date_operand(a) && is_date_operand(b)) return cmp_date(a, b, op);
     cmp_unsupported(name);
 }
 

@@ -224,6 +224,10 @@ print((none | e -> summarize(m = mean(e.salary))).m)
 			source: agreeStaff + `
 print((staff | e -> filter(e.salary > 100000.0)).id.to_list() == staff.id[staff.salary > 100000.0].to_list())
 print(staff.id[staff.salary > 100000.0])
+print((staff | e -> filter(e.salary > 100000)).id.to_list() == staff.id[staff.salary > 100000].to_list())
+print(staff.id[staff.salary > 100000])
+print(staff.id[100000 < staff.salary])
+print((staff | e -> filter(e.salary <= 90001)).id.to_list() == staff.id[staff.salary <= 90001].to_list())
 print((staff | e -> filter(e.dept == 'eng')).name.to_list() == staff.name[staff.dept == 'eng'].to_list())
 print(staff.name[staff.dept == 'eng'])
 print((staff | e -> sort(desc(e.name))).name.to_list() == staff.name.to_list().sort().reverse())
@@ -239,6 +243,10 @@ print((staff | e -> sort(e.dept, desc(e.id))).name)
 			want: `
 true
 [1, 4]
+true
+[1, 4]
+[1, 4]
+true
 true
 ['Ann', 'Cy']
 true

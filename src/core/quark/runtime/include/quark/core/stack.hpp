@@ -73,22 +73,19 @@ inline void q_stack_read_bounds() {
     q_stack_lo() = top - size;
     (void)marker;
 #else
-    // The mapping that contains a local is this thread's stack. The guard
-    // page sits just below it, so the fault check allows a page of slack.
-    FILE* maps = std::fopen("/proc/self/maps", "r");
-    if (!maps) return;
-    char line[512];
-    const uintptr_t here = reinterpret_cast<uintptr_t>(&marker);
-    while (std::fgets(line, sizeof(line), maps)) {
-        unsigned long start = 0, end = 0;
-        if (std::sscanf(line, "%lx-%lx", &start, &end) != 2) continue;
-        if (here >= start && here < end) {
-            q_stack_lo() = start;
-            q_stack_hi() = end;
-            break;
-        }
+    // The whole stack the thread may use, not just the part it has used so
+    // far (the main thread's [stack] mapping grows on demand, up to the
+    // stack limit). For the main thread glibc derives it from the limit.
+    (void)marker;
+    pthread_attr_t attr;
+    if (pthread_getattr_np(pthread_self(), &attr) != 0) return;
+    void* addr = nullptr;
+    size_t size = 0;
+    if (pthread_attr_getstack(&attr, &addr, &size) == 0 && addr != nullptr && size > 0) {
+        q_stack_lo() = reinterpret_cast<uintptr_t>(addr);
+        q_stack_hi() = q_stack_lo() + size;
     }
-    std::fclose(maps);
+    pthread_attr_destroy(&attr);
 #endif
 }
 

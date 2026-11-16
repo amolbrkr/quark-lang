@@ -61,5 +61,65 @@ for d in typed.day:
 		{name: "period_column", source: "incl 'std/time' as time\nstruct S:\n    p: period\nfn f(t: tbl[S]) -> 1\n", err: "field 'p' is period"},
 		{name: "csv_bad_date", files: map[string]string{"e.csv": "created_at\n01/30/2022\n"}, source: "incl 'std/csv' as csv\nstruct E:\n    created_at: date\nx: tbl[E] = unwrap(csv::read_file('e.csv'))\n", err: "is not a date"},
 		{name: "null_date", source: "incl 'std/time' as time\nd: date = null\n", err: "cannot assign value of type 'null' to 'date'"},
+		{
+			// Every vec and list operation on dates that compiles also runs
+			// (D9): to_list keeps the element type, compares, min/max, fillna,
+			// sort, printing through std/fmt.
+			name: "date_vecs_and_lists",
+			source: `incl 'std/time' as time
+incl 'std/csv' as csv
+incl 'std/fmt' as fmt
+struct E:
+    d: date
+    n: int
+t: tbl[E] = unwrap(csv::parse_text('d,n\n2022-01-05,1\n,2\n2021-03-01,3\n'))
+d0 = time::ymd('2022-01-05')
+print(t.d == d0)
+print(t.d < d0)
+print(d0 >= t.d)
+print(min(t.d))
+print(max(t.d))
+print(t.d.fillna(d0))
+xs = t.d.fillna(d0).to_list()
+print(xs)
+ys = list [time::ymd('2023-01-01'), time::ymd('2020-05-05'), d0]
+ys.sort()
+print(ys)
+print(fmt::table(t))
+`,
+			want: "[true, null, false]\n[false, null, true]\n[true, null, true]\n2021-03-01\n2022-01-05\n[2022-01-05, 2022-01-05, 2021-03-01]\n[2022-01-05, 2022-01-05, 2021-03-01]\n[2020-05-05, 2022-01-05, 2023-01-01]\n" +
+				"+---+------------+---+\n| # | d          | n |\n+---+------------+---+\n| 0 | 2022-01-05 | 1 |\n| 1 | NA         | 2 |\n| 2 | 2021-03-01 | 3 |\n+---+------------+---+\n[3 rows x 2 cols]",
+		},
+		{
+			// A list made by to_list() of a vec[date] is a list[date]: a value of
+			// another type pushed through an untyped function is an error.
+			name:   "date_to_list_elem_type",
+			source: "incl 'std/time' as time\nincl 'std/csv' as csv\nstruct E:\n    d: date\nt: tbl[E] = unwrap(csv::parse_text('d\\n2022-01-05\\n'))\nxs = t.d.to_list()\nfn add(l, v) -> l.push(v)\nadd(xs, 5)\n",
+			err:    "push()",
+		},
+		{name: "mean_of_dates", source: "incl 'std/time' as time\nincl 'std/csv' as csv\nincl 'std/stats' as stats\nstruct E:\n    d: date\nt: tbl[E] = unwrap(csv::parse_text('d\\n2022-01-05\\n'))\nprint(stats::mean(t.d))\n", err: "dates can't be averaged"},
+		{name: "compare_date_vec_with_int", source: "incl 'std/time' as time\nincl 'std/csv' as csv\nstruct E:\n    d: date\nt: tbl[E] = unwrap(csv::parse_text('d\\n2022-01-05\\n'))\nprint(t.d < 3)\n", err: "dates compare with dates"},
+		{name: "period_scale_overflow", source: "incl 'std/time' as time\nprint(time::years(4) * 4611686018427387904)\n", err: "period is too large"},
+		{name: "date_add_overflow", source: "incl 'std/time' as time\nprint(time::ymd('2022-01-05') + 9223372036854775807)\n", err: "outside the range of dates"},
+		{name: "date_years_overflow", source: "incl 'std/time' as time\nprint(time::date(0, 1, 1) + time::years(-2147483648))\n", err: "outside the range of dates"},
+		{name: "two_digit_year", source: "incl 'std/time' as time\nprint(time::ymd('25-12-22'))\n", err: "cannot parse '25-12-22'"},
+		{name: "csv_two_digit_year", files: map[string]string{"e.csv": "d\n25-12-22\n"}, source: "incl 'std/csv' as csv\nstruct E:\n    d: date\nx: tbl[E] = unwrap(csv::read_file('e.csv'))\n", err: "is not a date"},
+		{
+			// A column of two-digit-year text isn't inferred as dates; years
+			// before 1000, negative years and years past 9999 print with four
+			// or more digits and read back.
+			name: "year_digits",
+			source: `incl 'std/time' as time
+incl 'std/csv' as csv
+t = unwrap(csv::parse_text('a\n25-12-22\n01-02-03\n'))
+print(t)
+for s in list ['0044-03-15', '-0044-03-15', '12345-01-01', '-5877641-06-23']:
+    d = time::ymd(s)
+    print(d)
+    print(time::ymd(to_str(d)) == d)
+`,
+			want: "tbl: 2 rows\na\nstr\n25-12-22\n01-02-03\n0044-03-15\ntrue\n-0044-03-15\ntrue\n12345-01-01\ntrue\n-5877641-06-23\ntrue",
+		},
+		{name: "abs_of_date_any", source: "incl 'std/time' as time\nfn id(v) -> v\nprint(abs(id(time::ymd('2022-01-05'))))\n", err: "got date"},
 	})
 }

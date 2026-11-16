@@ -10,30 +10,16 @@
 #include <cstring>
 #include <vector>
 
-// q_sort_less orders two sort keys: numbers (int and float together) by value,
-// with NaN after every number (as table sorts put it) so that the order is a
-// strict weak ordering, strings by byte order, bools false before true. Any
-// other pair, such as a str and an int or anything with null, is a runtime
-// error.
-inline bool q_sort_less(const QValue& a, const QValue& b, const char* method) {
+// q_sort_less_other is q_sort_less for every pair but two ints and two floats.
+inline bool q_sort_less_other(const QValue& a, const QValue& b, const char* method) {
     const bool aNum = a.type == QValue::VAL_INT || a.type == QValue::VAL_FLOAT;
     const bool bNum = b.type == QValue::VAL_INT || b.type == QValue::VAL_FLOAT;
     if (aNum && bNum) {
-        if (a.type == QValue::VAL_INT && b.type == QValue::VAL_INT) {
-            return a.data.int_val < b.data.int_val;
-        }
-        const bool aNaN = a.type == QValue::VAL_FLOAT && a.data.float_val != a.data.float_val;
-        const bool bNaN = b.type == QValue::VAL_FLOAT && b.data.float_val != b.data.float_val;
-        if (aNaN || bNaN) {
-            return !aNaN && bNaN;  // a number before NaN; two NaNs are equal
-        }
-        if (a.type == QValue::VAL_FLOAT && b.type == QValue::VAL_FLOAT) {
-            return a.data.float_val < b.data.float_val;
-        }
-        // Mixed int and float: the same exact order as `<`.
+        // An int and a float: the same exact order as `<`, NaN last.
         const bool a_int = a.type == QValue::VAL_INT;
         const long long i = a_int ? a.data.int_val : b.data.int_val;
         const double f = a_int ? b.data.float_val : a.data.float_val;
+        if (f != f) return a_int;  // a number before NaN
         const int c = q_cmp_int_float(i, f);
         return a_int ? c < 0 : c > 0;
     }
@@ -43,11 +29,32 @@ inline bool q_sort_less(const QValue& a, const QValue& b, const char* method) {
     if (a.type == QValue::VAL_BOOL && b.type == QValue::VAL_BOOL) {
         return !a.data.bool_val && b.data.bool_val;
     }
+    if (a.type == QValue::VAL_DATE && b.type == QValue::VAL_DATE) {
+        return a.data.int_val < b.data.int_val;
+    }
     QValue an = q_type(a);
     QValue bn = q_type(b);
-    q_runtime_reportf("runtime error: %s() can't compare %s and %s; sort keys must all be numbers, all strings or all bools\n",
+    q_runtime_reportf("runtime error: %s() can't compare %s and %s; sort keys must all be numbers, all strings, all bools or all dates\n",
                       method, an.data.string_val, bn.data.string_val);
     q_exit(1);
+}
+
+// q_sort_less orders two sort keys: numbers (int and float together) by value,
+// with NaN after every number (as table sorts put it) so that the order is a
+// strict weak ordering, strings by byte order, bools false before true, dates
+// by day. Any
+// other pair, such as a str and an int or anything with null, is a runtime
+// error.
+inline bool q_sort_less(const QValue& a, const QValue& b, const char* method) {
+    if (a.type == QValue::VAL_INT && b.type == QValue::VAL_INT) {
+        return a.data.int_val < b.data.int_val;
+    }
+    if (a.type == QValue::VAL_FLOAT && b.type == QValue::VAL_FLOAT) {
+        const double x = a.data.float_val, y = b.data.float_val;
+        if (x == x && y == y) return x < y;
+        return x == x;  // a number before NaN; two NaNs are equal
+    }
+    return q_sort_less_other(a, b, method);
 }
 
 // list.sort(): sorts the list in place (stable, ascending) and returns it.

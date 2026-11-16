@@ -371,61 +371,14 @@ func (w *printer) ifChain(s *lower.If, chained bool) {
 	w.line("}")
 }
 
-// compareText prints a comparison. Two scalars of the same type are a raw
-// C++ operator. An int and a float go through q_int_float_*, which compares
-// the mathematical values; a raw C++ compare would round the int to a float.
-// parens wraps a raw compare. A condition drops them, because clang warns
+// compareText prints a raw comparison (lowering never mixes an int and a
+// float here). parens wraps it; a condition drops them, because clang warns
 // about parentheses inside if (...).
 func (w *printer) compareText(e *lower.Compare, parens bool) string {
-	lrep, rrep := e.L.Rep(), e.X.Rep()
-	mixed := (lrep == lower.RepInt && rrep == lower.RepFloat) || (lrep == lower.RepFloat && rrep == lower.RepInt)
-	if mixed {
-		op := e.Op
-		left, right := w.expr(e.L), w.expr(e.X)
-		if lrep == lower.RepFloat {
-			left, right = right, left
-			op = flipCmp(op)
-		}
-		return fmt.Sprintf("q_int_float_%s(%s, %s)", cmpSuffix(op), left, right)
-	}
 	if parens {
 		return fmt.Sprintf("(%s %s %s)", w.expr(e.L), e.Op, w.expr(e.X))
 	}
 	return fmt.Sprintf("%s %s %s", w.expr(e.L), e.Op, w.expr(e.X))
-}
-
-func cmpSuffix(op string) string {
-	switch op {
-	case "<":
-		return "lt"
-	case "<=":
-		return "le"
-	case ">":
-		return "gt"
-	case ">=":
-		return "ge"
-	case "==":
-		return "eq"
-	case "!=":
-		return "ne"
-	default:
-		return "eq"
-	}
-}
-
-func flipCmp(op string) string {
-	switch op {
-	case "<":
-		return ">"
-	case "<=":
-		return ">="
-	case ">":
-		return "<"
-	case ">=":
-		return "<="
-	default:
-		return op
-	}
 }
 
 // cond prints a condition; a comparison loses its own parentheses, which

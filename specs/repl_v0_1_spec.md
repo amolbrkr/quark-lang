@@ -1,7 +1,7 @@
 # Quark REPL v0.1 Spec
 
 Status: Implemented. On Windows an input runs in the host process and a failed input is rolled back from a copy of the session (§5.6); on Linux and macOS the host uses `fork`.
-Last Updated: 2026-11-15
+Last Updated: 2026-11-16
 Scope: `quark repl`, an interactive session that compiles each input with the normal compiler and runs it in a long-lived process. Notebooks and Jupyter kernels are out of scope (§7).
 
 ## Contents
@@ -138,6 +138,21 @@ error[QK-CHECK-001] (check): cannot add str to list[int]: ...
 
 If an untyped path (`any`) put a value in the container before the input that fixes its type, that input stops with a runtime error before any of its statements run, reported at the write that fixed the type. (The same program as a file fails at the untyped write instead, because the container's type is fixed from the start.)
 
+An empty `list []` or `dict {}` inside a function (a `fn` body, a lambda or a default value) is different once its input has run: the function is compiled, and every call makes a container with no element type, which a later input can't change. Its element type stays "any value", so the containers it makes hold any value, and a typed read of one is checked when it runs. In a file, the first write anywhere fixes the type of every container the function makes.
+
+```
+> fn mk() -> list []
+> zs = mk()
+> zs.push(1)
+[1]
+> zs.push('a')
+[1, 'a']
+> y: int = zs[1]
+error[QK-RUNTIME-001] (runtime): variable 'y' is declared int but got str at <input 5>:1:1
+```
+
+The same program as a file stops at `zs.push('a')`, a compile error. Typing such a function's container needs the function compiled again (late binding, deferred in §7).
+
 ### 3.6 Entering input
 
 - The prompt is `> `; continuation lines get `. `.
@@ -161,6 +176,7 @@ If an untyped path (`any`) put a value in the container before the input that fi
 | A variable assigned a value of another type | Error | Warning, if no function uses the variable (§3.4) |
 | A runtime error | Ends the program | Ends the input; the session goes back to its state before the input (§3.2) |
 | An untyped write into an empty container whose type a later write fixes | Runtime error at the untyped write | Runtime error at the start of the input with the fixing write (§3.5) |
+| An empty container made inside a function, written by a later input | Its first write fixes the element type of every container the function makes | Holds any value; a typed read is checked (§3.5) |
 
 ## 4. Diagnostics
 
@@ -245,7 +261,7 @@ An integration test file (`integration_repl_test.go`) runs `quark repl` with inp
 ## 7. Deferred
 
 - Notebooks, a Jupyter kernel and rich output (HTML tables, plots): when the language surface is stable.
-- Redefining a `fn` or `struct`, and a type change of a variable that a function uses: both need the functions that use the old definition recompiled against the new one.
+- Redefining a `fn` or `struct`, a type change of a variable that a function uses, and a later input fixing the element type of an empty container a function makes (§3.5): all need functions of earlier inputs recompiled (late binding).
 - REPL commands (`:help`, `:reset`, `:type x`), completion, history kept between sessions.
 - Continuing a typed input with an indented pipe line.
 - The optimization level of inputs, and using the runtime object for `quark run`: in the pipeline review, after the table work lands.
@@ -258,7 +274,7 @@ An integration test file (`integration_repl_test.go`) runs `quark repl` with inp
 4. **Redefining `fn` and `struct` is an error**, as in a file.
 5. **A variable may change type with a warning**, but only when no function uses it; otherwise those functions would compute with the old value.
 6. **The last bare expression is shown.**
-7. **An empty container's element type is fixed by its first write**, even in a later input, as in a file; a runtime check covers writes the analyser can't see.
+7. **An empty container's element type is fixed by its first write**, even in a later input, as in a file; a runtime check covers writes the analyser can't see. An empty container made inside a function of an input that has run keeps holding any value (§3.5): the function is compiled, and changing what it makes needs late binding.
 8. **Re-analysis of the committed inputs** for every new input, not analyser state kept between inputs: a failed input needs no undo.
 9. **Inputs compile at `-O0`** against the `-O3` runtime: about 0.2 s per input. Revisited in the pipeline review.
 10. **Session `int`, `float` and `bool` variables are raw slots** in the host. Every other session variable is a `QCell*`. A top-level numeric loop then lowers like the same loop in a file, and differs by the input's `-O0`.

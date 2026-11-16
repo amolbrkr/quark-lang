@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -188,5 +189,166 @@ func TestRepl_ListMutationRollsBack(t *testing.T) {
 	}
 	if strings.Count(got, "[1]\n") < 2 {
 		t.Fatalf("stdout:\n%s\nstderr:\n%s", got, errb.String())
+	}
+}
+
+// runRepl runs `quark repl` on the inputs and returns stdout and stderr.
+func runRepl(t *testing.T, dir string, inputs []string) (string, string) {
+	t.Helper()
+	cmd := exec.Command(quarkExePath, "repl")
+	cmd.Dir = dir
+	cmd.Stdin = strings.NewReader(strings.Join(inputs, "\n") + "\n")
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	done := make(chan error, 1)
+	go func() { done <- cmd.Run() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("repl: %v\nstderr:\n%s", err, errb.String())
+		}
+	case <-time.After(4 * time.Minute):
+		_ = cmd.Process.Kill()
+		t.Fatal("repl timed out\n" + errb.String())
+	}
+	return strings.ReplaceAll(out.String(), "\r\n", "\n"), errb.String()
+}
+
+// TestRepl_SessionValuesAndCompiledCode covers inputs whose compiled code
+// used to read the wrong slot or fail to compile: a type change that reads
+// the old value, a scalar slot read before its first assignment, an input
+// after a list's element type was fixed, and an earlier input's function
+// used as a value.
+func TestRepl_SessionValuesAndCompiledCode(t *testing.T) {
+	out, errText := runRepl(t, t.TempDir(), []string{
+		"t = 'abc'",
+		"t = t == 'abc'",
+		"t",
+		"fn g() ->",
+		"    f()",
+		"fn id(v) -> v",
+		"h = id(g)",
+		"print(h())",
+		"n = 5",
+		"fn f() -> n + 1",
+		"",
+		"xs = list []",
+		"xs.push(1)",
+		"fn sq(x: int) int -> x * x",
+		"sq(3)",
+		"fn cube(x) -> x * x * x",
+		"c = cube",
+		"c(2)",
+	})
+	if strings.Contains(errText, "internal compiler error") {
+		t.Fatalf("stderr:\n%s", errText)
+	}
+	if want := "true\n[1]\n9\n8\n"; out != want {
+		t.Fatalf("stdout:\n%s\nwant:\n%s\nstderr:\n%s", out, want, errText)
+	}
+	if !strings.Contains(errText, "'n' is used before it is assigned") {
+		t.Fatalf("a slot read before its first assignment should be an error\nstderr:\n%s", errText)
+	}
+}
+
+// TestRepl_IncludedFileReadOnce requires an included file to be read once
+// per session: editing it afterwards doesn't change what the session runs.
+func TestRepl_IncludedFileReadOnce(t *testing.T) {
+	dir := t.TempDir()
+	lib := filepath.Join(dir, "lib3.qrk")
+	if err := os.WriteFile(lib, []byte("fn f(x: int) int -> x + 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(quarkExePath, "repl")
+	cmd.Dir = dir
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out, errb lockedBuffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cmd.Process.Kill() }()
+	if _, err := stdin.Write([]byte("incl './lib3'\nprint(lib3::f(1))\n")); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Minute)
+	for !strings.Contains(out.String(), "2") {
+		if time.Now().After(deadline) {
+			t.Fatalf("no output from the first inputs\nstderr:\n%s", errb.String())
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if err := os.WriteFile(lib, []byte("fn f(x: int) float -> x * 1.5\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stdin.Write([]byte("print(lib3::f(4))\n")); err != nil {
+		t.Fatal(err)
+	}
+	_ = stdin.Close()
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Minute):
+		t.Fatal("repl timed out\n" + errb.String())
+	}
+	if got := strings.ReplaceAll(out.String(), "\r\n", "\n"); got != "2\n5\n" {
+		t.Fatalf("stdout:\n%s\nwant the file as first read (2, then 5)\nstderr:\n%s", got, errb.String())
+	}
+}
+
+// lockedBuffer is a bytes.Buffer the test can read while the command writes.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// TestRepl_FunctionMadeListStaysUntyped requires an empty list made inside a
+// function of an earlier input to keep holding any value: the function is
+// compiled, so a later write can't type what it makes, and a typed read of
+// such a list is checked (specs/repl_v0_1_spec.md §3.5). A top-level empty
+// list still takes its type from a later input's first write.
+func TestRepl_FunctionMadeListStaysUntyped(t *testing.T) {
+	out, errText := runRepl(t, t.TempDir(), []string{
+		"fn mk() -> list []",
+		"fn addany(l, v) -> l.push(v)",
+		"zs = mk()",
+		"zs.push(1)",
+		"ws = mk()",
+		"addany(ws, 'a')",
+		"y: int = ws[0]",
+		"zs.push('b')",
+		"xs = list []",
+		"xs.push(1)",
+		"xs.push('c')",
+	})
+	if want := "[1]\n['a']\n[1, 'b']\n[1]\n"; out != want {
+		t.Fatalf("stdout:\n%s\nwant:\n%s\nstderr:\n%s", out, want, errText)
+	}
+	if !strings.Contains(errText, "variable 'y' is declared int but got str") {
+		t.Fatalf("a typed read of a str from an untyped list should be an error\nstderr:\n%s", errText)
+	}
+	if !strings.Contains(errText, "cannot add str to list[int]") {
+		t.Fatalf("a top-level list typed by a later input should reject a str\nstderr:\n%s", errText)
+	}
+	if strings.Contains(errText, "internal compiler error") {
+		t.Fatalf("stderr:\n%s", errText)
 	}
 }

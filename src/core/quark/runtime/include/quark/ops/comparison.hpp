@@ -40,6 +40,9 @@ inline int q_str_compare(QValue a, QValue b) {
 }
 
 inline QValue q_lt(QValue a, QValue b) {
+    // Two ints or two floats first (IEEE 754 for floats, as q_values_ordered).
+    if (a.type == QValue::VAL_INT && b.type == QValue::VAL_INT) return qv_bool(a.data.int_val < b.data.int_val);
+    if (a.type == QValue::VAL_FLOAT && b.type == QValue::VAL_FLOAT) return qv_bool(a.data.float_val < b.data.float_val);
     if (a.type == QValue::VAL_VECTOR || b.type == QValue::VAL_VECTOR) {
         return q_vec_lt(a, b);
     }
@@ -61,6 +64,9 @@ inline QValue q_lt(QValue a, QValue b) {
 
 // Less than or equal
 inline QValue q_lte(QValue a, QValue b) {
+    // Two ints or two floats first (IEEE 754 for floats, as q_values_ordered).
+    if (a.type == QValue::VAL_INT && b.type == QValue::VAL_INT) return qv_bool(a.data.int_val <= b.data.int_val);
+    if (a.type == QValue::VAL_FLOAT && b.type == QValue::VAL_FLOAT) return qv_bool(a.data.float_val <= b.data.float_val);
     if (a.type == QValue::VAL_VECTOR || b.type == QValue::VAL_VECTOR) {
         return q_vec_lte(a, b);
     }
@@ -82,6 +88,9 @@ inline QValue q_lte(QValue a, QValue b) {
 
 // Greater than
 inline QValue q_gt(QValue a, QValue b) {
+    // Two ints or two floats first (IEEE 754 for floats, as q_values_ordered).
+    if (a.type == QValue::VAL_INT && b.type == QValue::VAL_INT) return qv_bool(a.data.int_val > b.data.int_val);
+    if (a.type == QValue::VAL_FLOAT && b.type == QValue::VAL_FLOAT) return qv_bool(a.data.float_val > b.data.float_val);
     if (a.type == QValue::VAL_VECTOR || b.type == QValue::VAL_VECTOR) {
         return q_vec_gt(a, b);
     }
@@ -103,6 +112,9 @@ inline QValue q_gt(QValue a, QValue b) {
 
 // Greater than or equal
 inline QValue q_gte(QValue a, QValue b) {
+    // Two ints or two floats first (IEEE 754 for floats, as q_values_ordered).
+    if (a.type == QValue::VAL_INT && b.type == QValue::VAL_INT) return qv_bool(a.data.int_val >= b.data.int_val);
+    if (a.type == QValue::VAL_FLOAT && b.type == QValue::VAL_FLOAT) return qv_bool(a.data.float_val >= b.data.float_val);
     if (a.type == QValue::VAL_VECTOR || b.type == QValue::VAL_VECTOR) {
         return q_vec_gte(a, b);
     }
@@ -259,6 +271,8 @@ inline bool values_equal(const QValue& a, const QValue& b, int depth) {
 
 // Equality (type-sensitive, structural for containers)
 inline QValue q_eq(QValue a, QValue b) {
+    if (a.type == QValue::VAL_INT && b.type == QValue::VAL_INT) return qv_bool(a.data.int_val == b.data.int_val);
+    if (a.type == QValue::VAL_FLOAT && b.type == QValue::VAL_FLOAT) return qv_bool(a.data.float_val == b.data.float_val);
     if (a.type == QValue::VAL_VECTOR || b.type == QValue::VAL_VECTOR) {
         return q_vec_eq(a, b);
     }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -2327,6 +2328,90 @@ func TestParamAnnotationsEnforced(t *testing.T) {
 	}
 }
 
+// TestIntFloatCompare_VecAgreesWithScalar requires every vec comparison of
+// ints with floats, in every shape and operand order, to agree element by
+// element with the scalar comparison (raw, and through untyped values),
+// which compares the mathematical values. The values sit at the edges of
+// the exact range (±2^53), past it, at the int range (±2^63), and include
+// NaN, the infinities and -0.0.
+func TestIntFloatCompare_VecAgreesWithScalar(t *testing.T) {
+	ops := []struct{ op, name string }{{"<", "lt"}, {"<=", "le"}, {">", "gt"}, {">=", "ge"}, {"==", "eq"}, {"!=", "ne"}}
+	var b strings.Builder
+	b.WriteString(`ints = list [0, 1, -1, 7, -7, 9007199254740992, -9007199254740992, 9007199254740993, -9007199254740993, 9007199254740995, 9223372036854775807, -9223372036854775807 - 1]
+small = list [0, 1, -1, 7, -7, 9007199254740992, -9007199254740992]
+nan = to_float('nan')
+inf = to_float('inf')
+floats = list [0.0, -0.0, 0.5, -0.5, 1.0, 7.0, -7.25, 9007199254740992.0, -9007199254740992.0, 9007199254740994.0, 9223372036854774784.0, 9223372036854775807.0, -9223372036854775808.0, -9223372036854777856.0, 1e300, -1e300, inf, -inf, nan]
+iv = ints.to_vec()
+fv = floats.to_vec()
+pi = list []
+pf = list []
+for i in ints:
+    for f in floats:
+        pi.push(i)
+        pf.push(f)
+si = list []
+sf = list []
+for i in small:
+    for f in floats:
+        si.push(i)
+        sf.push(f)
+piv = pi.to_vec()
+pfv = pf.to_vec()
+siv = si.to_vec()
+sfv = sf.to_vec()
+bad = 0
+`)
+	for _, o := range ops {
+		fmt.Fprintf(&b, "fn u%s(a, b) -> a %s b\n", o.name, o.op)
+	}
+	for _, o := range ops {
+		op, n := o.op, o.name
+		fmt.Fprintf(&b, `for f in floats:
+    r1 = iv %[1]s f
+    r2 = f %[1]s iv
+    for k in range(len(ints)):
+        i = ints[k]
+        if r1[k] != (i %[1]s f) or r2[k] != (f %[1]s i) or u%[2]s(i, f) != (i %[1]s f) or u%[2]s(f, i) != (f %[1]s i):
+            print('mismatch %[2]s ' + to_str(i) + ' ' + to_str(f))
+            bad = bad + 1
+for i in ints:
+    r3 = fv %[1]s i
+    r4 = i %[1]s fv
+    for k in range(len(floats)):
+        f = floats[k]
+        if r3[k] != (f %[1]s i) or r4[k] != (i %[1]s f):
+            print('mismatch %[2]s ' + to_str(i) + ' ' + to_str(f))
+            bad = bad + 1
+r5 = piv %[1]s pfv
+r6 = pfv %[1]s piv
+r7 = siv %[1]s sfv
+r8 = sfv %[1]s siv
+for k in range(len(pi)):
+    i = pi[k]
+    f = pf[k]
+    if r5[k] != (i %[1]s f) or r6[k] != (f %[1]s i):
+        print('mismatch vv %[2]s ' + to_str(i) + ' ' + to_str(f))
+        bad = bad + 1
+for k in range(len(si)):
+    i = si[k]
+    f = sf[k]
+    if r7[k] != (i %[1]s f) or r8[k] != (f %[1]s i):
+        print('mismatch small vv %[2]s ' + to_str(i) + ' ' + to_str(f))
+        bad = bad + 1
+`, op, n)
+	}
+	b.WriteString("print('mismatches: ' + to_str(bad))\n")
+	program := filepath.Join(t.TempDir(), "vecagree.qrk")
+	if err := os.WriteFile(program, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := strings.TrimSpace(normalizeNewlines(runQuark(t, "run", program)))
+	if got != "mismatches: 0" {
+		t.Fatalf("vec and scalar int/float comparisons disagree:\n%s", got)
+	}
+}
+
 func TestIntFloatCompare_Exact(t *testing.T) {
 	tmp := t.TempDir()
 	program := filepath.Join(tmp, "cmp.qrk")
@@ -2356,6 +2441,18 @@ func TestIntFloatCompare_Exact(t *testing.T) {
 		"print(1 == nan)",
 		"print(1 < nan)",
 		"print(1 != nan)",
+		"v = vec [-1.5, 0.5, 2.5]",
+		"print(v > 0)",
+		"print(v[v > 0])",
+		"print(0 < v)",
+		"x = 0.5",
+		"print(x > 0)",
+		"print(x < -1)",
+		"print(min(0, -0.0))",
+		"print(min(-0.0, 0))",
+		"print(max(2, 2.0))",
+		"print(min(nan, 1))",
+		"print(max(1, nan))",
 		"",
 	}, "\n")
 	if err := os.WriteFile(program, []byte(source), 0o644); err != nil {
@@ -2383,6 +2480,16 @@ func TestIntFloatCompare_Exact(t *testing.T) {
 		"false",
 		"false",
 		"true",
+		"[false, true, true]",
+		"[0.5, 2.5]",
+		"[false, true, true]",
+		"true",
+		"false",
+		"-0.0",
+		"-0.0",
+		"2.0",
+		"nan",
+		"nan",
 	}, "\n")
 	if got != want {
 		t.Fatalf("output:\n%s\nwant:\n%s", got, want)

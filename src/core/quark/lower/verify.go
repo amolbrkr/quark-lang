@@ -27,6 +27,13 @@ func Verify(p *Program) error {
 	for _, f := range p.Funcs {
 		v.funcs[f.CName] = f
 	}
+	if p.Session != nil {
+		// A REPL input calls and takes the value of earlier inputs' functions,
+		// which it declares extern.
+		for _, f := range p.Session.Extern {
+			v.funcs[f.CName] = f
+		}
+	}
 	for _, df := range p.DefaultArgFns {
 		for _, c := range df.Cases {
 			v.where = df.CName
@@ -368,6 +375,9 @@ func (v *verifier) expr(e Expr) {
 		v.expr(e.X)
 		if !e.L.Rep().IsScalar() || !e.X.Rep().IsScalar() {
 			v.fail("INV-IR-REP", "raw comparison of %s and %s", e.L.Rep(), e.X.Rep())
+		}
+		if lr, xr := e.L.Rep(), e.X.Rep(); (lr == RepInt && xr == RepFloat) || (lr == RepFloat && xr == RepInt) {
+			v.fail("INV-IR-REP", "raw comparison of %s and %s (an int and a float compare through q_int_float_*)", lr, xr)
 		}
 	case *Not:
 		v.expr(e.X)

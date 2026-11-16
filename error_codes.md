@@ -117,7 +117,7 @@ Run on every compile after lowering (`src/core/quark/lower/verify.go`, `architec
 | Code | Invariant |
 |---|---|
 | `INV-IR-SCOPE` | Every variable, temporary and parameter is used inside the scope that declares it, after its declaration, and declared once per scope; a closure captures cells in scope |
-| `INV-IR-REP` | Every value has the representation its use needs: a raw bool for a condition, a `QValue` for `q_truthy`, `Unbox`, `Adapt` and `Check`, the storage's type for a variable, the function's return type for `return`, a list or `QValue` for the list a loop checks; captured variables are cells |
+| `INV-IR-REP` | Every value has the representation its use needs: a raw bool for a condition, a `QValue` for `q_truthy`, `Unbox`, `Adapt` and `Check`, the storage's type for a variable, the function's return type for `return`, a list or `QValue` for the list a loop checks; captured variables are cells; a raw comparison never mixes an int and a float (those go through `q_int_float_*`) |
 | `INV-IR-UNBOX` | Every `Unbox` (a raw read of a `QValue`'s union field) says why the tag is known, and the reason fits: an analyzer type that is exactly the scalar read, or a loop's element read (`architecture.md` §12) |
 | `INV-IR-LOOP` | `break` and `continue` are inside a loop; a loop's length, range bounds and the list whose length it checks are temporaries or constants, since they are re-evaluated each iteration |
 | `INV-IR-RETURN` | `return` is inside a function |

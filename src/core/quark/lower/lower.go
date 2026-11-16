@@ -415,7 +415,17 @@ func externThunkFunc(proto *ir.CallPlan) *Func {
 		args[i] = adaptTo(&ParamRef{P: p}, RepOfCType(ct))
 	}
 	call := &Call{Fn: proto.RuntimeSymbol, Args: args, R: RepOfCType(proto.NativeReturnType)}
-	f.Body = &Block{Stmts: []Stmt{&Return{Value: boxed(call)}}}
+	if len(f.Params) == 0 {
+		f.Body = &Block{Stmts: []Stmt{&Return{Value: boxed(call)}}}
+		return f
+	}
+	// The parameters stay reachable until the call returns (keepArgsAlive).
+	result := &Temp{ID: 0, R: call.R}
+	stmts := []Stmt{&Let{T: result, Value: call}}
+	for _, p := range f.Params {
+		stmts = append(stmts, &Do{X: &Call{Fn: "q_keep_alive", Args: []Expr{&ParamRef{P: p}}, R: Rep("void")}})
+	}
+	f.Body = &Block{Stmts: append(stmts, &Return{Value: boxed(&TempRef{T: result})})}
 	return f
 }
 

@@ -46,9 +46,7 @@ inline QValue q_member_get(QValue obj, const char* member) {
         q_exit(1);
     }
 
-    const char* type_names[] = {"int", "float", "string", "bool", "null", "list", "vec", "dict", "fn", "result", "resource", "struct", "tbl"};
-    const char* type_name = (obj.type >= 0 && obj.type <= 12) ? type_names[obj.type] : "unknown";
-    q_runtime_reportf("runtime error: dot access is only supported on dict; got type '%s'\n", type_name);
+    q_runtime_reportf("runtime error: dot access is only supported on dict; got type '%s'\n", q_type_name(obj.type));
     q_exit(1);
 }
 

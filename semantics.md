@@ -30,7 +30,7 @@ Every runtime value has one of fourteen types. `type(v)` returns the name in the
 | Type | Payload | Notes |
 |------|---------|-------|
 | `int` | 64-bit signed integer | Overflow is a runtime error (§4.1) |
-| `date` | 32-bit day count | Days since 1970-01-01, no time of day (`specs/dates_v0_1_spec.md`). Prints as `YYYY-MM-DD` |
+| `date` | 32-bit day count | Days since 1970-01-01, no time of day (`specs/dates_v0_1_spec.md`). Prints as `YYYY-MM-DD`, with at least four year digits (`-0044-03-15`, `12345-01-01`) |
 | `period` | years, months, days | A calendar offset from `std/time` (`time::months(3)`). Not a column type |
 | `float` | 64-bit IEEE double | |
 | `str` | Immutable byte string | `len`, indexing and `for` work on bytes, not characters |

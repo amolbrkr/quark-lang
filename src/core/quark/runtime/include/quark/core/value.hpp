@@ -3,6 +3,7 @@
 #define QUARK_CORE_VALUE_HPP
 
 #include <cstdlib>
+#include <cstring>
 #include <vector>
 #include "gc.hpp"
 #include "diagnostics.hpp"
@@ -88,6 +89,31 @@ struct QResult {
     bool is_ok;
     QValue payload;
 };
+
+// q_keep_alive makes what v refers to (if anything) reachable at this point,
+// so the collector can't free or finalize it sooner. Generated code calls it
+// after a native call for every argument that refers to GC memory: the
+// native code may hold only a handle's payload (qext::handle_get), which
+// doesn't refer to the handle, and a collection during the call would
+// otherwise finalize the handle and close what the native code is using.
+inline void q_keep_alive(const QValue& v) {
+#ifdef QUARK_USE_GC
+    void* p;
+    std::memcpy(&p, &v.data, sizeof p);
+    GC_reachable_here(p);
+#else
+    (void)v;
+#endif
+}
+
+template <typename T>
+inline void q_keep_alive(const T* p) {
+#ifdef QUARK_USE_GC
+    GC_reachable_here(p);
+#else
+    (void)p;
+#endif
+}
 
 // QElemType describes the element type of a list or the value type of a
 // dict (checks in types/elemtype.hpp); nullptr stands for any value.

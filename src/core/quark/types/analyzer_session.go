@@ -31,6 +31,12 @@ type SessionInfo struct {
 // see definitions from later blocks. Top-level variables are session variables.
 func (a *Analyzer) analyzeSession(node *ast.TreeNode) Type {
 	var last Type = TypeVoid
+	var final *ast.TreeNode
+	for _, block := range node.Children {
+		if block != nil && block.NodeType == ast.InputBlockNode {
+			final = block
+		}
+	}
 	for _, block := range node.Children {
 		if block == nil || block.NodeType != ast.InputBlockNode {
 			continue
@@ -52,13 +58,44 @@ func (a *Analyzer) analyzeSession(node *ast.TreeNode) Type {
 				a.declareFixedFns(child.Children[1], child.Children[1].Children)
 			}
 		}
+		// Only the last input's settles are emitted: an earlier input's ran
+		// when that input did.
+		a.settles = nil
 		watched := a.watchPending()
 		last = a.analyzeStatements(block, stmts)
 		a.noteSettles(watched)
+		if block != final {
+			a.freezeFunctionContainers(block)
+		}
 	}
 	a.finalizeFixedFns()
 	a.finalizeSymbols()
 	return last
+}
+
+// freezeFunctionContainers gives every empty list or dict literal inside a
+// function of a committed input whose element type is still pending the
+// type "any value". The function is compiled: each call makes a container
+// with no element type, which a later input can't change, so a later write
+// must not give the literal, or what it makes, an element type.
+func (a *Analyzer) freezeFunctionContainers(block *ast.TreeNode) {
+	var walk func(n *ast.TreeNode, inFn bool)
+	walk = func(n *ast.TreeNode, inFn bool) {
+		if n == nil {
+			return
+		}
+		if n.NodeType == ast.LambdaNode {
+			inFn = true
+		}
+		if inFn && (n.NodeType == ast.ListNode || n.NodeType == ast.DictNode) && len(n.Children) == 0 {
+			escapePending(a.nodeTypes[n])
+		}
+		for _, c := range n.Children {
+			walk(c, inFn)
+		}
+		walk(n.DefaultValue, inFn)
+	}
+	walk(block, false)
 }
 
 // noteStructHome records which input defined each struct named in stmts.

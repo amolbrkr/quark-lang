@@ -131,7 +131,7 @@ func (l *lowerer) call(node *ast.TreeNode) Expr {
 				out = append(out, boxed(a))
 			}
 		}
-		return &Call{Fn: plan.RuntimeSymbol, Args: out, R: RepOfCType(plan.NativeReturnType)}
+		return l.keepArgsAlive(&Call{Fn: plan.RuntimeSymbol, Args: out, R: RepOfCType(plan.NativeReturnType)})
 
 	case ir.DispatchClosure:
 		callee := boxed(vals[calleeIdx])
@@ -143,6 +143,40 @@ func (l *lowerer) call(node *ast.TreeNode) Expr {
 	}
 	l.ice("INV-CALLPLAN-DISPATCH", node, "unknown dispatch for '%s'", funcNode.TokenLiteral())
 	return nil
+}
+
+// keepArgsAlive keeps every argument of a call into native code that refers
+// to GC memory reachable until the call returns (q_keep_alive after it).
+// Native code may hold only a handle's payload, which doesn't refer to the
+// handle; if nothing else did, a collection inside the call could finalize
+// the handle and close the payload in use. The arguments become temporaries,
+// in order, so they can be named after the call.
+func (l *lowerer) keepArgsAlive(call *Call) Expr {
+	keep := false
+	for _, a := range call.Args {
+		keep = keep || refersToGC(a.Rep())
+	}
+	if !keep {
+		return call
+	}
+	var kept []Expr
+	for i, a := range call.Args {
+		call.Args[i] = l.stable(a)
+		if refersToGC(a.Rep()) {
+			kept = append(kept, call.Args[i])
+		}
+	}
+	result := l.let(call)
+	for _, k := range kept {
+		l.add(&Do{X: &Call{Fn: "q_keep_alive", Args: []Expr{k}, R: Rep("void")}})
+	}
+	return result
+}
+
+// refersToGC reports whether a value of rep r can refer to GC memory: a
+// QValue or a native pointer, not a raw scalar.
+func refersToGC(r Rep) bool {
+	return !r.IsScalar() && r != Rep("std::nullptr_t")
 }
 
 // tableRead lowers a csv::read_file or csv::parse_text call to its native

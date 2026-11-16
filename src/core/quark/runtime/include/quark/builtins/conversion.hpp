@@ -244,6 +244,10 @@ inline QValue q_type(QValue v) {
             return qv_string("struct");
         case QValue::VAL_TABLE:
             return qv_string(q_table_type_name(v.data.table_val));
+        case QValue::VAL_DATE:
+            return qv_string("date");
+        case QValue::VAL_PERIOD:
+            return qv_string("period");
         case QValue::VAL_VECTOR: {
             if (!q_vec_has_valid_handle(v) || !q_vec_validate(*v.data.vector_val)) {
                 return qv_string("vec[invalid]");

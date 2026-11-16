@@ -490,15 +490,7 @@ inline void handle_close(QValue value) {
 // On type mismatch the program panics with a clear diagnostic instead
 // of silently reinterpreting the union bits as the wrong type.
 
-inline const char* q_as_type_name(QValue::ValueType t) {
-    static const char* names[] = {
-        "int", "float", "str", "bool", "null",
-        "list", "vec", "dict", "fn", "result", "resource", "struct", "tbl"
-    };
-    int idx = static_cast<int>(t);
-    if (idx >= 0 && idx <= 12) return names[idx];
-    return "unknown";
-}
+inline const char* q_as_type_name(QValue::ValueType t) { return q_type_name(t); }
 
 [[noreturn]] inline void q_as_type_panic(const char* expected, QValue::ValueType got) {
     q_runtime_reportf("runtime error: expected %s, got %s\n", expected, q_as_type_name(got));

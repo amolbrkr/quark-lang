@@ -45,6 +45,8 @@ func (t *errorType) Equals(other Type) bool {
 // Predefined basic types
 var (
 	TypeInt      = &BasicType{Name: "int"}
+	TypeDate     = &BasicType{Name: "date"}
+	TypePeriod   = &BasicType{Name: "period"}
 	TypeFloat    = &BasicType{Name: "float"}
 	TypeString   = &BasicType{Name: "str"}
 	TypeBool     = &BasicType{Name: "bool"}
@@ -318,7 +320,7 @@ func columnList(row *StructType) string {
 // IsColumnType reports whether t can be the type of a table column (v0.1:
 // int, float, bool, str).
 func IsColumnType(t Type) bool {
-	return t != nil && (t.Equals(TypeInt) || t.Equals(TypeFloat) || t.Equals(TypeBool) || t.Equals(TypeString))
+	return t != nil && (t.Equals(TypeInt) || t.Equals(TypeFloat) || t.Equals(TypeBool) || t.Equals(TypeString) || t.Equals(TypeDate))
 }
 
 // RowMatch reports whether a table of row src can be stored where a table of

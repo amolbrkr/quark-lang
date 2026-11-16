@@ -321,10 +321,10 @@ func (a *Analyzer) columnTypeOK(at *ast.TreeNode, name string, t Type) bool {
 		return true
 	}
 	if isUnknownType(t) {
-		a.errorAt(at, "the type of column '%s' isn't known; table columns are int, float, bool or str (annotate the return type of a function it calls)", name)
+		a.errorAt(at, "the type of column '%s' isn't known; table columns are int, float, bool, str or date (annotate the return type of a function it calls)", name)
 		return false
 	}
-	a.errorAt(at, "column '%s' would be %s; table columns are int, float, bool or str", name, t.String())
+	a.errorAt(at, "column '%s' would be %s; table columns are int, float, bool, str or date", name, t.String())
 	return false
 }
 
@@ -617,7 +617,7 @@ func (a *Analyzer) aggregate(node *ast.TreeNode, name, rowName string, row *Stru
 			agg.Type = TypeInt
 		}
 	case "mean":
-		if !ct.Equals(TypeString) {
+		if ct.Equals(TypeInt) || ct.Equals(TypeFloat) || ct.Equals(TypeBool) {
 			agg.Type = TypeFloat
 		}
 	default:

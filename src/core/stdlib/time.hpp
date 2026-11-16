@@ -59,32 +59,6 @@ inline const char* q_time_copy(const std::string& s) {
     return q_strdup(s.c_str());
 }
 
-// Days since 1970-01-01 (Howard Hinnant, public domain). month is 1-12.
-inline int64_t q_days_from_civil(int year, int month, int day) {
-    year -= month <= 2;
-    const int era = (year >= 0 ? year : year - 399) / 400;
-    const unsigned yoe = static_cast<unsigned>(year - era * 400);
-    const unsigned doy = (153u * static_cast<unsigned>(month + (month > 2 ? -3 : 9)) + 2) / 5 +
-                         static_cast<unsigned>(day) - 1;
-    const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    return static_cast<int64_t>(era) * 146097 + static_cast<int64_t>(doe) - 719468;
-}
-
-inline void q_civil_from_days(int64_t z, int& year, int& month, int& day) {
-    z += 719468;
-    const int64_t era = (z >= 0 ? z : z - 146096) / 146097;
-    const unsigned doe = static_cast<unsigned>(z - era * 146097);
-    const unsigned yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    const int y = static_cast<int>(yoe) + static_cast<int>(era) * 400;
-    const unsigned doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    const unsigned mp = (5 * doy + 2) / 153;
-    const unsigned d = doy - (153 * mp + 2) / 5 + 1;
-    const unsigned m = mp < 10 ? mp + 3 : mp - 9;
-    year = y + (m <= 2 ? 1 : 0);
-    month = static_cast<int>(m);
-    day = static_cast<int>(d);
-}
-
 // A real calendar day. An impossible day (31 February) does not round-trip
 // through the civil conversion, so it is rejected rather than normalized.
 inline bool q_time_valid_date(int year, int month, int day) {
@@ -491,7 +465,7 @@ inline QList* q_time_parts(double ts, bool local) {
 
 inline double q_time_make(int64_t year, int64_t month, int64_t day, int64_t hour, int64_t minute, double second, bool local) {
     if (year < q_time_year_min || year > q_time_year_max) {
-        q_time_fail("make", "year is out of range");
+        q_time_fail("timestamp", "year is out of range");
     }
     QTimeParts p;
     p.year = static_cast<int>(year);
@@ -503,10 +477,10 @@ inline double q_time_make(int64_t year, int64_t month, int64_t day, int64_t hour
     // The casts above truncate a value that does not fit in int. Reject those
     // before compose, so a huge month is an error and not a truncated one.
     if (!std::isfinite(second)) {
-        q_time_fail("make", "second must be a finite number");
+        q_time_fail("timestamp", "second must be a finite number");
     }
     if (month != p.month || day != p.day || hour != p.hour || minute != p.minute) {
-        q_time_fail("make", "date is not a real calendar time");
+        q_time_fail("timestamp", "date is not a real calendar time");
     }
     double ts = 0;
     if (!q_time_compose(p, local, ts)) {
@@ -515,22 +489,151 @@ inline double q_time_make(int64_t year, int64_t month, int64_t day, int64_t hour
         char buf[160];
         std::snprintf(buf, sizeof(buf), "date is not a real calendar time (%d-%02d-%02d %02d:%02d:%s)", p.year, p.month,
                       p.day, p.hour, p.minute, secbuf);
-        q_time_fail("make", buf);
+        q_time_fail("timestamp", buf);
     }
     return ts;
 }
 
-inline double q_time_today(bool local) {
+inline int32_t q_time_date(int64_t year, int64_t month, int64_t day) {
+    if (year < q_time_year_min || year > q_time_year_max || year != static_cast<int>(year)) {
+        q_time_fail("date", "year is out of range");
+    }
+    if (month != static_cast<int>(month) || day != static_cast<int>(day) ||
+        !q_time_valid_date(static_cast<int>(year), static_cast<int>(month), static_cast<int>(day))) {
+        q_time_fail("date", "date is not a real calendar day");
+    }
+    return static_cast<int32_t>(q_days_from_civil(static_cast<int>(year), static_cast<int>(month), static_cast<int>(day)));
+}
+
+inline int32_t q_time_ymd(const char* text) {
+    int32_t days = 0;
+    if (!q_parse_ymd(text ? text : "", "-/.", &days)) {
+        q_runtime_reportf("runtime error: time::ymd() cannot parse '%s'\n", q_time_shown(text).c_str());
+        q_exit(1);
+    }
+    return days;
+}
+
+inline int32_t q_time_today(bool local) {
     QTimeParts p;
     if (!q_time_break(q_time_now(), local, p)) {
         q_time_fail("today", "could not read the clock");
     }
-    p.hour = 0;
-    p.minute = 0;
-    p.second = 0;
+    return q_time_date(p.year, p.month, p.day);
+}
+
+inline int64_t q_time_year(int32_t days) {
+    int y = 0, m = 0, d = 0;
+    q_civil_from_days(days, y, m, d);
+    return y;
+}
+inline int64_t q_time_month(int32_t days) {
+    int y = 0, m = 0, d = 0;
+    q_civil_from_days(days, y, m, d);
+    return m;
+}
+inline int64_t q_time_day(int32_t days) {
+    int y = 0, m = 0, d = 0;
+    q_civil_from_days(days, y, m, d);
+    return d;
+}
+inline int64_t q_time_weekday(int32_t days) {
+    int64_t wd = (static_cast<int64_t>(days) + 3) % 7;
+    if (wd < 0) wd += 7;
+    return wd;
+}
+inline int64_t q_time_yearday(int32_t days) {
+    int y = 0, m = 0, d = 0;
+    q_civil_from_days(days, y, m, d);
+    return static_cast<int64_t>(days) - q_days_from_civil(y, 1, 1) + 1;
+}
+
+inline QList* q_time_date_parts(int32_t days) {
+    QValue list = qv_list(5, nullptr);
+    QList* xs = list.data.list_val;
+    xs->push_back(qv_int(q_time_year(days)));
+    xs->push_back(qv_int(q_time_month(days)));
+    xs->push_back(qv_int(q_time_day(days)));
+    xs->push_back(qv_int(q_time_weekday(days)));
+    xs->push_back(qv_int(q_time_yearday(days)));
+    return xs;
+}
+
+inline int32_t q_time_from_days(int64_t n) {
+    if (n < static_cast<int64_t>(INT32_MIN) || n > static_cast<int64_t>(INT32_MAX)) {
+        q_time_fail("from_days", "day count is outside the range of dates");
+    }
+    return static_cast<int32_t>(n);
+}
+
+inline int64_t q_time_to_days(int32_t days) { return days; }
+
+inline const char* q_time_format_date(int32_t days, const char* pattern) {
+    if (pattern == nullptr || pattern[0] == '\0') {
+        q_time_fail("format", "pattern must not be empty");
+    }
+    return q_time_format(static_cast<double>(days) * 86400.0, pattern, false);
+}
+
+inline QValue q_time_parse_date(const char* text, const char* pattern) {
+    if (pattern == nullptr || pattern[0] == '\0') {
+        q_time_fail("parse", "pattern must not be empty");
+    }
+    if (text == nullptr) text = "";
+    std::tm tm{};
+    std::istringstream in(text);
+    in.imbue(std::locale::classic());
+    in >> std::get_time(&tm, pattern);
+    if (in.fail()) return q_time_parse_err(text, std::string("with pattern '") + pattern + "'");
+    char extra = 0;
+    if (in >> extra) return q_time_parse_err(text, std::string("with pattern '") + pattern + "'");
+    const int year = tm.tm_year + 1900;
+    const int month = tm.tm_mon + 1;
+    const int day = tm.tm_mday;
+    if (!q_time_valid_date(year, month, day)) {
+        return q_time_parse_err(text, std::string("with pattern '") + pattern + "'");
+    }
+    return qv_ok(qv_date(static_cast<int32_t>(q_days_from_civil(year, month, day))));
+}
+
+inline QValue q_time_period_days(int64_t n) { return qv_period(0, 0, q_period_fit(n)); }
+
+inline QValue q_time_period_weeks(int64_t n) {
+    if (n > static_cast<int64_t>(INT32_MAX) / 7 || n < static_cast<int64_t>(INT32_MIN) / 7) {
+        q_time_fail("weeks", "count is too large");
+    }
+    return qv_period(0, 0, static_cast<int32_t>(n * 7));
+}
+
+inline QValue q_time_period_months(int64_t n) { return qv_period(0, q_period_fit(n), 0); }
+
+inline QValue q_time_period_quarters(int64_t n) {
+    if (n > static_cast<int64_t>(INT32_MAX) / 3 || n < static_cast<int64_t>(INT32_MIN) / 3) {
+        q_time_fail("quarters", "count is too large");
+    }
+    return qv_period(0, static_cast<int32_t>(n * 3), 0);
+}
+
+inline QValue q_time_period_years(int64_t n) { return qv_period(q_period_fit(n), 0, 0); }
+
+inline int32_t q_time_date_from_ts(double ts, bool local) {
+    QTimeParts p;
+    if (!q_time_break(ts, local, p)) {
+        q_time_fail("date_from_ts", "timestamp is not a finite time it can show");
+    }
+    return q_time_date(p.year, p.month, p.day);
+}
+
+inline double q_time_ts_from_date(int32_t days, bool local) {
+    int y = 0, m = 0, d = 0;
+    q_civil_from_days(days, y, m, d);
+    QTimeParts p;
+    p.year = y;
+    p.month = m;
+    p.day = d;
     double ts = 0;
     if (!q_time_compose(p, local, ts)) {
-        q_time_fail("today", "could not find midnight");
+        q_time_fail("ts_from_date", "date is not a real calendar day");
     }
     return ts;
 }

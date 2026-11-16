@@ -17,6 +17,7 @@ struct QResourceHandle;
 struct QStruct;
 struct QStructDef;
 struct QTable;
+struct QPeriod;
 
 struct QElemType;
 
@@ -46,7 +47,9 @@ struct QValue {
         VAL_RESULT,
         VAL_RESOURCE,
         VAL_STRUCT,
-        VAL_TABLE
+        VAL_TABLE,
+        VAL_DATE,
+        VAL_PERIOD
     } type;
 
     union {
@@ -62,6 +65,7 @@ struct QValue {
         QResourceHandle* resource_val;
         QStruct* struct_val;
         QTable* table_val;
+        QPeriod* period_val;
     } data;
 };
 
@@ -100,6 +104,8 @@ inline constexpr QElemType q_elem_int{QValue::VAL_INT, nullptr, nullptr, nullptr
 inline constexpr QElemType q_elem_float{QValue::VAL_FLOAT, nullptr, nullptr, nullptr, -1, "float"};
 inline constexpr QElemType q_elem_bool{QValue::VAL_BOOL, nullptr, nullptr, nullptr, -1, "bool"};
 inline constexpr QElemType q_elem_str{QValue::VAL_STRING, nullptr, nullptr, nullptr, -1, "str"};
+inline constexpr QElemType q_elem_date{QValue::VAL_DATE, nullptr, nullptr, nullptr, -1, "date"};
+inline constexpr QElemType q_elem_period{QValue::VAL_PERIOD, nullptr, nullptr, nullptr, -1, "period"};
 
 // q_type_name is the name Quark uses for a value type ("int", "str", ...),
 // as type() returns it. Struct values are shown by their struct's name where
@@ -119,6 +125,8 @@ inline const char* q_type_name(QValue::ValueType t) {
         case QValue::VAL_RESOURCE: return "resource";
         case QValue::VAL_STRUCT: return "struct";
         case QValue::VAL_TABLE: return "tbl";
+        case QValue::VAL_DATE: return "date";
+        case QValue::VAL_PERIOD: return "period";
     }
     return "unknown";
 }

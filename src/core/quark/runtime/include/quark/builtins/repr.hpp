@@ -114,6 +114,17 @@ inline void q_repr_into(std::string& out, QValue v, bool quoteStrings, QReprCtx&
             std::snprintf(buf, sizeof(buf), "%lld", v.data.int_val);
             out += buf;
             return;
+        case QValue::VAL_DATE:
+            q_format_date(static_cast<int32_t>(v.data.int_val), buf, sizeof(buf));
+            out += buf;
+            return;
+        case QValue::VAL_PERIOD:
+            if (v.data.period_val == nullptr) {
+                out += "0 days";
+                return;
+            }
+            out += q_format_period(*v.data.period_val);
+            return;
         case QValue::VAL_FLOAT:
             out += q_format_float(v.data.float_val, buf, sizeof(buf));
             return;
@@ -245,6 +256,9 @@ inline std::string q_table_cell(const QVector& v, int32_t r, bool truncate) {
             return q_format_float(q_vec_f64_data(v)[r], buf, sizeof buf);
         case QVector::Type::BOOL:
             return q_vec_bool_at(v, static_cast<size_t>(r)) ? "true" : "false";
+        case QVector::Type::DATE:
+            q_format_date(q_vec_date_data(v)[r], buf, sizeof buf);
+            return buf;
         case QVector::Type::STR: {
             std::string out;
             size_t width = 0;

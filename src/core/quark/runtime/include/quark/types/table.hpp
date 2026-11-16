@@ -66,6 +66,7 @@ inline const char* q_dtype_word(int dtype) {
         case static_cast<int>(QVector::Type::I64): return "int";
         case static_cast<int>(QVector::Type::BOOL): return "bool";
         case static_cast<int>(QVector::Type::STR): return "str";
+        case static_cast<int>(QVector::Type::DATE): return "date";
     }
     return "any";
 }

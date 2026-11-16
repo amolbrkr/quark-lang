@@ -426,6 +426,8 @@ func (a *Analyzer) finalizeSymbols() {
 				s.Storage = ir.StorageFloat
 			case s.StoreType.Equals(TypeBool):
 				s.Storage = ir.StorageBool
+			case s.StoreType.Equals(TypeDate):
+				s.Storage = ir.StorageDate
 			default:
 				s.Storage = ir.StorageValue
 			}

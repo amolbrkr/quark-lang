@@ -313,7 +313,7 @@ func TestTables_QueryRejected(t *testing.T) {
 		// mutate.
 		q("mutate_positional", "r = staff | e -> mutate(e.id + 1)\n", "mutate's columns are written name = expression"),
 		q("mutate_twice", "r = staff | e -> mutate(k = 1, k = 2)\n", "mutate defines column 'k' twice"),
-		q("mutate_list_column", "r = staff | e -> mutate(k = list [e.id])\n", "column 'k' would be list[int]; table columns are int, float, bool or str"),
+		q("mutate_list_column", "r = staff | e -> mutate(k = list [e.id])\n", "column 'k' would be list[int]; table columns are int, float, bool, str or date"),
 		q("mutate_unknown_type", "fn f(x) -> x\nr = staff | e -> mutate(k = f(e.id))\n", "the type of column 'k' isn't known"),
 		q("mutate_null", "r = staff | e -> mutate(k = null)\n", "column 'k' would be null"),
 		q("mutate_overflow", "r = staff | e -> mutate(k = e.id * 9223372036854775807)\n", "integer overflow in '*'"),

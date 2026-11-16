@@ -494,9 +494,71 @@ func (a *Analyzer) analyzeVectorArith(node *ast.TreeNode, leftType, rightType Ty
 	return nil, false
 }
 
+// temporalArith types date and period arithmetic (specs/dates_v0_1_spec.md).
+// ok is false when neither operand is a date or a period.
+func (a *Analyzer) temporalArith(node *ast.TreeNode, leftType, rightType Type) (Type, bool) {
+	op := node.Token.Type
+	dateL, dateR := leftType.Equals(TypeDate), rightType.Equals(TypeDate)
+	perL, perR := leftType.Equals(TypePeriod), rightType.Equals(TypePeriod)
+	if !dateL && !dateR && !perL && !perR {
+		return nil, false
+	}
+	unk := isUnknownType(leftType) || isUnknownType(rightType)
+	intL, intR := isIntLike(leftType), isIntLike(rightType)
+	bad := func(msg string) (Type, bool) {
+		a.errorAt(node, "%s", msg)
+		return TypeError, true
+	}
+	switch op {
+	case token.PLUS:
+		switch {
+		case unk:
+			return TypeAny, true
+		case (dateL && perR) || (perL && dateR) || (dateL && intR) || (intL && dateR):
+			return TypeDate, true
+		case perL && perR:
+			return TypePeriod, true
+		case dateL && dateR:
+			return bad("operator '+' cannot add two dates; subtract them for a day count, or add a period or a number of days")
+		default:
+			return bad(fmt.Sprintf("operator '+' cannot add %s and %s", leftType.String(), rightType.String()))
+		}
+	case token.MINUS:
+		switch {
+		case unk:
+			return TypeAny, true
+		case dateL && perR, dateL && intR:
+			return TypeDate, true
+		case dateL && dateR:
+			return TypeInt, true
+		case perL && perR:
+			return TypePeriod, true
+		default:
+			return bad(fmt.Sprintf("operator '-' cannot subtract %s from %s", rightType.String(), leftType.String()))
+		}
+	case token.MULTIPLY:
+		switch {
+		case unk:
+			return TypeAny, true
+		case (perL && intR) || (intL && perR):
+			return TypePeriod, true
+		default:
+			return bad(fmt.Sprintf("operator '*' cannot multiply %s and %s", leftType.String(), rightType.String()))
+		}
+	default:
+		if unk {
+			return TypeAny, true
+		}
+		return bad(fmt.Sprintf("operator '%s' is not defined for %s and %s", op.String(), leftType.String(), rightType.String()))
+	}
+}
+
 // analyzeArith types `+ - * / % **` on scalars (and `+` on strings).
 func (a *Analyzer) analyzeArith(node *ast.TreeNode, leftType, rightType Type) Type {
 	op := node.Token.Type
+	if t, ok := a.temporalArith(node, leftType, rightType); ok {
+		return t
+	}
 	if op == token.MODULO {
 		if isIntLike(leftType) && isIntLike(rightType) {
 			return TypeInt
@@ -545,6 +607,18 @@ func (a *Analyzer) analyzeOrdering(node *ast.TreeNode, leftType, rightType Type)
 			a.errorAt(node, "cannot compare vec with %s", leftType.String())
 		}
 		return &VectorType{ElementType: TypeBool}
+	}
+	dateL, dateR := leftType.Equals(TypeDate), rightType.Equals(TypeDate)
+	if dateL || dateR {
+		if (dateL && dateR) || isUnknownType(leftType) || isUnknownType(rightType) {
+			return TypeBool
+		}
+		other := rightType
+		if dateR {
+			other = leftType
+		}
+		a.errorAt(node, "cannot compare a date with %s", other.String())
+		return TypeError
 	}
 	if (IsComparable(leftType) && IsComparable(rightType)) || isUnknownType(leftType) || isUnknownType(rightType) {
 		return TypeBool
@@ -598,6 +672,11 @@ func (a *Analyzer) analyzeVector(node *ast.TreeNode) Type {
 		childType := a.Analyze(child)
 		if isUnknownType(childType) {
 			elemType = MergeTypes(elemType, childType)
+			continue
+		}
+		if childType.Equals(TypeDate) {
+			a.errorAt(child, "vec literals can't hold date yet")
+			elemType = MergeTypes(elemType, TypeAny)
 			continue
 		}
 		if !childType.Equals(TypeInt) && !childType.Equals(TypeFloat) && !childType.Equals(TypeBool) && !childType.Equals(TypeString) {

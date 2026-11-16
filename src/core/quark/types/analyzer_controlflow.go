@@ -10,6 +10,10 @@ import (
 // Results would silently discard errors, and vector comparisons yield a
 // vec[bool] whose emptiness says nothing about its elements.
 func (a *Analyzer) checkCondition(node *ast.TreeNode, t Type) {
+	if t != nil && (t.Equals(TypeDate) || t.Equals(TypePeriod)) {
+		a.errorAt(node, "a %s cannot be used as a condition; compare it with another %s", t.String(), t.String())
+		return
+	}
 	switch t.(type) {
 	case *ResultType:
 		a.errorAt(node, "result cannot be used as a condition; use is_ok(r), is_err(r) or when")

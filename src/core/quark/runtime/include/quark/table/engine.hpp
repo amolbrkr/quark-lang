@@ -112,6 +112,13 @@ inline QVector* take(const QVector& src, const int32_t* idx, int32_t n) {
             for (int32_t i = 0; i < n; i++) d[i] = s[idx[i]];
             break;
         }
+        case Type::DATE: {
+            dst = q_vec_alloc(Type::DATE, static_cast<size_t>(n));
+            const int32_t* s = q_vec_date_data(src);
+            int32_t* d = q_vec_date_data_mut(*dst);
+            for (int32_t i = 0; i < n; i++) d[i] = s[idx[i]];
+            break;
+        }
         case Type::BOOL: {
             dst = q_vec_alloc(Type::BOOL, static_cast<size_t>(n));
             for (int32_t i = 0; i < n; i++) {
@@ -181,6 +188,11 @@ inline int compare_rows(const QVector& v, int32_t a, int32_t b, bool desc) {
             c = x < y ? -1 : (x > y ? 1 : 0);
             break;
         }
+        case Type::DATE: {
+            const int32_t x = q_vec_date_data(v)[a], y = q_vec_date_data(v)[b];
+            c = x < y ? -1 : (x > y ? 1 : 0);
+            break;
+        }
         case Type::F64: {
             const double x = q_vec_f64_data(v)[a], y = q_vec_f64_data(v)[b];
             const bool xn = std::isnan(x), yn = std::isnan(y);
@@ -209,6 +221,7 @@ inline bool rows_equal(const QVector& v, int32_t a, int32_t b) {
     if (an || bn) return an == bn;
     switch (v.type) {
         case Type::I64: return q_vec_i64_data(v)[a] == q_vec_i64_data(v)[b];
+        case Type::DATE: return q_vec_date_data(v)[a] == q_vec_date_data(v)[b];
         case Type::F64: {
             const double x = q_vec_f64_data(v)[a], y = q_vec_f64_data(v)[b];
             return x == y || (std::isnan(x) && std::isnan(y));
@@ -281,6 +294,14 @@ inline int32_t* sort_one_numeric(QTable* t, SortKey key) {
             std::vector<std::pair<int, int32_t>> pairs;
             pairs.reserve(nums.size());
             for (int32_t i : nums) pairs.push_back({q_vec_bool_at(col, static_cast<size_t>(i)) ? 1 : 0, i});
+            write(std::move(pairs));
+            break;
+        }
+        case Type::DATE: {
+            const int32_t* x = q_vec_date_data(col);
+            std::vector<std::pair<int32_t, int32_t>> pairs;
+            pairs.reserve(nums.size());
+            for (int32_t i : nums) pairs.push_back({x[i], i});
             write(std::move(pairs));
             break;
         }
@@ -364,6 +385,11 @@ inline int cmp_key(const QVector& v, int32_t a, int32_t b, bool desc, const int3
             c = x < y ? -1 : (x > y ? 1 : 0);
             break;
         }
+        case Type::DATE: {
+            const int32_t x = q_vec_date_data(v)[a], y = q_vec_date_data(v)[b];
+            c = x < y ? -1 : (x > y ? 1 : 0);
+            break;
+        }
         case Type::F64: {
             const double x = q_vec_f64_data(v)[a], y = q_vec_f64_data(v)[b];
             const bool xn = std::isnan(x), yn = std::isnan(y);
@@ -398,7 +424,7 @@ inline int32_t* sort_perm(QTable* t, const SortKey* keys, int nkeys) {
         return perm;
     }
     const QVector& k0 = *column(t, keys[0].col);
-    if (nkeys == 1 && (k0.type == Type::I64 || k0.type == Type::F64 || k0.type == Type::BOOL)) {
+    if (nkeys == 1 && (k0.type == Type::I64 || k0.type == Type::F64 || k0.type == Type::BOOL || k0.type == Type::DATE)) {
         return sort_one_numeric(t, keys[0]);
     }
 
@@ -464,6 +490,7 @@ inline uint64_t hash_value(const QVector& v, int32_t i) {
     if (is_null(v, i)) return 0x9e3779b97f4a7c15ULL;
     switch (v.type) {
         case Type::I64: return mix64(static_cast<uint64_t>(q_vec_i64_data(v)[i]));
+        case Type::DATE: return mix64(static_cast<uint64_t>(static_cast<uint32_t>(q_vec_date_data(v)[i])));
         case Type::F64: {
             double x = q_vec_f64_data(v)[i];
             if (x == 0.0) x = 0.0; // -0.0 groups with 0.0
@@ -674,8 +701,9 @@ inline QVector* agg_sum(const QVector& col, const Grouping& g) {
             return out;
         }
         case Type::STR: break;
+        case Type::DATE: break;
     }
-    fail("sum needs a number or bool column, got str");
+    fail(col.type == Type::DATE ? "sum needs a number or bool column, got date" : "sum needs a number or bool column, got str");
 }
 
 // agg_mean: a float per group; null for a group with no values. Float
@@ -683,6 +711,7 @@ inline QVector* agg_sum(const QVector& col, const Grouping& g) {
 // share of true values, as q_vec_mean_present does for a whole column.
 inline QVector* agg_mean(const QVector& col, const Grouping& g) {
     if (col.type == Type::STR) fail("mean needs a number or bool column, got str");
+    if (col.type == Type::DATE) fail("mean needs a number or bool column, got date");
     const size_t ng = static_cast<size_t>(g.ngroups);
     QVector* out = q_vec_alloc(Type::F64, ng);
     double* d = q_vec_f64_data_mut(*out);
@@ -744,6 +773,15 @@ inline QVector* agg_extremum(const QVector& col, const Grouping& g, bool want_ma
     switch (col.type) {
         case Type::I64: {
             const int64_t* x = q_vec_i64_data(col);
+            for (int32_t r = 0; r < g.nrows; r++) {
+                if (is_null(col, r)) continue;
+                int32_t& b = best[static_cast<size_t>(group_of(g, r))];
+                if (b < 0 || (want_max ? x[r] > x[b] : x[r] < x[b])) b = r;
+            }
+            break;
+        }
+        case Type::DATE: {
+            const int32_t* x = q_vec_date_data(col);
             for (int32_t r = 0; r < g.nrows; r++) {
                 if (is_null(col, r)) continue;
                 int32_t& b = best[static_cast<size_t>(group_of(g, r))];

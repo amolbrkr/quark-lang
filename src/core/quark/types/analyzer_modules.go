@@ -249,6 +249,8 @@ func quarkTypeToNativeCType(t Type) string {
 		switch v.Name {
 		case "int":
 			return "int64_t"
+		case "date":
+			return "int32_t"
 		case "float":
 			return "double"
 		case "bool":

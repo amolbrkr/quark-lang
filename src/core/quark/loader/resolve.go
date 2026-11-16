@@ -565,6 +565,7 @@ func (ml *ModuleLoader) walkType(n *ast.TreeNode, c rctx) {
 // builtinTypeNames are the annotation types that aren't structs.
 var builtinTypeNames = map[string]bool{
 	"int": true, "float": true, "str": true, "bool": true, "null": true, "any": true,
+	"date": true, "period": true,
 	"list": true, "dict": true, "vec": true, "result": true, "resource": true, "fn": true,
 	"tbl": true,
 }

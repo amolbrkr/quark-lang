@@ -144,6 +144,7 @@ inline quark::tbl::ColOut q_col_new(int dtype, long long n) {
 
 inline void q_col_push_float(quark::tbl::ColOut& b, double x) { q_vec_f64_data_mut(*b.v)[b.n++] = x; }
 inline void q_col_push_int(quark::tbl::ColOut& b, long long x) { q_vec_i64_data_mut(*b.v)[b.n++] = static_cast<int64_t>(x); }
+inline void q_col_push_date(quark::tbl::ColOut& b, int32_t x) { q_vec_date_data_mut(*b.v)[b.n++] = x; }
 inline void q_col_push_bool(quark::tbl::ColOut& b, bool x) {
     if (x) quark::vec::put_bit(b.v->values, static_cast<size_t>(b.n), true);
     b.n++;

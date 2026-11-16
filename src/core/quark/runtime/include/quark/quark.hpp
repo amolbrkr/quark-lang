@@ -33,6 +33,7 @@
 #include "core/cell.hpp"
 #include "types/closure.hpp"
 #include "core/constructors.hpp"
+#include "types/date.hpp"
 
 // Type-specific operations
 #include "types/string.hpp"

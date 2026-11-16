@@ -226,6 +226,8 @@ func zeroOf(r Rep) Expr {
 		return &Const{R: RepFloat, Text: "0.0"}
 	case RepBool:
 		return &Const{R: RepBool, Text: "false"}
+	case RepDate:
+		return &Const{R: RepDate, Text: "0"}
 	}
 	return nullValue()
 }
@@ -436,7 +438,7 @@ func (l *lowerer) queryFilter(cur Expr, st *types.QueryStep) Expr {
 }
 
 // pushFns are the ColOut pushes by column type.
-var pushFns = map[Rep]string{RepInt: "q_col_push_int", RepFloat: "q_col_push_float", RepBool: "q_col_push_bool", RepValue: "q_col_push_str"}
+var pushFns = map[Rep]string{RepInt: "q_col_push_int", RepFloat: "q_col_push_float", RepBool: "q_col_push_bool", RepDate: "q_col_push_date", RepValue: "q_col_push_str"}
 
 func (l *lowerer) queryMutate(cur Expr, st *types.QueryStep) Expr {
 	for _, c := range st.Cols {

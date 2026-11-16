@@ -579,7 +579,7 @@ CSV and TSV files as tables (`specs/tables_v0_1_spec.md` §8, D15-D18). Import w
 | `write_file` | `t: tbl, path: str -> result` | Writes a header line, then a line per row; `ok(null)` or `err(message)` |
 | `format_text` | `t: tbl -> str` | The text `write_file` writes |
 
-**Typed by where the table goes.** When the read's table is stored where a `tbl[R]` is expected, the file is read with `R`'s columns and types: an annotated variable (`staff: tbl[Employee] = unwrap(csv::read_file('staff.csv'))`), a `tbl[R]` parameter, a struct field or a return annotation. A cell that doesn't parse as its column's type is an error naming the line, the column and the text: `staff.csv:412: column 'salary': '12k' is not a float (and 3 more problems)`. Elsewhere (`t = unwrap(csv::read_file(p))`, `when csv::read_file(p): ...`) each column's type is inferred from all of its values: int if every value is an int, else float if every value is a number, else bool (`true`/`false`, `TRUE`/`FALSE`, `True`/`False`, `T`/`F`), else str. Such a table's row type is unknown to the compiler (`tbl`) until it reaches a `tbl[R]` slot, where it is checked (semantics.md §9.5).
+**Typed by where the table goes.** When the read's table is stored where a `tbl[R]` is expected, the file is read with `R`'s columns and types: an annotated variable (`staff: tbl[Employee] = unwrap(csv::read_file('staff.csv'))`), a `tbl[R]` parameter, a struct field or a return annotation. A cell that doesn't parse as its column's type is an error naming the line, the column and the text: `staff.csv:412: column 'salary': '12k' is not a float (and 3 more problems)`. Elsewhere (`t = unwrap(csv::read_file(p))`, `when csv::read_file(p): ...`) each column's type is inferred from all of its values: int if every value is an int, else float if every value is a number, else bool (`true`/`false`, `TRUE`/`FALSE`, `True`/`False`, `T`/`F`), else date if every value is a calendar day (`2024-01-02` or `2024-1-2`), else str. A typed `date` column accepts the same day text and is written back as `YYYY-MM-DD`. `01/30/2022` is not a date. Such a table's row type is unknown to the compiler (`tbl`) until it reaches a `tbl[R]` slot, where it is checked (semantics.md §9.5).
 
 **Columns are matched by name**, so a file may have more columns than the struct and in another order. `columns` maps fields to header names that differ: `csv::read_file('emp.csv', dict { id: 'EmpID', salary: 'Salary ($)' })`; unmapped fields use their own name. The mapping must be a `dict` literal of string literals, and its fields are checked against the row struct at compile time. A column missing from the header is an error that says how to map it: `emp.csv: no column named 'id' in the header (columns: EmpID, name); map field 'id' to one of them with dict { id: '...' }`. For an untyped read, the mapping names the table's columns.
 
@@ -624,44 +624,45 @@ print(stats::mean(vec [true, false, false, true]))    // 0.5
 
 ## `std/time`
 
-Wall-clock and monotonic time, dates and durations. Timestamps and durations are float seconds. Import with `incl 'std/time' as time`.
+Clocks, calendar dates and instants. Import with `incl 'std/time' as time`. A `date` is a calendar day (Arrow `date32`: days since 1970-01-01). A `period` is a calendar offset. An instant is still a `float`, seconds since the Unix epoch. The design is `specs/dates_v0_1_spec.md`.
 
 | Function | Signature | Description |
 |---|---|---|
 | `now` | `-> float` | Seconds since the Unix epoch (wall clock), with sub-second precision |
 | `clock` | `-> float` | Monotonic seconds from an arbitrary starting point; subtract two readings to time code |
 | `sleep` | `seconds: float` | Pause for `seconds` (fractions allowed; zero or negative returns at once) |
-| `since` | `start: float -> float` | Seconds elapsed since a `clock()` reading: `time::clock() - start` |
-| `seconds` | `n: float -> float` | `n` as seconds |
-| `minutes` | `n: float -> float` | `n` minutes, in seconds (`time::minutes(5)` is `300.0`) |
-| `hours` | `n: float -> float` | `n` hours, in seconds |
-| `days` | `n: float -> float` | `n` days, in seconds (`86400.0` each) |
-| `weeks` | `n: float -> float` | `n` weeks, in seconds |
-| `duration` | `seconds: float -> str` | A short reading of a duration. Under a second it is milliseconds (`0.25` → `250ms`, `0` → `0ms`); otherwise zero units are left out (`75.5` → `1m 15.5s`, `93784` → `1d 2h 3m 4s`, `60` → `1m`). A negative duration keeps its sign. A non-finite number is a runtime error |
-| `format` | `ts: float, pattern: str = '%Y-%m-%d %H:%M:%S', local: bool = false -> str` | `ts` with a `strftime` pattern. UTC unless `local` is true. The fractional part of `ts` is dropped. `%z` and `%Z` follow the machine's zone even when the other fields are UTC, because the C library fills them that way. An empty result, or one over 1MB, is a runtime error |
-| `iso` | `ts: float -> str` | ISO 8601 UTC, such as `2026-11-11T19:24:06Z`. A fractional second is kept, trailing zeros dropped (`0.5` → `1970-01-01T00:00:00.5Z`) |
-| `parse` | `text: str, pattern: str = '%Y-%m-%d', local: bool = false -> result` | `ok(timestamp)` when `text` matches a `strftime` pattern, otherwise `err`. The whole string must match; trailing whitespace is accepted and other trailing text is not. An empty pattern is a runtime error. A date that is not a real calendar day is an `err` |
-| `parse_iso` | `text: str -> result` | `ok(timestamp)` for `YYYY-MM-DD`, optionally followed by `T`, `t` or a space and `HH:MM:SS`, an optional fraction, and an optional `Z`/`z` or `±hh:mm` (the colon is required). A missing zone means UTC, and an offset is subtracted. Otherwise `err` |
-| `parts` | `ts: float, local: bool = false -> time::Parts` | The calendar fields of `ts`. UTC unless `local` is true |
-| `make` | `year: int, month: int, day: int, hour: int = 0, minute: int = 0, second: float = 0.0, local: bool = false -> float` | The timestamp for a calendar time, the inverse of `parts`. A date that is not a real calendar time, a year outside −999999..999999, or a non-finite second is a runtime error |
-| `today` | `local: bool = false -> float` | Midnight of the current day, UTC unless `local` is true |
+| `since` | `start: float -> float` | Seconds elapsed since a `clock()` reading |
+| `seconds` / `minutes` / `hours` | `n: float -> float` | `n` of that unit, in seconds (`time::minutes(5)` is `300.0`) |
+| `duration` | `seconds: float -> str` | A short reading of a duration in seconds (`75.5` → `1m 15.5s`). A non-finite number is a runtime error |
+| `date` | `year: int, month: int, day: int -> date` | That calendar day. An impossible day is a runtime error |
+| `ymd` | `text: str -> date` | `2022-01-30`, `2022-1-30`, `2022/1/30` or `2022.1.30`. Anything else is a runtime error |
+| `today` | `local: bool = false -> date` | The current calendar day. UTC unless `local` is true |
+| `year` / `month` / `day` / `weekday` | `d: date -> int` | A field of `d`. `weekday` is 0 for Monday |
+| `parts` | `d: date -> time::DateParts` | `year`, `month`, `day`, `weekday`, `yearday` (1 = 1 January) |
+| `from_days` / `to_days` | day index ↔ `date` | Days since 1970-01-01. `to_int` does not accept a date |
+| `format` | `d: date, pattern: str = '%Y-%m-%d' -> str` | `d` with a `strftime` pattern |
+| `parse` | `text: str, pattern: str = '%Y-%m-%d' -> result` | `ok(date)` or `err`. The whole string must match. An empty pattern is a runtime error |
+| `days` / `weeks` / `months` / `quarters` / `years` | `n: int -> period` | A calendar offset. `d + time::months(1)` rolls an impossible day back (31 January + 1 month is 28 or 29 February). `d + 3` adds days, the same as `d + time::days(3)`. `d2 - d1` is an `int` |
+| `timestamp` | `year, month, day, hour = 0, minute = 0, second = 0.0, local = false -> float` | An instant. A time that is not a real calendar time is a runtime error. The name is not `time`: a module member cannot share the module's name |
+| `iso` | `ts: float -> str` | ISO 8601 UTC, such as `2026-11-11T19:24:06Z` |
+| `format_time` | `ts: float, pattern: str = '%Y-%m-%d %H:%M:%S', local: bool = false -> str` | An instant with a `strftime` pattern |
+| `parse_time` | `text: str, pattern: str = '%Y-%m-%d %H:%M:%S', local: bool = false -> result` | `ok(timestamp)` or `err` |
+| `parse_iso` | `text: str -> result` | `ok(timestamp)` for ISO 8601 with `Z` or `±hh:mm`, otherwise `err` |
+| `parts_time` | `ts: float, local: bool = false -> time::Parts` | The calendar fields of an instant, including `hour`, `minute` and `second` |
+| `date_from_ts` / `ts_from_date` | instant ↔ `date` | The calendar day of an instant, and midnight of a date as a timestamp |
 
-`time::Parts` has `year`, `month`, `day`, `hour`, `minute`, `weekday` and `yearday` as ints, and `second` as a float. `weekday` is 0 for Monday (1970-01-01, a Thursday, is 3). `yearday` is 1 for 1 January. `second` is in `[0, 60)`.
-
-February 29 in a common year, and month 13, fail in `make`, `parse` and `parse_iso`. Only UTC and the machine's local zone are supported. A timestamp whose absolute value is above `3.2e13` seconds, or that is not finite, is a runtime error in `format`, `iso` and `parts`.
+Only UTC and the machine's local zone are supported. February 29 in a common year fails in `date`, `ymd`, `parse` and `timestamp`.
 
 ```quark
 incl 'std/time' as time
 
-start = time::clock()
-time::sleep(0.1)
-print(time::since(start) >= 0.1)          // true
-print(time::duration(75.5))                // 1m 15.5s
+cutoff: date = time::ymd('2022-01-30')
+print(cutoff + time::months(3))            // 2022-04-30
+print(cutoff + time::days(7))              // 2022-02-06
 print(time::iso(0.0))                      // 1970-01-01T00:00:00Z
-print(time::parts(0.0).weekday)            // 3
-print(time::make(1970, 1, 2))              // 86400.0
+print(time::timestamp(1970, 1, 2))         // 86400.0
 when time::parse('2024-02-29'):
-    ok t -> print(time::format(t, '%Y-%m-%d'))   // 2024-02-29
+    ok d -> print(d)                       // 2024-02-29
     err e -> print(e)
 ```
 

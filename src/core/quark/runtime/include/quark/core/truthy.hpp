@@ -50,6 +50,12 @@ inline bool q_truthy(QValue v) {
             q_runtime_reportf("runtime error: a table used as a condition; "
                               "test a column, such as len(t.col) > 0 or any(t.col > 0)\n");
             q_exit(1);
+        case QValue::VAL_DATE:
+            q_runtime_reportf("runtime error: a date used as a condition; compare it with another date\n");
+            q_exit(1);
+        case QValue::VAL_PERIOD:
+            q_runtime_reportf("runtime error: a period used as a condition; compare it with another period\n");
+            q_exit(1);
         default:
             return false;
     }

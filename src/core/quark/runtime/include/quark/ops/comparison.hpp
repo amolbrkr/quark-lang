@@ -43,6 +43,9 @@ inline QValue q_lt(QValue a, QValue b) {
     if (a.type == QValue::VAL_VECTOR || b.type == QValue::VAL_VECTOR) {
         return q_vec_lt(a, b);
     }
+    if (a.type == QValue::VAL_DATE || b.type == QValue::VAL_DATE) {
+        return qv_bool(q_temporal_ordered(a, b, "<"));
+    }
     // Two strings compare by byte order (as list.sort does).
     if (a.type == QValue::VAL_STRING && b.type == QValue::VAL_STRING) {
         return qv_bool(q_str_compare(a, b) < 0);
@@ -60,6 +63,9 @@ inline QValue q_lt(QValue a, QValue b) {
 inline QValue q_lte(QValue a, QValue b) {
     if (a.type == QValue::VAL_VECTOR || b.type == QValue::VAL_VECTOR) {
         return q_vec_lte(a, b);
+    }
+    if (a.type == QValue::VAL_DATE || b.type == QValue::VAL_DATE) {
+        return qv_bool(q_temporal_ordered(a, b, "<="));
     }
     // Two strings compare by byte order (as list.sort does).
     if (a.type == QValue::VAL_STRING && b.type == QValue::VAL_STRING) {
@@ -79,6 +85,9 @@ inline QValue q_gt(QValue a, QValue b) {
     if (a.type == QValue::VAL_VECTOR || b.type == QValue::VAL_VECTOR) {
         return q_vec_gt(a, b);
     }
+    if (a.type == QValue::VAL_DATE || b.type == QValue::VAL_DATE) {
+        return qv_bool(q_temporal_ordered(a, b, ">"));
+    }
     // Two strings compare by byte order (as list.sort does).
     if (a.type == QValue::VAL_STRING && b.type == QValue::VAL_STRING) {
         return qv_bool(q_str_compare(a, b) > 0);
@@ -96,6 +105,9 @@ inline QValue q_gt(QValue a, QValue b) {
 inline QValue q_gte(QValue a, QValue b) {
     if (a.type == QValue::VAL_VECTOR || b.type == QValue::VAL_VECTOR) {
         return q_vec_gte(a, b);
+    }
+    if (a.type == QValue::VAL_DATE || b.type == QValue::VAL_DATE) {
+        return qv_bool(q_temporal_ordered(a, b, ">="));
     }
     // Two strings compare by byte order (as list.sort does).
     if (a.type == QValue::VAL_STRING && b.type == QValue::VAL_STRING) {
@@ -139,6 +151,9 @@ inline bool vectors_identical(const QVector& a, const QVector& b) {
             case QVector::Type::STR:
                 if (q_vec_str_at(a, i) != q_vec_str_at(b, i)) return false;
                 break;
+            case QVector::Type::DATE:
+                if (q_vec_date_data(a)[i] != q_vec_date_data(b)[i]) return false;
+                break;
         }
     }
     return true;
@@ -162,6 +177,14 @@ inline bool values_equal(const QValue& a, const QValue& b, int depth) {
     switch (a.type) {
         case QValue::VAL_INT:
             return a.data.int_val == b.data.int_val;
+        case QValue::VAL_DATE:
+            return a.data.int_val == b.data.int_val;
+        case QValue::VAL_PERIOD: {
+            const QPeriod* pa = a.data.period_val;
+            const QPeriod* pb = b.data.period_val;
+            if (pa == nullptr || pb == nullptr) return pa == pb;
+            return pa->years == pb->years && pa->months == pb->months && pa->days == pb->days;
+        }
         case QValue::VAL_FLOAT:
             return a.data.float_val == b.data.float_val;
         case QValue::VAL_BOOL:

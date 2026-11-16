@@ -28,10 +28,7 @@ inline bool either_float(const QValue& a, const QValue& b) {
 } // namespace detail
 } // namespace quark
 
-inline const char* q_type_name_arith(QValue::ValueType t) {
-    static const char* type_names[] = {"int", "float", "str", "bool", "null", "list", "vec", "dict", "fn", "result", "resource", "struct", "tbl"};
-    return (t >= 0 && t <= 12) ? type_names[t] : "unknown";
-}
+inline const char* q_type_name_arith(QValue::ValueType t) { return q_type_name(t); }
 
 inline void q_arith_type_error(const char* op, QValue a, QValue b) {
     q_runtime_reportf("runtime error: operator '%s' expects numeric operands (or str+str for '+'), got %s and %s\n", op, q_type_name_arith(a.type), q_type_name_arith(b.type));
@@ -47,6 +44,9 @@ inline void q_unary_type_error(const char* op, QValue a) {
 inline QValue q_add(QValue a, QValue b) {
     if (a.type == QValue::VAL_VECTOR || b.type == QValue::VAL_VECTOR) {
         return q_vec_add(a, b);
+    }
+    if (a.type == QValue::VAL_DATE || b.type == QValue::VAL_DATE || a.type == QValue::VAL_PERIOD || b.type == QValue::VAL_PERIOD) {
+        return q_temporal_add(a, b);
     }
     // String concatenation: string + string
     if (a.type == QValue::VAL_STRING && b.type == QValue::VAL_STRING) {
@@ -89,6 +89,9 @@ inline QValue q_sub(QValue a, QValue b) {
     if (a.type == QValue::VAL_VECTOR || b.type == QValue::VAL_VECTOR) {
         return q_vec_sub(a, b);
     }
+    if (a.type == QValue::VAL_DATE || b.type == QValue::VAL_DATE || a.type == QValue::VAL_PERIOD || b.type == QValue::VAL_PERIOD) {
+        return q_temporal_sub(a, b);
+    }
     // Type guard: only INT and FLOAT are valid
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
         (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
@@ -104,6 +107,9 @@ inline QValue q_sub(QValue a, QValue b) {
 inline QValue q_mul(QValue a, QValue b) {
     if (a.type == QValue::VAL_VECTOR || b.type == QValue::VAL_VECTOR) {
         return q_vec_mul(a, b);
+    }
+    if (a.type == QValue::VAL_DATE || b.type == QValue::VAL_DATE || a.type == QValue::VAL_PERIOD || b.type == QValue::VAL_PERIOD) {
+        return q_temporal_mul(a, b);
     }
     // Type guard: only INT and FLOAT are valid
     if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||

@@ -6,15 +6,34 @@ extern fn time_sleep(seconds: float) any as 'q_time_sleep'
 extern fn time_duration(seconds: float) str as 'q_time_duration'
 extern fn time_format(ts: float, pattern: str, local: bool) str as 'q_time_format'
 extern fn time_iso(ts: float) str as 'q_time_iso'
-extern fn time_parse(text: str, pattern: str, local: bool) result as 'q_time_parse'
+extern fn time_parse_time(text: str, pattern: str, local: bool) result as 'q_time_parse'
 extern fn time_parse_iso(text: str) result as 'q_time_parse_iso'
 // year, month, day, hour, minute, second, weekday, yearday. second is a float.
-extern fn time_parts(ts: float, local: bool) list as 'q_time_parts'
+extern fn time_parts_time(ts: float, local: bool) list as 'q_time_parts'
 extern fn time_make(year: int, month: int, day: int, hour: int, minute: int, second: float, local: bool) float as 'q_time_make'
-extern fn time_today(local: bool) float as 'q_time_today'
+
+extern fn time_date(year: int, month: int, day: int) date as 'q_time_date'
+extern fn time_ymd(text: str) date as 'q_time_ymd'
+extern fn time_today(local: bool) date as 'q_time_today'
+extern fn time_year(d: date) int as 'q_time_year'
+extern fn time_month(d: date) int as 'q_time_month'
+extern fn time_day(d: date) int as 'q_time_day'
+extern fn time_weekday(d: date) int as 'q_time_weekday'
+extern fn time_date_parts(d: date) list as 'q_time_date_parts'
+extern fn time_from_days(n: int) date as 'q_time_from_days'
+extern fn time_to_days(d: date) int as 'q_time_to_days'
+extern fn time_format_date(d: date, pattern: str) str as 'q_time_format_date'
+extern fn time_parse_date(text: str, pattern: str) result as 'q_time_parse_date'
+extern fn time_period_days(n: int) period as 'q_time_period_days'
+extern fn time_period_weeks(n: int) period as 'q_time_period_weeks'
+extern fn time_period_months(n: int) period as 'q_time_period_months'
+extern fn time_period_quarters(n: int) period as 'q_time_period_quarters'
+extern fn time_period_years(n: int) period as 'q_time_period_years'
+extern fn time_date_from_ts(ts: float, local: bool) date as 'q_time_date_from_ts'
+extern fn time_ts_from_date(d: date, local: bool) float as 'q_time_ts_from_date'
 
 module time:
-    // A UTC or local time. weekday is 0 = Monday. yearday is 1 = 1 January.
+    // A UTC or local instant. weekday is 0 = Monday. yearday is 1 = 1 January.
     struct Parts:
         year: int
         month: int
@@ -25,51 +44,62 @@ module time:
         weekday: int
         yearday: int
 
-    // Seconds since the Unix epoch (wall-clock time), as a float.
+    // A calendar day. weekday is 0 = Monday. yearday is 1 = 1 January.
+    struct DateParts:
+        year: int
+        month: int
+        day: int
+        weekday: int
+        yearday: int
+
     fn now() float -> time_now()
-
-    // Monotonic seconds, for measuring durations: end - start.
     fn clock() float -> time_clock()
-
-    // Pause for `seconds` (fractions allowed).
     fn sleep(seconds: float) -> time_sleep(seconds)
-
-    // Seconds elapsed since a clock() reading.
     fn since(start: float) float -> clock() - start
 
-    // `n` as seconds.
     fn seconds(n: float) float -> n
-
-    // `n` minutes, in seconds.
     fn minutes(n: float) float -> n * 60.0
-
-    // `n` hours, in seconds.
     fn hours(n: float) float -> n * 3600.0
-
-    // `n` days, in seconds.
-    fn days(n: float) float -> n * 86400.0
-
-    // `n` weeks, in seconds.
-    fn weeks(n: float) float -> n * 604800.0
-
-    // A short reading of a duration in seconds, such as '250ms' or '1d 2h 3m 4s'.
     fn duration(seconds: float) str -> time_duration(seconds)
 
-    // `ts` formatted with a strftime pattern. UTC unless `local` is true.
-    fn format(ts: float, pattern: str = '%Y-%m-%d %H:%M:%S', local: bool = false) str -> time_format(ts, pattern, local)
+    // Calendar day.
+    fn date(year: int, month: int, day: int) date -> time_date(year, month, day)
+    fn ymd(text: str) date -> time_ymd(text)
+    fn today(local: bool = false) date -> time_today(local)
+    fn year(d: date) int -> time_year(d)
+    fn month(d: date) int -> time_month(d)
+    fn day(d: date) int -> time_day(d)
+    fn weekday(d: date) int -> time_weekday(d)
+    fn parts(d: date) DateParts ->
+        p = time_date_parts(d)
+        DateParts {
+            year: p[0]
+            month: p[1]
+            day: p[2]
+            weekday: p[3]
+            yearday: p[4]
+        }
+    fn from_days(n: int) date -> time_from_days(n)
+    fn to_days(d: date) int -> time_to_days(d)
+    fn format(d: date, pattern: str = '%Y-%m-%d') str -> time_format_date(d, pattern)
+    fn parse(text: str, pattern: str = '%Y-%m-%d') result -> time_parse_date(text, pattern)
 
-    // ISO 8601 UTC, with fractional seconds when `ts` is not a whole second.
+    // Calendar offsets. Adding one to a date rolls an impossible day back.
+    fn days(n: int) period -> time_period_days(n)
+    fn weeks(n: int) period -> time_period_weeks(n)
+    fn months(n: int) period -> time_period_months(n)
+    fn quarters(n: int) period -> time_period_quarters(n)
+    fn years(n: int) period -> time_period_years(n)
+
+    // Instants, as float seconds since the Unix epoch.
+    // Named timestamp, not time: a member can't share the module's name.
+    fn timestamp(year: int, month: int, day: int, hour: int = 0, minute: int = 0, second: float = 0.0, local: bool = false) float -> time_make(year, month, day, hour, minute, second, local)
     fn iso(ts: float) str -> time_iso(ts)
-
-    // ok(timestamp) when `text` matches a strftime pattern, otherwise err.
-    fn parse(text: str, pattern: str = '%Y-%m-%d', local: bool = false) result -> time_parse(text, pattern, local)
-
-    // ok(timestamp) for ISO 8601 text with Z or a ±hh:mm offset, otherwise err.
+    fn format_time(ts: float, pattern: str = '%Y-%m-%d %H:%M:%S', local: bool = false) str -> time_format(ts, pattern, local)
+    fn parse_time(text: str, pattern: str = '%Y-%m-%d %H:%M:%S', local: bool = false) result -> time_parse_time(text, pattern, local)
     fn parse_iso(text: str) result -> time_parse_iso(text)
-
-    // The calendar fields of `ts`. UTC unless `local` is true.
-    fn parts(ts: float, local: bool = false) Parts ->
-        p = time_parts(ts, local)
+    fn parts_time(ts: float, local: bool = false) Parts ->
+        p = time_parts_time(ts, local)
         Parts {
             year: p[0]
             month: p[1]
@@ -80,9 +110,5 @@ module time:
             weekday: p[6]
             yearday: p[7]
         }
-
-    // The timestamp for a calendar time. The inverse of parts.
-    fn make(year: int, month: int, day: int, hour: int = 0, minute: int = 0, second: float = 0.0, local: bool = false) float -> time_make(year, month, day, hour, minute, second, local)
-
-    // Midnight of the current day, UTC unless `local` is true.
-    fn today(local: bool = false) float -> time_today(local)
+    fn date_from_ts(ts: float, local: bool = false) date -> time_date_from_ts(ts, local)
+    fn ts_from_date(d: date, local: bool = false) float -> time_ts_from_date(d, local)

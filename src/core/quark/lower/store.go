@@ -101,6 +101,14 @@ func (l *lowerer) toScalar(st ir.Storage, node *ast.TreeNode, v Expr, what strin
 			return &Unbox{X: v, To: RepBool, Proof: ProofType, Type: vt}
 		}
 		return scalarCheck("var", "bool", v, []string{cstr(what)})
+	case ir.StorageDate:
+		if r == RepDate {
+			return v
+		}
+		if is(types.TypeDate) {
+			return &Unbox{X: v, To: RepDate, Proof: ProofType, Type: vt}
+		}
+		return scalarCheck("var", "date", v, []string{cstr(what)})
 	}
 	l.ice("INV-STORAGE", node, "toScalar called for non-scalar storage")
 	return nil
@@ -121,6 +129,8 @@ func scalarStorage(t types.Type) ir.Storage {
 		return ir.StorageFloat
 	case t.Equals(types.TypeBool):
 		return ir.StorageBool
+	case t.Equals(types.TypeDate):
+		return ir.StorageDate
 	}
 	return ir.StorageValue
 }
@@ -165,6 +175,7 @@ var paramTagChecks = map[string]struct {
 	"result":   {"VAL_RESULT", false},
 	"resource": {"VAL_RESOURCE", true},
 	"fn":       {"VAL_FUNC", false},
+	"period":   {"VAL_PERIOD", false},
 }
 
 // typeCheck is the runtime check that a value has an annotated type.
@@ -212,6 +223,10 @@ func (l *lowerer) checkFor(t types.Type) (typeCheck, bool) {
 		return typeCheck{scalar: "float"}, true
 	case t.Equals(types.TypeBool):
 		return typeCheck{scalar: "bool"}, true
+	case t.Equals(types.TypeDate):
+		return typeCheck{scalar: "date"}, true
+	case t.Equals(types.TypePeriod):
+		return tagCheck("period")
 	case t.Equals(types.TypeString):
 		return tagCheck("str")
 	case t.Equals(types.TypeResource):
@@ -238,7 +253,7 @@ func (c typeCheck) check(family string, v Expr, args []string) Expr {
 	case c.scalar != "":
 		ch.Kind, ch.Scalar = CheckScalar, c.scalar
 		if family != "field" {
-			ch.R = map[string]Rep{"int": RepInt, "float": RepFloat, "bool": RepBool}[c.scalar]
+			ch.R = map[string]Rep{"int": RepInt, "float": RepFloat, "bool": RepBool, "date": RepDate}[c.scalar]
 		}
 	case c.table:
 		ch.Kind = CheckTable
@@ -317,6 +332,10 @@ func (l *lowerer) elemDesc(t types.Type) string {
 		return "&q_elem_bool"
 	case t.Equals(types.TypeString):
 		return "&q_elem_str"
+	case t.Equals(types.TypeDate):
+		return "&q_elem_date"
+	case t.Equals(types.TypePeriod):
+		return "&q_elem_period"
 	}
 	elem, errDesc, sdef, vdtype := "nullptr", "nullptr", "nullptr", -1
 	var tag string
@@ -345,6 +364,8 @@ func (l *lowerer) elemDesc(t types.Type) string {
 			vdtype = 2
 		case v.ElementType.Equals(types.TypeString):
 			vdtype = 3
+		case v.ElementType.Equals(types.TypeDate):
+			vdtype = 4
 		}
 	case *types.FunctionType:
 		// Only that it is a function: containers don't trust a stored

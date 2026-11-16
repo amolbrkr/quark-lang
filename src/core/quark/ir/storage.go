@@ -12,6 +12,7 @@ const (
 	StorageInt                  // long long: the value is always an int
 	StorageFloat                // double: always a float (an int is widened)
 	StorageBool                 // bool
+	StorageDate                 // int32_t: always a date (days since 1970-01-01)
 	StorageCell                 // QCell*: captured by a closure, so shared by reference
 )
 
@@ -24,6 +25,8 @@ func (s Storage) CType() string {
 		return "double"
 	case StorageBool:
 		return "bool"
+	case StorageDate:
+		return "int32_t"
 	case StorageCell:
 		return "QCell*"
 	}
@@ -32,7 +35,7 @@ func (s Storage) CType() string {
 
 // IsScalar reports whether the storage is a raw C++ scalar.
 func (s Storage) IsScalar() bool {
-	return s == StorageInt || s == StorageFloat || s == StorageBool
+	return s == StorageInt || s == StorageFloat || s == StorageBool || s == StorageDate
 }
 
 // Generated C++ names. A user name is emitted as quark_<name> (with the loader's

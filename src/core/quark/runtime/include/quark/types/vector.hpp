@@ -47,7 +47,7 @@
 #include <vector>
 
 struct QVector {
-    enum class Type { F64, I64, BOOL, STR };
+    enum class Type { F64, I64, BOOL, STR, DATE };
 
     Type type = Type::F64;
     size_t count = 0;
@@ -158,7 +158,9 @@ inline void fill_bits(uint8_t* out, size_t n, F f) {
 }
 
 inline size_t elem_width(QVector::Type t) {
-    return (t == QVector::Type::F64 || t == QVector::Type::I64) ? 8 : 0;
+    if (t == QVector::Type::F64 || t == QVector::Type::I64) return 8;
+    if (t == QVector::Type::DATE) return 4;
+    return 0;
 }
 
 } // namespace vec
@@ -178,6 +180,7 @@ inline bool q_vec_validate(const QVector& vec) {
         case QVector::Type::F64:
         case QVector::Type::I64:
         case QVector::Type::BOOL:
+        case QVector::Type::DATE:
             if (vec.values == nullptr) return false;
             break;
         case QVector::Type::STR:
@@ -196,6 +199,7 @@ inline const char* q_vec_dtype_name(const QVector& vec) {
         case QVector::Type::I64: return "i64";
         case QVector::Type::BOOL: return "bool";
         case QVector::Type::STR: return "str";
+        case QVector::Type::DATE: return "date";
         default: return "unknown";
     }
 }
@@ -212,6 +216,8 @@ inline bool q_vec_is_dense_of(QValue vec, QVector::Type type) {
 
 inline const double* q_vec_f64_data(const QVector& v) { return reinterpret_cast<const double*>(v.values); }
 inline const int64_t* q_vec_i64_data(const QVector& v) { return reinterpret_cast<const int64_t*>(v.values); }
+inline const int32_t* q_vec_date_data(const QVector& v) { return reinterpret_cast<const int32_t*>(v.values); }
+inline int32_t* q_vec_date_data_mut(QVector& v) { return reinterpret_cast<int32_t*>(v.values); }
 inline double* q_vec_f64_data_mut(QVector& v) { return reinterpret_cast<double*>(v.values); }
 inline int64_t* q_vec_i64_data_mut(QVector& v) { return reinterpret_cast<int64_t*>(v.values); }
 
@@ -242,6 +248,10 @@ inline QVector* q_vec_alloc(QVector::Type type, size_t n, size_t str_bytes = 0) 
         case QVector::Type::F64:
         case QVector::Type::I64:
             v->values_cap = n * 8;
+            v->values = quark::vec::alloc_zeroed(v->values_cap, &v->values_base);
+            break;
+        case QVector::Type::DATE:
+            v->values_cap = n * 4;
             v->values = quark::vec::alloc_zeroed(v->values_cap, &v->values_base);
             break;
         case QVector::Type::BOOL:
@@ -323,6 +333,9 @@ inline void reserve_one(QVector& v) {
         case QVector::Type::F64:
         case QVector::Type::I64:
             v.values = grow(v.values, n * 8, v.values_cap, (n + 1) * 8, &v.values_base);
+            break;
+        case QVector::Type::DATE:
+            v.values = grow(v.values, n * 4, v.values_cap, (n + 1) * 4, &v.values_base);
             break;
         case QVector::Type::BOOL:
             v.values = grow(v.values, bitmap_bytes(n), v.values_cap, bitmap_bytes(n + 1), &v.values_base);
@@ -489,6 +502,9 @@ inline QValue q_vec_clone(QValue vec) {
         case QVector::Type::I64:
             std::memcpy(out->values, src.values, src.count * 8);
             break;
+        case QVector::Type::DATE:
+            std::memcpy(out->values, src.values, src.count * 4);
+            break;
         case QVector::Type::BOOL:
             std::memcpy(out->values, src.values, quark::vec::bitmap_bytes(src.count));
             break;
@@ -519,6 +535,7 @@ inline QValue q_vec_box_at(const QVector& v, size_t i) {
     switch (v.type) {
         case QVector::Type::F64: return qv_float(q_vec_f64_data(v)[i]);
         case QVector::Type::I64: return qv_int(static_cast<long long>(q_vec_i64_data(v)[i]));
+        case QVector::Type::DATE: return qv_date(q_vec_date_data(v)[i]);
         case QVector::Type::BOOL: return qv_bool(q_vec_bool_at(v, i));
         case QVector::Type::STR: {
             const std::string_view s = q_vec_str_at(v, i);
@@ -824,9 +841,10 @@ inline QValue q_vec_sum(QValue vec) {
         case QVector::Type::F64:
             return qv_float(q_vec_f64_present_sum(v));
         case QVector::Type::STR:
+        case QVector::Type::DATE:
             break;
     }
-    q_runtime_reportf("runtime error: sum() requires numeric or bool vec, got vec[str]\n");
+    q_runtime_reportf("runtime error: sum() requires numeric or bool vec, got vec[%s]\n", q_vec_dtype_name(v));
     q_exit(1);
 }
 
@@ -847,6 +865,10 @@ inline int q_vec_compare(const QVector& v, size_t i, size_t j) {
         case QVector::Type::STR: {
             const int c = q_vec_str_at(v, i).compare(q_vec_str_at(v, j));
             return c < 0 ? -1 : (c > 0 ? 1 : 0);
+        }
+        case QVector::Type::DATE: {
+            const int32_t a = q_vec_date_data(v)[i], b = q_vec_date_data(v)[j];
+            return a < b ? -1 : (a > b ? 1 : 0);
         }
     }
     return 0;
@@ -1113,7 +1135,7 @@ inline QValue q_to_vec(QValue input) {
                 if (item.data.string_val) str_bytes += std::strlen(item.data.string_val);
                 break;
             default:
-                q_runtime_reportf("runtime error: to_vec only supports int/float/bool/str lists (null allowed), got %s at index %zu\n", type_name(item.type), i);
+                q_runtime_reportf("runtime error: to_vec only supports int/float/bool/str lists (null allowed), got %s at index %zu\n", q_type_name(item.type), i);
                 q_exit(1);
         }
         if (mode == Mode::UNKNOWN) {
@@ -1382,6 +1404,7 @@ inline QValue q_vec_keep(const QVector& dv, Keep keep) {
         switch (dv.type) {
             case QVector::Type::F64: q_vec_f64_data_mut(*out)[j] = q_vec_f64_data(dv)[i]; break;
             case QVector::Type::I64: q_vec_i64_data_mut(*out)[j] = q_vec_i64_data(dv)[i]; break;
+            case QVector::Type::DATE: q_vec_date_data_mut(*out)[j] = q_vec_date_data(dv)[i]; break;
             case QVector::Type::BOOL: q_vec_bool_put(*out, j, q_vec_bool_at(dv, i)); break;
             case QVector::Type::STR: {
                 const std::string_view s = q_vec_str_at(dv, i);

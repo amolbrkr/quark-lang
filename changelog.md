@@ -10,7 +10,7 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 
 ## Contents
 
-- [2026-11-15: REPL on Windows](#2026-11-15-repl-on-windows)
+- [2026-11-15: Dates, and the REPL on Windows](#2026-11-15-dates-and-the-repl-on-windows)
 - [2026-11-14: REPL](#2026-11-14-repl)
 - [2026-11-14: FFI phase 2 (glue sources, handles, results)](#2026-11-14-ffi-phase-2-glue-sources-handles-results)
 - [2026-11-14: Tables v0.2](#2026-11-14-tables-v02)
@@ -46,7 +46,22 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 - [2026-04-02: Structs v0.1](#2026-04-02-structs-v01)
 - [2026-03-28: Vector soundness, `std/fmt` on `extern`, build output](#2026-03-28-vector-soundness-stdfmt-on-extern-build-output)
 
-## 2026-11-15: REPL on Windows
+## 2026-11-15: Dates, and the REPL on Windows
+
+### Breaking
+
+- `std/time` no longer treats a calendar day as a float. `today()` returns a `date`. `days`, `weeks` and the new `months`, `quarters` and `years` return a `period`, not a number of seconds. `make` is `timestamp`. `format` and `parse` take a `date`; instants use `format_time`, `parse_time` and `parts_time`. `to_int` does not accept a date: use `time::to_days`.
+
+```quark
+incl 'std/time' as time
+
+cutoff: date = time::ymd('2022-01-30')
+print(cutoff + time::months(3))   // 2022-04-30
+```
+
+### Added
+
+- `date` and `period` are types. A date is an Arrow `date32` (days since 1970-01-01). `d + time::months(1)` rolls an impossible day back to the last day of that month; `d + 3` adds days; `d2 - d1` is the number of days. A date column can be filtered, sorted, grouped and aggregated with `min` and `max`. CSV reads `YYYY-MM-DD` (unpadded month and day too) into a `date` column, and an untyped read infers `date` when every value is such a day. `vec` literals cannot hold a date.
 
 ### Fixed
 

@@ -25,28 +25,30 @@ How Quark programs behave: values, types, scoping, functions, errors. Syntax and
 
 ## 1) Value Model
 
-Every runtime value has one of twelve types. `type(v)` returns the name in the first column (`vec[i64]`, `vec[f64]`, `vec[bool]` or `vec[str]` for a vector, the struct's name for a struct).
+Every runtime value has one of fourteen types. `type(v)` returns the name in the first column (`vec[i64]`, `vec[f64]`, `vec[bool]`, `vec[str]` or `vec[date]` for a vector, the struct's name for a struct).
 
 | Type | Payload | Notes |
 |------|---------|-------|
 | `int` | 64-bit signed integer | Overflow is a runtime error (§4.1) |
+| `date` | 32-bit day count | Days since 1970-01-01, no time of day (`specs/dates_v0_1_spec.md`). Prints as `YYYY-MM-DD` |
+| `period` | years, months, days | A calendar offset from `std/time` (`time::months(3)`). Not a column type |
 | `float` | 64-bit IEEE double | |
 | `str` | Immutable byte string | `len`, indexing and `for` work on bytes, not characters |
 | `bool` | Boolean | |
 | `null` | (none) | A distinct type, not a zero value of another type (§1.3) |
 | `list` | Ordered, mutable array | Its element type is fixed when it is created (§9.1) |
-| `vec` | Immutable typed column | dtype `i64`, `f64`, `bool` or `str` (§9.4) |
+| `vec` | Immutable typed column | dtype `i64`, `f64`, `bool`, `str` or `date` (§9.4). A `vec` literal does not accept `date` |
 | `dict` | String-keyed map | Unordered; its value type is fixed when it is created (§9.2) |
 | `fn` | Function value | Equality is identity (§6.1) |
 | `result` | `ok` or `err` with a payload | Has no truthiness (§12) |
 | `resource` | Opaque native handle | Created only by native code, such as `io::open` (§1.4) |
 | `struct` | Fixed set of named fields | Declared with `struct`; immutable (grammar.md §9.1) |
 
-Tables (`tbl`) are not a Quark type yet: the runtime has the table engine and CSV reader, and the compiler side is planned in `specs/tables_v0_1_spec.md` (the type is written `tbl[Employee]`, D10).
+Tables (`tbl`) are described in §9.5.
 
 ### 1.1 Aliasing
 
-Assignment and argument passing copy the value. For `int`, `float`, `bool` and `null` that is the whole value. For the other types the copy refers to the same data, so two names can alias one list or dict, and a change through one name is visible through the other. Strings and vectors can't be changed. Structs and results can't be changed either, but a list or dict inside one is shared: after `b = a`, `b.xs.push(2)` changes `a.xs`.
+Assignment and argument passing copy the value. For `int`, `date`, `float`, `bool` and `null` that is the whole value. A `period` is immutable. For the other types the copy refers to the same data, so two names can alias one list or dict, and a change through one name is visible through the other. Strings and vectors can't be changed. Structs and results can't be changed either, but a list or dict inside one is shared: after `b = a`, `b.xs.push(2)` changes `a.xs`.
 
 ### 1.2 Strings
 
@@ -100,6 +102,8 @@ Truthiness applies to every condition (`if`, `elseif`, `while`, the ternary `if`
 | `struct` | always |
 | `vec` | **error**: use `all(v)`, `any(v)` or `len(v) > 0` |
 | `tbl` | **error**: test a column, such as `len(t.col) > 0` |
+| `date` | **error**: compare it with another date |
+| `period` | **error**: compare it with another period |
 | `result` | **error**: use `is_ok(r)`, `is_err(r)` or `when` |
 
 **Results, vectors and tables are rejected as conditions.** Treating an `err` as false would silently discard the error. A vector comparison such as `v == w` yields a `vec[bool]`, so its emptiness says nothing about whether the elements matched, and a table holds columns of such values. Using one as a condition, with `!`, or as an `and`/`or` operand is a compile-time error when the type is known and a runtime error otherwise.
@@ -125,6 +129,11 @@ Precedence and associativity are in grammar.md §10.3.
 | `%` | **int×int only** | int | Modulo by zero is a runtime error; no vector form |
 | `**` | numeric×numeric | int if both int, else float | Exact for ints; int overflow is a runtime error; a negative int exponent truncates (`2 ** -1` is `0`); no vector form |
 | unary `-` | numeric | same type | Negating the smallest int is a runtime error |
+| `+` | date×period, period×date, date×int, int×date | date | `d + time::months(1)` rolls an impossible day back to the last day of the month; `d + 3` adds days |
+| `-` | date×period, date×int | date | The same, subtracted |
+| `-` | date×date | int | The number of days from the right date to the left |
+| `+` `-` | period×period | period | Component-wise |
+| `*` | period×int, int×period | period | Scales each component |
 
 Any other combination is an error (`operator '%' requires integer operands, got float and int`).
 
@@ -135,6 +144,7 @@ Any other combination is an error (`operator '%' requires integer operands, got 
 | Operator | Accepted types | Result |
 |----------|---------------|--------|
 | `<` `<=` `>` `>=` | numeric×numeric | bool; an int and a float compare exactly (§2) |
+| `<` `<=` `>` `>=` `==` `!=` | date×date | bool, in calendar order |
 | `<` `<=` `>` `>=` | str×str | bool, by byte order (`'Zebra' < 'apple'`), the order `list.sort()` uses |
 | `<` `<=` `>` `>=` | vec×vec, vec×scalar | `vec[bool]`, element-wise |
 | `==` `!=` | any×any | bool (`vec[bool]` for vectors) |
@@ -367,7 +377,7 @@ The methods are listed in stdlib.md.
 
 A table (`tbl`) is an immutable, in-memory, columnar set of rows: one vec per column, all of one length, in the Arrow layout. Its design and decisions are in `specs/tables_v0_1_spec.md` and `specs/tables_v0_2_spec.md`. The column-wise table literal is deferred (`specs/tables_v0_2_spec.md` §6.1).
 
-**Types.** `tbl[R]` is a table whose rows are the struct `R`: its columns are `R`'s fields, in field order, with their types, which must be `int`, `float`, `bool` or `str` (`struct S can't be a table row: field 'xs' is list[any]`). A bare `tbl` is a table whose row type the compiler doesn't know: it can be printed, written and passed on, but its columns can't be read and it can't be queried until it reaches a `tbl[R]` slot. A query step's output has an *anonymous* row, written by its shape: `tbl[{dept: str, n: int}]`. A table is never `null`.
+**Types.** `tbl[R]` is a table whose rows are the struct `R`: its columns are `R`'s fields, in field order, with their types, which must be `int`, `float`, `bool`, `str` or `date` (`struct S can't be a table row: field 'xs' is list[any]`). A `date` column is an Arrow `date32` (days since 1970-01-01). A bare `tbl` is a table whose row type the compiler doesn't know: it can be printed, written and passed on, but its columns can't be read and it can't be queried until it reaches a `tbl[R]` slot. A query step's output has an *anonymous* row, written by its shape: `tbl[{dept: str, n: int}]`. A table is never `null`.
 
 **Columns.** `t.salary` on a `tbl[Employee]` is the column as a `vec[float]` (no copy); an unknown column is a compile-time error that lists the columns. There is no cell or column assignment, no `t[i]`, no iteration over rows (`for r in t`), and no `==` (§4.2); `len(t)` isn't defined (use `len(t.col)`).
 

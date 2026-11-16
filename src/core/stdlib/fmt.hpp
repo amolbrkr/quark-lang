@@ -25,6 +25,11 @@ static inline std::string q_fmt_cell(QValue v) {
             return buf;
         case QValue::VAL_BOOL:
             return v.data.bool_val ? "true" : "false";
+        case QValue::VAL_DATE:
+            q_format_date(static_cast<int32_t>(v.data.int_val), buf, sizeof(buf));
+            return buf;
+        case QValue::VAL_PERIOD:
+            return v.data.period_val ? q_format_period(*v.data.period_val) : "0 days";
         case QValue::VAL_STRING:
             return v.data.string_val ? v.data.string_val : "";
         case QValue::VAL_NULL:

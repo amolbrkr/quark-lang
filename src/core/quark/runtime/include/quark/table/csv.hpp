@@ -392,6 +392,7 @@ inline const char* type_word(QVector::Type t) {
         case QVector::Type::F64: return "a float";
         case QVector::Type::BOOL: return "a bool";
         case QVector::Type::STR: return "a str";
+        case QVector::Type::DATE: return "a date";
     }
     return "a value";
 }
@@ -403,6 +404,7 @@ inline const char* type_word(QVector::Type t) {
 struct Builder {
     QVector::Type type = QVector::Type::STR;
     std::vector<int64_t> i64;
+    std::vector<int32_t> dates;
     std::vector<double> f64;
     std::vector<uint8_t> b;
     std::string bytes;
@@ -414,6 +416,7 @@ struct Builder {
         nulls.push_back(count);
         switch (type) {
             case QVector::Type::I64: i64.push_back(0); break;
+            case QVector::Type::DATE: dates.push_back(0); break;
             case QVector::Type::F64: f64.push_back(0); break;
             case QVector::Type::BOOL: b.push_back(0); break;
             case QVector::Type::STR: offsets.push_back(static_cast<int32_t>(bytes.size())); break;
@@ -428,6 +431,10 @@ struct Builder {
             case QVector::Type::I64:
                 v = q_vec_alloc(type, n);
                 if (n) std::memcpy(v->values, i64.data(), n * 8);
+                break;
+            case QVector::Type::DATE:
+                v = q_vec_alloc(type, n);
+                if (n) std::memcpy(v->values, dates.data(), n * 4);
                 break;
             case QVector::Type::F64:
                 v = q_vec_alloc(type, n);
@@ -634,7 +641,7 @@ inline QTable* parse_table(const char* text, size_t len, const std::string& sour
     // Rows are read once into the builders. Untyped reads first scan the rows
     // to infer the types (a second tokenizer over the same text).
     if (!schema) {
-        std::vector<bool> can_int(ncols, true), can_float(ncols, true), can_bool(ncols, true), any(ncols, false);
+        std::vector<bool> can_int(ncols, true), can_float(ncols, true), can_bool(ncols, true), can_date(ncols, true), any(ncols, false);
         Tokenizer scan(text, len, sep);
         std::vector<Field> row;
         int rl = 0;
@@ -651,6 +658,11 @@ inline QTable* parse_table(const char* text, size_t len, const std::string& sour
                 if (can_int[c] && !parse_i64(v, &i)) can_int[c] = false;
                 if (can_float[c] && !parse_f64(v, &d)) can_float[c] = false;
                 if (can_bool[c] && !parse_bool(v, &b)) can_bool[c] = false;
+                if (can_date[c]) {
+                    int32_t day = 0;
+                    std::string cell(v);
+                    if (!q_parse_ymd(cell.c_str(), "-", &day)) can_date[c] = false;
+                }
             }
         }
         for (size_t c = 0; c < ncols; c++) {
@@ -658,6 +670,7 @@ inline QTable* parse_table(const char* text, size_t len, const std::string& sour
             else if (can_int[c]) types.push_back(QVector::Type::I64);
             else if (can_float[c]) types.push_back(QVector::Type::F64);
             else if (can_bool[c]) types.push_back(QVector::Type::BOOL);
+            else if (can_date[c]) types.push_back(QVector::Type::DATE);
             else types.push_back(QVector::Type::STR);
         }
     }
@@ -695,6 +708,17 @@ inline QTable* parse_table(const char* text, size_t len, const std::string& sour
                     bool x = false;
                     ok = parse_bool(v, &x);
                     bld.b.push_back(x ? 1 : 0);
+                    break;
+                }
+                case QVector::Type::DATE: {
+                    int32_t x = 0;
+                    std::string cell(v);
+                    ok = q_parse_ymd(cell.c_str(), "-", &x);
+                    bld.dates.push_back(x);
+                    if (!ok) {
+                        problems.add(rl, "column '" + labels[c] + "' is not a date (got '" + std::string(v) + "')");
+                        return;
+                    }
                     break;
                 }
                 case QVector::Type::STR:
@@ -836,6 +860,10 @@ inline std::string format_table(QTable* t, char sep) {
                     break;
                 case QVector::Type::BOOL:
                     out += q_vec_bool_at(v, static_cast<size_t>(r)) ? "true" : "false";
+                    break;
+                case QVector::Type::DATE:
+                    q_format_date(q_vec_date_data(v)[r], num, sizeof num);
+                    out += num;
                     break;
                 case QVector::Type::STR:
                     append_field(out, q_vec_str_at(v, static_cast<size_t>(r)), sep);

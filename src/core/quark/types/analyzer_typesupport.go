@@ -94,6 +94,10 @@ func annotationType(node *ast.TreeNode, structTypes map[string]*StructType) (Typ
 	switch name {
 	case "int":
 		return TypeInt, nil, ""
+	case "date":
+		return TypeDate, nil, ""
+	case "period":
+		return TypePeriod, nil, ""
 	case "float":
 		return TypeFloat, nil, ""
 	case "str":
@@ -141,7 +145,7 @@ func tableAnnotation(arg *ast.TreeNode, structTypes map[string]*StructType) (Typ
 	}
 	for _, f := range st.Fields {
 		if !IsColumnType(f.Type) && !IsErrorType(f.Type) {
-			return nil, arg, "struct " + st.Name + " can't be a table row: field '" + f.Name + "' is " + f.Type.String() + ", and table columns are int, float, bool or str"
+			return nil, arg, "struct " + st.Name + " can't be a table row: field '" + f.Name + "' is " + f.Type.String() + ", and table columns are int, float, bool, str or date"
 		}
 	}
 	return &TableType{Row: st}, nil, ""

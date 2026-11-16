@@ -43,7 +43,7 @@ Reserved (`token/token.go`):
 
 `incl as module extern fn struct if elseif else for while break continue when in and or true false null ok err list dict vec result`
 
-`_` is its own token (the wildcard pattern). The type names `int`, `float`, `str`, `bool`, `any` and `resource` are ordinary identifiers that the checker resolves in type positions. `link`, `include_path` and `source` are contextual words after `extern`.
+`_` is its own token (the wildcard pattern). The type names `int`, `float`, `str`, `bool`, `any`, `date`, `period` and `resource` are ordinary identifiers that the checker resolves in type positions. `link`, `include_path` and `source` are contextual words after `extern`.
 
 Identifiers are letters, digits and `_`, starting with a letter or `_`. A name containing `__` is a load error: that form is reserved for compiler-generated names.
 
@@ -244,7 +244,7 @@ WhileLoop       ::= "while" Expression ":" Block
 
 ```ebnf
 TypedDecl       ::= ID ":" Type "=" Expression
-Type            ::= "int" | "float" | "str" | "bool" | "any"
+Type            ::= "int" | "float" | "str" | "bool" | "any" | "date" | "period"
                 |   "list" | "dict" | "vec" | "result" | "resource" | "fn"
                 |   "tbl" [ "[" Type "]" ]                    (a table; the type is its row struct)
                 |   TypeName                                  (a struct: Point, geo::Point)

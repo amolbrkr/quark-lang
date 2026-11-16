@@ -418,6 +418,70 @@ func promotedRep(a, b Rep, op token.TokenType) Rep {
 	return ""
 }
 
+// temporal lowers date and period arithmetic the analyzer typed exactly.
+// A value of unknown type falls through to the boxed runtime operator.
+func (l *lowerer) temporal(node *ast.TreeNode, op token.TokenType, a, b Expr) Expr {
+	if len(node.Children) != 2 {
+		return nil
+	}
+	lt, rt := l.nodeType(node.Children[0]), l.nodeType(node.Children[1])
+	is := func(t, want types.Type) bool { return t != nil && t.Equals(want) }
+	dateL, dateR := is(lt, types.TypeDate), is(rt, types.TypeDate)
+	perL, perR := is(lt, types.TypePeriod), is(rt, types.TypePeriod)
+	if !dateL && !dateR && !perL && !perR {
+		return nil
+	}
+	if is(lt, types.TypeAny) || is(rt, types.TypeAny) {
+		return nil
+	}
+	asDate := func(v Expr) Expr {
+		if v.Rep() == RepDate {
+			return v
+		}
+		return &Unbox{X: boxed(v), To: RepDate, Proof: ProofType, Type: types.TypeDate}
+	}
+	asInt := func(v Expr) Expr {
+		if v.Rep() == RepInt {
+			return v
+		}
+		return &Unbox{X: boxed(v), To: RepInt, Proof: ProofType, Type: types.TypeInt}
+	}
+	switch op {
+	case token.PLUS:
+		switch {
+		case dateL && perR:
+			return &Call{Fn: "q_date_add_period", Args: []Expr{asDate(a), boxed(b)}, R: RepDate}
+		case perL && dateR:
+			return &Call{Fn: "q_date_add_period", Args: []Expr{asDate(b), boxed(a)}, R: RepDate}
+		case dateL && is(rt, types.TypeInt):
+			return &Call{Fn: "q_date_add_days", Args: []Expr{asDate(a), asInt(b)}, R: RepDate}
+		case is(lt, types.TypeInt) && dateR:
+			return &Call{Fn: "q_date_add_days", Args: []Expr{asDate(b), asInt(a)}, R: RepDate}
+		case perL && perR:
+			return &Call{Fn: "q_period_add", Args: []Expr{boxed(a), boxed(b)}, R: RepValue}
+		}
+	case token.MINUS:
+		switch {
+		case dateL && perR:
+			return &Call{Fn: "q_date_sub_period", Args: []Expr{asDate(a), boxed(b)}, R: RepDate}
+		case dateL && is(rt, types.TypeInt):
+			return &Call{Fn: "q_date_add_days", Args: []Expr{asDate(a), &Arith{Op: "-", L: &Const{R: RepInt, Text: "0"}, X: asInt(b), R: RepInt}}, R: RepDate}
+		case dateL && dateR:
+			return &Call{Fn: "q_date_diff", Args: []Expr{asDate(a), asDate(b)}, R: RepInt}
+		case perL && perR:
+			return &Call{Fn: "q_period_sub", Args: []Expr{boxed(a), boxed(b)}, R: RepValue}
+		}
+	case token.MULTIPLY:
+		switch {
+		case perL && is(rt, types.TypeInt):
+			return &Call{Fn: "q_period_scale", Args: []Expr{boxed(a), asInt(b)}, R: RepValue}
+		case is(lt, types.TypeInt) && perR:
+			return &Call{Fn: "q_period_scale", Args: []Expr{boxed(b), asInt(a)}, R: RepValue}
+		}
+	}
+	return nil
+}
+
 func (l *lowerer) binary(node *ast.TreeNode) Expr {
 	if node.Token == nil || len(node.Children) != 2 {
 		return nullValue()
@@ -429,6 +493,9 @@ func (l *lowerer) binary(node *ast.TreeNode) Expr {
 	}
 	ops := l.operands(node.Children)
 	a, b := ops[0], ops[1]
+	if e := l.temporal(node, op, a, b); e != nil {
+		return e
+	}
 	if cop, ok := arithOps[op]; ok {
 		if r := promotedRep(a.Rep(), b.Rep(), op); r != "" {
 			return &Arith{Op: cop, L: a, X: b, R: r}
@@ -442,7 +509,8 @@ func (l *lowerer) binary(node *ast.TreeNode) Expr {
 	}
 	if cop, ok := compareOps[op]; ok && a.Rep().IsScalar() && b.Rep().IsScalar() {
 		ordered := op == token.LT || op == token.LTE || op == token.GT || op == token.GTE
-		numeric := a.Rep() != RepBool && b.Rep() != RepBool
+		dateMix := (a.Rep() == RepDate) != (b.Rep() == RepDate)
+		numeric := a.Rep() != RepBool && b.Rep() != RepBool && !dateMix
 		if numeric || (!ordered && a.Rep() == b.Rep()) {
 			return &Compare{Op: cop, L: a, X: b}
 		}
@@ -751,6 +819,7 @@ func (l *lowerer) lowerFor(node *ast.TreeNode) {
 		ir.StorageInt:   "QVector::Type::I64",
 		ir.StorageFloat: "QVector::Type::F64",
 		ir.StorageBool:  "QVector::Type::BOOL",
+		ir.StorageDate:  "QVector::Type::DATE",
 	}[sym.Storage]
 	if dtype == "" {
 		generic()
@@ -840,6 +909,8 @@ func placeholder(sym *types.Symbol) Expr {
 		return &Const{R: RepFloat, Text: "0.0"}
 	case ir.StorageBool:
 		return &Const{R: RepBool, Text: "false"}
+	case ir.StorageDate:
+		return &Const{R: RepDate, Text: "0"}
 	}
 	return nullValue()
 }

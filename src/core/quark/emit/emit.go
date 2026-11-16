@@ -444,6 +444,7 @@ var boxFns = map[lower.Rep]string{
 	lower.RepInt:     "qv_int",
 	lower.RepFloat:   "qv_float",
 	lower.RepBool:    "qv_bool",
+	lower.RepDate:    "qv_date",
 	lower.RepStr:     "q_box_native_str",
 	lower.RepStrView: "q_str_view_box",
 	lower.RepVector:  "qv_vector_ptr",
@@ -458,6 +459,7 @@ var adaptFns = map[lower.Rep]string{
 	lower.RepInt:    "q_as_int",
 	lower.RepFloat:  "q_as_float",
 	lower.RepBool:   "q_as_bool",
+	lower.RepDate:   "q_as_date",
 	lower.RepStr:    "q_as_str",
 	lower.RepVector: "q_as_vector",
 	lower.RepList:   "q_as_list",
@@ -478,6 +480,7 @@ var proveFns = map[lower.Rep]string{
 	lower.RepInt:   "q_prove_int",
 	lower.RepFloat: "q_prove_float",
 	lower.RepBool:  "q_prove_bool",
+	lower.RepDate:  "q_prove_date",
 }
 
 var checkedArith = map[string]string{"+": "q_checked_add", "-": "q_checked_sub", "*": "q_checked_mul", "%": "q_checked_mod"}
@@ -528,6 +531,9 @@ func (w *printer) expr(e lower.Expr) string {
 				panic(fmt.Sprintf("emit: can't prove %s", e.To))
 			}
 			return fmt.Sprintf("%s(%s)", fn, w.expr(e.X))
+		}
+		if e.To == lower.RepDate {
+			return fmt.Sprintf("static_cast<int32_t>((%s).data.int_val)", w.expr(e.X))
 		}
 		return fmt.Sprintf("(%s).data.%s", w.expr(e.X), unboxFields[e.To])
 	case *lower.Cast:
@@ -599,6 +605,8 @@ func (w *printer) expr(e lower.Expr) string {
 			return fmt.Sprintf("static_cast<long long>(q_vec_i64_data(%s)[%s])", v, i)
 		case lower.RepFloat:
 			return fmt.Sprintf("q_vec_f64_data(%s)[%s]", v, i)
+		case lower.RepDate:
+			return fmt.Sprintf("q_vec_date_data(%s)[%s]", v, i)
 		}
 		return fmt.Sprintf("q_vec_bool_at(%s, %s)", v, i)
 	case *lower.InitList:

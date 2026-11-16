@@ -1090,7 +1090,7 @@ date columns, and compile-time schema inference for CSV files
 
 **Known limitations** (deliberate gaps, not bugs):
 
-- No regex, JSON, HTTP, subprocesses or dates. Vectors have no sort
+- No regex, JSON, HTTP or subprocesses. Vectors have no sort. `vec` literals cannot hold `date` (a date column from a table is `vec[date]`)
 (`v.to_list().sort()` works).
 - No annotation for "any struct" (`fn f(x: struct)` is a parse error; use
 `any`), and no nullable types.

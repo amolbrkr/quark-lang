@@ -36,6 +36,11 @@ inline bool q_param_bool(QValue v, const char* fn, const char* param) {
     return v.data.bool_val;
 }
 
+inline int32_t q_param_date(QValue v, const char* fn, const char* param) {
+    if (v.type != QValue::VAL_DATE) q_param_type_error(v, "date", fn, param);
+    return static_cast<int32_t>(v.data.int_val);
+}
+
 // q_param_check checks a non-scalar annotation. allowNull is set for
 // resource only (structs use q_param_struct): `list`, `dict`, `vec` and `fn`
 // mean a list, dict, vec or function, and a result is always ok(...) or
@@ -92,6 +97,11 @@ inline QValue q_field_bool(QValue v, const char* structName, const char* field) 
     return v;
 }
 
+inline QValue q_field_date(QValue v, const char* structName, const char* field) {
+    if (v.type != QValue::VAL_DATE) q_field_type_error(v, "date", structName, field);
+    return v;
+}
+
 inline QValue q_field_check(QValue v, QValue::ValueType tag, bool allowNull, const char* expected, const char* structName, const char* field) {
     if (v.type == tag || (allowNull && v.type == QValue::VAL_NULL)) return v;
     q_field_type_error(v, expected, structName, field);
@@ -138,6 +148,11 @@ inline bool q_var_bool(QValue v, const char* var) {
     return v.data.bool_val;
 }
 
+inline int32_t q_var_date(QValue v, const char* var) {
+    if (v.type != QValue::VAL_DATE) q_var_type_error(v, "date", var);
+    return static_cast<int32_t>(v.data.int_val);
+}
+
 inline QValue q_var_check(QValue v, QValue::ValueType tag, bool allowNull, const char* expected, const char* var) {
     if (v.type == tag || (allowNull && v.type == QValue::VAL_NULL)) return v;
     q_var_type_error(v, expected, var);
@@ -182,6 +197,11 @@ inline double q_ret_float(QValue v, const char* fn) {
 inline bool q_ret_bool(QValue v, const char* fn) {
     if (v.type != QValue::VAL_BOOL) q_ret_type_error(v, "bool", fn);
     return v.data.bool_val;
+}
+
+inline int32_t q_ret_date(QValue v, const char* fn) {
+    if (v.type != QValue::VAL_DATE) q_ret_type_error(v, "date", fn);
+    return static_cast<int32_t>(v.data.int_val);
 }
 
 inline QValue q_ret_check(QValue v, QValue::ValueType tag, bool allowNull, const char* expected, const char* fn) {

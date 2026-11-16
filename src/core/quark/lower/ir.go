@@ -21,6 +21,7 @@ const (
 	RepInt     Rep = "long long"
 	RepFloat   Rep = "double"
 	RepBool    Rep = "bool"
+	RepDate    Rep = "int32_t"
 	RepStr     Rep = "const char*"
 	RepStrView Rep = "std::string_view"
 	RepList    Rep = "QList*"
@@ -34,7 +35,7 @@ const (
 )
 
 // IsScalar reports whether r is a raw C++ scalar.
-func (r Rep) IsScalar() bool { return r == RepInt || r == RepFloat || r == RepBool }
+func (r Rep) IsScalar() bool { return r == RepInt || r == RepFloat || r == RepBool || r == RepDate }
 
 // RepOfCType maps a native C++ type of a signature (ir.CallPlan's
 // NativeParamTypes) to its Rep; int64_t is held as long long.
@@ -42,6 +43,8 @@ func RepOfCType(c string) Rep {
 	switch c {
 	case "int64_t", "long long":
 		return RepInt
+	case "int32_t":
+		return RepDate
 	case "", "QValue":
 		return RepValue
 	}
@@ -145,6 +148,8 @@ func ScalarRepOf(t types.Type) Rep {
 		return RepFloat
 	case t.Equals(types.TypeBool):
 		return RepBool
+	case t.Equals(types.TypeDate):
+		return RepDate
 	}
 	return ""
 }
@@ -496,6 +501,8 @@ func ColumnDtype(t types.Type) int {
 		return 2
 	case t.Equals(types.TypeString):
 		return 3
+	case t.Equals(types.TypeDate):
+		return 4
 	}
 	return -1
 }

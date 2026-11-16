@@ -7,6 +7,24 @@ import (
 	"quark/token"
 )
 
+// rejectDateConversion makes to_int / to_float / to_bool refuse a date or a
+// period when the type is known. The day count is time::to_days.
+func (a *Analyzer) rejectDateConversion(name string, argTypes []Type, argNodes []*ast.TreeNode) {
+	if name != "to_int" && name != "to_float" && name != "to_bool" {
+		return
+	}
+	if len(argTypes) == 0 || len(argNodes) == 0 {
+		return
+	}
+	t := argTypes[0]
+	switch {
+	case t.Equals(TypeDate):
+		a.errorAt(argNodes[0], "%s() cannot convert a date; use time::to_days(d) for the day count", name)
+	case t.Equals(TypePeriod):
+		a.errorAt(argNodes[0], "%s() cannot convert a period", name)
+	}
+}
+
 // checkArgTypes validates argument types against parameter types using the knowability rule.
 func (a *Analyzer) checkArgTypes(calleeName string, paramTypes []Type, argTypes []Type, argNodes []*ast.TreeNode) {
 	for i, argType := range argTypes {
@@ -285,6 +303,7 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 			a.callPlans[node] = &ir.CallPlan{CalleeName: name, MinArity: sig.MinArgs, MaxArity: sig.MaxArgs, Dispatch: ir.DispatchBuiltin, RuntimeSymbol: builtinsRuntimeName(name)}
 			a.checkArity(node, "builtin '"+name+"'", sig.MinArgs, sig.MaxArgs, argCount)
 			a.checkArgTypes(name, sig.Type.ParamTypes, argTypes, argNodes)
+			a.rejectDateConversion(name, argTypes, argNodes)
 			a.checkPrintAlign(name, argNodes)
 			return a.inferBuiltinReturnType(name, argTypes, node)
 		}

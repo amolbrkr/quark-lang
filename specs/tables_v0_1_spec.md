@@ -57,7 +57,7 @@ Stats and ML come after this. DuckDB is a later, optional backend, not the found
 
 ## 3. Type model
 
-- `tbl[R]`, where `R` is a struct, is a table whose columns are `R`'s fields, in field order, with the field types (D2, D10). Column types are `int`, `float`, `bool` and `str` in v0.1 (`date` and others later, §9).
+- `tbl[R]`, where `R` is a struct, is a table whose columns are `R`'s fields, in field order, with the field types (D2, D10). Column types are `int`, `float`, `bool` and `str` in v0.1 (`date` is specified in `specs/dates_v0_1_spec.md`; timestamps and categoricals later, §9).
 - A table whose row struct the compiler doesn't know has type `tbl` (D20): it can be printed, rendered, written and passed to a `tbl` parameter, but not queried (D11).
 - `t.col` on a `tbl[R]` is the column as a `vec` (D1); an unknown column is a compile-time error.
 - A table value is immutable; there is no cell assignment.
@@ -191,7 +191,7 @@ Measured on 500K rows (`-O2`, one core, Linux x86_64, 2026-11-13): `group_by` + 
 **Still later:**
 - `summary(t)` (§6), with the quantile kernel it needs (decided 2026-11-13: after v0.1, so the first implementation ships `head`, `tail` and `describe`).
 - Joins, and `slice`.
-- Column types: `date` (int32 days, Arrow `date32`), then timestamps and categoricals.
+- Column types: `date` (int32 days, Arrow `date32`) — design in `specs/dates_v0_1_spec.md` — then timestamps and categoricals.
 - `map` over vecs and tables (D4), `list[T]` (D16).
 - DuckDB as an optional backend (`specs/ffi_v0_1_spec.md` §6). User-facing semantics must stay the same across backends; only performance and where the work runs may differ.
 

@@ -1,7 +1,7 @@
 # Quark REPL v0.1 Spec
 
 Status: Implemented. On Windows an input runs in the host process and a failed input is rolled back from a copy of the session (§5.6); on Linux and macOS the host uses `fork`.
-Last Updated: 2026-11-14
+Last Updated: 2026-11-15
 Scope: `quark repl`, an interactive session that compiles each input with the normal compiler and runs it in a long-lived process. Notebooks and Jupyter kernels are out of scope (§7).
 
 ## Contents
@@ -215,6 +215,7 @@ If an untyped path (`any`) put a value in the container before the input that fi
 - A type change (§3.4) gives the variable a new symbol and slot, and clears the old slot at the change.
 - At the start of the entry function, every variable from §5.3's list is passed to a new runtime helper, `q_settle_elems(value, elem_type, loc)` (`types/elemtype.hpp`). It gives the containers in the value that still have no element type the type this input fixed, following nested lists and dicts, and checks the elements already there; one that doesn't match is a `QK-RUNTIME-001` reported at `loc`, the fixing write.
 - The IR verifier runs as for a program.
+- `csv::read_file` and `csv::parse_text` call the native reader directly and pass the row struct (`QStructDef*`), which the Quark wrapper compiled with the `incl` does not take. The input that makes the call includes the header that declares the reader (`csv.hpp`), even when an earlier input included `std/csv`. Other extern functions still go through the wrapper of the input that included them.
 
 ### 5.5 Line input
 

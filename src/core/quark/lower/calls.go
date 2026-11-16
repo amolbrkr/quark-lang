@@ -148,7 +148,20 @@ func (l *lowerer) call(node *ast.TreeNode) Expr {
 // tableRead lowers a csv::read_file or csv::parse_text call to its native
 // reader with the row's definition (D18), or nullptr when the column types
 // come from the file. The wrapper's default mapping is no mapping (nullptr).
+//
+// The reader is inline in the header the module included. A later REPL input
+// cannot call the earlier input's wrapper: the wrapper does not take the row
+// struct. This input includes the header and compiles the call itself.
 func (l *lowerer) tableRead(argsNode *ast.TreeNode, tr *types.TableRead) Expr {
+	if !l.externDefinedHere(tr.Native) {
+		headers := l.nativeHeaders[tr.Native]
+		if len(headers) == 0 {
+			l.ice("INV-REPL", argsNode, "csv read calls '%s', whose declaring header is not in this input", tr.Native)
+		}
+		for _, h := range headers {
+			l.include(h)
+		}
+	}
 	vals := l.operands(argsNode.Children)
 	args := []Expr{toNative(vals[0], RepStr), nullptrExpr}
 	if len(vals) > 1 {

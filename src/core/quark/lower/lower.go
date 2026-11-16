@@ -66,8 +66,12 @@ type lowerer struct {
 	// externHome is the C++ symbols of extern fns declared in this REPL
 	// input. Nil for an ordinary program, where every extern fn is local.
 	// foreignThunk records wrappers from earlier inputs that this input uses.
-	externHome   map[string]bool
-	foreignThunk map[string]bool
+	// nativeHeaders maps an extern symbol to the headers of the file that
+	// declares it, so a later input that calls the function directly (a
+	// typed csv read) can include them.
+	externHome    map[string]bool
+	foreignThunk  map[string]bool
+	nativeHeaders map[string][]string
 }
 
 // Lower lowers an analyzed, validated tree to a Program. sourceName labels
@@ -114,7 +118,7 @@ func (l *lowerer) ice(code string, node *ast.TreeNode, format string, args ...in
 
 func (l *lowerer) program(root *ast.TreeNode) {
 	if l.an.Session != nil {
-		l.sessionProgram()
+		l.sessionProgram(root)
 		return
 	}
 	p := l.prog

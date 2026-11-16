@@ -2,6 +2,8 @@ package repl
 
 import (
 	"bufio"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -170,6 +172,98 @@ func TestSession_EmptyListFixedLater(t *testing.T) {
 	if !bad.Failed() {
 		t.Fatal("pushing a str into a list[int] should fail")
 	}
+}
+
+func TestSession_CSVReadFromLaterInput(t *testing.T) {
+	t.Setenv("QUARK_STDLIB_ROOT", stdlibRoot(t))
+
+	structIn := "struct car:\n    model: str\n    mpg: int\n    cyl: int\n"
+	read := "cars: tbl[car] = unwrap(csv::read_file('cars.csv'))\n"
+	later := driver.CompileSession(".", []string{
+		"incl 'std/csv'\n",
+		structIn,
+		read,
+	})
+	if later.Failed() {
+		t.Fatalf("later read: %v %v", later.Err, later.Diagnostics)
+	}
+	if !strings.Contains(later.CPP, "csv.hpp") || !strings.Contains(later.CPP, "q_csv_read_file(") {
+		t.Fatalf("later input did not include the csv reader:\n%s", later.CPP)
+	}
+	if !strings.Contains(later.CPP, "&_sdef_") {
+		t.Fatalf("typed read did not pass the row struct:\n%s", later.CPP)
+	}
+
+	same := driver.CompileSession(".", []string{"incl 'std/csv'\n" + structIn + read})
+	if same.Failed() {
+		t.Fatalf("same input: %v %v", same.Err, same.Diagnostics)
+	}
+	if !strings.Contains(same.CPP, "csv.hpp") || !strings.Contains(same.CPP, "q_csv_read_file(") {
+		t.Fatalf("same-input read lost the header:\n%s", same.CPP)
+	}
+
+	text := driver.CompileSession(".", []string{
+		"incl 'std/csv'\n",
+		"unwrap(csv::parse_text('a,b\\n1,2\\n'))\n",
+	})
+	if text.Failed() {
+		t.Fatalf("parse_text: %v %v", text.Err, text.Diagnostics)
+	}
+	if !strings.Contains(text.CPP, "csv.hpp") || !strings.Contains(text.CPP, "q_csv_parse_text(") {
+		t.Fatalf("parse_text did not include the reader:\n%s", text.CPP)
+	}
+
+	anyCall := driver.CompileSession(".", []string{
+		"incl 'std/csv'\n",
+		"fn id(v) -> v\ncsv::read_file(id(1))\n",
+	})
+	if anyCall.Failed() {
+		t.Fatalf("any argument should reach the reader: %v %v", anyCall.Err, anyCall.Diagnostics)
+	}
+	if !strings.Contains(anyCall.CPP, "q_as_str(") || !strings.Contains(anyCall.CPP, "csv.hpp") {
+		t.Fatalf("untyped path was not checked at the reader:\n%s", anyCall.CPP)
+	}
+
+	for _, tc := range []struct{ src, want string }{
+		{"csv::read_file(1)\n", "expects str, got int"},
+		{"csv::read_file(null)\n", "expects str, got null"},
+		{"csv::read_file()\n", "expects 1"},
+	} {
+		bad := driver.CompileSession(".", []string{"incl 'std/csv'\n", tc.src})
+		if !bad.Failed() {
+			t.Fatalf("%s compiled", tc.src)
+		}
+		joined := ""
+		for _, d := range bad.Diagnostics {
+			joined += d.Message + "\n"
+		}
+		if !strings.Contains(joined, tc.want) {
+			t.Fatalf("%s: got %s", tc.src, joined)
+		}
+	}
+}
+
+// stdlibRoot is src/core/stdlib, found by walking up from the test's
+// working directory. go test runs the repl package from its own directory.
+func stdlibRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 6; i++ {
+		cand := filepath.Join(dir, "stdlib", "csv.qrk")
+		if st, err := os.Stat(cand); err == nil && !st.IsDir() {
+			return filepath.Join(dir, "stdlib")
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	t.Fatal("could not find stdlib/csv.qrk above the working directory")
+	return ""
 }
 
 func TestReadInput_BlockAndBrackets(t *testing.T) {

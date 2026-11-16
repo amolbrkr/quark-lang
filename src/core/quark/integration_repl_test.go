@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -91,6 +93,74 @@ func TestRepl_EarlierInputStaysCallable(t *testing.T) {
 	}
 	if !strings.Contains(got, ":\\") && !strings.Contains(got, "/") {
 		t.Fatalf("cwd missing\nstdout:\n%s\nstderr:\n%s", got, errText)
+	}
+}
+
+func TestRepl_CSVReadAfterIncl(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "cars.csv"), []byte("model,mpg,cyl\nMazda,21,6\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(quarkExePath, "repl")
+	cmd.Dir = dir
+	cmd.Stdin = strings.NewReader(strings.Join([]string{
+		"incl 'std/csv'",
+		"struct car:",
+		"    model: str",
+		"    mpg: int",
+		"    cyl: int",
+		"",
+		"csv::read_file(1)",
+		"csv::read_file(null)",
+		"csv::read_file()",
+		"text: tbl[car] = unwrap(csv::parse_text('model,mpg,cyl\\nMazda,21,6\\n'))",
+		"print(sum(text.mpg))",
+		"fn id(v) -> v",
+		"csv::read_file(id(1))",
+		"cars: tbl[car] = unwrap(csv::read_file('cars.csv'))",
+		"print(cars.model)",
+		"print(csv::format_text(cars))",
+		"unwrap(csv::read_file('missing.csv'))",
+		"print(sum(cars.mpg))",
+		"",
+	}, "\n"))
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	done := make(chan error, 1)
+	go func() { done <- cmd.Run() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("repl: %v\nstderr:\n%s", err, errb.String())
+		}
+	case <-time.After(4 * time.Minute):
+		_ = cmd.Process.Kill()
+		t.Fatal("repl timed out\n" + errb.String())
+	}
+	got := strings.ReplaceAll(out.String(), "\r\n", "\n")
+	errText := errb.String()
+	if strings.Contains(errText, "Compilation failed") || strings.Contains(errText, "undeclared identifier") {
+		t.Fatalf("C++ compile failed\nstdout:\n%s\nstderr:\n%s", got, errText)
+	}
+	for _, want := range []string{"21\n", "['Mazda']\n", "Mazda,21,6\n"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q\nstdout:\n%s\nstderr:\n%s", want, got, errText)
+		}
+	}
+	for _, want := range []string{
+		"expects str, got int",
+		"expects str, got null",
+		"expects 1",
+		"expected str, got int",
+		"unwrap on err: cannot open 'missing.csv'",
+	} {
+		if !strings.Contains(errText, want) {
+			t.Fatalf("missing %q\nstderr:\n%s", want, errText)
+		}
+	}
+	if strings.Count(got, "21\n") < 2 {
+		t.Fatalf("the failed read dropped the table\nstdout:\n%s\nstderr:\n%s", got, errText)
 	}
 }
 

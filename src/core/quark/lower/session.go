@@ -12,7 +12,7 @@ import (
 // sessionProgram lowers the last input of a REPL session. Earlier inputs
 // stay in the libraries already loaded; this one declares them extern and
 // defines only its own functions.
-func (l *lowerer) sessionProgram() {
+func (l *lowerer) sessionProgram(root *ast.TreeNode) {
 	sess := l.an.Session
 	block := sess.Emit
 	if block == nil {
@@ -23,7 +23,11 @@ func (l *lowerer) sessionProgram() {
 	p.Session = &SessionEmit{Input: inputNumber(block.SourceFile)}
 	p.Session.NInt, p.Session.NFloat, p.Session.NBool, p.Session.NCell = slotCounts(sess.Slots)
 	p.Includes = collectExternSources(block)
+	for _, inc := range p.Includes {
+		l.included[inc] = true
+	}
 	l.externHome = externSymbols(block)
+	l.nativeHeaders = externHeadersBySymbol(root)
 
 	l.collectFunctions(block)
 	for _, fd := range l.fns {
@@ -115,6 +119,72 @@ func externSymbols(block *ast.TreeNode) map[string]bool {
 	}
 	walk(block)
 	return syms
+}
+
+// externHeadersBySymbol maps each extern fn's C++ symbol to the headers of
+// the file that declares it, in source order. A typed csv read calls the
+// native function directly and passes the row struct, so the input that
+// makes the call has to include that header even when an earlier input
+// included the module.
+func externHeadersBySymbol(root *ast.TreeNode) map[string][]string {
+	type file struct {
+		headers []string
+		symbols []string
+	}
+	files := map[string]*file{}
+	fileOf := func(n *ast.TreeNode) *file {
+		f := files[n.SourceFile]
+		if f == nil {
+			f = &file{}
+			files[n.SourceFile] = f
+		}
+		return f
+	}
+	var walk func(*ast.TreeNode)
+	walk = func(n *ast.TreeNode) {
+		if n == nil {
+			return
+		}
+		switch n.NodeType {
+		case ast.ExternHeaderNode:
+			if len(n.Children) > 0 && n.Children[0] != nil && n.Children[0].Token != nil && n.Children[0].Token.Literal != "" {
+				f := fileOf(n)
+				path := n.Children[0].Token.Literal
+				seen := false
+				for _, h := range f.headers {
+					if h == path {
+						seen = true
+						break
+					}
+				}
+				if !seen {
+					f.headers = append(f.headers, path)
+				}
+			}
+		case ast.ExternFnNode:
+			if n.ExternSymbol != "" {
+				f := fileOf(n)
+				f.symbols = append(f.symbols, n.ExternSymbol)
+			}
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(root)
+	out := map[string][]string{}
+	for _, f := range files {
+		if len(f.headers) == 0 {
+			continue
+		}
+		for _, sym := range f.symbols {
+			if _, ok := out[sym]; ok {
+				continue
+			}
+			out[sym] = append([]string(nil), f.headers...)
+		}
+	}
+	return out
 }
 
 func (l *lowerer) externShells() {

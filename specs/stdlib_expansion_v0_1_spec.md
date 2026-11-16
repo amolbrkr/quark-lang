@@ -129,7 +129,7 @@ Filesystem operations (listing, creating and removing directories and files) go 
 
 `now()` (epoch seconds), `clock()` (monotonic seconds) and `sleep(seconds)` exist. There is no way to show a timestamp as a date, read a date, or present a duration.
 
-Timestamps stay floats: seconds since the Unix epoch, UTC. That keeps arithmetic trivial (`ts + time::days(3)`), sorts, and fits vectors. Durations are float seconds too. A dedicated date type isn't worth it for v0.1; the tables work plans a `date` column type (`specs/tables_v0_1_spec.md` §9), and this module should convert to and from it when it exists.
+Timestamps stay floats: seconds since the Unix epoch, UTC. Durations for clocks are float seconds too. The dedicated `date` type, period arithmetic, and the rewrite of this module around them are specified in `specs/dates_v0_1_spec.md` (supersedes the earlier "no date type yet" choice here).
 
 ### 5.2 Proposal
 

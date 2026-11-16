@@ -51,6 +51,16 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 ### Fixed
 
 - A line after `incl 'std/sys'` compiles. The C++ behind that module is built in the input that included it. A later line calls the Quark function from that input; it does not compile the C++ again.
+- A line after `incl 'std/csv'` can read a file. `csv::read_file` and `csv::parse_text` call the C++ reader directly so they can pass the row struct, and that reader is declared in the header the `incl` brought in. The input that calls them includes that header.
+
+```quark
+incl 'std/csv'
+struct car:
+    model: str
+    mpg: int
+
+cars: tbl[car] = unwrap(csv::read_file('cars.csv'))
+```
 
 ```quark
 incl 'std/sys' as sys

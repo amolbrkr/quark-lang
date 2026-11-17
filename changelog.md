@@ -56,10 +56,14 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 
 ## 2026-11-16: CI on Linux and Windows
 
+Commits: `285af4a`
+
 ### Fixed
 
+- **`incl 'std/fmt'` works again.** At `285af4a`, `src/core/stdlib/fmt.qrk` ended with top-level statements, so every program that included it failed with `QK-LOAD-001: 'fmt.qrk' is imported, so it can only contain definitions`.
+
 - **A finalized handle no longer keeps its parent open.** When a child handle (`qext::new_handle(kind, payload, parent)`) became unreachable, its finalizer ran the close function, but the handle's memory still pointed at the parent. The collector scans the stack conservatively, so a stale word left pointing at the finalized child kept the parent reachable, and the parent's close function never ran. Glue built at `-O0` hit this every time; on the Linux CI runner (clang 18) it failed `TestFFI_Phase2` at `-O3`. The finalizer now clears the child's parent.
-- **Windows `quark repl`: inputs that include `std/sys` or read with `std/csv` link, and output appears when each input ends.** `incl 'std/sys' as sys` failed with `LNK2005: ... already defined in quarkrepl.lib(quarkrepl.dll)`, and so did the first `std/csv` read. With stdout piped, `print` output appeared only when the session ended. The host, `quarkrepl.dll` and every input now use the DLL C runtime instead of each linking its own static copy, and the host flushes stdout after each input. This hasn't been run on a Windows machine; the Windows CI job is the first check.
+- **Windows `quark repl`: inputs that include `std/sys` or read with `std/csv` link, and output appears when each input ends.** `incl 'std/sys' as sys` failed with `LNK2005: ... already defined in quarkrepl.lib(quarkrepl.dll)`, and so did the first `std/csv` read. With stdout piped, `print` output appeared only when the session ended. The host, `quarkrepl.dll` and every input now use the DLL C runtime instead of each linking its own static copy, and the host flushes stdout after each input. The Windows CI job's REPL tests pass at `285af4a`; it hasn't been tried interactively on a Windows machine.
 
 ### Internal
 
@@ -72,6 +76,8 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 ---
 
 ## 2026-11-16: std/random, std/sys and std/time at their edges
+
+Commits: `285af4a`
 
 ### Breaking
 

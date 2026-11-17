@@ -1081,10 +1081,15 @@ and don't. An `INV-*` diagnostic is a compiler bug.
 
 **Planned:**
 
-- Tables still later: the column-wise table literal, joins, `summary(t)`,
-date columns, and compile-time schema inference for CSV files
+- Tables v0.3 ([specs/tables_v0_3_spec.md](specs/tables_v0_3_spec.md), a proposal):
+aggregates in `filter` and `mutate` (whole table and per group), missing values in
+queries, `contains`, the `count` step, and verbs, vec operations and the CSV reader
+on every core with the same output for every thread count.
+- Tables still later: the column-wise table literal, joins, `summary(t)`, and
+compile-time schema inference for CSV files
 ([specs/tables_v0_1_spec.md](specs/tables_v0_1_spec.md) §9-10,
-[specs/tables_v0_2_spec.md](specs/tables_v0_2_spec.md) §6).
+[specs/tables_v0_2_spec.md](specs/tables_v0_2_spec.md) §6,
+[specs/tables_v0_3_spec.md](specs/tables_v0_3_spec.md) §13).
 - Element types in annotations: `list[T]`.
 - Struct methods and whole-struct equality.
 - Result helpers such as `unwrap_or` and `map_ok`.
@@ -1154,6 +1159,7 @@ measured.
 [structs v0.1](specs/implemented/structs_v0_1_spec.md)), and those with work
 still planned or proposed in `specs/` ([tables v0.1](specs/tables_v0_1_spec.md),
 [tables v0.2](specs/tables_v0_2_spec.md),
+[tables v0.3](specs/tables_v0_3_spec.md),
 [FFI v0.1](specs/ffi_v0_1_spec.md), [REPL v0.1](specs/repl_v0_1_spec.md) and
 [stdlib expansion v0.1](specs/stdlib_expansion_v0_1_spec.md) (partly implemented)).
 

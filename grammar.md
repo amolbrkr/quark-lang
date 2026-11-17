@@ -410,7 +410,7 @@ A pipe whose target starts with a name and `->` is a table query (semantics.md �
 Query           ::= ID "->" Step { "|" Step }
                 |   ID "->" NEWLINE INDENT Step { NEWLINE "|" Step } NEWLINE DEDENT
 Step            ::= ID "(" [ StepArg { "," StepArg } [ "," ] ] ")"
-StepArg         ::= ID "=" PipeExpr               (mutate, summarize, group_by)
+StepArg         ::= ID "=" PipeExpr               (mutate, summarize, group_by, count, rename)
                 |   "desc" "(" PipeExpr ")"       (sort)
                 |   PipeExpr
 ```
@@ -428,7 +428,7 @@ top = staff | e -> sort(desc(e.salary)) | head(3)
 
 - The steps continue on lines that start with `|`, as for pipes (§10.4), or form an indented block after `e ->` at the end of a line.
 - Every `| step` after `e ->` belongs to the query, so a query's result can't be piped into a function directly: `(t | e -> head(3)) | f()`. A second `| x ->` is a parse error (`a query names its row once`).
-- The verb (`filter`, `mutate`, `select`, `deselect`, `rename`, `distinct`, `sort`, `group_by`, `summarize`, `head`, `tail`), `desc` and the `name =` column names are part of the query, never functions or variables, so a user function named `filter` doesn't affect them. Which verbs exist and what their arguments may be is checked by the compiler (semantics.md §9.5).
+- The verb (`filter`, `mutate`, `select`, `deselect`, `rename`, `distinct`, `drop_na`, `sort`, `group_by`, `summarize`, `count`, `head`, `tail`), `desc` and the `name =` column names are part of the query, never functions or variables, so a user function named `filter` doesn't affect them. Which verbs exist and what their arguments may be is checked by the compiler (semantics.md §9.5). As a step, `count(e.k)` is a verb; inside a verb's arguments, `count()` is the aggregate.
 - Inside `filter`, `mutate` and `summarize`, `count()`, `count(e.x)`, `sum`, `mean`, `sd`, `min`, `max` and `n_distinct` of an expression that reads the row are aggregates, not function calls. `min` and `max` with two arguments, and `sum`, `mean`, `sd`, `min` and `max` of a value that doesn't read the row, are the prelude functions. In a verb, a bare call of one of these names that resolves to the program's own function, variable or parameter is a compile-time error, so the aggregate never silently takes a definition's place; a qualified call (`lib::count(e.x)`) is an ordinary call (semantics.md §9.5).
 
 ## 11) Not in the Language
@@ -442,7 +442,7 @@ These are not part of Quark, by decision or because they are planned in a spec:
 | `extern include` | Not a directive: use `extern include_path` or `extern 'file.hpp'` |
 | `struct` inside a function body | Not supported; currently an internal error (known_issues.md) |
 | `return` | None: a function's value is its last statement (semantics.md §6.1) |
-| `in` as an operator | None: use `any(v == x)`, `d.get(k) != null`, `s.contains(sub)` |
+| `in` as an operator | None: use `xs.contains(x)` (lists and vecs), `d.get(k) != null`, `s.contains(sub)` |
 | String interpolation, varargs, keyword arguments | None (`specs/stdlib_expansion_v0_1_spec.md` §1) |
 | Struct methods | None (`specs/implemented/structs_v0_1_spec.md`) |
 | Exceptions | None: runtime errors are fatal, expected failures are results (semantics.md §11) |

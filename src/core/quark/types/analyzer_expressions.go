@@ -591,6 +591,9 @@ func (a *Analyzer) analyzeArith(node *ast.TreeNode, leftType, rightType Type) Ty
 
 // analyzeOrdering types `< <= > >=`.
 func (a *Analyzer) analyzeOrdering(node *ast.TreeNode, leftType, rightType Type) Type {
+	if a.rowOrderedNull(node, leftType, rightType) {
+		return TypeError
+	}
 	leftVec, leftIsVec := leftType.(*VectorType)
 	rightVec, rightIsVec := rightType.(*VectorType)
 	if leftIsVec || rightIsVec {
@@ -650,6 +653,9 @@ func (a *Analyzer) analyzeOrdering(node *ast.TreeNode, leftType, rightType Type)
 // analyzeEquality types `==` and `!=`.
 func (a *Analyzer) analyzeEquality(node *ast.TreeNode, leftType, rightType Type) Type {
 	op := node.Token.Type
+	if t, ok := a.rowNullTest(node, leftType, rightType); ok {
+		return t
+	}
 	_, leftIsVec := leftType.(*VectorType)
 	_, rightIsVec := rightType.(*VectorType)
 	if leftIsVec || rightIsVec {

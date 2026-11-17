@@ -10,6 +10,8 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 
 ## Contents
 
+- [2026-11-17: Tables v0.3, random draws in verbs](#2026-11-17-tables-v03-random-draws-in-verbs)
+- [2026-11-17: Tables v0.3, missing values in verbs, contains, count step](#2026-11-17-tables-v03-missing-values-in-verbs-contains-count-step)
 - [2026-11-17: Tables v0.3, aggregate names and rowsafe hardened](#2026-11-17-tables-v03-aggregate-names-and-rowsafe-hardened)
 - [2026-11-16: Tables v0.3, row-safe calls](#2026-11-16-tables-v03-row-safe-calls)
 - [2026-11-16: Tables v0.3, aggregates on one thread](#2026-11-16-tables-v03-aggregates-on-one-thread)
@@ -56,6 +58,86 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 - [2026-04-03: Table runtime scaffolding; struct fixes](#2026-04-03-table-runtime-scaffolding-struct-fixes)
 - [2026-04-02: Structs v0.1](#2026-04-02-structs-v01)
 - [2026-03-28: Vector soundness, `std/fmt` on `extern`, build output](#2026-03-28-vector-soundness-stdfmt-on-extern-build-output)
+
+## 2026-11-17: Tables v0.3, random draws in verbs
+
+`specs/tables_v0_3_spec.md` §5 (D45): a random draw in a query no longer takes the next number of `std/random`'s sequence. It is computed from the seed, the row loop, the row and the draw's place in the row, with the counter-based generator Philox4x32-10, so the numbers don't depend on the order rows run in, which the parallel queries of phase 4 need.
+
+### Breaking
+
+- **A seeded program that draws in a query gets different numbers.** `random::seed(42)`, then `staff | e -> mutate(u = random::uniform())` gives other values than before, and so do `normal`, `randint`, `choice`, `sample`, `weighted` and the `_vec` draws in a verb, directly or through a function. Draws outside queries are unchanged.
+- **A query no longer moves the sequence.** `x = random::uniform()`, a query that draws, then `y = random::uniform()`: `y` is now the number that follows `x`, as it would be without the query.
+
+### Added
+
+- Uniform floats, ints, `choice`, `sample` and `weighted` drawn in a query are the same on every platform (they use the runtime's own algorithms over Philox bits, not `std::` distributions); a normal uses the platform's `log` and `cos`.
+- `random::seed(n)` also seeds the draws in queries.
+
+### Internal
+
+- `core/rowrand.hpp`: Philox4x32-10 (checked against the Random123 known-answer vectors), the thread-local row context `q_row_ctx`, the verb seed and loop count `q_rand_state`, `q_rand_loop_key` (a loop that starts inside a row takes its key from that row), and the stream `QRowStream`. `std/random`'s functions take a stream with `q_row_stream` and use `q_row_uniform`, `q_row_normal`, `q_row_randint` and `q_row_below`. `q_exit` clears the row context when the Windows REPL recovers from an input.
+- A verb call of a function that draws has `CallPlan.Draws` set (`finalizeRowSafety`); `lower/query.go` `drawContext` gives a row loop whose expressions draw its key and saved context, `rowFor` sets the context per row, and `endRow` restores it.
+- Tests: `TestTables_Random` (fixed values for a seed, repeats, distinct draws in a row, distinct loops, the sequence outside queries, helpers, grouped summarize, vec draws, `weighted`, nested queries).
+- Docs: `specs/tables_v0_3_spec.md` §5 (the key and counter layout, and loops that don't draw take no number), `semantics.md` §9.5, `stdlib.md` (`std/random`), `architecture.md` §1.6 (Queries), `README.md`.
+
+---
+
+## 2026-11-17: Tables v0.3, missing values in verbs, contains, count step
+
+The rest of the tables v0.3 language on one thread (`specs/tables_v0_3_spec.md` §6, §7): a query can test and replace a missing value, test membership, and count rows; tables report their shape; two-argument `min` and `max` have types.
+
+### Breaking
+
+- **In a verb, `x == null` is true where `x` is missing.** `filter(e.mpg == null)` kept no rows; it now keeps the rows with no `mpg`, and `mutate(m = e.mpg == null)` is `true` there instead of missing. `e.x < null` and the other ordered comparisons with `null` are compile-time errors in a verb. Outside verbs, `==` with `null` is unchanged.
+- **Two-argument `min` and `max` are typed by their arguments.** `x = max(1, 2)` makes `x` an int, so a later `x = 2.5` is a compile-time error (it was untyped). An int and a float still give an untyped value. A bool, `null`, or a str with a number is a compile-time error (`argument 1 of 'min' expects int, float, str or date, got bool`).
+
+### Added
+
+- `x == null`, `x != null` and `null == x` in a verb test whether any verb expression is missing, and are never missing themselves. `null` may be a variable holding it:
+
+```quark
+unpaid = staff | e -> filter(e.salary == null)
+gaps = staff | e -> group_by(e.dept) | summarize(missing = sum(e.salary == null))
+```
+
+- `x.fillna(v)` in a verb: `x` where it is present, else `v`, which has `x`'s type (an int fills a float) and is computed only for the rows where `x` is missing. `v` can be another column or an aggregate: `mutate(s = e.salary.fillna(mean(e.salary)))`, `e.a.fillna(e.b)`.
+- The `drop_na` step keeps the rows where every listed column is present (`drop_na()`: every column). A NaN is present.
+- The `count` step: `count(e.dept)` is `group_by(e.dept) | summarize(n = count())`, with computed keys as in `group_by` (`count(e.dept, rich = e.salary > 100_000.0)`); `count()` is one row with the row count. A key named `n` is a compile-time error.
+- `xs.contains(x)` on lists and vecs: whether some element equals `x` under `==` (`list [1, 2].contains(2.0)` is true; a missing vec entry and NaN never match). A comparison that can't be true (`list ['a'].contains(1)`) is a compile-time error. In a verb, a list or vec that doesn't read the row is turned into a hash set the first time a row needs it, so each row costs one lookup:
+
+```quark
+keep = list ['eng', 'ops']
+mine = staff | e -> filter(keep.contains(e.dept))
+known = orders | o -> filter(customers.id.contains(o.customer_id))
+```
+
+- `t.nrow()`, `t.ncol()` and `t.names()` (the column names as a `list` of `str`).
+- Two-argument `min` and `max` of two strs (by their bytes) and of two dates. In a verb they make a typed column: `mutate(m = max(e.salary, 100_000.0))` works (it failed with `the type of column 'm' isn't known`).
+
+### Changed
+
+- `len(t)` of a table says `len() of a table isn't defined; its row count is t.nrow()`, at compile time and at runtime.
+- In a verb, two-argument `min` or `max` of an int and a float is a compile-time error that says to convert the int with `to_float`, since a column needs one type.
+- `contains` on a value of unknown type (`id('abc').contains(1)`) now checks its argument when it runs, since the value may be a list or a vec, whose `contains` takes any value: a str receiver with a non-str argument is a runtime error (`contains() expects (str, str)`), where it was a compile-time error.
+
+### Fixed
+
+- `filter(e.mpg == null)` keeps the rows where `mpg` is missing; it kept none, with no error (see Breaking).
+- Two-argument `min` and `max` work in a query: `mutate(m = max(e.mpg, 20.0))` failed with `the type of column 'm' isn't known`, which a user couldn't fix for a builtin (see Added).
+- **An `and`, `or`, `!` or ternary inside an aggregate no longer crashes the compiler** when the step's columns have missing values: `summarize(k = sum(e.salary > 0.0 and e.id > 1))` failed with `internal compiler error [INV-QUERY-COLUMN]: column read outside its row loop`. The same held for `== null` and `fillna` inside an aggregate.
+
+### Internal
+
+- `types.RowMissing` (`Analysis.RowMissing`, `types/analyzer_missing.go`) records each `x == null` and verb `fillna`; lowering treats them, like `and`/`or`, as parts lowered before the strict expression around them (`lower/query.go` `rowNullTest`, `rowFillna`, `rowMissingDense`). A verb `fillna` has the call plan `ir.DispatchRowFillna`.
+- `ir.CallPlan.Lookup` marks a verb `contains` whose receiver is the same for every row (`types/analyzer_contains.go`); `lowerer.lookupCall` builds a `quark::tbl::LookupSet` (`table/query.hpp`) in a once-slot and calls `q_lookup_has_*` per row. List elements that aren't scalars are kept aside and compared with `==`, so the set gives the linear scan's answer. `q_list_contains` and `q_vec_contains` are in the new `builtins/contains.hpp`.
+- `q_tbl_drop_na`, `q_tbl_nrow`, `q_tbl_ncol`, `q_tbl_names`; `q_min`/`q_max` go through `q_minmax2`. The analyzer's `groupKeys` is shared by `group_by` and `count`; `minMax2Type` types two-argument `min` and `max`.
+- `lower/query.go` `logicParts` skips aggregates, as `columnReads` and `aggUsesIn` do (the Fixed entry).
+- Error codes `INV-QUERY-ONCE`, `INV-QUERY-LOOKUP`, `INV-QUERY-NULLTEST` and `INV-QUERY-FILLNA` are documented in `error_codes.md`.
+- The editor grammar highlights `nrow`, `ncol` and `names`; the editor data is regenerated.
+- Tests: `TestTables_MissingValues`, `TestTables_MissingValuesRejected`, `TestTables_CountStep`, `TestTables_Contains` (with a rowsafe glue library whose list function counts its calls or fails), `TestTables_TableInfo`, `TestTables_MinMax2`.
+- Docs: `specs/tables_v0_3_spec.md` (status, §6, §7.1, §7.4), `specs/tables_v0_1_spec.md` §5, `semantics.md` §9.5, `stdlib.md`, `grammar.md` §10.5 and §11, `architecture.md` §1.6 (Queries), `README.md`.
+
+---
 
 ## 2026-11-17: Tables v0.3, aggregate names and rowsafe hardened
 
@@ -164,7 +246,7 @@ dev = cars | c -> group_by(c.cyl) | mutate(dev = c.mpg - mean(c.mpg))
 
 ## 2026-11-16: CI on Linux and Windows
 
-Commits: `285af4a`
+Commits: `285af4a`, `212aa54`
 
 ### Fixed
 

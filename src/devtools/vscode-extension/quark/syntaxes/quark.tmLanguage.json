@@ -262,7 +262,7 @@
         {
           "comment": "Builtin methods (str, list, dict, vec, tbl), after a dot",
           "name": "support.function.method.quark",
-          "match": "(?<=\\.)(upper|lower|trim|contains|startswith|endswith|replace|concat|split|slice|push|pop|get|set|insert|remove|reverse|sort_by|sort|enumerate|join|to_vec|keys|values|items|fillna|drop_na|astype|to_list|head|tail|describe)\\b(?=\\s*\\()"
+          "match": "(?<=\\.)(upper|lower|trim|contains|startswith|endswith|replace|concat|split|slice|push|pop|get|set|insert|remove|reverse|sort_by|sort|enumerate|join|to_vec|keys|values|items|fillna|drop_na|astype|to_list|head|tail|describe|nrow|ncol|names)\\b(?=\\s*\\()"
         }
       ]
     },

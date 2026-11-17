@@ -12,9 +12,12 @@
 
 #include "engine.hpp"
 #include "../builtins/repr.hpp"
+#include "../builtins/contains.hpp"
 
+#include <cstring>
 #include <initializer_list>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace quark {
@@ -292,9 +295,211 @@ inline QTable* q_tbl_distinct(QTable* t, std::initializer_list<int> keys) {
     return quark::tbl::distinct_rows(t, k.data(), static_cast<int>(k.size()));
 }
 
+// q_tbl_drop_na keeps the rows where every listed column is present
+// (tables v0.3 D47). A NaN is present. A table with nothing to drop is
+// returned as it is (tables are immutable).
+inline QTable* q_tbl_drop_na(QTable* t, std::initializer_list<int> cols) {
+    std::vector<const QVector*> gaps;
+    for (int c : cols) {
+        const QVector* v = quark::tbl::column(t, c);
+        if (v->null_count != 0) gaps.push_back(v);
+    }
+    if (gaps.empty()) return t;
+    quark::tbl::RowSet s = q_rows_new(t->nrows);
+    for (int32_t r = 0; r < t->nrows; r++) {
+        bool keep = true;
+        for (const QVector* v : gaps) {
+            if (quark::tbl::is_null(*v, r)) {
+                keep = false;
+                break;
+            }
+        }
+        if (keep) q_rows_push(s, r);
+    }
+    return q_tbl_take(t, s);
+}
+
 inline QTable* q_tbl_make(const QStructDef* def, std::initializer_list<QVector*> cols) {
     std::vector<QVector*> cs(cols);
     return quark::tbl::make_table(def, cs.data());
+}
+
+// ------------------------------------------------------------
+// xs.contains(x) in a verb (tables v0.3 D48): when xs is the same for every
+// row, a hash set of its elements is built the first time a row needs it,
+// and each row looks x up. Equality is ==, as in q_list_contains: a float
+// that is an exact int is stored as that int, so 2 and 2.0 are one key; NaN
+// and missing vec entries are never stored, so they never match. A list of
+// unknown element type may hold other values (null, a list): they are kept
+// aside and compared with == when x isn't a scalar, so the result is the
+// linear scan's (the compiler rejects element types it knows aren't
+// scalars).
+
+namespace quark {
+namespace tbl {
+
+struct LookupSet {
+    enum Kind : uint8_t { EMPTY = 0, INT, FLT, BOOL, STR, DATE };
+    struct Slot {
+        uint8_t kind = EMPTY;
+        uint64_t bits = 0;
+        std::string_view s;
+    };
+    // src keeps the list or vec, and so the strings slots point into,
+    // reachable while the set is (the set is a local of the step).
+    QValue src = qv_null();
+    std::vector<Slot> slots;
+    size_t mask = 0;
+    std::vector<QValue> others; // list elements that aren't scalars, in order
+};
+
+inline uint64_t lookup_hash(uint8_t kind, uint64_t bits) { return mix64(bits ^ (static_cast<uint64_t>(kind) * 0x9e3779b97f4a7c15ULL)); }
+
+inline uint64_t lookup_hash_str(std::string_view s) {
+    uint64_t h = 0xcbf29ce484222325ULL; // FNV-1a
+    for (unsigned char ch : s) {
+        h ^= ch;
+        h *= 0x100000001b3ULL;
+    }
+    return lookup_hash(LookupSet::STR, h);
+}
+
+// lookup_find is the slot holding the key, or the empty slot where it
+// would go.
+inline size_t lookup_find(const LookupSet& set, uint8_t kind, uint64_t bits, std::string_view s, uint64_t h) {
+    size_t i = static_cast<size_t>(h) & set.mask;
+    while (true) {
+        const LookupSet::Slot& slot = set.slots[i];
+        if (slot.kind == LookupSet::EMPTY) return i;
+        if (slot.kind == kind && (kind == LookupSet::STR ? slot.s == s : slot.bits == bits)) return i;
+        i = (i + 1) & set.mask;
+    }
+}
+
+inline void lookup_add(LookupSet& set, uint8_t kind, uint64_t bits, std::string_view s = {}) {
+    const uint64_t h = kind == LookupSet::STR ? lookup_hash_str(s) : lookup_hash(kind, bits);
+    const size_t i = lookup_find(set, kind, bits, s, h);
+    if (set.slots[i].kind != LookupSet::EMPTY) return;
+    set.slots[i].kind = kind;
+    set.slots[i].bits = bits;
+    set.slots[i].s = s;
+}
+
+inline bool lookup_has(const LookupSet& set, uint8_t kind, uint64_t bits, std::string_view s = {}) {
+    if (set.slots.empty()) return false;
+    const uint64_t h = kind == LookupSet::STR ? lookup_hash_str(s) : lookup_hash(kind, bits);
+    return set.slots[lookup_find(set, kind, bits, s, h)].kind != LookupSet::EMPTY;
+}
+
+// lookup_float_key is a float's key: an exact int is an INT key (so -0.0 is
+// 0), anything else its bits. NaN has no key.
+inline bool lookup_float_key(double f, uint8_t* kind, uint64_t* bits) {
+    if (f != f) return false;
+    long long i = 0;
+    if (q_float_as_int(f, &i)) {
+        *kind = LookupSet::INT;
+        *bits = static_cast<uint64_t>(i);
+        return true;
+    }
+    *kind = LookupSet::FLT;
+    std::memcpy(bits, &f, sizeof f);
+    return true;
+}
+
+inline void lookup_reserve(LookupSet& set, size_t n) {
+    size_t cap = 16;
+    while (cap < n * 2) cap <<= 1;
+    set.slots.assign(cap, LookupSet::Slot{});
+    set.mask = cap - 1;
+}
+
+} // namespace tbl
+} // namespace quark
+
+// q_lookup_build makes the set of xs's elements: a list's int, float, bool,
+// str and date elements (any other element is kept aside), or a vec's
+// present entries.
+inline quark::tbl::LookupSet q_lookup_build(QValue xs) {
+    using quark::tbl::LookupSet;
+    LookupSet set;
+    set.src = xs;
+    if (xs.type == QValue::VAL_LIST && xs.data.list_val) {
+        const QList& l = *xs.data.list_val;
+        quark::tbl::lookup_reserve(set, l.size());
+        for (const QValue& e : l) {
+            switch (e.type) {
+                case QValue::VAL_INT: quark::tbl::lookup_add(set, LookupSet::INT, static_cast<uint64_t>(e.data.int_val)); break;
+                case QValue::VAL_FLOAT: {
+                    uint8_t kind = 0;
+                    uint64_t bits = 0;
+                    if (quark::tbl::lookup_float_key(e.data.float_val, &kind, &bits)) quark::tbl::lookup_add(set, kind, bits);
+                    break;
+                }
+                case QValue::VAL_BOOL: quark::tbl::lookup_add(set, LookupSet::BOOL, e.data.bool_val ? 1 : 0); break;
+                case QValue::VAL_DATE: quark::tbl::lookup_add(set, LookupSet::DATE, static_cast<uint64_t>(static_cast<uint32_t>(e.data.int_val))); break;
+                case QValue::VAL_STRING:
+                    if (e.data.string_val) quark::tbl::lookup_add(set, LookupSet::STR, 0, std::string_view(e.data.string_val));
+                    else set.others.push_back(e);
+                    break;
+                default: set.others.push_back(e); break;
+            }
+        }
+        return set;
+    }
+    if (xs.type == QValue::VAL_VECTOR && xs.data.vector_val) {
+        const QVector& v = *xs.data.vector_val;
+        quark::tbl::lookup_reserve(set, v.count);
+        for (size_t i = 0; i < v.count; i++) {
+            if (q_vec_is_null_at(v, i)) continue;
+            switch (v.type) {
+                case QVector::Type::I64: quark::tbl::lookup_add(set, LookupSet::INT, static_cast<uint64_t>(q_vec_i64_data(v)[i])); break;
+                case QVector::Type::F64: {
+                    uint8_t kind = 0;
+                    uint64_t bits = 0;
+                    if (quark::tbl::lookup_float_key(q_vec_f64_data(v)[i], &kind, &bits)) quark::tbl::lookup_add(set, kind, bits);
+                    break;
+                }
+                case QVector::Type::BOOL: quark::tbl::lookup_add(set, LookupSet::BOOL, q_vec_bool_at(v, i) ? 1 : 0); break;
+                case QVector::Type::DATE: quark::tbl::lookup_add(set, LookupSet::DATE, static_cast<uint64_t>(static_cast<uint32_t>(q_vec_date_data(v)[i]))); break;
+                case QVector::Type::STR: quark::tbl::lookup_add(set, LookupSet::STR, 0, q_vec_str_at(v, i)); break;
+            }
+        }
+        return set;
+    }
+    q_runtime_reportf("runtime error: contains() expects a list or vec, got %s\n", q_type_name(xs.type));
+    q_exit(1);
+}
+
+inline bool q_lookup_has_int(const quark::tbl::LookupSet& set, long long x) {
+    return quark::tbl::lookup_has(set, quark::tbl::LookupSet::INT, static_cast<uint64_t>(x));
+}
+inline bool q_lookup_has_float(const quark::tbl::LookupSet& set, double x) {
+    uint8_t kind = 0;
+    uint64_t bits = 0;
+    return quark::tbl::lookup_float_key(x, &kind, &bits) && quark::tbl::lookup_has(set, kind, bits);
+}
+inline bool q_lookup_has_bool(const quark::tbl::LookupSet& set, bool x) {
+    return quark::tbl::lookup_has(set, quark::tbl::LookupSet::BOOL, x ? 1 : 0);
+}
+inline bool q_lookup_has_date(const quark::tbl::LookupSet& set, int32_t x) {
+    return quark::tbl::lookup_has(set, quark::tbl::LookupSet::DATE, static_cast<uint64_t>(static_cast<uint32_t>(x)));
+}
+inline bool q_lookup_has_str(const quark::tbl::LookupSet& set, std::string_view x) {
+    return quark::tbl::lookup_has(set, quark::tbl::LookupSet::STR, 0, x);
+}
+inline bool q_lookup_has_val(const quark::tbl::LookupSet& set, QValue x) {
+    switch (x.type) {
+        case QValue::VAL_INT: return q_lookup_has_int(set, x.data.int_val);
+        case QValue::VAL_FLOAT: return q_lookup_has_float(set, x.data.float_val);
+        case QValue::VAL_BOOL: return q_lookup_has_bool(set, x.data.bool_val);
+        case QValue::VAL_DATE: return q_lookup_has_date(set, static_cast<int32_t>(x.data.int_val));
+        case QValue::VAL_STRING: return x.data.string_val && q_lookup_has_str(set, std::string_view(x.data.string_val));
+        default:
+            for (const QValue& e : set.others) {
+                if (quark::detail::values_equal(e, x, 0)) return true;
+            }
+            return false;
+    }
 }
 
 // ------------------------------------------------------------
@@ -353,5 +558,16 @@ inline QValue q_tbl_describe(QValue tv, QValue nv) {
     return qv_null();
 }
 inline QValue q_tbl_describe(QValue t) { return q_tbl_describe(t, qv_int(5)); }
+
+// t.nrow(), t.ncol() and t.names() (tables v0.3 D49): the row count, the
+// column count, and the column names in column order as a list[str].
+inline QValue q_tbl_nrow(QValue t) { return qv_int(q_tbl_of(t)->nrows); }
+inline QValue q_tbl_ncol(QValue t) { return qv_int(q_tbl_of(t)->ncols); }
+inline QValue q_tbl_names(QValue tv) {
+    QTable* t = q_tbl_of(tv);
+    QValue out = qv_list(t->ncols, &q_elem_str);
+    for (int c = 0; c < t->ncols; c++) out.data.list_val->push_back(qv_string(t->def->field_names[c]));
+    return out;
+}
 
 #endif // QUARK_TABLE_QUERY_HPP

@@ -292,7 +292,7 @@ func TestTables_QueryRejected(t *testing.T) {
 		{name: "not_a_table", source: "r = 5 | e -> head(1)\n", err: "a query runs on a table, not on int"},
 		{name: "hoisted_unannotated", source: "incl 'std/csv'\n" + empStruct + "r = load() | e -> head(1)\nfn load() -> unwrap(csv::read_file('staff.csv'))\n", err: "a query needs a table whose row type is known"},
 		// Verbs.
-		q("unknown_verb", "r = staff | e -> pick(e.id)\n", "'pick' is not a query step (verbs: filter, mutate, select, deselect, rename, distinct, sort, group_by, summarize, head, tail)"),
+		q("unknown_verb", "r = staff | e -> pick(e.id)\n", "'pick' is not a query step (verbs: filter, mutate, select, deselect, rename, distinct, drop_na, sort, group_by, summarize, count, head, tail)"),
 		q("not_a_verb_after_query", "staff | e -> head(1) | show()\n", "'show' is not a query step"),
 		q("qualified_after_query", "staff | e -> head(1) | csv::format_text()\n", "expected a query step, verb(...)"),
 		q("second_row_name", "r = staff | e -> head(1) | x -> head(1)\n", "a query names its row once ('e ->'); write the next step as '| verb(...)'"),
@@ -440,7 +440,7 @@ func TestTables_ValueRejected(t *testing.T) {
 		q("condition_any", "if id(staff):\n    print(1)\n", "a table used as a condition"),
 		q("for_loop", "for r in staff:\n    print(r)\n", "for loop expects list, vec, or str iterable, got tbl[Emp]"),
 		q("for_loop_any", "for r in id(staff):\n    print(r)\n", "for-loop iterable must be list, string, or vec, got tbl"),
-		q("len", "print(len(staff))\n", "argument 1 of 'len' expects str, list, dict, or vec, got tbl[Emp]"),
+		q("len", "print(len(staff))\n", "len() of a table isn't defined; its row count is staff.nrow()"),
 	})
 }
 
@@ -724,5 +724,265 @@ func TestTables_Once(t *testing.T) {
 		{name: "draw_in_helper_not_once", files: map[string]string{"staff.csv": queryCSV},
 			source: "incl 'std/random'\nfn jitter() float -> random::uniform()\n" + queryPre + "random::seed(1)\nr = staff | e -> mutate(u = jitter())\nprint((r | e -> summarize(k = n_distinct(e.u))).k[0])\n",
 			want:   "5"},
+	})
+}
+
+// rowSafeListH is a glue header whose rowsafe functions return a list (and
+// count their calls) or fail, for contains() sets built once per step.
+const rowSafeListH = `#pragma once
+static int q_rowsafe_list_n = 0;
+inline QList* q_rowsafe_tick_list() {
+    ++q_rowsafe_list_n;
+    QValue l = qv_list(2, &q_elem_int);
+    l.data.list_val->push_back(qv_int(2));
+    l.data.list_val->push_back(qv_int(4));
+    return l.data.list_val;
+}
+inline int64_t q_rowsafe_list_ticks() { return q_rowsafe_list_n; }
+inline QList* q_rowsafe_boom_list() {
+    q_runtime_reportf("runtime error: boom\n");
+    q_exit(1);
+    return nullptr;
+}
+`
+
+// TestTables_MissingValues is tables v0.3 §6 (D46, D47): `== null` and
+// `!= null` test whether a verb expression is missing, `x.fillna(v)` replaces
+// a missing value, and drop_na is a step.
+func TestTables_MissingValues(t *testing.T) {
+	// pairCSV has a row where both a and b are missing, and NaN in b.
+	pairCSV := "id,a,b\n1,1.5,\n2,,2.5\n3,,\n4,4.5,NaN\n"
+	files := map[string]string{"staff.csv": queryCSV, "p.csv": pairCSV,
+		"lib.qrk": "struct Emp:\n    id: int\n    name: str\n    dept: str\n    salary: float\nmodule lib:\n    fn unpaid(t: tbl[Emp]) -> t | e -> filter(e.salary == null)\n"}
+	q := func(name, body, want string) tableCase {
+		return tableCase{name: name, files: files, source: queryPre + body, want: want}
+	}
+	pairs := "struct P:\n    id: int\n    a: float\n    b: float\np: tbl[P] = unwrap(csv::read_file('p.csv'))\n"
+	runTableCases(t, []tableCase{
+		q("eq_null_column", "print((staff | e -> filter(e.salary == null)).name)\n", "['Cy']"),
+		q("null_eq_column", "print((staff | e -> filter(null == e.dept)).name)\n", "['Ed']"),
+		q("ne_null", "print((staff | e -> filter(e.salary != null and e.dept != null)).name)\nprint((staff | e -> filter(null != e.salary)).name)\n",
+			"['Ann', 'Bo', 'Di']\n['Ann', 'Bo', 'Di', 'Ed']"),
+		q("never_missing", "print((staff | e -> mutate(m = e.salary == null, k = to_int(e.salary == null) + 1)).m)\n", "[false, false, true, false, false]"),
+		q("expression", "print((staff | e -> filter(e.salary * 2.0 + to_float(e.id) == null)).name)\n", "['Cy']"),
+		q("in_logic", "print((staff | e -> filter(e.salary == null or e.dept == null)).name)\nprint((staff | e -> filter(!(e.salary == null))).name)\n",
+			"['Cy', 'Ed']\n['Ann', 'Bo', 'Di', 'Ed']"),
+		q("aggregate", "none = staff | e -> filter(e.id > 99)\nprint((none | e -> summarize(m = mean(e.salary) == null)).m)\nprint((staff | e -> summarize(m = mean(e.salary) == null)).m)\n",
+			"[true]\n[false]"),
+		q("count_missing", "print(show(staff | e -> summarize(gaps = sum(e.salary == null), both = sum(e.salary == null or e.dept == null))))\nprint((staff | e -> group_by(e.dept) | summarize(g = sum(e.salary == null))).g)\nprint((staff | e -> mutate(g = sum(e.salary == null))).g)\n",
+			"gaps,both\n1,2\n\n[1, 0, 0]\n[1, 1, 1, 1, 1]"),
+		q("null_variable", "n = null\nprint((staff | e -> filter(e.dept == n)).name)\n", "['Ed']"),
+		q("dense_table", "full = staff | e -> drop_na()\nprint((full | e -> mutate(m = e.salary == null, k = e.salary != null)).m)\nprint((full | e -> mutate(f = e.salary.fillna(0.0))).f)\n",
+			"[false, false, false]\n[120000.0, 90000.5, 150000.0]"),
+		q("fillna", "print((staff | e -> mutate(s = e.salary.fillna(0.0))).s)\nprint((staff | e -> mutate(s = e.salary.fillna(1))).s)\nprint((staff | e -> mutate(d = e.dept.fillna('none'))).d)\n",
+			"[120000.0, 90000.5, 0.0, 150000.0, 80000.0]\n[120000.0, 90000.5, 1.0, 150000.0, 80000.0]\n['eng', 'ops', 'eng', 'ops', 'none']"),
+		q("fillna_aggregate", "print((staff | e -> mutate(s = e.salary.fillna(mean(e.salary)))).s)\nprint((staff | e -> group_by(e.dept) | mutate(s = e.salary.fillna(max(e.salary)))).s)\n",
+			"[120000.0, 90000.5, 110000.125, 150000.0, 80000.0]\n[120000.0, 90000.5, 120000.0, 150000.0, 80000.0]"),
+		q("fillna_expression", "print((staff | e -> mutate(x = (e.salary * 2.0).fillna(-1.0) + 1.0)).x)\nprint((staff | e -> filter(e.salary.fillna(0.0) < 100000.0)).name)\n",
+			"[240001.0, 180002.0, 0.0, 300001.0, 160001.0]\n['Bo', 'Cy', 'Ed']"),
+		// The fill value is computed only where the value is missing: here it
+		// divides by zero on the first row, whose salary is present.
+		q("fillna_value_lazy", "print((staff | e -> mutate(s = e.salary.fillna(to_float(100 / (e.id - 1))))).s)\n",
+			"[120000.0, 90000.5, 50.0, 150000.0, 80000.0]"),
+		q("fillna_other_column", pairs+"print((p | e -> mutate(c = e.a.fillna(e.b))).c)\nprint((p | e -> summarize(k = count(e.a.fillna(e.b)))).k)\n",
+			"[1.5, 2.5, null, 4.5]\n[3]"),
+		q("fillna_in_aggregate", "print((staff | e -> summarize(s = sum(e.salary.fillna(1.0)), m = mean(e.salary.fillna(0.0)))).s)\n", "[440001.5]"),
+		q("drop_na", "print((staff | e -> drop_na()).name)\nprint((staff | e -> drop_na(e.salary)).name)\nprint((staff | e -> drop_na(e.id)).name)\nprint(type(staff | e -> drop_na(e.dept)))\n",
+			"['Ann', 'Bo', 'Di']\n['Ann', 'Bo', 'Di', 'Ed']\n['Ann', 'Bo', 'Cy', 'Di', 'Ed']\ntbl[Emp]"),
+		q("drop_na_keeps_nan", pairs+"print((p | e -> drop_na(e.b)).id)\nprint((p | e -> drop_na()).id)\n", "[2, 4]\n[4]"),
+		q("drop_na_empty", "none = staff | e -> filter(e.id > 99)\nprint((none | e -> drop_na()).id)\n", "[]"),
+		{name: "in_module", files: files, source: "incl 'std/csv'\nincl './lib'\nfn load(p: str) tbl[lib::Emp] -> unwrap(csv::read_file(p))\nprint(lib::unpaid(load('staff.csv')).name)\n", want: "['Cy']"},
+		// Outside a verb, == null keeps its meaning, in a function a verb
+		// calls too (which isn't called for a row whose value is missing).
+		q("outside_verb", "x = null\nprint(x == null)\nprint(staff.salary.get(2) == null)\nfn isnull(v) bool -> v == null\nprint((staff | e -> filter(isnull(e.salary))).name)\n",
+			"true\ntrue\n[]"),
+	})
+}
+
+// TestTables_MissingValuesRejected: misuse of == null, fillna and drop_na in
+// verbs.
+func TestTables_MissingValuesRejected(t *testing.T) {
+	files := map[string]string{"staff.csv": queryCSV}
+	q := func(name, body, err string) tableCase {
+		return tableCase{name: name, files: files, source: queryPre + body, err: err}
+	}
+	runTableCases(t, []tableCase{
+		q("ordered_null", "r = staff | e -> filter(e.salary < null)\n", "in a query, '<' with null compares with a missing value"),
+		q("ordered_null_left", "r = staff | e -> filter(null >= e.id)\n", "in a query, '>=' with null compares with a missing value"),
+		q("null_null", "r = staff | e -> filter(null == null)\n", "in a query, '==' compares null with null"),
+		q("fillna_narrowing", "r = staff | e -> mutate(x = e.id.fillna(1.5))\n", "fillna() can't fill int with float"),
+		q("fillna_str_int", "r = staff | e -> mutate(x = e.dept.fillna(1))\n", "fillna() can't fill str with int"),
+		q("fillna_null", "r = staff | e -> mutate(x = e.salary.fillna(null))\n", "fillna() can't fill float with null"),
+		q("fillna_no_value", "r = staff | e -> mutate(x = e.salary.fillna())\n", "fillna takes one value, the value for rows where 'e.salary' is missing, got 0"),
+		q("fillna_two_values", "r = staff | e -> mutate(x = e.salary.fillna(1.0, 2.0))\n", "fillna takes one value"),
+		q("fillna_untyped_value", "fn id(v) -> v\nr = staff | e -> mutate(x = e.salary.fillna(id(1.0)))\n", "the type of fillna()'s value isn't known; it must be float"),
+		q("fillna_unsafe_value", "r = staff | e -> mutate(x = e.salary.fillna(to_float(print(1))))\n", "'print' can't be called in a query"),
+		q("drop_na_expression", "r = staff | e -> drop_na(e.salary * 2.0)\n", "drop_na takes columns (e.col); to drop the rows where a computed value is missing, write filter(... != null)"),
+		q("drop_na_named", "r = staff | e -> drop_na(s = e.salary)\n", "drop_na takes no named arguments"),
+		q("drop_na_twice", "r = staff | e -> drop_na(e.id, e.id)\n", "drop_na names column 'id' twice"),
+		q("drop_na_unknown_column", "r = staff | e -> drop_na(e.wage)\n", "Emp has no column 'wage'"),
+		q("drop_na_after_group_by", "r = staff | e -> group_by(e.dept) | drop_na()\n", "group_by applies to the next step, which must be filter, mutate or summarize (got drop_na)"),
+		q("fillna_vec_still_checked", "v = staff.salary.fillna('x')\n", "fillna() can't fill vec[float] with str"),
+	})
+}
+
+// TestTables_CountStep is D50: count(keys) is group_by(keys) |
+// summarize(n = count()).
+func TestTables_CountStep(t *testing.T) {
+	files := map[string]string{"staff.csv": queryCSV}
+	q := func(name, body, want string) tableCase {
+		return tableCase{name: name, files: files, source: queryPre + body, want: want}
+	}
+	r := func(name, body, err string) tableCase {
+		return tableCase{name: name, files: files, source: queryPre + body, err: err}
+	}
+	runTableCases(t, []tableCase{
+		q("by_column", "print(show(staff | e -> count(e.dept)))\nprint(type(staff | e -> count(e.dept)))\n",
+			"dept,n\neng,2\nops,2\n,1\n\ntbl[{dept: str, n: int}]"),
+		q("whole", "print(show(staff | e -> count()))\n", "n\n5"),
+		q("computed_key", "print(show(staff | e -> count(e.dept, hi = e.salary > 100000.0)))\n",
+			"dept,hi,n\neng,true,1\neng,,1\nops,false,1\nops,true,1\n,false,1"),
+		q("same_as_summarize", "a = staff | e -> count(e.dept)\nb = staff | e -> group_by(e.dept) | summarize(n = count())\nprint(show(a) == show(b))\n", "true"),
+		q("empty", "none = staff | e -> filter(e.id > 99)\nprint(show(none | e -> count()))\nprint(show(none | e -> count(e.dept)))\n", "n\n0\n\ndept,n"),
+		q("then_steps", "print((staff | e -> count(e.dept) | filter(e.n > 1) | sort(desc(e.dept))).dept)\n", "['ops', 'eng']"),
+		q("into_struct", "struct C:\n    dept: str\n    n: int\nc: tbl[C] = staff | e -> count(e.dept)\nprint(type(c))\nprint(c.n)\n", "tbl[C]\n[2, 2, 1]"),
+		q("count_variable_free", "count = 3\nprint(show(staff | e -> count(e.dept) | filter(e.n < count)))\n", "dept,n\neng,2\nops,2\n,1"),
+		r("key_named_n", "r = staff | e -> mutate(n = e.id) | count(e.n)\n", "count's result has its own column 'n' for the counts, so a key can't be named 'n'"),
+		r("computed_key_named_n", "r = staff | e -> count(n = e.id > 2)\n", "a key can't be named 'n'"),
+		r("unnamed_computed_key", "r = staff | e -> count(e.id > 2)\n", "a computed group key needs a name: count(year = time::year(e.day))"),
+		r("after_group_by", "r = staff | e -> group_by(e.dept) | count()\n", "group_by applies to the next step, which must be filter, mutate or summarize (got count)"),
+		r("twice", "r = staff | e -> count(e.dept, e.dept)\n", "count names column 'dept' twice"),
+		r("aggregate_key", "r = staff | e -> count(s = sum(e.id))\n", "aggregates are for filter, mutate and summarize"),
+		r("non_column_key", "r = staff | e -> count(k = list [e.id])\n", "column 'k' would be list[int]"),
+	})
+}
+
+// TestTables_Contains is D48: xs.contains(x) on lists and vecs, and in a
+// verb against a list or vec that doesn't read the row (a hash set).
+func TestTables_Contains(t *testing.T) {
+	files := map[string]string{"staff.csv": queryCSV, "l.hpp": rowSafeListH}
+	q := func(name, body, want string) tableCase {
+		return tableCase{name: name, files: files, source: queryPre + body, want: want}
+	}
+	r := func(name, body, err string) tableCase {
+		return tableCase{name: name, files: files, source: queryPre + body, err: err}
+	}
+	glue := "extern 'l.hpp'\nextern rowsafe fn tick_list() list as 'q_rowsafe_tick_list'\nextern rowsafe fn list_ticks() int as 'q_rowsafe_list_ticks'\nextern rowsafe fn boom_list() list as 'q_rowsafe_boom_list'\n"
+	runTableCases(t, []tableCase{
+		q("list", "print(list ['eng', 'x'].contains('eng'))\nprint(list ['eng'].contains('ops'))\nprint(list [1, 2].contains(2.0))\nprint(list [1, 2].contains(2.5))\nprint(list [list [1]].contains(list [1]))\n",
+			"true\nfalse\ntrue\nfalse\ntrue"),
+		q("vec", "print(vec [1.0, 2.0].contains(2))\nprint(vec [1, 2].contains(2.0))\nprint(vec ['a'].contains('a'))\nprint(vec [true].contains(false))\nprint(staff.salary.contains(120000))\n",
+			"true\ntrue\ntrue\nfalse\ntrue"),
+		q("exact_int_float", "print(list [9007199254740993].contains(9007199254740992.0))\nprint(vec [9007199254740992.0].contains(9007199254740993))\nprint(vec [9007199254740992.0].contains(9007199254740992))\nprint(list [-0.0].contains(0))\n",
+			"false\nfalse\ntrue\ntrue"),
+		q("missing_and_nan", "print(list [1, null].to_vec().contains(0))\nprint(staff.salary.contains(0.0))\nprint(list [to_float('nan')].contains(to_float('nan')))\nprint(vec [to_float('nan')].contains(to_float('nan')))\n",
+			"false\nfalse\nfalse\nfalse"),
+		q("dates", "incl 'std/time'\nstruct D:\n    d: date\ndt: tbl[D] = unwrap(csv::parse_text('d\\n2020-01-01\\n'))\nprint(dt.d.contains(time::date(2020, 1, 1)))\nprint(list [time::date(2020, 1, 2)].contains(time::date(2020, 1, 1)))\nprint((staff | e -> filter(dt.d.contains(time::date(2020, 1, e.id)))).id)\n", "true\nfalse\n[1]"),
+		q("str_still_substring", "print('abc'.contains('b'))\nfn id(v) -> v\nprint(id('abc').contains('b'))\nprint(id(list ['b']).contains('b'))\nprint(id(vec [1]).contains(1))\n", "true\ntrue\ntrue\ntrue"),
+		q("verb_outside_list", "keep = list ['eng', 'x']\nprint((staff | e -> filter(keep.contains(e.dept))).name)\n", "['Ann', 'Cy']"),
+		q("verb_negated_missing", "keep = list ['eng']\nprint((staff | e -> filter(!keep.contains(e.dept))).name)\n", "['Bo', 'Di']"),
+		q("verb_other_table", "ids = vec [2, 4]\nprint((staff | e -> mutate(k = ids.contains(e.id), j = staff.salary.contains(e.salary))).k)\nprint((staff | e -> mutate(j = staff.salary.contains(e.salary))).j)\n",
+			"[false, true, false, true, false]\n[true, true, null, true, true]"),
+		q("verb_int_float", "fs = list [2.0, 4.5]\nprint((staff | e -> filter(fs.contains(e.id))).id)\nis = vec [120000, 7]\nprint((staff | e -> filter(is.contains(e.salary))).id)\n", "[2]\n[1]"),
+		q("verb_untyped_elements", "fn id(v) -> v\nxs = list []\nxs.push(id(list [1]))\nxs.push(id('Bo'))\nxs.push(id(null))\nxs.push(id(4.0))\nprint((staff | e -> filter(xs.contains(e.name) or xs.contains(e.id))).name)\nprint((staff | e -> mutate(b = xs.contains(list [e.id]))).b)\n",
+			"['Bo', 'Di']\n[true, false, false, false, false]"),
+		q("verb_grouped", "keep = list ['Ann', 'Bo']\nprint((staff | e -> group_by(e.dept) | filter(keep.contains(e.name) or count() == 1)).name)\n", "['Ann', 'Bo', 'Ed']"),
+		q("verb_set_built_once", glue+"print((staff | e -> filter(tick_list().contains(e.id))).id)\nprint(list_ticks())\n", "[2, 4]\n1"),
+		q("verb_set_not_built_without_rows", glue+"none = staff | e -> filter(e.id > 99)\nprint((none | e -> filter(boom_list().contains(e.id))).id)\nprint((staff | e -> filter(false and boom_list().contains(e.id))).id)\n", "[]\n[]"),
+		{name: "verb_set_error_at_first_row", files: files, err: "boom", source: glue + queryPre + "r = staff | e -> filter(boom_list().contains(e.id))\n"},
+		r("never_true", "print(list ['a'].contains(1))\n", "contains() can't be true here: the elements of list[str] are str, and this value is int"),
+		r("never_true_vec", "print(vec [1, 2].contains('a'))\n", "the elements of vec[int] are int, and this value is str"),
+		r("never_true_null", "print(vec [1, 2].contains(null))\n", "the elements of vec[int] are int, and this value is null"),
+		r("never_true_in_verb", "keep = list ['a']\nr = staff | e -> filter(keep.contains(e.id))\n", "contains() can't be true here"),
+		r("structs", "struct P:\n    x: int\nprint(list [P { x: 1 }].contains(1))\n", "contains() compares with ==, which isn't defined for struct values"),
+		r("verb_set_of_lists", "ll = list [list [1]]\nr = staff | e -> filter(ll.contains(list [e.id]))\n", "in a query, contains() looks the value up in a set of the list's elements, made once for the step, which holds int, float, bool, str or date values; these elements are list[int]"),
+		r("arity", "print(list [1].contains())\n", "method 'contains' expects 1 argument but got 0"),
+		r("arity_two", "print(vec [1].contains(1, 2))\n", "method 'contains' expects 1 argument but got 2"),
+		r("dynamic_str_int", "fn id(v) -> v\nprint(id('abc').contains(1))\n", "contains() expects (str, str)"),
+	})
+}
+
+// TestTables_TableInfo is D49: t.nrow(), t.ncol() and t.names(); len(t)
+// names nrow.
+func TestTables_TableInfo(t *testing.T) {
+	files := map[string]string{"staff.csv": queryCSV}
+	q := func(name, body, want string) tableCase {
+		return tableCase{name: name, files: files, source: queryPre + body, want: want}
+	}
+	r := func(name, body, err string) tableCase {
+		return tableCase{name: name, files: files, source: queryPre + body, err: err}
+	}
+	runTableCases(t, []tableCase{
+		q("counts", "print(staff.nrow())\nprint(staff.ncol())\nprint(staff.names())\n", "5\n4\n['id', 'name', 'dept', 'salary']"),
+		q("query_result", "r = staff | e -> filter(e.id > 3) | select(e.name)\nprint(r.nrow())\nprint(r.ncol())\nprint(r.names())\n", "2\n1\n['name']"),
+		q("untyped", "fn id(v) -> v\nprint(id(staff).nrow())\nprint(id(staff).names())\n", "5\n['id', 'name', 'dept', 'salary']"),
+		q("names_is_str_list", "n = staff.names()\nn.push('x')\nprint(n)\nprint(staff.names())\n", "['id', 'name', 'dept', 'salary', 'x']\n['id', 'name', 'dept', 'salary']"),
+		q("in_verb", "print((staff | e -> mutate(k = staff.nrow() - e.id)).k)\n", "[4, 3, 2, 1, 0]"),
+		q("empty", "none = staff | e -> filter(e.id > 99)\nprint(none.nrow())\nprint(none.ncol())\n", "0\n4"),
+		r("names_push_int", "n = staff.names()\nn.push(1)\n", "list[str]"),
+		r("nrow_arg", "print(staff.nrow(1))\n", "method 'nrow' expects 0 arguments but got 1"),
+		r("len", "print(len(staff))\n", "len() of a table isn't defined; its row count is staff.nrow()"),
+		r("len_untyped", "fn id(v) -> v\nprint(len(id(staff)))\n", "len() of a table isn't defined; its row count is t.nrow()"),
+		r("nrow_on_list", "print(list [1].nrow())\n", "type 'list[int]' has no method 'nrow'"),
+	})
+}
+
+// TestTables_MinMax2 is D51: two-argument min and max are typed by their
+// arguments, in and outside verbs.
+func TestTables_MinMax2(t *testing.T) {
+	files := map[string]string{"staff.csv": queryCSV}
+	q := func(name, body, want string) tableCase {
+		return tableCase{name: name, files: files, source: queryPre + body, want: want}
+	}
+	r := func(name, body, err string) tableCase {
+		return tableCase{name: name, files: files, source: queryPre + body, err: err}
+	}
+	runTableCases(t, []tableCase{
+		q("typed", "incl 'std/time'\nprint(type(max(1, 2)))\nprint(min(2.5, 1.5))\nprint(max('apple', 'banana'))\nprint(min('b', 'a'))\nprint(min(time::date(2020, 1, 1), time::date(2019, 5, 5)))\nprint(type(max(time::date(2020, 1, 1), time::date(2019, 5, 5))))\n",
+			"int\n1.5\nbanana\na\n2019-05-05\ndate"),
+		q("mixed_untyped", "x = max(1, 2.5)\nprint(x)\nprint(max(9007199254740993, 1.0))\ny: float = max(1, 2.5)\nprint(y)\n", "2.5\n9007199254740993\n2.5"),
+		q("nan_wins", "print(max(1.0, to_float('nan')))\nprint(min(to_float('nan'), 1.0))\n", "nan\nnan"),
+		q("in_verb", "r = staff | e -> mutate(m = max(e.salary, 100000.0), n = min(e.name, 'B'), k = max(e.id, 3))\nprint(r.m)\nprint(r.n)\nprint(r.k)\nprint(type(r))\n",
+			"[120000.0, 100000.0, null, 150000.0, 100000.0]\n['Ann', 'B', 'B', 'B', 'B']\n[3, 3, 3, 4, 5]\ntbl[{id: int, name: str, dept: str, salary: float, m: float, n: str, k: int}]"),
+		q("dynamic", "fn id(v) -> v\nprint(max(id('a'), id('b')))\nprint(min(id(3), id(2.5)))\n", "b\n2.5"),
+		r("in_verb_int_float", "r = staff | e -> mutate(m = max(e.salary, 20))\n", "max of an int and a float has no single type, and a column needs one; convert the int with to_float(20)"),
+		r("in_verb_int_float_col", "r = staff | e -> mutate(m = min(e.id, e.salary))\n", "convert the int with to_float(e.id)"),
+		r("str_int", "print(max(1, 'a'))\n", "'max' compares two values of one type, got int and str"),
+		r("bool", "print(min(true, false))\n", "argument 1 of 'min' expects int, float, str or date, got bool"),
+		r("dynamic_bool", "fn id(v) -> v\nprint(max(id(true), 1))\n", "max() expects two numbers, two strs or two dates, got bool and int"),
+		r("variable_typed", "x = max(1, 2)\nx = 2.5\n", "cannot assign value of type 'float' to 'int'"),
+		r("null", "print(min(1, null))\n", "argument 2 of 'min' expects int, float, str or date, got null"),
+	})
+}
+
+// TestTables_Random is tables v0.3 §5 (D45): a draw in a verb is computed
+// from the seed, the loop, the row and the draw's position in the row
+// (Philox4x32-10), not taken from the sequence that draws outside verbs use.
+func TestTables_Random(t *testing.T) {
+	files := map[string]string{"staff.csv": queryCSV}
+	pre := "incl 'std/random'\n" + queryPre
+	q := func(name, body, want string) tableCase {
+		return tableCase{name: name, files: files, source: pre + body, want: want}
+	}
+	runTableCases(t, []tableCase{
+		// The values are the runtime's own algorithms over Philox bits, so
+		// they are the same on every platform (CI runs this on Windows too).
+		q("fixed_values", "random::seed(42)\nr = staff | e -> mutate(u = random::uniform(), k = random::randint(1, 6), w = random::uniform(10.0, 20.0))\nprint(r.u)\nprint(r.k)\nprint(r.w)\nprint((staff | e -> filter(random::choice(list [1, 2, 3]) == 2)).id)\nprint((staff | e -> mutate(b = random::randint(-9223372036854775807 - 1, 9223372036854775807))).b)\n",
+			"[0.4685865183391049, 0.32706338120338474, 0.6583155272123093, 0.6706398529302326, 0.839045447606225]\n[6, 5, 4, 5, 2]\n[18.803964482882158, 12.62144533649401, 12.301875305504868, 17.82020150978942, 12.195637057195112]\n[2]\n[-9154696446549032815, -3463510196736257792, 4154311677657610901, 7660504997838088410, 6923990931457500105]"),
+		q("seed_repeats", "random::seed(5)\na = staff | e -> mutate(u = random::uniform(), n = random::normal())\nrandom::seed(5)\nb = staff | e -> mutate(u = random::uniform(), n = random::normal())\nprint(all(a.u == b.u) and all(a.n == b.n))\n", "true"),
+		q("two_draws_in_a_row", "random::seed(1)\nr = staff | e -> mutate(d = random::uniform() - random::uniform(), same = random::uniform() == random::uniform())\nprint(sum(r.same))\nprint(all(r.d != 0.0))\n", "0\ntrue"),
+		q("each_row_differs", "random::seed(1)\nr = staff | e -> mutate(u = random::uniform())\nprint((r | e -> summarize(k = n_distinct(e.u))).k[0])\n", "5"),
+		q("loops_differ", "random::seed(1)\nr = staff | e -> mutate(u = random::uniform(), v = random::uniform())\nprint(sum(r.u == r.v))\ns = staff | e -> summarize(m = max(random::uniform() + to_float(e.id) * 0.0))\nprint(s.m[0] == max(r.u))\n", "0\nfalse"),
+		q("aggregate_pass_and_row_loop", "random::seed(3)\nr = staff | e -> filter(random::uniform() + to_float(e.id) * 0.0 < max(random::uniform() + to_float(e.id) * 0.0))\nprint(r.nrow() > 0)\n", "true"),
+		q("sequence_unchanged", "random::seed(9)\nx1 = random::uniform()\ny1 = random::uniform()\nrandom::seed(9)\nx2 = random::uniform()\nr = staff | e -> mutate(u = random::uniform(), k = random::randint(1, 9))\ny2 = random::uniform()\nprint(x1 == x2 and y1 == y2)\n", "true"),
+		q("helper_draws", "fn jitter(x: float) float -> x + random::uniform(0.0, 0.5)\nrandom::seed(2)\na = staff | e -> mutate(j = jitter(e.salary))\nrandom::seed(2)\nb = staff | e -> mutate(j = jitter(e.salary))\nprint(a.j == b.j)\nprint((a | e -> summarize(k = n_distinct(e.j))).k[0])\n",
+			"[true, true, null, true, true]\n5"),
+		q("grouped_summarize", "random::seed(4)\na = staff | e -> group_by(e.dept) | summarize(c = random::randint(1, 1000000))\nrandom::seed(4)\nb = staff | e -> group_by(e.dept) | summarize(c = random::randint(1, 1000000))\nprint(all(a.c == b.c))\nprint((a | e -> summarize(k = n_distinct(e.c))).k[0])\n", "true\n3"),
+		q("vec_draws_in_a_row", "random::seed(6)\nr = staff | e -> mutate(s = mean(random::uniform_vec(4)), m = to_int(sum(random::randint_vec(3, 1, 1))), z = len(random::sample(list [1, 2, 3], 2)))\nprint(r.m)\nprint(r.z)\nprint((r | e -> summarize(k = n_distinct(e.s))).k[0])\n",
+			"[3, 3, 3, 3, 3]\n[2, 2, 2, 2, 2]\n5"),
+		q("weighted", "random::seed(8)\nr = staff | e -> filter(random::weighted(list ['a', 'b'], list [0.0, 1.0]) == 'b')\nprint(r.nrow())\n", "5"),
+		q("nested_query", "fn inner(k: int) float -> (staff | e -> summarize(m = mean(random::uniform() + to_float(e.id + k) * 0.0))).m[0]\nrandom::seed(7)\na = staff | e -> mutate(x = inner(e.id), y = random::uniform())\nrandom::seed(7)\nb = staff | e -> mutate(x = inner(e.id), y = random::uniform())\nprint(all(a.x == b.x) and all(a.y == b.y))\nprint((a | e -> summarize(k = n_distinct(e.x))).k[0])\n",
+			"true\n5"),
+		q("missing_row_skips_draw", "random::seed(1)\nr = staff | e -> mutate(u = e.salary * 0.0 + random::uniform())\nprint(r.u.get(2))\n", "null"),
 	})
 }

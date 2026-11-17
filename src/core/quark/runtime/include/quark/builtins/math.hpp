@@ -8,6 +8,7 @@
 #include "../core/checked.hpp"
 #include "../core/numcmp.hpp"
 #include <cstdlib>
+#include <cstring>
 #include <cstdio>
 #include <cmath>
 
@@ -66,15 +67,28 @@ inline QValue q_minmax_wide(long long i, double f, bool want_min) {
     return qv_int(i);
 }
 
-// Minimum of two values
-inline QValue q_min(QValue a, QValue b) {
-    if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
-        (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
-        q_runtime_reportf("runtime error: min() expects numeric arguments, got %s and %s\n", q_type_name_math(a.type), q_type_name_math(b.type));
-        q_exit(1);
+// q_minmax2 is two-argument min (want_min) or max (tables v0.3 D51): two
+// numbers as q_minmax, two strs by their bytes, two dates by day. A tie
+// returns the first argument. Any other pair is an error.
+inline QValue q_minmax2(QValue a, QValue b, bool want_min) {
+    const char* fn = want_min ? "min" : "max";
+    const bool a_num = a.type == QValue::VAL_INT || a.type == QValue::VAL_FLOAT;
+    const bool b_num = b.type == QValue::VAL_INT || b.type == QValue::VAL_FLOAT;
+    if (a_num && b_num) return q_minmax(a, b, want_min);
+    if (a.type == QValue::VAL_STRING && b.type == QValue::VAL_STRING) {
+        const int c = std::strcmp(a.data.string_val ? a.data.string_val : "", b.data.string_val ? b.data.string_val : "");
+        return (want_min ? c <= 0 : c >= 0) ? a : b;
     }
-    return q_minmax(a, b, true);
+    if (a.type == QValue::VAL_DATE && b.type == QValue::VAL_DATE) {
+        const long long x = a.data.int_val, y = b.data.int_val;
+        return (want_min ? x <= y : x >= y) ? a : b;
+    }
+    q_runtime_reportf("runtime error: %s() expects two numbers, two strs or two dates, got %s and %s\n", fn, q_type_name_math(a.type), q_type_name_math(b.type));
+    q_exit(1);
 }
+
+// Minimum of two values
+inline QValue q_min(QValue a, QValue b) { return q_minmax2(a, b, true); }
 
 // Minimum of vector values
 inline QValue q_min(QValue v) {
@@ -86,14 +100,7 @@ inline QValue q_min(QValue v) {
 }
 
 // Maximum of two values
-inline QValue q_max(QValue a, QValue b) {
-    if ((a.type != QValue::VAL_INT && a.type != QValue::VAL_FLOAT) ||
-        (b.type != QValue::VAL_INT && b.type != QValue::VAL_FLOAT)) {
-        q_runtime_reportf("runtime error: max() expects numeric arguments, got %s and %s\n", q_type_name_math(a.type), q_type_name_math(b.type));
-        q_exit(1);
-    }
-    return q_minmax(a, b, false);
-}
+inline QValue q_max(QValue a, QValue b) { return q_minmax2(a, b, false); }
 
 // Maximum of vector values
 inline QValue q_max(QValue v) {

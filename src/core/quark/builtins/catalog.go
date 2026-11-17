@@ -109,6 +109,7 @@ var catalog = []Spec{
 	{Name: "sort_by", Runtime: "q_sort_by", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeListAny, ReceiverType: TypeListAny, Mutates: true},
 	{Name: "enumerate", Runtime: "q_enumerate", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeListAny, RowSafe: true},
 	{Name: "join", Runtime: "q_str_join", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeString, ReceiverType: TypeListAny, RowSafe: true},
+	{Name: "contains", Runtime: "q_list_contains", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeBool, ReceiverType: TypeListAny, RowSafe: true},
 	{Name: "to_vec", Runtime: "q_to_vec", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeAny, ReceiverType: TypeListAny, RowSafe: true},
 
 	// Dict methods (receiver = dict). set changes the dict.
@@ -122,6 +123,7 @@ var catalog = []Spec{
 	{Name: "get", Runtime: "q_vec_get", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeInt}, ReturnType: TypeAny, ReceiverType: TypeVectorAny, RowSafe: true},
 	{Name: "fillna", Runtime: "q_fillna", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeVectorAny, ReceiverType: TypeVectorAny, RowSafe: true},
 	{Name: "drop_na", Runtime: "q_drop_na", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeVectorAny, ReceiverType: TypeVectorAny, RowSafe: true},
+	{Name: "contains", Runtime: "q_vec_contains", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeBool, ReceiverType: TypeVectorAny, RowSafe: true},
 
 	// Table methods (specs/tables_v0_1_spec.md §6, D25): the first or last n rows
 	// (6 by default) as a table of the same row type, and one line per column.
@@ -129,6 +131,10 @@ var catalog = []Spec{
 	{Name: "head", Runtime: "q_tbl_head_method", MinArgs: 0, MaxArgs: 1, ParamTypes: []TypeKey{TypeInt}, ReturnType: TypeTableAny, ReceiverType: TypeTableAny, Header: TableHeader, RowSafe: true},
 	{Name: "tail", Runtime: "q_tbl_tail_method", MinArgs: 0, MaxArgs: 1, ParamTypes: []TypeKey{TypeInt}, ReturnType: TypeTableAny, ReceiverType: TypeTableAny, Header: TableHeader, RowSafe: true},
 	{Name: "describe", Runtime: "q_tbl_describe", MinArgs: 0, MaxArgs: 1, ParamTypes: []TypeKey{TypeInt}, ReturnType: TypeVoid, ReceiverType: TypeTableAny, Header: TableHeader},
+	// The row count, the column count and the column names (tables v0.3 D49).
+	{Name: "nrow", Runtime: "q_tbl_nrow", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeInt, ReceiverType: TypeTableAny, Header: TableHeader, RowSafe: true},
+	{Name: "ncol", Runtime: "q_tbl_ncol", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeInt, ReceiverType: TypeTableAny, Header: TableHeader, RowSafe: true},
+	{Name: "names", Runtime: "q_tbl_names", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListString, ReceiverType: TypeTableAny, Header: TableHeader, RowSafe: true},
 	{Name: "astype", Runtime: "q_astype", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeVectorAny, ReceiverType: TypeVectorAny, RowSafe: true},
 	{Name: "to_list", Runtime: "q_to_list", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeVectorAny, RowSafe: true},
 	{Name: "enumerate", Runtime: "q_enumerate", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeVectorAny, RowSafe: true},

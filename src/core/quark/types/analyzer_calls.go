@@ -102,6 +102,10 @@ func (a *Analyzer) resolveMethodCall(call, funcNode *ast.TreeNode, argTypes []Ty
 		return methodCallResult{returnType: TypeError, receiverType: receiverType, resolved: true}
 	}
 
+	if a.isRowFillna(methodName, receiverNode, receiverType) {
+		return a.rowFillna(call, receiverNode, receiverType, argTypes, argNodes)
+	}
+
 	receiverKey := typeToBuiltinTypeKey(receiverType)
 	if receiverKey != "" {
 		if methodSigs, ok := a.methods[receiverKey]; ok {
@@ -136,6 +140,9 @@ func (a *Analyzer) resolveMethodCall(call, funcNode *ast.TreeNode, argTypes []Ty
 				a.checkArity(call, "method '"+methodName+"'", sig.MinArgs, sig.MaxArgs, argCount)
 				a.checkArgTypes(methodName, sig.Type.ParamTypes, argTypes, argNodes)
 				a.checkMutation(receiverType, methodName, argTypes, argNodes)
+				if methodName == "contains" {
+					a.checkContains(call, receiverType, argTypes, argNodes)
+				}
 				ret := refineMethodReturnType(sig.Type.ReturnType, receiverType, methodName)
 				switch methodName {
 				case "to_vec":

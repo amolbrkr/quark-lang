@@ -107,6 +107,10 @@ Raised while lowering the analyzed tree to the IR (`src/core/quark/lower/`). Pri
 | `INV-QUERY` | A query was analyzed, and each of its steps is a known verb | `lower/query.go` |
 | `INV-QUERY-REP` | A verb expression's value has a scalar or `QValue` representation that converts to its column's | `lower/query.go` |
 | `INV-QUERY-COLUMN` | A column read (`e.col`) is lowered inside the row loop that binds the column | `lower/query.go` |
+| `INV-QUERY-ONCE` | A call computed once per step, or a `contains()` set built once per step, is lowered inside a row loop | `lower/calls.go` |
+| `INV-QUERY-LOOKUP` | A `contains()` looked up in a set built once per step has a receiver and one argument | `lower/calls.go` |
+| `INV-QUERY-NULLTEST` | A test for a missing value in a verb (`x == null`) is lowered inside its row loop | `lower/expr.go` |
+| `INV-QUERY-FILLNA` | A `fillna` of one row's value is lowered inside its row loop | `lower/calls.go` |
 | `INV-REPL` | A REPL session has an input block to emit | `lower/session.go` |
 | `INV-REPL-STABLE` | Re-analysing the committed inputs assigns the same slots, function names and struct names as the previous analysis | `repl/session.go` |
 

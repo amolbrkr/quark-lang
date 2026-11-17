@@ -73,6 +73,9 @@ type Analysis struct {
 	// AggUses maps each aggregate call in a verb (sum(e.x), count(), ...) to
 	// the value lowering computes once for the row's group.
 	AggUses map[*ast.TreeNode]*AggUse
+	// RowMissing maps `x == null`, `x != null` and `x.fillna(v)` in a verb
+	// expression to what lowering needs to look at x's missing value.
+	RowMissing map[*ast.TreeNode]*RowMissing
 }
 
 // Analysis returns the analyzer outputs for root, which must be the tree
@@ -96,6 +99,7 @@ func (a *Analyzer) Analysis(root *ast.TreeNode) *Analysis {
 		Queries:          a.queries,
 		ColumnRefs:       a.columnRefs,
 		AggUses:          a.aggUses,
+		RowMissing:       a.rowMissing,
 	}
 }
 

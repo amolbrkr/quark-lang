@@ -203,6 +203,10 @@
         "signature": "join(str) str"
       },
       {
+        "name": "contains",
+        "signature": "contains(any) bool"
+      },
+      {
         "name": "to_vec",
         "signature": "to_vec() any"
       }
@@ -257,6 +261,18 @@
       {
         "name": "describe",
         "signature": "describe(int?)"
+      },
+      {
+        "name": "nrow",
+        "signature": "nrow() int"
+      },
+      {
+        "name": "ncol",
+        "signature": "ncol() int"
+      },
+      {
+        "name": "names",
+        "signature": "names() list"
       }
     ],
     "vec": [
@@ -271,6 +287,10 @@
       {
         "name": "drop_na",
         "signature": "drop_na() vec"
+      },
+      {
+        "name": "contains",
+        "signature": "contains(any) bool"
       },
       {
         "name": "astype",

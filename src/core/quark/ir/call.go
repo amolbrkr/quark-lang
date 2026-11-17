@@ -19,6 +19,10 @@ const (
 	// DispatchAggregate is a query aggregate (sum(e.x) inside a verb). It is
 	// syntax, not a call: lowering reads the value computed for the row's group.
 	DispatchAggregate
+	// DispatchRowFillna is x.fillna(v) on one row's value in a verb
+	// expression (tables v0.3 D47). It is syntax, not a call: lowering
+	// takes x where it is present, else v (types.RowMissing).
+	DispatchRowFillna
 )
 
 // MethodCandidate is one receiver type a DispatchDynamicMethod call may resolve to.
@@ -49,13 +53,20 @@ type CallPlan struct {
 	MethodCandidates []MethodCandidate
 
 	// RowSafe is set on an extern fn declared `extern rowsafe fn` (D43).
-	// Draws is set on a random draw: row-safe, but each call draws its own
-	// number, so a verb does not compute it once (D44).
+	// Draws is set on a random draw, and on a verb call of a function that
+	// draws: row-safe, but each call draws its own number, so a verb does
+	// not compute it once (D44), and its row loop sets the row's draw
+	// context (D45).
 	// Once is set on a verb call whose result is the same for every row of
 	// the step. Lowering evaluates it the first time a row needs it.
 	RowSafe bool
 	Draws   bool
 	Once    bool
+	// Lookup is set on a verb call xs.contains(x) on a list or vec whose
+	// receiver is the same for every row and whose x isn't: lowering
+	// builds a hash set of xs the first time a row needs it and looks x
+	// up per row (tables v0.3 D48).
+	Lookup bool
 
 	// Populated for DispatchExtern and DispatchNative calls:
 	// C++ type per explicit parameter: "int64_t", "double", "bool", "const char*",

@@ -199,7 +199,7 @@ A float argument is an error, not truncated: a compile-time error when the type 
 | Function | Signature | Description |
 |---|---|---|
 | `abs` | `int\|float -> int\|float` | Absolute value, same type as the argument |
-| `min`, `max` | `number, number -> number` | The smaller/larger of two numbers, ordered exactly (§2 of semantics.md). Both ints give an int. An int and a float give a float when the float wins, when they are equal, or when the int wins and fits in a float (`min(1, 2.5)` is `1.0`); an int that wins and does not fit is returned as that int (`min(9007199254740993, 9007199254740994.0)` is `9007199254740993`), a deliberate choice of exactness over speed (`architecture.md` §15). If either is NaN the result is NaN, in either order, as in arithmetic (the vector reductions skip NaN instead). With one argument they reduce a vector ([Reductions](#reductions)) |
+| `min`, `max` | `int, int -> int`, `float, float -> float`, `str, str -> str`, `date, date -> date`; `int, float -> any` | The smaller/larger of two values of one type, typed by them: numbers ordered exactly (§2 of semantics.md), strings by their bytes, dates by day. An int and a float are ordered exactly too, and the result has no static type: a float when the float wins, when they are equal, or when the int wins and fits in a float (`min(1, 2.5)` is `1.0`); an int that wins and does not fit is returned as that int (`min(9007199254740993, 9007199254740994.0)` is `9007199254740993`), a deliberate choice of exactness over speed (`architecture.md` §15). In a query, where a column needs one type, an int and a float are a compile-time error that says to convert one with `to_float`. If either is NaN the result is NaN, in either order, as in arithmetic (the vector reductions skip NaN instead). Other arguments (a bool, `null`, a str and a number) are an error, at compile time when the types are known. With one argument they reduce a vector ([Reductions](#reductions)) |
 | `sum`, `mean`, `sd`, `all`, `any` | `vec -> ...` | Vector reductions ([Reductions](#reductions)) |
 | `sqrt` | `float -> float` | Square root; an int argument is widened. A negative argument is a runtime error |
 | `floor`, `ceil` | `float -> int` | Round down / up |
@@ -273,6 +273,7 @@ A list keeps its element type ([Element types](#element-types-of-returned-lists)
 | `.join(sep)` | `str -> str` | Items joined by `sep`; non-strings are converted with `to_str` |
 | `.enumerate()` | `-> list` | List of `{index, value}` dicts: `for e in xs.enumerate(): print(e.index)` |
 | `.to_vec()` | `-> vec` | Typed vector of the items. All non-null items must have one type: `int`, `float`, `bool` or `str` (ints and floats don't mix). `null` items become missing entries; an empty list gives a `vec[i64]` |
+| `.contains(x)` | `any -> bool` | Whether some item equals `x` under `==` (an int and a float are equal when they are the same number; values of different types never are). When the item type and `x`'s type are known, a comparison that can't be true (`list ['a'].contains(1)`) is a compile-time error. In a query, a list that doesn't read the row is turned into a hash set once per step (semantics.md §9.5) |
 
 ```quark
 xs = list [10, 20, 30]
@@ -371,6 +372,7 @@ for x in v:                  // runtime error: vec element 1 is missing; use fil
 | `.get(idx)` | `int -> any` | Element at `idx` (negative counts from the end); `null` for a missing entry, so the result has type `any` (`v[idx]` is the typed read, and errors on a missing entry). Out of range is a runtime error (unlike list `.get`) |
 | `.fillna(val)` | `any -> vec` | Missing entries replaced by `val`, which must have the element type, as a write into a typed list must: an int or float for `vec[float]`, an int for `vec[int]`, a bool for `vec[bool]`, a str for `vec[str]`. Anything else is an error even when nothing is missing: at compile time when both types are known (`fillna() can't fill vec[int] with float`), otherwise at runtime |
 | `.drop_na()` | `-> vec` | The present entries, in order, with the same element type (the vector itself when nothing is missing) |
+| `.contains(x)` | `any -> bool` | Whether some present entry equals `x` under `==`; a missing entry and a NaN never equal anything. A comparison that can't be true (`vec [1].contains('a')`, `.contains(null)`) is a compile-time error |
 | `.astype(dtype)` | `str -> vec` | Cast between `'f64'`, `'i64'` and `'bool'`. f64 → i64 truncates; a value outside the int64 range is a runtime error. `vec[str]` can't be cast |
 | `.to_list()` | `-> list` | List of the elements, typed by the dtype. A vector with missing entries is a runtime error (`to_list() of a vec with 2 missing entries; use fillna or drop_na first`) |
 | `.enumerate()` | `-> list` | List of `{index, value}` dicts, as for lists; a missing entry is a runtime error |
@@ -417,6 +419,8 @@ A table is made by `std/csv` or a query (semantics.md §9.5, `specs/tables_v0_1_
 | `head` | `t.head(n: int = 6) -> tbl` | The first `n` rows, as a table of the same type (all of them when there are fewer). A negative `n` is a runtime error |
 | `tail` | `t.tail(n: int = 6) -> tbl` | The last `n` rows |
 | `describe` | `t.describe(n: int = 5)` | Prints one line per column: its name, its type and its first `n` values |
+| `nrow`, `ncol` | `t.nrow() -> int`, `t.ncol() -> int` | The number of rows, and of columns. `len(t)` is a compile-time error that names `t.nrow()` |
+| `names` | `t.names() -> list[str]` | The column names, in column order |
 
 `print(t)` shows at most 10 rows and counts the rest; `fmt::full(t)` shows all of them. Numbers are right-aligned, strings left-aligned and unquoted (a line break in one shows as `\n`, and a long one is cut at 32 characters with `...`), and a missing value is `null`. A table with an anonymous row shows `tbl` on its first line; the types are under the column names.
 
@@ -657,11 +661,13 @@ when time::parse('2024-02-29'):
 
 ## `std/random`
 
-Pseudo-random numbers (64-bit Mersenne Twister), seeded randomly at startup; `seed(n)` makes the sequence reproducible. Not for cryptography. Import with `incl 'std/random' as random`. The draws can be called from a query, and each row draws its own number; `seed` and `shuffle` cannot.
+Pseudo-random numbers (64-bit Mersenne Twister), seeded randomly at startup; `seed(n)` makes the sequence reproducible. Not for cryptography. Import with `incl 'std/random' as random`. The draws can be called from a query, and each row draws its own numbers; `seed` and `shuffle` cannot.
+
+In a query, a draw doesn't take the next number of the sequence: it is computed from the seed, the row loop, the row and the draw's place in the row, with the counter-based generator Philox4x32-10 (semantics.md §9.5, `specs/tables_v0_3_spec.md` §5). A seeded program then gets the same numbers whatever order its rows run in, uniform floats, ints, `choice`, `sample` and `weighted` are the same on every platform (a normal uses the platform's `log` and `cos`), and a query doesn't move the sequence: `x = random::uniform()`, a query that draws, then `y = random::uniform()` gives the same `x` and `y` as without the query. Outside queries the draws come from the sequence, whose values for a seed can differ between C++ standard libraries.
 
 | Function | Signature | Description |
 |---|---|---|
-| `seed` | `n: int` | Seed the generator; the same seed gives the same sequence |
+| `seed` | `n: int` | Seed the generator, and the draws in queries; the same seed gives the same sequence |
 | `uniform` | `lo: float = 0.0, hi: float = 1.0 -> float` | A float in `[lo, hi)`, never `hi`, for any finite bounds (`uniform(-1e308, 1e308)` too). `lo == hi` returns `lo`. `lo > hi`, or a non-finite bound, is a runtime error. `uniform()` is `[0, 1)`. One argument is the low end, so `uniform(2.0)` is `uniform(2.0, 1.0)` and fails |
 | `normal` | `mean: float = 0.0, sd: float = 1.0 -> float` | A normal float. `sd` of 0 returns `mean`. A negative or non-finite `sd` is a runtime error, and so is a draw too large for a float (`normal(1e308, 1e308)` can give one) |
 | `randint` | `lo: int, hi: int -> int` | An int in `[lo, hi]`, both ends included; `lo > hi` is a runtime error |

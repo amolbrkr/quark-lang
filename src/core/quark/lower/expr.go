@@ -492,6 +492,12 @@ func (l *lowerer) binary(node *ast.TreeNode) Expr {
 		return nullValue()
 	}
 	op := node.Token.Type
+	if rm := l.an.RowMissing[node]; rm != nil {
+		if l.row == nil {
+			l.ice("INV-QUERY-NULLTEST", node, "a test for a missing value outside its row loop")
+		}
+		return l.rowMissingDense(node, rm)
+	}
 	switch op {
 	case token.AND, token.OR:
 		return l.logical(node, op == token.AND)

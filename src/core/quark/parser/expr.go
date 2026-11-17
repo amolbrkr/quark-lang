@@ -624,7 +624,7 @@ func (p *Parser) parseQuery(source *ast.TreeNode, pipeTok token.Token) *ast.Tree
 // keys, so those are not resolved as function calls.
 func (p *Parser) parseQueryStep() *ast.TreeNode {
 	if p.curToken.Type != token.ID || p.peek(1).Type != token.LPAR {
-		p.addError("expected a query step, verb(...) (filter, mutate, select, deselect, rename, distinct, sort, group_by, summarize, head or tail), but got %s; to pipe a query's result into a function, put the query in parentheses", sourceText(p.curToken))
+		p.addError("expected a query step, verb(...) (filter, mutate, select, deselect, rename, distinct, drop_na, sort, group_by, summarize, count, head or tail), but got %s; to pipe a query's result into a function, put the query in parentheses", sourceText(p.curToken))
 		return nil
 	}
 	verbTok := p.curToken

@@ -2,6 +2,7 @@
 #ifndef QUARK_CORE_DIAGNOSTICS_HPP
 #define QUARK_CORE_DIAGNOSTICS_HPP
 
+#include "rowrand.hpp"
 #include <cstdarg>
 #include <cstdlib>
 #include <cstring>
@@ -94,9 +95,17 @@ inline void (*q_exit_hook)(int) = nullptr;
 
 [[noreturn]] inline void q_exit(int code) {
     if (q_exit_hook != nullptr) {
+        // The REPL host (Windows) recovers from the failed input in this
+        // process: a verb's random-draw context must not outlive it.
+        q_row_ctx = QRowCtx{};
         q_exit_hook(code);
     }
     ::exit(code);
+}
+
+[[noreturn]] inline void q_row_stream_exhausted() {
+    q_runtime_reportf("runtime error: a random draw in a query needs more numbers than one row can draw (2^33)\n");
+    q_exit(1);
 }
 
 // QK-FFI-004: a handle of the wrong kind, or use of a handle that is closed.

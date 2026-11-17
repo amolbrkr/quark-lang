@@ -27,3 +27,13 @@ print(stats)
 top = staff | e -> sort(desc(e.salary)) | head(2)
 print(top.name)
 staff.describe(2)
+
+// tables v0.3: shape, missing values, membership, the count step
+print(staff.nrow())
+print(staff.names())
+print((staff | e -> filter(e.salary == null)).name)
+print((staff | e -> mutate(s = e.salary.fillna(0.0))).s)
+keep = list ['ops']
+print((staff | e -> filter(keep.contains(e.dept))).name)
+print((staff | e -> count(e.dept)).n)
+print(list [1, 2].contains(2.0))

@@ -27,6 +27,10 @@ inline QValue q_len(QValue v) {
             return qv_int(static_cast<long long>(q_vec_size(v)));
         case QValue::VAL_DICT:
             return qv_int(v.data.dict_val ? static_cast<long long>(v.data.dict_val->entries.size()) : 0);
+        case QValue::VAL_TABLE:
+            // tables v0.3 D49: the row count is t.nrow().
+            q_runtime_reportf("runtime error: len() of a table isn't defined; its row count is t.nrow()\n");
+            q_exit(1);
         default:
             q_runtime_reportf("runtime error: len() expects str, list, dict, or vec\n");
             q_exit(1);

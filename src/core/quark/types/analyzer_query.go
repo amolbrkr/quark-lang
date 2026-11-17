@@ -26,9 +26,9 @@ type QueryStep struct {
 	Pred      *ast.TreeNode   // filter: the condition
 	Cols      []*MutateColumn // mutate: the columns, in the order written
 	Keys      []SortKey       // sort; distinct (Desc unused)
-	Keep      []int           // select, deselect: columns of In kept, in output order
+	Keep      []int           // select, deselect: columns of In kept, in output order; drop_na: the columns tested
 	SumCols   []*SumCol       // summarize: the columns, after the group keys
-	GroupKeys []GroupKey      // the group_by this step consumes; a group_by step's own keys
+	GroupKeys []GroupKey      // the group_by this step consumes; a group_by or count step's own keys
 	Aggs      []*AggUse       // filter and summarize: aggregates computed before the step
 	Count     *ast.TreeNode   // head, tail: the row count; nil for the default (6)
 }
@@ -73,7 +73,7 @@ type SortKey struct {
 }
 
 // queryVerbs are the steps a query may have, for messages.
-const queryVerbs = "filter, mutate, select, deselect, rename, distinct, sort, group_by, summarize, head, tail"
+const queryVerbs = "filter, mutate, select, deselect, rename, distinct, drop_na, sort, group_by, summarize, count, head, tail"
 
 // rowContext is the row a verb expression reads: the row name's symbol, the
 // row type, and the function nesting where it is bound (a function written
@@ -135,6 +135,10 @@ func (a *Analyzer) analyzeQuery(node *ast.TreeNode) Type {
 			ok = a.queryRename(step, rowName)
 		case "distinct":
 			ok = a.queryDistinct(step, rowName)
+		case "drop_na":
+			ok = a.queryDropNa(step, rowName)
+		case "count":
+			ok = a.queryCount(step, rowName)
 		case "sort":
 			ok = a.querySort(step, rowName)
 		case "group_by":
@@ -568,6 +572,65 @@ func (a *Analyzer) queryGroupBy(step *QueryStep, rowName string) bool {
 		a.errorAt(step.Node, "group_by needs at least one key: group_by(%s.col)", rowName)
 		return false
 	}
+	return a.groupKeys(step, rowName)
+}
+
+// queryCount is the count step (tables v0.3 D50): group_by(keys) |
+// summarize(n = count()), one row per key combination in key order with the
+// keys and an int column n; count() is one row, the row count.
+func (a *Analyzer) queryCount(step *QueryStep, rowName string) bool {
+	if !a.groupKeys(step, rowName) {
+		return false
+	}
+	var fields []StructField
+	for _, k := range step.GroupKeys {
+		if k.Name == "n" {
+			a.errorAt(step.Node, "count's result has its own column 'n' for the counts, so a key can't be named 'n'; give the key another name (count(key = %s.n))", rowName)
+			return false
+		}
+		fields = append(fields, StructField{Name: k.Name, Type: k.Type})
+	}
+	fields = append(fields, StructField{Name: "n", Type: TypeInt})
+	step.Out = a.anonRow(fields)
+	return true
+}
+
+// queryDropNa is the drop_na step (D47): the rows where every listed column
+// is present (a float NaN is present); drop_na() lists every column.
+func (a *Analyzer) queryDropNa(step *QueryStep, rowName string) bool {
+	if !a.noNamedArgs(step) {
+		return false
+	}
+	if len(step.Node.Children) == 0 {
+		for i := range step.In.Fields {
+			step.Keep = append(step.Keep, i)
+		}
+		return true
+	}
+	seen := map[int]bool{}
+	for _, arg := range step.Node.Children {
+		t := a.rowExpr(arg, rowName, "drop_na", step.In)
+		if IsErrorType(t) {
+			return false
+		}
+		col, ok := a.isColumnRef(arg)
+		if !ok {
+			a.errorAt(arg, "drop_na takes columns (%s.col); to drop the rows where a computed value is missing, write filter(... != null)", rowName)
+			return false
+		}
+		if seen[col] {
+			a.errorAt(arg, "drop_na names column '%s' twice", step.In.Fields[col].Name)
+			return false
+		}
+		seen[col] = true
+		step.Keep = append(step.Keep, col)
+	}
+	return true
+}
+
+// groupKeys checks the keys of a group_by or count step (§3.5): a column,
+// e.col, or name = expr of a column type. They go on step.GroupKeys.
+func (a *Analyzer) groupKeys(step *QueryStep, rowName string) bool {
 	seenCol := map[int]bool{}
 	seenName := map[string]bool{}
 	for _, arg := range step.Node.Children {
@@ -576,13 +639,13 @@ func (a *Analyzer) queryGroupBy(step *QueryStep, rowName string) bool {
 		if arg.NodeType == ast.ColumnDefNode && len(arg.Children) == 1 {
 			named, name, expr = true, arg.TokenLiteral(), arg.Children[0]
 		}
-		t := a.rowExpr(expr, rowName, "group_by", step.In)
+		t := a.rowExpr(expr, rowName, step.Verb, step.In)
 		if IsErrorType(t) {
 			return false
 		}
 		col, isCol := a.isColumnRef(expr)
 		if !named && !isCol {
-			a.errorAt(expr, "a computed group key needs a name: group_by(year = time::year(%s.day))", rowName)
+			a.errorAt(expr, "a computed group key needs a name: %s(year = time::year(%s.day))", step.Verb, rowName)
 			return false
 		}
 		if !named {
@@ -593,14 +656,14 @@ func (a *Analyzer) queryGroupBy(step *QueryStep, rowName string) bool {
 		}
 		if seenName[name] {
 			if !named && isCol {
-				a.errorAt(expr, "group_by names column '%s' twice", name)
+				a.errorAt(expr, "%s names column '%s' twice", step.Verb, name)
 			} else {
-				a.errorAt(arg, "group_by names key '%s' twice", name)
+				a.errorAt(arg, "%s names key '%s' twice", step.Verb, name)
 			}
 			return false
 		}
 		if isCol && !named && seenCol[col] {
-			a.errorAt(expr, "group_by names column '%s' twice", name)
+			a.errorAt(expr, "%s names column '%s' twice", step.Verb, name)
 			return false
 		}
 		seenName[name] = true

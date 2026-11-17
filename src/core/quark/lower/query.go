@@ -29,12 +29,20 @@ type rowLoop struct {
 	idx  *Temp
 	row  *types.StructType
 	cols map[int]*Temp // column index -> const QVector& temp
+	// key and saved are set when the loop's expressions draw random
+	// numbers (specs/tables_v0_3_spec.md §5): the loop's key, and the draw
+	// context to restore after the loop (endRow).
+	key   *Temp
+	saved *Temp
 }
 
 const (
 	repRowSet   Rep = "quark::tbl::RowSet"
 	repColOut   Rep = "quark::tbl::ColOut"
 	repGrouping Rep = "quark::tbl::Grouping"
+	repLookup   Rep = "quark::tbl::LookupSet"
+	repRandKey  Rep = "uint64_t"
+	repRowCtx   Rep = "QRowCtx"
 )
 
 func intConst(n int) Expr { return &Const{R: RepInt, Text: fmt.Sprint(n)} }
@@ -65,6 +73,14 @@ func (l *lowerer) query(node *ast.TreeNode) Expr {
 			cur = l.queryProject(cur, st, cols)
 		case "distinct":
 			cur = l.queryDistinct(cur, st)
+		case "drop_na":
+			cols := make([]Expr, len(st.Keep))
+			for i, c := range st.Keep {
+				cols[i] = intConst(c)
+			}
+			cur = l.let(&Call{Fn: "q_tbl_drop_na", Args: []Expr{cur, &InitList{Type: "std::initializer_list<int>", Elems: cols}}, R: RepTable})
+		case "count":
+			cur = l.queryCount(cur, st)
 		case "sort":
 			keys := make([]Expr, 0, 2*len(st.Keys))
 			for _, k := range st.Keys {
@@ -122,6 +138,7 @@ func (l *lowerer) openRow(cur Expr, row *types.StructType, exprs []*ast.TreeNode
 		}
 	}
 	rl.idx = l.newTemp(RepInt)
+	l.drawContext(rl, exprs)
 	if len(checks) == 0 {
 		return rl, n, nil
 	}
@@ -164,17 +181,75 @@ func onceZero(r Rep) Expr {
 		return zeroOf(r)
 	case RepValue:
 		return nullValue()
+	case repLookup:
+		return &Const{R: r, Text: "quark::tbl::LookupSet{}"}
 	default:
 		return &Const{R: r, Text: "nullptr"}
 	}
 }
 
-// rowFor lowers body as a loop over the rows openRow bound.
+// drawContext gives rl a draw context when exprs draw random numbers
+// (specs/tables_v0_3_spec.md §5): the loop's key, taken once before the
+// loop (one number for the dense and the general loop, of which one runs),
+// and the context the loop replaces.
+func (l *lowerer) drawContext(rl *rowLoop, exprs []*ast.TreeNode) {
+	if !l.drawsIn(exprs) {
+		return
+	}
+	rl.key = l.newTemp(repRandKey)
+	l.add(&Let{T: rl.key, Value: &Call{Fn: "q_rand_loop_key", R: repRandKey}})
+	rl.saved = l.newTemp(repRowCtx)
+	l.add(&Let{T: rl.saved, Value: &Call{Fn: "q_row_ctx_save", R: repRowCtx}})
+}
+
+// endRow restores the draw context after rl's loops.
+func (l *lowerer) endRow(rl *rowLoop) {
+	if rl.saved != nil {
+		l.add(&Do{X: &Call{Fn: "q_row_ctx_restore", Args: []Expr{&TempRef{T: rl.saved}}, R: Rep("void")}})
+	}
+}
+
+// drawsIn reports whether evaluating exprs for a row can draw a random
+// number: a call the analyzer marked Draws. An aggregate's argument runs
+// in its own loop, and a function written in an expression isn't called.
+func (l *lowerer) drawsIn(exprs []*ast.TreeNode) bool {
+	var walk func(n *ast.TreeNode) bool
+	walk = func(n *ast.TreeNode) bool {
+		if n == nil || n.NodeType == ast.LambdaNode || l.an.AggUses[n] != nil {
+			return false
+		}
+		if n.NodeType == ast.FunctionCallNode {
+			if p := l.an.CallPlans[n]; p != nil && p.Draws {
+				return true
+			}
+		}
+		for _, ch := range n.Children {
+			if walk(ch) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, e := range exprs {
+		if walk(e) {
+			return true
+		}
+	}
+	return false
+}
+
+// rowFor lowers body as a loop over the rows openRow bound. With a draw
+// context, each row starts by setting it.
 func (l *lowerer) rowFor(rl *rowLoop, n Expr, body func()) {
 	saved, savedOnce := l.row, l.once
 	l.row = rl
 	l.once = &onceSlots{byNode: map[*ast.TreeNode]*onceSlot{}}
-	loop := l.sub(body)
+	loop := l.sub(func() {
+		if rl.key != nil {
+			l.add(&Do{X: &Call{Fn: "q_row_ctx_set", Args: []Expr{&TempRef{T: rl.key}, &TempRef{T: rl.idx}}, R: Rep("void")}})
+		}
+		body()
+	})
 	slots := l.once
 	l.row, l.once = saved, savedOnce
 	for _, s := range slots.list {
@@ -224,8 +299,13 @@ func (l *lowerer) columnReads(node *ast.TreeNode, skip map[*ast.TreeNode]bool) [
 }
 
 // isRowLogic reports whether node is a part of a verb expression that
-// follows three-valued logic: and, or, !, or a ternary.
-func isRowLogic(node *ast.TreeNode) bool {
+// doesn't follow the strict rule: and, or, !, a ternary (three-valued
+// logic), and `x == null`, `x != null` and `x.fillna(v)` (they look at the
+// missing value itself, tables v0.3 D46, D47).
+func (l *lowerer) isRowLogic(node *ast.TreeNode) bool {
+	if l.an.RowMissing[node] != nil {
+		return true
+	}
 	switch node.Op() {
 	case token.AND, token.OR:
 		return node.NodeType == ast.BinaryNode
@@ -235,16 +315,21 @@ func isRowLogic(node *ast.TreeNode) bool {
 	return node.NodeType == ast.TernaryNode
 }
 
-// logicParts are the outermost three-valued parts below node.
-func logicParts(node *ast.TreeNode) []*ast.TreeNode {
+// logicParts are the outermost non-strict parts below node. An aggregate's
+// argument is not a part: the aggregate is computed before the row loop,
+// over its own loop (evalAgg), and the row reads its value.
+func (l *lowerer) logicParts(node *ast.TreeNode) []*ast.TreeNode {
 	var out []*ast.TreeNode
 	var walk func(n *ast.TreeNode)
 	walk = func(n *ast.TreeNode) {
+		if l.an.AggUses[n] != nil {
+			return
+		}
 		for _, ch := range n.Children {
 			if ch == nil || ch.NodeType == ast.LambdaNode {
 				continue
 			}
-			if isRowLogic(ch) {
+			if l.isRowLogic(ch) {
 				out = append(out, ch)
 				continue
 			}
@@ -301,6 +386,12 @@ func (l *lowerer) asRowRep(node *ast.TreeNode, v Expr, r Rep) Expr {
 // rowValue lowers verb expression node for the current row: its value (in
 // rowRep of its type) and whether it is present (nil: always).
 func (l *lowerer) rowValue(node *ast.TreeNode) (Expr, Expr) {
+	if rm := l.an.RowMissing[node]; rm != nil {
+		if rm.Fill != nil {
+			return l.rowFillna(node, rm)
+		}
+		return l.rowNullTest(rm), nil
+	}
 	switch {
 	case node.Op() == token.AND && node.NodeType == ast.BinaryNode:
 		return l.rowLogic(node, true)
@@ -319,7 +410,7 @@ func (l *lowerer) rowValue(node *ast.TreeNode) (Expr, Expr) {
 // column it reads (or any three-valued part in it) is: it is computed only
 // when all of them are present.
 func (l *lowerer) rowStrict(node *ast.TreeNode) (Expr, Expr) {
-	parts := logicParts(node)
+	parts := l.logicParts(node)
 	skip := map[*ast.TreeNode]bool{}
 	var pres []Expr
 	for _, part := range parts {
@@ -446,6 +537,63 @@ func (l *lowerer) rowTernary(node *ast.TreeNode) (Expr, Expr) {
 	return &TempRef{T: out}, &TempRef{T: present}
 }
 
+// rowNullTest lowers `x == null` / `x != null` (D46): whether x is missing,
+// never missing itself. x is computed as anywhere else (when the values it
+// reads are present), so an error computing it is reported.
+func (l *lowerer) rowNullTest(rm *types.RowMissing) Expr {
+	v, p := l.rowValue(rm.X)
+	if p == nil {
+		l.stable(v)
+		if rm.Not {
+			return trueExpr
+		}
+		return falseExpr
+	}
+	if rm.Not {
+		return p
+	}
+	return &Not{X: p}
+}
+
+// rowFillna lowers `x.fillna(v)` (D47): x where it is present, else v, which
+// is computed only for those rows; missing only where both are.
+func (l *lowerer) rowFillna(node *ast.TreeNode, rm *types.RowMissing) (Expr, Expr) {
+	r := rowRep(l.nodeType(node))
+	vx, px := l.rowValue(rm.X)
+	if px == nil {
+		return l.asRowRep(rm.X, vx, r), nil
+	}
+	out := l.newTemp(r)
+	l.add(&Let{T: out, Value: zeroOf(r)})
+	present := l.newTemp(RepBool)
+	l.add(&Let{T: present, Value: trueExpr})
+	then := &Block{Stmts: []Stmt{&SetTemp{T: out, Value: l.asRowRep(rm.X, vx, r)}}}
+	els := l.sub(func() {
+		vf, pf := l.rowValue(rm.Fill)
+		l.add(&SetTemp{T: out, Value: l.asRowRep(rm.Fill, vf, r)})
+		if pf != nil {
+			l.add(&SetTemp{T: present, Value: pf})
+		}
+	})
+	l.add(&If{Cond: px, Then: then, Else: els})
+	return &TempRef{T: out}, &TempRef{T: present}
+}
+
+// rowMissingDense lowers `x == null` or `x.fillna(v)` in a row loop whose
+// values are all present (the dense loop): x itself, or whether it is
+// missing (never), after computing it.
+func (l *lowerer) rowMissingDense(node *ast.TreeNode, rm *types.RowMissing) Expr {
+	v := l.expr(rm.X)
+	if rm.Fill != nil {
+		return l.asRowRep(rm.X, v, rowRep(l.nodeType(node)))
+	}
+	l.stable(v)
+	if rm.Not {
+		return trueExpr
+	}
+	return falseExpr
+}
+
 // columnRead is `e.col` in the current row: the raw value (a QValue for a
 // str column), which rowStrict reads only when it is present.
 func (l *lowerer) columnRead(node *ast.TreeNode, col int) Expr {
@@ -492,6 +640,7 @@ func (l *lowerer) queryFilter(cur Expr, st *types.QueryStep) Expr {
 			l.add(&If{Cond: keep, Then: &Block{Stmts: []Stmt{push}}})
 		})
 	})
+	l.endRow(rl)
 	l.agg = nil
 	return l.let(&Call{Fn: "q_tbl_take", Args: []Expr{cur, &TempRef{T: rows}}, R: RepTable})
 }
@@ -569,6 +718,18 @@ func (l *lowerer) querySummarize(cur Expr, st *types.QueryStep) Expr {
 		}
 		l.agg.perGroup = false
 	}
+	def := &Const{R: Rep("const QStructDef*"), Text: "&_sdef_" + structCName(st.Out.Name)}
+	out := l.let(&Call{Fn: "q_tbl_make", Args: []Expr{def, &InitList{Type: "std::initializer_list<QVector*>", Elems: cols}}, R: RepTable})
+	l.agg = nil
+	return out
+}
+
+// queryCount is the count step (tables v0.3 D50): the group keys and the
+// row count of each group.
+func (l *lowerer) queryCount(cur Expr, st *types.QueryStep) Expr {
+	l.bindGrouping(cur, st.GroupKeys, st.In)
+	cols := append([]Expr{}, l.agg.keyVecs...)
+	cols = append(cols, l.let(&Call{Fn: "q_tbl_agg_count", Args: []Expr{l.agg.group}, R: RepVector}))
 	def := &Const{R: Rep("const QStructDef*"), Text: "&_sdef_" + structCName(st.Out.Name)}
 	out := l.let(&Call{Fn: "q_tbl_make", Args: []Expr{def, &InitList{Type: "std::initializer_list<QVector*>", Elems: cols}}, R: RepTable})
 	l.agg = nil
@@ -667,6 +828,7 @@ func (l *lowerer) buildColumn(cur Expr, row *types.StructType, expr *ast.TreeNod
 			l.pushOrNull(b, p, pushOf(v))
 		})
 	})
+	l.endRow(rl)
 	return l.let(&Call{Fn: "q_col_finish", Args: []Expr{&TempRef{T: b}}, R: RepVector})
 }
 
@@ -678,10 +840,12 @@ func (l *lowerer) buildGroupColumn(n Expr, keys map[int]*Temp, row *types.Struct
 	l.add(&Let{T: b, Value: &Call{Fn: "q_col_new", Args: []Expr{intConst(ColumnDtype(typ)), n}, R: repColOut}})
 	idx := l.newTemp(RepInt)
 	rl := &rowLoop{idx: idx, row: row, cols: keys}
+	l.drawContext(rl, []*ast.TreeNode{expr})
 	l.rowFor(rl, n, func() {
 		v, p := l.rowValue(expr)
 		l.pushOrNull(b, p, &Do{X: &Call{Fn: pushFns[r], Args: []Expr{&TempRef{T: b}, l.asRowRep(expr, v, r)}, R: Rep("void")}})
 	})
+	l.endRow(rl)
 	return l.let(&Call{Fn: "q_col_finish", Args: []Expr{&TempRef{T: b}}, R: RepVector})
 }
 

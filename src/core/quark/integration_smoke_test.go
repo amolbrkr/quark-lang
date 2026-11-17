@@ -794,6 +794,13 @@ func TestSmokePrograms_Run(t *testing.T) {
 				"name    str    'Ann', 'Bo', ...",
 				"dept    str    'eng', 'ops', ...",
 				"salary  float  120000.0, 90000.5, ...",
+				"4",
+				"['id', 'name', 'dept', 'salary']",
+				"['Cy']",
+				"[120000.0, 90000.5, 0.0, 150000.0]",
+				"['Bo', 'Di']",
+				"[2, 2]",
+				"true",
 			),
 		},
 		{

@@ -843,8 +843,9 @@ print(stats)
 ```
 
 The verbs are `filter`, `mutate`, `select`, `deselect`, `rename`, `distinct`,
-`sort`, `group_by` (which applies to the next `filter`, `mutate` or
-`summarize`), `summarize`, `head` and `tail`. The aggregates `count`, `sum`,
+`drop_na`, `sort`, `group_by` (which applies to the next `filter`, `mutate` or
+`summarize`), `summarize`, `count` (`count(e.dept)` is the rows per key),
+`head` and `tail`. The aggregates `count`, `sum`,
 `mean`, `sd`, `min`, `max` and `n_distinct` work in `filter`, `mutate` and
 `summarize`, over the whole table or the row's group:
 `filter(e.salary > mean(e.salary))`. A call in a verb has to be row-safe (it
@@ -853,8 +854,11 @@ as `mean(t.salary)`, runs once for the step. The rules are in
 [semantics.md](semantics.md) §9.5. A query's result has an anonymous row (`{dept: str, avg: float, top: float, n: int}`), which matches a struct with exactly those fields where
 it is stored (`s: tbl[DeptStats] = ...`). Missing values (empty or `NA` cells)
 are skipped by aggregates and make an expression missing, and `and`/`or`
-follow SQL (`true or <missing>` is true). `t.describe()` prints each column's
-type and first values. The details are in [semantics.md](semantics.md) §9.5,
+follow SQL (`true or <missing>` is true); `e.salary == null` tests for one and
+`e.salary.fillna(0.0)` replaces it. `keep.contains(e.dept)` tests membership in
+a list or vec, with a hash set built once for the step. `t.describe()` prints
+each column's type and first values, and `t.nrow()`, `t.ncol()` and
+`t.names()` its shape. The details are in [semantics.md](semantics.md) §9.5,
 and the design in [specs/tables_v0_1_spec.md](specs/tables_v0_1_spec.md).
 
 ### Modules and imports
@@ -940,7 +944,7 @@ names, arities and types is `src/core/quark/builtins/catalog.go`.
 | `unwrap` | 1 | | the value of an `ok`; runtime error on `err` |
 | `range` | 1-3 | list | `range(end)`, `range(start, end)`, `range(start, end, step)` |
 | `abs` | 1 | | keeps int or float |
-| `min`, `max` | 1-2 | | of two numbers, or of one numeric vector (float) |
+| `min`, `max` | 1-2 | | of two values of one type (int, float, str or date), typed by them; or of one vector |
 | `sum` | 1 | float | of a numeric or bool vector (not a list) |
 | `sqrt` | 1 | float | runtime error on a negative number |
 | `floor`, `ceil`, `round` | 1 | int | |
@@ -964,6 +968,7 @@ names, arities and types is `src/core/quark/builtins/catalog.go`.
 | | `.join(sep)` | one string |
 | | `.enumerate()` | list of `{index, value}` dicts |
 | | `.to_vec()` | typed vector (elements must be one scalar type, or `null`) |
+| | `.contains(x)` | whether some item equals `x` |
 | `dict` | `.get(key)` | value, or `null` if missing (type `any`; `d.key` errors if missing) |
 | | `.set(key, x)` | sets in place, returns the dict |
 | | `.keys()`, `.values()`, `.items()` | lists (`items` gives `{key, value}` dicts) |
@@ -971,8 +976,10 @@ names, arities and types is `src/core/quark/builtins/catalog.go`.
 | | `.fillna(x)` | new vector with missing values replaced |
 | | `.astype(dtype)` | new vector of dtype `'i64'`, `'f64'` or `'bool'` |
 | | `.to_list()`, `.enumerate()` | lists |
+| | `.contains(x)` | whether some present entry equals `x` |
 | `tbl` | `.head(n = 6)`, `.tail(n = 6)` | the first or last `n` rows, as a table of the same type |
 | | `.describe(n = 5)` | prints each column's name, type and first `n` values |
+| | `.nrow()`, `.ncol()`, `.names()` | the row count, the column count, the column names |
 
 When a receiver's type isn't known at compile time (for example the result of
 `unwrap`), the method is chosen at runtime, and a receiver without that method
@@ -1085,13 +1092,15 @@ and don't. An `INV-*` diagnostic is a compiler bug.
 **Planned:**
 
 - Tables v0.3 ([specs/tables_v0_3_spec.md](specs/tables_v0_3_spec.md)):
-aggregates in `filter` and `mutate`, and row-safe calls in a verb, are in.
-Still to come: missing values in verbs, `contains`, `nrow`, the `count` step,
-two-argument `min`/`max` typing, and running a query on more than one thread
-with the same output for every thread count.
-- Tables still later: the column-wise table literal, joins, `summary(t)`, and
-compile-time schema inference for CSV files
-([specs/tables_v0_1_spec.md](specs/tables_v0_1_spec.md) §9-10,
+the language on one thread is in (aggregates in `filter` and `mutate`, missing
+values in verbs, `contains`, `nrow`, the `count` step, two-argument `min`/`max`
+typing), and so are row-safe calls in a verb and random draws in a verb that
+don't depend on the order rows run in. Still to come: running a query on more
+than one thread with the same output for every thread count.
+- Tables still later: the column-wise table literal, joins, `summary(t)`,
+queries on tables without a row struct, and compile-time schema inference for CSV
+files ([specs/untyped_tables_v0_1_spec.md](specs/untyped_tables_v0_1_spec.md), a proposal;
+[specs/tables_v0_1_spec.md](specs/tables_v0_1_spec.md) §9,
 [specs/tables_v0_2_spec.md](specs/tables_v0_2_spec.md) §6,
 [specs/tables_v0_3_spec.md](specs/tables_v0_3_spec.md) §13).
 - Element types in annotations: `list[T]`.

@@ -22,8 +22,9 @@ import (
 // A row-safe call whose arguments don't depend on the row is the same for
 // every row, so lowering evaluates it the first time a row needs it (D44).
 // A random draw is row-safe but not the same twice, so it is never evaluated
-// once (the per-row generator is specs §5, not done yet; until then each row
-// still draws from the sequence).
+// once; a verb call that draws, directly or through the functions it calls,
+// has CallPlan.Draws set, and lowering gives its row loop a draw context
+// (specs §5, core/rowrand.hpp).
 
 // drawSymbols are the std/random draws. They are declared rowsafe, and each
 // call draws its own number.
@@ -197,7 +198,7 @@ func containerWrite(a *Analyzer, target *ast.TreeNode) bool {
 
 func (a *Analyzer) noteRowCall(f *FixedFn, n *ast.TreeNode, callFn map[*ast.TreeNode]*FixedFn) {
 	plan := a.callPlans[n]
-	if plan == nil || plan.Dispatch == ir.DispatchAggregate {
+	if plan == nil || plan.Dispatch == ir.DispatchAggregate || plan.Dispatch == ir.DispatchRowFillna {
 		return
 	}
 	if g := callFn[n]; g != nil {
@@ -253,7 +254,7 @@ func (a *Analyzer) dynamicRowSafe(plan *ir.CallPlan) bool {
 // Analyze records it); a call that failed to type is dropped in checkVerbCall.
 func (a *Analyzer) noteVerbCall(node *ast.TreeNode, grouped bool) {
 	plan := a.callPlans[node]
-	if plan == nil || plan.Dispatch == ir.DispatchAggregate {
+	if plan == nil || plan.Dispatch == ir.DispatchAggregate || plan.Dispatch == ir.DispatchRowFillna {
 		return
 	}
 	a.verbCalls = append(a.verbCalls, verbCall{node: node, grouped: grouped})
@@ -271,7 +272,11 @@ func (a *Analyzer) checkVerbCall(c verbCall, callFn map[*ast.TreeNode]*FixedFn) 
 	if g := callFn[node]; g != nil {
 		if !g.rowSafe {
 			a.errorAt(node, "'%s' can't be called in a query: it %s", g.Name, a.explainUnsafe(g, map[*FixedFn]bool{}))
-		} else if !g.draws && !a.callArgsVary(node, c.grouped, callFn) {
+		} else if g.draws {
+			// Lowering sets the row's draw context for a loop with a draw
+			// (specs/tables_v0_3_spec.md §5).
+			plan.Draws = true
+		} else if !a.callArgsVary(node, c.grouped, callFn) {
 			plan.Once = true
 		}
 		return
@@ -292,6 +297,10 @@ func (a *Analyzer) checkVerbCall(c verbCall, callFn map[*ast.TreeNode]*FixedFn) 
 		}
 		if !a.callArgsVary(node, c.grouped, callFn) {
 			plan.Once = true
+		} else if isContainsCall(plan) && !a.exprVaries(plan.ReceiverNode, c.grouped, callFn) {
+			if a.lookupSetOK(node, plan) {
+				plan.Lookup = true
+			}
 		}
 	case ir.DispatchDynamicMethod:
 		if !a.dynamicRowSafe(plan) {

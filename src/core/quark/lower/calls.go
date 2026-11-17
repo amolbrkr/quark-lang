@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"quark/ast"
+	"quark/builtins"
 	"quark/ir"
 	"quark/types"
 )
@@ -23,12 +24,22 @@ func (l *lowerer) call(node *ast.TreeNode) Expr {
 	if plan == nil {
 		l.ice("INV-CALLPLAN-MISSING", node, "missing call plan")
 	}
+	if plan.Dispatch == ir.DispatchRowFillna {
+		rm := l.an.RowMissing[node]
+		if rm == nil || l.row == nil {
+			l.ice("INV-QUERY-FILLNA", node, "fillna of a row value outside its row loop")
+		}
+		return l.rowMissingDense(node, rm)
+	}
 	// A call that doesn't depend on the row is the same for every row. It
 	// stays where the expression evaluates it, so a row that doesn't reach
 	// it doesn't run it, and the first row that does is where an error is
 	// reported (D44).
 	if plan.Once && l.row != nil && l.onceNode != node {
 		return l.onceCall(node)
+	}
+	if plan.Lookup && l.row != nil {
+		return l.lookupCall(node, plan)
 	}
 	if funcNode.NodeType == ast.MemberNode && plan.Dispatch == ir.DispatchClosure {
 		l.ice("INV-DOT-CALL", node, "dot-call syntax is not supported")
@@ -179,6 +190,46 @@ func (l *lowerer) onceCall(node *ast.TreeNode) Expr {
 	)
 	l.add(&If{Cond: &Not{X: &TempRef{T: slot.ready}}, Then: then})
 	return &TempRef{T: slot.value}
+}
+
+// lookupCall lowers xs.contains(x) in a row loop when xs is the same for
+// every row (plan.Lookup, tables v0.3 D48): the set of xs's elements is
+// built the first time a row gets here, as a once-call is (so a row that
+// doesn't reach it doesn't build it, and an error building it is reported
+// at that row), and each row looks x up in it.
+func (l *lowerer) lookupCall(node *ast.TreeNode, plan *ir.CallPlan) Expr {
+	if l.once == nil {
+		l.ice("INV-QUERY-ONCE", node, "a contains() set made once per step is outside a row loop")
+	}
+	args := node.Children[1].Children
+	if len(args) != 1 || plan.ReceiverNode == nil {
+		l.ice("INV-QUERY-LOOKUP", node, "contains() lookup without one argument and a receiver")
+	}
+	l.include(builtins.TableHeader)
+	slot := l.once.slot(l, node, repLookup)
+	then := l.sub(func() {
+		recv := l.expr(plan.ReceiverNode)
+		l.add(&SetTemp{T: slot.value, Value: &Call{Fn: "q_lookup_build", Args: []Expr{boxed(recv)}, R: repLookup}})
+		l.add(&SetTemp{T: slot.ready, Value: trueExpr})
+	})
+	l.add(&If{Cond: &Not{X: &TempRef{T: slot.ready}}, Then: then})
+	x := l.expr(args[0])
+	fn := "q_lookup_has_val"
+	switch x.Rep() {
+	case RepInt:
+		fn = "q_lookup_has_int"
+	case RepFloat:
+		fn = "q_lookup_has_float"
+	case RepBool:
+		fn = "q_lookup_has_bool"
+	case RepDate:
+		fn = "q_lookup_has_date"
+	case RepStrView:
+		fn = "q_lookup_has_str"
+	default:
+		x = boxed(x)
+	}
+	return &Call{Fn: fn, Args: []Expr{&TempRef{T: slot.value}, x}, R: RepBool}
 }
 
 // keepArgsAlive keeps every argument of a call into native code that refers

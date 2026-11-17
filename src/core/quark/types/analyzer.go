@@ -104,6 +104,9 @@ type Analyzer struct {
 	aggs    *aggScope
 	aggUses map[*ast.TreeNode]*AggUse
 	inAgg   bool
+	// rowMissing records `x == null` and `x.fillna(v)` in verb expressions
+	// (analyzer_missing.go).
+	rowMissing map[*ast.TreeNode]*RowMissing
 
 	// REPL session (specs/repl_v0_1_spec.md). session is set when the tree's
 	// children are input blocks. sessionUses lists the session variables a
@@ -173,6 +176,7 @@ func NewAnalyzer() *Analyzer {
 		queries:         make(map[*ast.TreeNode]*Query),
 		columnRefs:      make(map[*ast.TreeNode]int),
 		aggUses:         make(map[*ast.TreeNode]*AggUse),
+		rowMissing:      make(map[*ast.TreeNode]*RowMissing),
 		sessionUses:     make(map[*ast.TreeNode][]*Symbol),
 		structHome:      make(map[string]string),
 	}

@@ -61,6 +61,7 @@
 #include "builtins/dict.hpp"
 #include "builtins/strings.hpp"
 #include "builtins/sort.hpp"
+#include "builtins/contains.hpp"
 // Member access (must come after types and builtins)
 #include "ops/member.hpp"
 

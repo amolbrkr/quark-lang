@@ -167,6 +167,18 @@ func Lookup(name string) (Spec, bool) {
 	return s, ok
 }
 
+// IsQueryAggregate reports whether name is a query aggregate (tables v0.3
+// §3.1): inside filter, mutate and summarize, a call of one of these names is
+// the aggregate when its argument reads the row. count and n_distinct exist
+// only as aggregates; the others are also prelude functions.
+func IsQueryAggregate(name string) bool {
+	switch name {
+	case "count", "sum", "mean", "sd", "min", "max", "n_distinct":
+		return true
+	}
+	return false
+}
+
 // LookupMethod looks up a method by receiver type and method name.
 // receiverType must be one of the TypeKey constants.
 func LookupMethod(receiverType TypeKey, methodName string) (Spec, bool) {

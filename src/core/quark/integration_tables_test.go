@@ -494,6 +494,86 @@ func TestTables_Aggregates(t *testing.T) {
 	})
 }
 
+// gapsCSV has a group whose values are all missing (a), a NaN (in the
+// group of missing keys) and a group with two present values (b).
+const gapsCSV = "id,g,x\n1,a,\n2,a,\n3,b,1.5\n4,b,2.5\n5,,NaN\n"
+
+const gapsPre = "incl 'std/csv'\nstruct M:\n    id: int\n    g: str\n    x: float\nm: tbl[M] = unwrap(csv::read_file('m.csv'))\nshow = csv::format_text\n"
+
+// TestTables_AggregateEdges is tables v0.3 §11's aggregate edge cases in
+// filter and mutate: a group whose values are all missing, NaN, the
+// whole-table min/max loop with and without missing values, an int sum
+// that overflows before any row fails, and aggregates in an imported file.
+func TestTables_AggregateEdges(t *testing.T) {
+	files := map[string]string{"m.csv": gapsCSV}
+	q := func(name, body, want string) tableCase {
+		return tableCase{name: name, files: files, source: gapsPre + body, want: want}
+	}
+	dense := "struct D:\n    id: int\n    x: float\n    d: date\nd: tbl[D] = unwrap(csv::parse_text('id,x,d\\n1,NaN,2020-01-01\\n2,3.0,2021-05-05\\n3,-1.0,2019-02-02\\n'))\n"
+	runTableCases(t, []tableCase{
+		q("grouped_all_missing", "print(show(m | e -> group_by(e.g) | mutate(mu = mean(e.x), s = sd(e.x), mx = max(e.x), c = count(e.x), n = count())))\n",
+			"id,g,x,mu,s,mx,c,n\n1,a,,,,,0,2\n2,a,,,,,0,2\n3,b,1.5,2.0,0.7071067811865476,2.5,2,2\n4,b,2.5,2.0,0.7071067811865476,2.5,2,2\n5,,nan,,,,0,1"),
+		q("grouped_filter_missing_aggregate", "print((m | e -> group_by(e.g) | filter(e.x == max(e.x) or count(e.x) == 0)).id)\n", "[1, 2, 4, 5]"),
+		q("whole_mean_skips_nan", "print((m | e -> filter(e.x >= mean(e.x) - 0.5)).id)\nprint((m | e -> mutate(top = max(e.x), lo = min(e.x))).top)\n", "[3, 4]\n[2.5, 2.5, 2.5, 2.5, 2.5]"),
+		q("whole_all_missing", "none = m | e -> filter(e.g == 'a')\nprint((none | e -> mutate(mu = mean(e.x), mx = max(e.x), c = count(e.x))).mx)\nprint(len((none | e -> filter(e.x <= max(e.x))).id))\n",
+			"[null, null]\n0"),
+		q("whole_dense_extremes", dense+"print(show(d | e -> summarize(a = max(e.x), b = min(e.x), c = max(e.id), lo = min(e.d), hi = max(e.d))))\nprint((d | e -> filter(e.x == max(e.x))).id)\nprint(max(d.x) == (d | e -> summarize(a = max(e.x))).a[0])\n",
+			"a,b,c,lo,hi\n3.0,-1.0,3,2019-02-02,2021-05-05\n\n[2]\ntrue"),
+		q("whole_dense_all_nan", "struct N:\n    x: float\nn: tbl[N] = unwrap(csv::parse_text('x\\nNaN\\nNaN\\n'))\nprint((n | e -> summarize(a = max(e.x), b = min(e.x))).a)\nprint(len((n | e -> filter(e.x == max(e.x))).x))\n",
+			"[null]\n0"),
+		{name: "sum_overflow_in_filter", files: files, err: "integer overflow in 'sum'",
+			source: gapsPre + "r = m | e -> mutate(k = 9223372036854775807 if e.id < 3 else 1) | filter(e.k > sum(e.k))\n"},
+		{name: "sum_overflow_in_mutate", files: files, err: "integer overflow in 'sum'",
+			source: gapsPre + "r = m | e -> mutate(k = 9223372036854775807 if e.id < 3 else 1) | mutate(s = sum(e.k))\n"},
+		{name: "sum_overflow_before_row_error", files: files, err: "integer overflow in 'sum'",
+			source: gapsPre + "r = m | e -> mutate(k = 9223372036854775807 if e.id < 3 else 1) | filter(to_int(e.g) > sum(e.k))\n"},
+		// Aggregate names in an imported file are the aggregates, whatever
+		// the main script defines.
+		{name: "imported_file", want: "dept,n,k,m\neng,2,2,120000.0\nops,2,2,120000.25\n,1,1,80000.0\n\n['Ann', 'Di']\n7",
+			files: map[string]string{"staff.csv": queryCSV, "lib.qrk": "incl 'std/csv'\n" + empStruct +
+				"fn per_dept(t: tbl[Emp]) tbl -> t | e -> group_by(e.dept) | summarize(n = count(), k = n_distinct(e.name), m = mean(e.salary))\n" +
+				"fn above(t: tbl[Emp]) tbl[Emp] -> t | e -> filter(e.salary > mean(e.salary) and count() > 1)\n"},
+			source: "incl 'std/csv'\nincl './lib'\ncount = 7\nstaff: tbl[lib::Emp] = unwrap(csv::read_file('staff.csv'))\nprint(csv::format_text(lib::per_dept(staff)))\nprint(lib::above(staff).name)\nprint(count)\n"},
+	})
+}
+
+// TestTables_AggregateNames: in a verb, a call of an aggregate name is the
+// aggregate, so a definition of that name it would hide is an error, in the
+// main script and in an imported file (decided 2026-11-17).
+func TestTables_AggregateNames(t *testing.T) {
+	staff := map[string]string{"staff.csv": queryCSV}
+	q := func(name, head, body, err string) tableCase {
+		return tableCase{name: name, files: staff, source: head + queryPre + body, err: err}
+	}
+	lib := func(name, libSrc, err string) tableCase {
+		return tableCase{name: name, err: err, files: map[string]string{"lib.qrk": "struct Emp:\n    id: int\n" + libSrc},
+			source: "incl './lib'\nprint(1)\n"}
+	}
+	runTableCases(t, []tableCase{
+		q("user_fn", "fn count(x: int) int -> x + 100\n", "r = staff | e -> mutate(y = count(e.id))\n",
+			"'count(...)' in a query is the aggregate, but this program defines 'count' (line 1); rename it to use the aggregate"),
+		q("variable", "count = 3\n", "r = staff | e -> filter(count() > 1)\n", "but this program defines 'count' (line 1)"),
+		q("n_distinct_fn", "fn n_distinct(x: str) int -> 1\n", "r = staff | e -> filter(n_distinct(e.dept) > 1)\n", "'n_distinct(...)' in a query is the aggregate"),
+		q("parameter", "", "fn f(t: tbl[Emp], n_distinct: int) -> t | e -> filter(n_distinct(e.dept) > 1)\n", "but this program defines 'n_distinct' (line 9)"),
+		q("parameter_mean", "", "fn f(t: tbl[Emp], mean: float) -> t | e -> filter(e.salary > mean(e.salary))\n", "'mean(...)' in a query is the aggregate, but this program defines 'mean' (line 9)"),
+		{name: "extern_fn", files: map[string]string{"staff.csv": queryCSV, "tick.hpp": rowSafeTickH}, err: "'count(...)' in a query is the aggregate, but this program defines 'count'",
+			source: "extern 'tick.hpp'\nextern rowsafe fn count() int as 'q_rowsafe_tick'\n" + queryPre + "r = staff | e -> filter(count() > 1)\n"},
+		q("row_name", "", "r = staff | count -> filter(count() > 1)\n", "the query's row is named 'count'; rename the row"),
+		lib("imported_def", "fn count(x: int) int -> x\nfn f(t: tbl[Emp]) tbl -> t | e -> mutate(y = count(e.id))\n",
+			"'count(...)' in a query is the aggregate, but this program defines 'count' (line 3)"),
+		lib("imported_param", "fn g(t: tbl[Emp], n_distinct: int) tbl -> t | e -> filter(n_distinct(e.id) > 0)\n", "'n_distinct(...)' in a query is the aggregate"),
+		// head's count isn't a verb expression, so count() there names
+		// nothing in the imported file, not the main script's count.
+		{name: "imported_head_count", err: "undefined identifier 'count'",
+			files:  map[string]string{"lib.qrk": "struct Emp:\n    id: int\nfn h(t: tbl[Emp]) tbl[Emp] -> t | e -> head(count())\n"},
+			source: "incl './lib'\nfn count() int -> 2\nprint(count())\n"},
+		// The name is still free outside verbs and as a value in one.
+		{name: "value_and_outside", want: "[1, 2]\n101\n[101, 102, 103, 104, 105]",
+			files:  map[string]string{"staff.csv": queryCSV, "lib.qrk": "fn count(x: int) int -> x + 100\n"},
+			source: "incl './lib'\ncount = 3\n" + queryPre + "print((staff | e -> filter(e.id < count)).id)\nprint(lib::count(1))\nprint((staff | e -> mutate(y = lib::count(e.id))).y)\n"},
+	})
+}
+
 // rowSafeTickH is a glue header whose rowsafe functions count calls or fail.
 // The generated program includes quark.hpp first, so q_runtime_reportf is in scope.
 const rowSafeTickH = `#pragma once
@@ -576,6 +656,17 @@ func TestTables_RowSafety(t *testing.T) {
 			"'random::shuffle' can't be called in a query"),
 		use("blas_dot", "incl 'std/blas'\n", "blas::dot(vec [1.0], vec [1.0]) > 0.0",
 			"'blas::dot' can't be called in a query: it calls the native function 'blas_dot', which isn't declared rowsafe"),
+		// A rowsafe native function can't take a function value: its promise
+		// can't cover the Quark code it would call (decided 2026-11-17).
+		{name: "rowsafe_fn_param", files: map[string]string{"h.hpp": rowSafeTagH},
+			source: "extern 'h.hpp'\nextern rowsafe fn apply(f: fn, x: float) float as 'q_tag'\nprint(1)\n",
+			err:    "a rowsafe native function can't take a function value ('f: fn')"},
+		{name: "rowsafe_method_fn_param", files: map[string]string{"h.hpp": rowSafeTagH},
+			source: "extern 'h.hpp'\nextern rowsafe fn str.apply(f: fn) str as 'q_tag'\nprint(1)\n",
+			err:    "a rowsafe native function can't take a function value ('f: fn')"},
+		{name: "plain_fn_param_in_verb", files: map[string]string{"staff.csv": queryCSV, "h.hpp": rowSafeTagH},
+			source: "extern 'h.hpp'\nextern fn apply(f: fn, x: float) float as 'q_tag'\n" + queryPre + "r = staff | e -> mutate(y = apply(fn(v: float) float -> v, e.salary))\n",
+			err:    "'apply' can't be called in a query: it isn't declared rowsafe"},
 		{name: "module_helper", files: map[string]string{"staff.csv": queryCSV, "lib.qrk": "fn loud(x: float) float ->\n    print(x)\n    x\n"},
 			source: "incl './lib'\n" + queryPre + "r = staff | e -> filter(lib::loud(e.salary) > 0.0)\n",
 			err:    "'lib::loud' can't be called in a query: it calls 'print' (line 2)"},
@@ -624,6 +715,9 @@ func TestTables_Once(t *testing.T) {
 		q("never_branch_does_not_fail", "r = staff | e -> filter(false and boom() > 0)\nprint(len(r.id))\n", "0", ""),
 		q("earlier_row_error_wins", "struct S:\n    x: int\n    s: str\nt: tbl[S] = unwrap(csv::parse_text('x,s\\n0,no\\n1,2\\n'))\nr = t | e -> filter(to_int(e.s) > 0 and boom() > 0)\n", "", "cannot parse 'no'"),
 		q("fails_at_first_row_that_needs_it", "struct S:\n    x: int\nt: tbl[S] = unwrap(csv::parse_text('x\\n0\\n1\\n'))\nr = t | e -> filter(e.x == 1 and boom() > 0)\n", "", "boom"),
+		{name: "error_location_after_once", files: map[string]string{"staff.csv": queryCSV},
+			source: queryPre + "fn k(x: int) int -> x\nr = staff | e -> mutate(a = k(1) + 9223372036854775807 * (e.id - 1))\n",
+			err:    "main.qrk:10:18"},
 		{name: "draw_not_once", files: map[string]string{"staff.csv": queryCSV},
 			source: "incl 'std/random'\n" + queryPre + "random::seed(1)\nr = staff | e -> mutate(u = random::uniform())\nprint((r | e -> summarize(k = n_distinct(e.u))).k[0])\n",
 			want:   "5"},

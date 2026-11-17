@@ -467,7 +467,7 @@ func (l *lowerer) queryFilter(cur Expr, st *types.QueryStep) Expr {
 	if len(st.Aggs) > 0 {
 		l.bindGrouping(cur, st.GroupKeys, st.In)
 		for _, a := range st.Aggs {
-			l.agg.vecs[a] = l.evalAgg(cur, a, st.In)
+			l.bindAgg(a, l.evalAgg(cur, a, st.In))
 		}
 	}
 	rows := l.newTemp(repRowSet)
@@ -515,7 +515,7 @@ func (l *lowerer) queryMutate(cur Expr, st *types.QueryStep) Expr {
 			if l.agg.vecs[a] != nil {
 				continue
 			}
-			l.agg.vecs[a] = l.evalAgg(cur, a, c.Reads)
+			l.bindAgg(a, l.evalAgg(cur, a, c.Reads))
 		}
 		vec := l.buildColumn(cur, c.Reads, c.Value, c.Type)
 		def := &Const{R: Rep("const QStructDef*"), Text: "&_sdef_" + structCName(c.After.Name)}
@@ -548,6 +548,7 @@ func (l *lowerer) queryDistinct(cur Expr, st *types.QueryStep) Expr {
 func (l *lowerer) querySummarize(cur Expr, st *types.QueryStep) Expr {
 	l.bindGrouping(cur, st.GroupKeys, st.In)
 	for _, a := range st.Aggs {
+		// Read per group (perGroup), so nothing is hoisted.
 		l.agg.vecs[a] = l.evalAgg(cur, a, st.In)
 	}
 	cols := append([]Expr{}, l.agg.keyVecs...)
@@ -581,12 +582,22 @@ type aggBind struct {
 	perGroup bool
 	vecs     map[*types.AggUse]Expr
 	keyVecs  []Expr
+	// wholeVals are the value and presence of each aggregate of a
+	// whole-table step, read once before the row loop (bindAgg).
+	wholeVals map[*types.AggUse]wholeAgg
+}
+
+// wholeAgg is a whole-table aggregate held in locals: present is nil when
+// the aggregate can't be missing.
+type wholeAgg struct {
+	value   Expr
+	present Expr
 }
 
 // bindGrouping computes the step's groups: the whole table, or the group_by
 // keys (a computed key is evaluated into a column first).
 func (l *lowerer) bindGrouping(cur Expr, keys []types.GroupKey, row *types.StructType) {
-	l.agg = &aggBind{vecs: map[*types.AggUse]Expr{}, keyVecs: make([]Expr, len(keys))}
+	l.agg = &aggBind{vecs: map[*types.AggUse]Expr{}, keyVecs: make([]Expr, len(keys)), wholeVals: map[*types.AggUse]wholeAgg{}}
 	if len(keys) == 0 {
 		l.agg.group = l.let(&Call{Fn: "q_tbl_whole", Args: []Expr{cur}, R: repGrouping})
 		l.agg.whole = true
@@ -757,7 +768,28 @@ func (l *lowerer) groupIndex() Expr {
 	return &Call{Fn: "q_tbl_group_of", Args: []Expr{l.agg.group, &TempRef{T: l.row.idx}}, R: RepInt}
 }
 
+// bindAgg records an aggregate's per-group vector. For a whole-table
+// filter or mutate it also reads the one value, and whether it is present,
+// into locals before the row loop: a row then reads a register, where
+// reading the vector on every row is a load clang can't hoist past the
+// loop's writes (specs/tables_v0_3_spec.md §3.7). An entry of a missing
+// aggregate is zeroed, so the read is defined; the row checks present first.
+func (l *lowerer) bindAgg(u *types.AggUse, vec Expr) {
+	l.agg.vecs[u] = vec
+	if !l.agg.whole {
+		return
+	}
+	w := wholeAgg{value: l.let(l.aggRead(u, vec, intConst(0)))}
+	if u.CanMiss {
+		w.present = l.let(&Call{Fn: "q_grp_present", Args: []Expr{vec, intConst(0)}, R: RepBool})
+	}
+	l.agg.wholeVals[u] = w
+}
+
 func (l *lowerer) aggPresent(u *types.AggUse) Expr {
+	if w, ok := l.agg.wholeVals[u]; ok && !l.agg.perGroup && w.present != nil {
+		return w.present
+	}
 	return &Call{Fn: "q_grp_present", Args: []Expr{l.agg.vecs[u], l.groupIndex()}, R: RepBool}
 }
 
@@ -765,8 +797,14 @@ func (l *lowerer) aggValue(node *ast.TreeNode, u *types.AggUse) Expr {
 	if l.agg == nil || l.agg.vecs[u] == nil {
 		l.ice("INV-QUERY-AGG", node, "aggregate %s was not computed", u.Fn)
 	}
-	idx := l.groupIndex()
-	vec := l.agg.vecs[u]
+	if w, ok := l.agg.wholeVals[u]; ok && !l.agg.perGroup {
+		return w.value
+	}
+	return l.aggRead(u, l.agg.vecs[u], l.groupIndex())
+}
+
+// aggRead reads group idx of an aggregate's per-group vector.
+func (l *lowerer) aggRead(u *types.AggUse, vec, idx Expr) Expr {
 	switch rowRep(u.Type) {
 	case RepFloat:
 		return &Call{Fn: "q_grp_f64", Args: []Expr{vec, idx}, R: RepFloat}

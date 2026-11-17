@@ -156,6 +156,12 @@ func (a *Analyzer) analyzeExternFn(node *ast.TreeNode) Type {
 		if t == nil {
 			t = TypeAny
 		}
+		if node.ExternRowSafe && isFnValueType(t) {
+			// The promise covers the native code, not Quark code it would
+			// call, which could print, change a list or draw a number on
+			// every row (specs/tables_v0_3_spec.md §4.4, decided 2026-11-17).
+			a.errorAt(child, "a rowsafe native function can't take a function value ('%s: %s'): its promise can't cover the Quark code it would call; declare it without rowsafe", child.TokenLiteral(), t.String())
+		}
 		paramTypes = append(paramTypes, t)
 		nativeParams = append(nativeParams, quarkTypeToNativeCType(t))
 	}
@@ -333,4 +339,14 @@ func receiverStringToNativeCType(s string) string {
 		return "QVector*"
 	}
 	return "QValue"
+}
+
+// isFnValueType reports whether t is a function value: the `fn` annotation,
+// or a function type.
+func isFnValueType(t Type) bool {
+	if t == TypeFn {
+		return true
+	}
+	_, ok := t.(*FunctionType)
+	return ok
 }

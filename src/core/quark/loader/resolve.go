@@ -23,6 +23,9 @@ type rctx struct {
 	shadow map[string]bool // parameters, loop variables and `when` bindings
 	locals map[string]bool // names assigned inside the enclosing functions
 	inFn   bool
+	// inStep is set inside a query step's arguments, outside any function
+	// written there: where a call of an aggregate name can be the aggregate.
+	inStep bool
 }
 
 func (c rctx) with(shadow ...string) rctx {
@@ -177,6 +180,12 @@ func (ml *ModuleLoader) walk(n *ast.TreeNode, c rctx) {
 		ml.walkMember(n, c)
 	case ast.FunctionCallNode:
 		ml.renameMethodCall(n, c)
+		if ml.queryAggregate(n, c) {
+			for _, ch := range n.Children[1:] {
+				ml.walk(ch, c)
+			}
+			return
+		}
 		ml.walkChildren(n, c)
 	case ast.AssignNode, ast.FnDeclNode:
 		if len(n.Children) != 2 {
@@ -279,6 +288,7 @@ func (ml *ModuleLoader) walkLambda(n *ast.TreeNode, c rctx) {
 	params := paramNames(n.Children[0])
 	lc := c.with(params...)
 	lc.inFn = true
+	lc.inStep = false
 	lc.locals = map[string]bool{}
 	for k := range c.locals {
 		lc.locals[k] = true
@@ -304,8 +314,9 @@ func (ml *ModuleLoader) walkFor(n *ast.TreeNode, c rctx) {
 }
 
 // walkQuery resolves a table query: the source in the enclosing scope, the
-// steps with the row name bound, like a parameter. Verb, column and
-// aggregate names are node tokens, not identifiers, so they aren't resolved.
+// steps with the row name bound, like a parameter. Verb and column names are
+// node tokens, not identifiers, so they aren't resolved; aggregate calls are
+// handled by queryAggregate.
 func (ml *ModuleLoader) walkQuery(n *ast.TreeNode, c rctx) {
 	if len(n.Children) < 2 {
 		ml.walkChildren(n, c)
@@ -313,10 +324,40 @@ func (ml *ModuleLoader) walkQuery(n *ast.TreeNode, c rctx) {
 	}
 	ml.walk(n.Children[0], c)
 	sc := c.with(n.Children[1].TokenLiteral())
+	sc.inStep = true
 	ml.renameLocal(n.Children[1], sc)
 	for _, step := range n.Children[2:] {
 		ml.walk(step, sc)
 	}
+}
+
+// queryAggregate marks the callee of a call in a query step written as a
+// bare aggregate name (`count(...)`, `sum(...)`, ...; tables v0.3 §3.1) with
+// the name as written, and reports whether the name is free: an imported
+// file that defines nothing by it. A free name is the aggregate (or the
+// prelude function), not an undefined identifier, and not a name of the
+// main script, which the checker's scopes would find; it is left as
+// written. A name the file defines is resolved as usual, and the checker
+// reports the clash with the aggregate. In the main script nothing is free:
+// the checker resolves its names.
+func (ml *ModuleLoader) queryAggregate(n *ast.TreeNode, c rctx) bool {
+	if !c.inStep || len(n.Children) == 0 {
+		return false
+	}
+	callee := n.Children[0]
+	if callee == nil || callee.NodeType != ast.IdentifierNode {
+		return false
+	}
+	name := callee.TokenLiteral()
+	if !builtins.IsQueryAggregate(name) {
+		return false
+	}
+	callee.AggregateName = name
+	if c.f.info.Main || c.shadow[name] || c.locals[name] || c.lookupBare(name) != nil {
+		return false
+	}
+	callee.AggregateFree = true
+	return true
 }
 
 func (ml *ModuleLoader) walkPattern(n *ast.TreeNode, c rctx) {

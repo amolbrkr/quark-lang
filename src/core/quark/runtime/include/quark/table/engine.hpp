@@ -786,6 +786,16 @@ inline QVector* agg_extremum_whole(const QVector& col, int32_t nrows, bool want_
     switch (col.type) {
         case Type::I64: {
             const int64_t* x = q_vec_i64_data(col);
+            QVector* out = q_vec_alloc(Type::I64, 1);
+            if (col.null_count == 0) {
+                // No missing values: the branch-free loop of min(v) / max(v)
+                // (q_vec_extremum), with the same result.
+                if (nrows == 0) return missing(out);
+                int64_t best = x[0];
+                for (int32_t r = 1; r < nrows; r++) best = want_max ? (x[r] > best ? x[r] : best) : (x[r] < best ? x[r] : best);
+                q_vec_i64_data_mut(*out)[0] = best;
+                return out;
+            }
             bool any = false;
             int64_t best = 0;
             for (int32_t r = 0; r < nrows; r++) {
@@ -795,13 +805,20 @@ inline QVector* agg_extremum_whole(const QVector& col, int32_t nrows, bool want_
                     any = true;
                 }
             }
-            QVector* out = q_vec_alloc(Type::I64, 1);
             if (!any) return missing(out);
             q_vec_i64_data_mut(*out)[0] = best;
             return out;
         }
         case Type::DATE: {
             const int32_t* x = q_vec_date_data(col);
+            if (col.null_count == 0) {
+                QVector* out = q_vec_alloc(Type::DATE, 1);
+                if (nrows == 0) return missing(out);
+                int32_t best = x[0];
+                for (int32_t r = 1; r < nrows; r++) best = want_max ? (x[r] > best ? x[r] : best) : (x[r] < best ? x[r] : best);
+                q_vec_date_data_mut(*out)[0] = best;
+                return out;
+            }
             bool any = false;
             int32_t best = 0;
             for (int32_t r = 0; r < nrows; r++) {
@@ -818,6 +835,18 @@ inline QVector* agg_extremum_whole(const QVector& col, int32_t nrows, bool want_
         }
         case Type::F64: {
             const double* x = q_vec_f64_data(col);
+            if (col.null_count == 0) {
+                // A NaN never compares less or greater, so after the first
+                // non-NaN value it never wins (as in q_vec_extremum).
+                int32_t first = 0;
+                while (first < nrows && std::isnan(x[first])) first++;
+                QVector* out = q_vec_alloc(Type::F64, 1);
+                if (first == nrows) return missing(out);
+                double best = x[first];
+                for (int32_t r = first + 1; r < nrows; r++) best = want_max ? (x[r] > best ? x[r] : best) : (x[r] < best ? x[r] : best);
+                q_vec_f64_data_mut(*out)[0] = best;
+                return out;
+            }
             bool any = false;
             double best = 0;
             for (int32_t r = 0; r < nrows; r++) {

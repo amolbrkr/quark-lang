@@ -10,6 +10,7 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 
 ## Contents
 
+- [2026-11-17: Tables v0.3, aggregate names and rowsafe hardened](#2026-11-17-tables-v03-aggregate-names-and-rowsafe-hardened)
 - [2026-11-16: Tables v0.3, row-safe calls](#2026-11-16-tables-v03-row-safe-calls)
 - [2026-11-16: Tables v0.3, aggregates on one thread](#2026-11-16-tables-v03-aggregates-on-one-thread)
 - [2026-11-16: CI on Linux and Windows](#2026-11-16-ci-on-linux-and-windows)
@@ -56,7 +57,44 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 - [2026-04-02: Structs v0.1](#2026-04-02-structs-v01)
 - [2026-03-28: Vector soundness, `std/fmt` on `extern`, build output](#2026-03-28-vector-soundness-stdfmt-on-extern-build-output)
 
+## 2026-11-17: Tables v0.3, aggregate names and rowsafe hardened
+
+Fixes for what a check of the two tables v0.3 commits of 2026-11-16 found.
+
+### Breaking
+
+- **In a verb, a call of an aggregate name that names one of the program's own definitions is a compile-time error.** Since 2026-11-16 the aggregate silently took the definition's place: with `fn count(x: int) int -> x + 100`, `mutate(y = count(e.id))` gave the row count on every row. It now says `'count(...)' in a query is the aggregate, but this program defines 'count' (line 1); rename it to use the aggregate`. The same holds for a variable or parameter named `count` or `n_distinct`, a parameter named `sum`, `mean`, `sd`, `min` or `max`, an `extern fn` of one of these names, and a query row named like one. Outside verbs the names are free, a verb may read a `count` variable as a value, and a qualified call is an ordinary call:
+
+```quark
+count = 0                                           // fine
+r = t | e -> filter(e.id < count)                   // fine: count is read, not called
+r = t | e -> mutate(y = lib::count(e.id))           // fine: lib's function
+r = t | e -> filter(count() > 1)                    // error: count is defined on line 1
+```
+
+- **`extern rowsafe fn` can't have a `fn` parameter.** `extern rowsafe fn apply(f: fn, x: float) float as 'apply'` is a compile-time error (`a rowsafe native function can't take a function value ('f: fn')`): the promise covers the native code, not Quark code it would call, which could print, change a list or draw a number on every row. Declare such a function without `rowsafe`; it then can't be called in a verb.
+- **`mean(v)` and `sd(v)` of an untyped value are typed `float`**, as for a vec: `m = mean(x)` followed by `m = 'a'` is a compile-time error. A value that isn't a numeric or bool vec is still a runtime error.
+
+### Fixed
+
+- **`count()` and `n_distinct(...)` in a query of an imported file work again.** Since 2026-11-16 the file failed to load with `undefined identifier 'count'`. An aggregate name the file doesn't define is the aggregate, whatever the importing file defines.
+- **A random draw in a function value passed to a native function in a verb gave every row the same number**: the call looked as if it didn't read the row, so it was computed once. Such a native function has to be `rowsafe` to be called in a verb, and a `rowsafe` one can no longer take a function value (Breaking).
+- **A runtime error in a verb expression that also has a call computed once was reported at that call's column.** It is at the step, as for any other call in a verb.
+- **Whole-table aggregates in `filter` and `mutate` are as fast as computing them first.** The row loop reads the aggregate from a local instead of the result vector on every row, and `min`/`max` of a column with no missing values uses the branch-free loop of `min(v)`/`max(v)`. On 10M floats: `filter(e.a == max(e.a))` 19.5 → 15.9 ms (`m = max(t.a)` then `filter(e.a == m)`: 15.6 ms), `summarize(x = max(e.a))` 9.8 → 6.1 ms, `filter(e.a > mean(e.a))` 75 → 48 ms.
+
+### Internal
+
+- `builtins.IsQueryAggregate` is the one list of aggregate names, for the loader and the checker. The loader marks a callee written as a bare aggregate name in a query step (`ast.TreeNode.AggregateName`, and `AggregateFree` in an imported file that doesn't define it), so a qualified call isn't taken for the aggregate and an imported file's aggregate never resolves to the main script's names. `ast.AggregateNode`, which the parser no longer built, is removed.
+- `lower/query.go` `bindAgg` reads a whole-table aggregate's value and presence into locals; `agg_extremum_whole` (`table/engine.hpp`) has dense loops for int, float and date columns.
+- The editor grammar highlights `extern rowsafe fn`. CLAUDE.md's full test command passes `-timeout 60m` (the suite takes about 17 minutes; CI already did).
+- Tests: `TestTables_AggregateEdges` (a group whose values are all missing, NaN, the dense min/max loops, int `sum` overflow in `filter` and `mutate`, aggregates in an imported file), `TestTables_AggregateNames` (each kind of clash, in the main script and an imported file, and the uses that stay allowed), `rowsafe` with a `fn` parameter, the error location after a once-computed call, and `mean`/`sd` typing.
+- Docs: README's table tour and Known limitations, and the parts of `specs/tables_v0_1_spec.md` (D21, D24, §3, §4) and `specs/tables_v0_2_spec.md` §3 that v0.3 replaced, describe the current rules.
+
+---
+
 ## 2026-11-16: Tables v0.3, row-safe calls
+
+Commits: `0b387c2`
 
 A call written in a query has to be safe to run for any row, in any order. One that isn't is a compile error that names it.
 
@@ -87,6 +125,8 @@ above = cars | c -> filter(c.mpg > norm(c.hp, 100.0))
 - Each builtin catalog entry says whether it is row-safe and whether it changes its receiver. The analyzer works out row-safety for every `fn` the way it works out which declarations need a closure.
 
 ## 2026-11-16: Tables v0.3, aggregates on one thread
+
+Commits: `d99b076`
 
 The first part of `specs/tables_v0_3_spec.md`: aggregates work in `filter` and `mutate`, a `group_by` applies only to the next `filter`, `mutate` or `summarize`, a `summarize` column is an expression, and `mean` and `sd` are prelude functions. Still to come in that spec: testing missing values, `contains`, `nrow`, the `count` step, two-argument `min`/`max` typing, row-safety, and running queries on more than one thread.
 

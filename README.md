@@ -843,11 +843,14 @@ print(stats)
 ```
 
 The verbs are `filter`, `mutate`, `select`, `deselect`, `rename`, `distinct`,
-`sort`, `group_by` + `summarize`, `head` and `tail`. `summarize` also has
-`n_distinct`. A call in a verb has to be row-safe (it can run for any row, in
-any order), and a call that doesn't use the row, such as `mean(t.salary)`,
-runs once for the step. The rules are in
-[specs/tables_v0_2_spec.md](specs/tables_v0_2_spec.md). A query's result has an anonymous row (`{dept: str, avg: float, top: float, n: int}`), which matches a struct with exactly those fields where
+`sort`, `group_by` (which applies to the next `filter`, `mutate` or
+`summarize`), `summarize`, `head` and `tail`. The aggregates `count`, `sum`,
+`mean`, `sd`, `min`, `max` and `n_distinct` work in `filter`, `mutate` and
+`summarize`, over the whole table or the row's group:
+`filter(e.salary > mean(e.salary))`. A call in a verb has to be row-safe (it
+can run for any row, in any order), and a call that doesn't use the row, such
+as `mean(t.salary)`, runs once for the step. The rules are in
+[semantics.md](semantics.md) §9.5. A query's result has an anonymous row (`{dept: str, avg: float, top: float, n: int}`), which matches a struct with exactly those fields where
 it is stored (`s: tbl[DeptStats] = ...`). Missing values (empty or `NA` cells)
 are skipped by aggregates and make an expression missing, and `and`/`or`
 follow SQL (`true or <missing>` is true). `t.describe()` prints each column's
@@ -1108,8 +1111,7 @@ compile-time schema inference for CSV files
 a runtime error, not a compile error.
 - A `vec` literal can't contain `null`.
 - Tables: a query needs a row struct the compiler knows (a table read
-without one can be printed and written, or given one with `t: tbl[Row] = ...`); summarize columns aggregate one column each (`mutate` first to
-aggregate a computed value); there are no row reads (`t[i]`), table
+without one can be printed and written, or given one with `t: tbl[Row] = ...`); there are no row reads (`t[i]`), table
 literals or joins yet.
 
 **Known issues.** Bugs, including the cases where the compiler still gives a

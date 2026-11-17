@@ -59,7 +59,7 @@ eng = staff | e ->
 rest = staff | e -> deselect(e.id, e.dept)
 ```
 
-`e` in each step is that step's input row. `group_by` is still followed only by `summarize`; a `select`, `deselect`, `rename` or `distinct` after `group_by` is the same compile-time error as a `filter` there.
+`e` in each step is that step's input row. `group_by` applies to the next step, which is `filter`, `mutate` or `summarize` (`specs/tables_v0_3_spec.md` D36); a `select`, `deselect`, `rename` or `distinct` after `group_by` is a compile-time error.
 
 ### 3.1 select
 

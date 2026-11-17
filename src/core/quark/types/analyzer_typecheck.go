@@ -95,7 +95,9 @@ func (a *Analyzer) inferBuiltinReturnType(name string, argTypes []Type, callNode
 				return TypeError
 			}
 		}
-		return TypeAny
+		// An untyped argument is checked when the call runs, and the
+		// result is a float or a runtime error (q_mean, q_sd).
+		return TypeFloat
 	case "min", "max":
 		// min(v) / max(v) of a vec keep its element type; a vec with no present
 		// values is a runtime error, never a null typed as the element (D13).

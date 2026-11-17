@@ -61,14 +61,10 @@ const (
 	// (filter, mutate, ...), Children its arguments: expressions,
 	// ColumnDefNodes (mutate, summarize) or SortKeyNodes (sort).
 	QueryStepNode
-	// ColumnDefNode is `name = value` in mutate or summarize: Token is the
-	// column name, Children [value]; in summarize the value is an
-	// AggregateNode.
+	// ColumnDefNode is `name = value` in mutate, summarize or group_by:
+	// Token is the column name, Children [value]. An aggregate in the value
+	// is a FunctionCallNode the checker recognizes (types/analyzer_agg.go).
 	ColumnDefNode
-	// AggregateNode is a summarize aggregate, `sum(e.x)` or `count()`:
-	// Token is its name, Children its arguments. Aggregate names are syntax
-	// here, never resolved as functions.
-	AggregateNode
 	// SortKeyNode is a sort key: Children [key]; Descending is set for
 	// desc(key).
 	SortKeyNode
@@ -123,7 +119,6 @@ var nodeTypeNames = map[NodeType]string{
 	QueryNode:             "Query",
 	QueryStepNode:         "QueryStep",
 	ColumnDefNode:         "ColumnDef",
-	AggregateNode:         "Aggregate",
 	SortKeyNode:           "SortKey",
 	InputBlockNode:        "InputBlock",
 }
@@ -165,6 +160,17 @@ type TreeNode struct {
 	// is parsed as `f(x, a)`, so the piped input is the first argument.
 	// Only messages use it ("including piped input").
 	Piped bool
+
+	// AggregateName is set by the loader on the callee of a call in a query
+	// step that is written as a bare aggregate name (count, sum, ...): the
+	// name as written, since resolving it may rename the node to a
+	// definition of its file. A qualified call (lib::count) is not marked.
+	// AggregateFree is also set in an imported file when that file defines
+	// nothing by the name, so the checker takes it as the aggregate (or the
+	// prelude function) and never as a name of another file. The main
+	// script's names are resolved by the checker (loader, queryAggregate).
+	AggregateName string
+	AggregateFree bool
 
 	// Descending marks a SortKeyNode written desc(key).
 	Descending bool

@@ -367,7 +367,7 @@ func (a *Analyzer) analyze(node *ast.TreeNode) Type {
 		return a.analyzeStructLiteral(node)
 	case ast.QueryNode:
 		return a.analyzeQuery(node)
-	case ast.QueryStepNode, ast.ColumnDefNode, ast.AggregateNode, ast.SortKeyNode:
+	case ast.QueryStepNode, ast.ColumnDefNode, ast.SortKeyNode:
 		a.errorAt(node, "internal compiler error: a query step outside a query")
 		return TypeError
 	default:

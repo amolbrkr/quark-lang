@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"quark/ast"
+	"quark/builtins"
 	"quark/ir"
 )
 
@@ -38,24 +39,52 @@ type aggScope struct {
 	gen   map[int]int
 }
 
-func isAggName(name string) bool {
-	switch name {
-	case "count", "sum", "mean", "sd", "min", "max", "n_distinct":
-		return true
-	}
-	return false
-}
-
 // tryAggregate reports whether call is an aggregate and, when it is, its
 // type. A false handled means the caller analyzes it as an ordinary call;
 // the arguments have not been analyzed.
+//
+// In a verb, a call of an aggregate name is never a user's definition: when
+// the name resolves to one (a function, variable or parameter, or the row),
+// the call is an error, since the aggregate would silently take its place
+// (decided 2026-11-17). The loader marks a callee written as a bare
+// aggregate name (fn.AggregateName: resolving it may have renamed the node);
+// one it marked free has no definition in its imported file, so it isn't
+// looked up: the scopes would find the main script's names. A qualified
+// call (lib::count) is an ordinary call.
 func (a *Analyzer) tryAggregate(call, fn *ast.TreeNode, args []*ast.TreeNode) (Type, bool) {
-	if !a.inVerbExpr() || fn == nil || fn.NodeType != ast.IdentifierNode {
+	if fn == nil || fn.NodeType != ast.IdentifierNode {
 		return nil, false
 	}
 	name := fn.TokenLiteral()
-	if !isAggName(name) {
+	written := fn.AggregateName
+	if written == "" {
+		written = name // a tree the loader didn't resolve (the main script's names are as written)
+	}
+	if !builtins.IsQueryAggregate(written) {
 		return nil, false
+	}
+	if !a.inVerbExpr() {
+		if fn.AggregateFree && !isPreludeFunction(name) {
+			// count(...) in a step argument that isn't a verb expression
+			// (head's count) of an imported file: it names nothing there.
+			a.errorAt(fn, "undefined identifier '%s'", name)
+			return TypeError, true
+		}
+		return nil, false
+	}
+	if !fn.AggregateFree {
+		if sym := a.currentScope.Lookup(name); sym != nil && !(sym.Kind == SymBuiltin && isPreludeFunction(name)) {
+			if sym.Kind == SymRow {
+				a.errorAt(fn, "'%s(...)' in a query is the aggregate, but the query's row is named '%s'; rename the row", written, written)
+				return TypeError, true
+			}
+			where := ""
+			if line := nodeLine(sym.Decl); line > 0 {
+				where = fmt.Sprintf(" (line %d)", line)
+			}
+			a.errorAt(fn, "'%s(...)' in a query is the aggregate, but this program defines '%s'%s; rename it to use the aggregate", written, written, where)
+			return TypeError, true
+		}
 	}
 	rowName := a.rowCtx.sym.Name
 	switch name {
@@ -102,6 +131,13 @@ func (a *Analyzer) tryAggregate(call, fn *ast.TreeNode, args []*ast.TreeNode) (T
 		return TypeError, true
 	}
 	return a.finishAgg(call, name, arg, t), true
+}
+
+// isPreludeFunction reports whether name is a prelude builtin (an extern fn
+// is a SymBuiltin too, but it is the program's own definition).
+func isPreludeFunction(name string) bool {
+	_, ok := builtins.Lookup(name)
+	return ok
 }
 
 func (a *Analyzer) countRowsAgg(call *ast.TreeNode) Type {

@@ -87,6 +87,14 @@
             "1": { "name": "keyword.control.import.quark" },
             "2": { "name": "keyword.control.import.quark" }
           }
+        },
+        {
+          "comment": "extern rowsafe fn (rowsafe is a contextual word)",
+          "match": "\\b(extern)\\s+(rowsafe)(?=\\s+fn\\b)",
+          "captures": {
+            "1": { "name": "keyword.control.import.quark" },
+            "2": { "name": "storage.modifier.quark" }
+          }
         }
       ]
     },

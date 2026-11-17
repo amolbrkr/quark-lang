@@ -1365,6 +1365,8 @@ func TestSemanticsSafety_Rejected(t *testing.T) {
 		{"mean_not_vec", "print(mean(list [1, 2]))\n", "argument 1 of 'mean' expects numeric or bool vec, got list[int]"},
 		{"sd_few_values", "print(sd(vec [1]))\n", "sd() of a vec with fewer than 2 present values"},
 		{"mean_redefined", "fn mean(x) -> x\n", "'mean' is a builtin function and can't be redefined or assigned"},
+		{"mean_untyped_is_float", "fn id(x) -> x\nm = mean(id(vec [1.0]))\nm = 'a'\n", "cannot assign value of type 'str' to 'float'"},
+		{"sd_untyped_not_vec", "fn id(x) -> x\nprint(sd(id(list [1.0, 2.0])) + 1.0)\n", "sd() expects a numeric or bool vec, got list"},
 		// A null pointer from one native function never reaches the next.
 		{"native_null_str_chained", "extern 'nn.hpp'\nextern fn nullstr() str as 'nn_nullstr'\nextern fn slen(s: str) int as 'nn_len'\nprint(slen(nullstr()))\n", "a native function declared to return str returned a null pointer"},
 		{"native_null_list_chained", "extern 'nn.hpp'\nextern fn nulllist() list as 'nn_nulllist'\nextern fn lcount(l: list) int as 'nn_count'\nprint(lcount(nulllist()))\n", "a native function declared to return list returned a null pointer"},

@@ -155,14 +155,15 @@ func (l *lowerer) call(node *ast.TreeNode) Expr {
 // onceCall evaluates node the first time a row reaches it and reuses the
 // result for later rows. The slot is declared before the loop (rowFor);
 // the call itself stays in this branch, so a row that doesn't reach here
-// doesn't make it, and a failure is reported at this row.
+// doesn't make it, and a failure is reported at this row. Like a call made
+// on every row, it runs under the step's source location: setting its own
+// would leave later rows' errors pointing at it.
 func (l *lowerer) onceCall(node *ast.TreeNode) Expr {
 	if l.once == nil {
 		l.ice("INV-QUERY-ONCE", node, "a call computed once per step is outside a row loop")
 	}
 	var value Expr
 	then := l.sub(func() {
-		l.setLoc(node)
 		prev := l.onceNode
 		l.onceNode = node
 		value = l.call(node)

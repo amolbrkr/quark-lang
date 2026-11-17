@@ -150,7 +150,7 @@ ReceiverType      ::= "int" | "float" | "str" | "bool" | "list" | "dict" | "vec"
 ```
 
 - `extern 'path.hpp'` `#include`s a C++ header, resolved relative to the declaring file (`std/...` in the stdlib).
-- `extern fn name(...) T as 'symbol'` binds a free function; `extern fn list.name(...) T as 'symbol'` adds a method to a builtin type. `extern rowsafe fn` is the same form with the row-safe promise (semantics.md §9.5). The return type comes before `as`, with no `->`.
+- `extern fn name(...) T as 'symbol'` binds a free function; `extern fn list.name(...) T as 'symbol'` adds a method to a builtin type. `extern rowsafe fn` is the same form with the row-safe promise (semantics.md §9.5); it can't have a `fn` parameter. The return type comes before `as`, with no `->`.
 - Nothing may follow a directive's string on its line. `extern link` takes a bare library name (`'openblas'`, not `'-lopenblas'` or `'libopenblas.so'`).
 - `extern source 'file.cpp'` names a glue file compiled on its own (`specs/ffi_v0_1_spec.md`). `extern include` is a parse error (`use extern include_path`).
 
@@ -429,7 +429,7 @@ top = staff | e -> sort(desc(e.salary)) | head(3)
 - The steps continue on lines that start with `|`, as for pipes (§10.4), or form an indented block after `e ->` at the end of a line.
 - Every `| step` after `e ->` belongs to the query, so a query's result can't be piped into a function directly: `(t | e -> head(3)) | f()`. A second `| x ->` is a parse error (`a query names its row once`).
 - The verb (`filter`, `mutate`, `select`, `deselect`, `rename`, `distinct`, `sort`, `group_by`, `summarize`, `head`, `tail`), `desc` and the `name =` column names are part of the query, never functions or variables, so a user function named `filter` doesn't affect them. Which verbs exist and what their arguments may be is checked by the compiler (semantics.md §9.5).
-- Inside `filter`, `mutate` and `summarize`, `count()`, `count(e.x)`, `sum`, `mean`, `sd`, `min`, `max` and `n_distinct` of an expression that reads the row are aggregates, not function calls. `min` and `max` with two arguments, and `sum`, `mean`, `sd`, `min` and `max` of a value that doesn't read the row, are the prelude functions.
+- Inside `filter`, `mutate` and `summarize`, `count()`, `count(e.x)`, `sum`, `mean`, `sd`, `min`, `max` and `n_distinct` of an expression that reads the row are aggregates, not function calls. `min` and `max` with two arguments, and `sum`, `mean`, `sd`, `min` and `max` of a value that doesn't read the row, are the prelude functions. In a verb, a bare call of one of these names that resolves to the program's own function, variable or parameter is a compile-time error, so the aggregate never silently takes a definition's place; a qualified call (`lib::count(e.x)`) is an ordinary call (semantics.md §9.5).
 
 ## 11) Not in the Language
 

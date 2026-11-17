@@ -100,8 +100,8 @@ quark parse <file>    # Print AST
 quark check <file>    # Semantic analysis only
 quark emit <file>     # Print generated C++ to stdout
 
-# Run all integration tests
-cd src/core/quark && go test -v
+# Run all integration tests (about 17 minutes, past go test's default 10-minute timeout)
+cd src/core/quark && go test -v -timeout 60m
 
 # Run a single test by name
 cd src/core/quark && go test -v -run TestSmokePrograms_Run

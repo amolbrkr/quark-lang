@@ -2,7 +2,7 @@
 
 A benchmark suite that compares Quark with Python (pure Python, NumPy, pandas, Polars) and R (loops, base vectors, data.frame, data.table) on common data processing and number crunching. The point is to see where Quark actually stands, so that design decisions are made on measurements. It is not meant to make Quark look good: each tool gets the code an experienced user of it would write, and the same work.
 
-The figures in the repository [README](../../README.md#measured-against-python-and-r) are the one-thread run of 2026-11-14. [RESULTS.md](RESULTS.md) is an earlier write-up, from a different machine, and its tables are not that run.
+The figures in the repository [README](../../README.md#measured-against-python-and-r) and in [RESULTS.md](RESULTS.md) are the two runs of 2026-11-17 on Linux: every library on one thread, and every library at its default thread count. RESULTS.md has both runs' tables and what limits Quark in them.
 
 ## Contents
 
@@ -96,7 +96,7 @@ A tool is left out of a benchmark (`n/a` in the report) when it has no natural w
 4. **No accelerators.** No numba, Cython, numexpr, Rcpp, JIT decorators or hand-written native code. `std/blas` is part of Quark's standard library, so `quark_blas` is in.
 5. **The result is materialized.** Polars runs eagerly (`DataFrame`, not `LazyFrame`), and every timed function returns its full result (a new column, the filtered rows, the grouped table).
 6. **Fresh process per implementation**, so one implementation's heap, caches and thread pools don't affect another's.
-7. **One thread by default.** `--threads 1` pins every thread pool: `OMP_NUM_THREADS`, `OPENBLAS_NUM_THREADS`, `MKL_NUM_THREADS`, `POLARS_MAX_THREADS`, `R_DATATABLE_NUM_THREADS` and data.table's `setDTthreads`, and `GC_MARKERS` (Quark's Boehm GC marks in parallel by default). This compares the code, not the core count. `--threads 0` shows what each tool does out of the box; Quark itself is single-threaded except inside OpenBLAS and the GC.
+7. **One thread by default.** `--threads 1` pins every thread pool: `OMP_NUM_THREADS`, `OPENBLAS_NUM_THREADS`, `MKL_NUM_THREADS`, `POLARS_MAX_THREADS`, `R_DATATABLE_NUM_THREADS` and data.table's `setDTthreads`, `QUARK_THREADS` (Quark's thread pool, which `quark run --threads` sets) and `GC_MARKERS`. This compares the code, not the core count. `--threads 0` shows what each tool does out of the box: Quark then uses the logical CPUs the process may use, after its CPU affinity and its container's CPU quota (`stdlib.md`, `sys::threads`), and the report's Setup table records both. Libraries count CPUs in their own ways, and not all of them see a quota.
 8. **Quark is built the way users build it**: `quark build` with its default flags (`-O3 -march=x86-64-v3` on x86-64, no LTO).
 
 ## Benchmarks

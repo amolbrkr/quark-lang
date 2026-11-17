@@ -99,8 +99,36 @@ struct Pool {
     std::condition_variable idle; // the caller waits for workers to leave it
     Task* task = nullptr;
     uint64_t gen = 0;
-    int joined = 0; // workers working on task
+    int joined = 0;   // workers working on task
+    int sleeping = 0; // workers waiting on wake
+    // gen and joined, readable without the lock: a worker spins on gen a
+    // while after a loop, and the caller on joined, before sleeping.
+    std::atomic<uint64_t> gen_seen{0};
+    std::atomic<int> joined_now{0};
 };
+
+// spin_for spins until done() holds or about us microseconds pass, and
+// returns whether done() held. A program's loops often follow one another
+// (a step's columns, a chain of vec operations), and waking a sleeping
+// thread costs tens of microseconds, about what a loop of 160,000 light rows
+// takes on one thread.
+template <class Done>
+inline bool spin_for(int us, Done done) {
+    const auto until = std::chrono::steady_clock::now() + std::chrono::microseconds(us);
+    while (true) {
+        for (int i = 0; i < 64; i++) {
+            if (done()) return true;
+#if defined(__x86_64__) || defined(__i386__)
+            __builtin_ia32_pause();
+#elif defined(__aarch64__)
+            asm volatile("yield");
+#endif
+        }
+        if (std::chrono::steady_clock::now() >= until) return done();
+    }
+}
+
+inline constexpr int kSpinMicros = 50;
 
 // The pool and the once-call lock are never destroyed: workers wait on them
 // until the program exits.
@@ -248,27 +276,55 @@ inline void work(Task& t) {
     }
 }
 
-inline void worker_loop() {
-    Pool& p = *pool_ptr();
-    uint64_t seen = 0;
-    std::unique_lock<std::mutex> lk(p.mu);
-    while (true) {
-        p.wake.wait(lk, [&] { return p.gen != seen && p.task != nullptr; });
-        seen = p.gen;
-        Task* t = p.task;
-        p.joined++;
-        lk.unlock();
-        work(*t);
-        lk.lock();
-        if (--p.joined == 0) p.idle.notify_all();
-    }
-}
-
-inline void worker_start() {
+// A worker is registered with the collector only while it may run a block:
+// every collection stops each registered thread, and an idle one costs it
+// about 45 µs (a collection took 64 µs with no pool and 282 µs with 5 idle
+// workers registered). A worker that goes to sleep holds no live GC memory,
+// so it unregisters, and registers again when it wakes for a loop.
+inline void gc_register_worker() {
 #ifdef QUARK_USE_GC
     struct GC_stack_base sb;
     if (GC_get_stack_base(&sb) == GC_SUCCESS) GC_register_my_thread(&sb);
 #endif
+}
+
+inline void gc_unregister_worker() {
+#ifdef QUARK_USE_GC
+    GC_unregister_my_thread();
+#endif
+}
+
+inline void worker_loop() {
+    Pool& p = *pool_ptr();
+    uint64_t seen = 0;
+    std::unique_lock<std::mutex> lk(p.mu, std::defer_lock);
+    while (true) {
+        const bool soon = spin_for(kSpinMicros, [&] { return p.gen_seen.load(std::memory_order_acquire) != seen; });
+        if (!soon) gc_unregister_worker();
+        lk.lock();
+        auto ready = [&] { return p.gen != seen && p.task != nullptr; };
+        if (!ready()) {
+            p.sleeping++;
+            p.wake.wait(lk, ready);
+            p.sleeping--;
+        }
+        seen = p.gen;
+        Task* t = p.task;
+        p.joined++;
+        p.joined_now.store(p.joined, std::memory_order_release);
+        lk.unlock();
+        if (!soon) gc_register_worker();
+        work(*t);
+        lk.lock();
+        p.joined--;
+        p.joined_now.store(p.joined, std::memory_order_release);
+        if (p.joined == 0) p.idle.notify_all();
+        lk.unlock();
+    }
+}
+
+inline void worker_start() {
+    gc_register_worker();
 #if !defined(_WIN32)
     q_stack_thread_init();
 #endif
@@ -387,17 +443,34 @@ inline void run(const Plan& p, F& f) {
     t.nblocks = p.nblocks;
     t.loc = q_runtime_loc;
     t.row_ctx = q_row_ctx;
+    int sleeping = 0;
     {
         std::lock_guard<std::mutex> lk(pl.mu);
         pl.task = &t;
         pl.gen++;
+        pl.gen_seen.store(pl.gen, std::memory_order_release);
+        sleeping = pl.sleeping;
     }
-    pl.wake.notify_all();
+    // Spinning workers see the task by themselves; wake only as many
+    // sleeping ones as there are blocks for besides the caller's.
+    const long long wanted = t.nblocks - 1;
+    if (sleeping > 0 && wanted > 0) {
+        if (wanted >= sleeping) {
+            pl.wake.notify_all();
+        } else {
+            for (long long i = 0; i < wanted; i++) pl.wake.notify_one();
+        }
+    }
     work(t);
     {
         std::unique_lock<std::mutex> lk(pl.mu);
         pl.task = nullptr;
-        pl.idle.wait(lk, [&] { return pl.joined == 0; });
+        if (pl.joined > 0) {
+            lk.unlock();
+            spin_for(kSpinMicros, [&] { return pl.joined_now.load(std::memory_order_acquire) == 0; });
+            lk.lock();
+            pl.idle.wait(lk, [&] { return pl.joined == 0; });
+        }
     }
     if (t.err_block != LLONG_MAX) report(t);
 }

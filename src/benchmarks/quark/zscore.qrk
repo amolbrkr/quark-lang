@@ -21,18 +21,18 @@ fn zscore_list(a: list) list ->
     for x in a:
         v: float = x
         ss = ss + (v - m) * (v - m)
-    sd = sqrt(ss / (n - 1))
+    sdev = sqrt(ss / (n - 1))
     z = list []
     for x in a:
         v: float = x
-        z.push((v - m) / sd)
+        z.push((v - m) / sdev)
     z
 
 fn zscore_vec(a: vec) vec ->
     m = sum(a) / len(a)
     d = a - m
-    sd = sqrt(sum(d * d) / (len(a) - 1))
-    d / sd
+    sdev = sqrt(sum(d * d) / (len(a) - 1))
+    d / sdev
 
 // The mean and sd come from the column as a vec, the way quark_vec does,
 // and z is added with mutate.
@@ -40,8 +40,8 @@ fn zscore_tbl(t: tbl[tables::Cols]) tbl[Z] ->
     a = t.a
     m = mean(a)
     d = a - m
-    sd = sqrt(sum(d * d) / (len(a) - 1))
-    t | e -> mutate(z = (e.a - m) / sd)
+    sdev = sqrt(sum(d * d) / (len(a) - 1))
+    t | e -> mutate(z = (e.a - m) / sdev)
 
 // The checksum: sum(z * b).
 fn weighted_list(z: list, b: list) float ->

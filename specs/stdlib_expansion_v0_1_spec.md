@@ -1,6 +1,6 @@
 # Quark Standard Library Expansion v0.1 Spec
 
-Status: Partly implemented (2026-11-14). Implemented: §4 `std/sys`, §5 `std/time` except the named stopwatch (decision 5 is open), and §9.1 `std/random`. Still open: multi-argument `print` (decision 1), `fmt::format` (§3), the `std/io` rework (§6, FFI phase 3 finalizers), `std/fs` (§7, waits on FFI phase 2), JSON and subprocesses (§9.2-9.3). CSV is superseded by `specs/tables_v0_1_spec.md` (D8, D15, D17, tables §8), and decisions 7 and 8 are answered there.
+Status: Partly implemented (2026-11-14). Implemented: §4 `std/sys`, §5 `std/time` except the named stopwatch (decision 5 is open), and §9.1 `std/random`. Still open: multi-argument `print` (decision 1), `fmt::format` (§3), the `std/io` rework (§6, FFI phase 3 finalizers), `std/fs` (§7, waits on FFI phase 2), and subprocesses (§9.3). JSON moved to `specs/data_work_v0_1_spec.md` §9. CSV is superseded by `specs/tables_v0_1_spec.md` (D8, D15, D17, tables §8), and decisions 7 and 8 are answered there.
 Scope: `std/fmt`, `std/sys`, `std/time`, `std/io`, a new `std/fs`, and additions to `std/random`. JSON, regex and subprocesses are covered briefly in §9.
 Related: `stdlib.md` (current API), `specs/ffi_v0_1_spec.md` (how modules bind native code), `specs/implemented/modules_v0_2_spec.md` (modules), `specs/tables_v0_1_spec.md` (CSV and tables)
 
@@ -238,7 +238,7 @@ Implemented (2026-11-14). One function, `uniform(lo: float = 0.0, hi: float = 1.
 
 ### 9.2 JSON
 
-The most common format after CSV. Candidates: [nlohmann/json](https://github.com/nlohmann/json) (MIT, single header; as a glue header it costs about 5.1s per importing program, so it belongs in an `extern source`), or an in-house parser of a few hundred lines mapping to dict/list/str/int/float/bool/null. Proposed API: `json::parse(text) result`, `json::read(path) result`, `json::format(x, indent = 0) str`, `json::write(path, x) result`. Dict keys are strings already, so objects map directly. JSON values are mixed, so parsed lists and dicts hold any value (`list`, `dict` without an element type); reading them into typed values goes through typed declarations or struct literals, which check at runtime.
+Proposed in `specs/data_work_v0_1_spec.md` §9: `std/json` reads tables from records and JSON Lines with `std/csv`'s functions and typing, and reads and writes any JSON value (`json::parse_value`, `json::format_value`, `json::read_value`, `json::write_value`), with an in-house reader.
 
 ### 9.3 Subprocesses
 
@@ -252,7 +252,7 @@ The most common format after CSV. Candidates: [nlohmann/json](https://github.com
 
 Measured 2026-11-11 (`quark build`, PCH warm, Linux x86_64): a one-line program builds in 1.1s; the same program importing `io`, `fmt`, `sys`, `csv`, `time` and `random` builds in 3.6s, even if it calls none of them. Nearly all of that is `std/fmt`: its 437-line glue header costs 1.9s, because every import recompiles the glue at `-O3` inside the program's translation unit. This proposal makes the glue much larger (format mini-language, buffered I/O), and some of it needs heavy standard headers on their own: `<filesystem>` adds 0.7s, `<regex>` 0.7s, `<iomanip>` 0.4s; nlohmann/json (48,158 lines) 5.1s.
 
-- **P2 (separately compiled glue sources)** shipped 2026-11-14. Stdlib glue can be compiled once and cached (`extern source`), so an import costs its declarations and a link. P2 also makes nlohmann/json (§9.2) affordable. The stdlib modules themselves are still header-only.
+- **P2 (separately compiled glue sources)** shipped 2026-11-14. Stdlib glue can be compiled once and cached (`extern source`), so an import costs its declarations and a link. P2 also makes a large library such as nlohmann/json affordable. The stdlib modules themselves are still header-only.
 - **P3 (extension handles)** shipped 2026-11-14, including finalizers. A file handle the program has dropped is closed when the collector runs. The `std/io` rework (§6.2) can use the same kinds for `stdin()`/`stdout()`/`stderr()`.
 - **P4 (result helpers) and `QK-FFI-004`** shipped 2026-11-14.
 
@@ -267,7 +267,7 @@ Shipped without waiting on P2 (2026-11-14): the `std/sys` and `std/time` additio
 | 1. Daily friction | multi-argument `print` (if decision 1 is accepted), `sys::eprint` (**done**), `fmt::format` and helpers, `io` whole-file and line helpers, buffering, file finalizers and flush at exit | a log-writing script needs no `to_str` chains, guessed sizes or manual flushing; the `io` write benchmark is within 2× of Python |
 | 2. Scripting | `sys` additions (**done**), `std/time` dates and durations except the named stopwatch (**done**), `std/fs` | a script can find files, check modification times and print readable dates and durations |
 | 3. Data generators | `random` additions (**done**) | `normal_vec(1000000, 0.0, 1.0)` builds a `vec[f64]` without a list in between |
-| 4. Formats | JSON, subprocesses | — |
+| 4. Formats | Subprocesses (JSON is in `specs/data_work_v0_1_spec.md` §9) | — |
 
 Every function gets a smoke test, negative tests for its misuse paths (wrong type, `null`, an `any` value), an entry in `stdlib.md`, and editor data (`go test ./internal/editordata -update`).
 

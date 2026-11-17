@@ -33,11 +33,15 @@
     #include <gc.h>
     #include <gc/gc_allocator.h>
 
-    // Initialize GC (call once at program start). The collector marks with
-    // as many threads as the program uses (one: no marker threads); they
-    // start with the thread pool.
+    // Initialize GC (call once at program start). The collector marks on
+    // one thread (no marker threads), whatever the program's thread count:
+    // with the thread pool running, parallel marking was the slowdown. A
+    // mutate building strings on 1M rows took 0.83 s on 6 threads with 6
+    // markers and 0.78 s with 2, against 0.20 s with one and 0.49 s on one
+    // thread (2026-11-17, a 6-CPU quota). GC_MARKERS still overrides it.
     inline void q_gc_init() {
-        GC_set_markers_count(static_cast<unsigned>(q_par_threads()));
+        (void)q_par_threads();
+        GC_set_markers_count(1);
         GC_INIT();
     }
 

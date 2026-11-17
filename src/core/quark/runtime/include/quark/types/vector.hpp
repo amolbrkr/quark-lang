@@ -77,6 +77,14 @@ struct QVector {
 // ============================================================
 // Buffer and bitmap primitives
 // ============================================================
+// QUARK_ALWAYS_INLINE forces a small predicate inline into the loop that
+// calls it per element.
+#if defined(__clang__) || defined(__GNUC__)
+#define QUARK_ALWAYS_INLINE __attribute__((always_inline))
+#else
+#define QUARK_ALWAYS_INLINE
+#endif
+
 namespace quark {
 namespace vec {
 
@@ -1754,12 +1762,44 @@ inline size_t q_vec_mask_count(const QVector& mask) {
     return selected;
 }
 
+namespace quark {
+namespace vec {
+
+// The loops of q_vec_keep, one block at a time. They are functions of their
+// own (noinline), so each is optimized with keep inlined into it however
+// deep the caller is: inlined into a caller, the same loop compiled 40%
+// slower.
+template <class Keep>
+QPAR_NOINLINE inline size_t keep_count(size_t lo, size_t hi, Keep& keep) {
+    size_t c = 0;
+    for (size_t i = lo; i < hi; i++) c += keep(i) ? 1 : 0;
+    return c;
+}
+
+template <class T, class Keep>
+QPAR_NOINLINE inline void keep_copy(const T* src, T* dst, size_t lo, size_t hi, size_t j, Keep& keep, const QVector& dv,
+                                    std::vector<size_t>& nulls) {
+    if (dv.null_count == 0) {
+        for (size_t i = lo; i < hi; i++) {
+            if (keep(i)) dst[j++] = src[i];
+        }
+        return;
+    }
+    for (size_t i = lo; i < hi; i++) {
+        if (!keep(i)) continue;
+        dst[j] = src[i];
+        if (q_vec_is_null_at(dv, i)) nulls.push_back(j);
+        j++;
+    }
+}
+
+} // namespace vec
+} // namespace quark
+
 // q_vec_keep is the elements of dv for which keep(i) holds, in order, with
 // their missing marks (mask filtering, drop_na). It runs in two passes over
 // the blocks of the thread pool: each block counts what it keeps (and the
 // bytes of a str vector), then copies it from where the blocks before it end.
-// A bool vector's blocks would share bytes of the output bitmap, so its copy
-// is one pass on the calling thread.
 template <class Keep>
 inline QValue q_vec_keep(const QVector& dv, Keep keep) {
     const size_t n = dv.count;
@@ -1768,11 +1808,15 @@ inline QValue q_vec_keep(const QVector& dv, Keep keep) {
     const size_t nb = static_cast<size_t>(plan.nblocks);
     std::vector<size_t> start(nb + 1, 0), bytes(nb + 1, 0);
     q_par_run(plan, [&](long long lo, long long hi, long long b) {
+        if (!is_str) {
+            start[static_cast<size_t>(b) + 1] = quark::vec::keep_count(static_cast<size_t>(lo), static_cast<size_t>(hi), keep);
+            return;
+        }
         size_t c = 0, sb = 0;
         for (long long i = lo; i < hi; i++) {
             if (!keep(static_cast<size_t>(i))) continue;
             c++;
-            if (is_str) sb += q_vec_str_at(dv, static_cast<size_t>(i)).size();
+            sb += q_vec_str_at(dv, static_cast<size_t>(i)).size();
         }
         start[static_cast<size_t>(b) + 1] = c;
         bytes[static_cast<size_t>(b) + 1] = sb;
@@ -1787,37 +1831,48 @@ inline QValue q_vec_keep(const QVector& dv, Keep keep) {
         q_exit(1);
     }
 
-    QVector* out = q_vec_alloc(dv.type, selected, is_str ? bytes[nb] : 0);
+    // A fixed-width vector's output is written in full, so it isn't zeroed.
+    QVector* out = is_str || dv.type == QVector::Type::BOOL ? q_vec_alloc(dv.type, selected, is_str ? bytes[nb] : 0)
+                                                            : q_vec_alloc_raw(dv.type, selected);
     std::vector<std::vector<size_t>> nulls(nb);
-    auto copy = [&](size_t lo, size_t hi, size_t b) {
-        size_t j = start[b];
-        int32_t pos = static_cast<int32_t>(bytes[b]);
-        for (size_t i = lo; i < hi; i++) {
-            if (!keep(i)) continue;
-            switch (dv.type) {
-                case QVector::Type::F64: q_vec_f64_data_mut(*out)[j] = q_vec_f64_data(dv)[i]; break;
-                case QVector::Type::I64: q_vec_i64_data_mut(*out)[j] = q_vec_i64_data(dv)[i]; break;
-                case QVector::Type::DATE: q_vec_date_data_mut(*out)[j] = q_vec_date_data(dv)[i]; break;
-                case QVector::Type::BOOL: q_vec_bool_put(*out, j, q_vec_bool_at(dv, i)); break;
-                case QVector::Type::STR: {
-                    const std::string_view s = q_vec_str_at(dv, i);
-                    if (!s.empty()) std::memcpy(out->values + pos, s.data(), s.size());
-                    pos += static_cast<int32_t>(s.size());
-                    out->offsets[j + 1] = pos;
-                    break;
-                }
-            }
-            if (q_vec_is_null_at(dv, i)) nulls[b].push_back(j);
-            j++;
-        }
+    // One loop per element type, over raw pointers.
+    auto copy_fixed = [&](auto* dst, const auto* src) {
+        q_par_run(plan, [&, dst, src](long long lo, long long hi, long long b) {
+            quark::vec::keep_copy(src, dst, static_cast<size_t>(lo), static_cast<size_t>(hi), start[static_cast<size_t>(b)], keep, dv,
+                                  nulls[static_cast<size_t>(b)]);
+        });
     };
-    if (dv.type == QVector::Type::BOOL) {
-        for (size_t b = 0; b < nb; b++) {
-            const size_t lo = b * static_cast<size_t>(q_par_block);
-            copy(lo, nb == 1 ? n : std::min(n, lo + static_cast<size_t>(q_par_block)), b);
+    switch (dv.type) {
+        case QVector::Type::F64: copy_fixed(q_vec_f64_data_mut(*out), q_vec_f64_data(dv)); break;
+        case QVector::Type::I64: copy_fixed(q_vec_i64_data_mut(*out), q_vec_i64_data(dv)); break;
+        case QVector::Type::DATE: copy_fixed(q_vec_date_data_mut(*out), q_vec_date_data(dv)); break;
+        case QVector::Type::BOOL: {
+            // The blocks would share bytes of the output bitmap: one pass on
+            // the calling thread.
+            size_t j = 0;
+            for (size_t i = 0; i < n; i++) {
+                if (!keep(i)) continue;
+                q_vec_bool_put(*out, j, q_vec_bool_at(dv, i));
+                if (q_vec_is_null_at(dv, i)) nulls[0].push_back(j);
+                j++;
+            }
+            break;
         }
-    } else {
-        q_par_run(plan, [&](long long lo, long long hi, long long b) { copy(static_cast<size_t>(lo), static_cast<size_t>(hi), static_cast<size_t>(b)); });
+        case QVector::Type::STR:
+            q_par_run(plan, [&](long long lo, long long hi, long long b) {
+                size_t j = start[static_cast<size_t>(b)];
+                int32_t pos = static_cast<int32_t>(bytes[static_cast<size_t>(b)]);
+                for (long long i = lo; i < hi; i++) {
+                    if (!keep(static_cast<size_t>(i))) continue;
+                    const std::string_view sv = q_vec_str_at(dv, static_cast<size_t>(i));
+                    if (!sv.empty()) std::memcpy(out->values + pos, sv.data(), sv.size());
+                    pos += static_cast<int32_t>(sv.size());
+                    out->offsets[j + 1] = pos;
+                    if (q_vec_is_null_at(dv, static_cast<size_t>(i))) nulls[static_cast<size_t>(b)].push_back(j);
+                    j++;
+                }
+            });
+            break;
     }
     for (const std::vector<size_t>& block : nulls) {
         for (size_t j : block) q_vec_mark_null(*out, j);
@@ -1841,7 +1896,17 @@ inline QValue q_vec_mask_filter(QValue data, QValue mask) {
         q_exit(1);
     }
 
-    return q_vec_keep(dv, [&](size_t i) { return q_vec_mask_selects(mv, i); });
+    // The predicates read the bitmaps through pointers they hold, and are
+    // forced inline: q_vec_keep calls them per element from the blocks of
+    // the thread pool, where clang otherwise may leave them as calls.
+    const uint8_t* bits = mv.values;
+    const uint8_t* valid = mv.null_count > 0 ? mv.validity : nullptr;
+    if (valid == nullptr) {
+        return q_vec_keep(dv, [bits](size_t i) QUARK_ALWAYS_INLINE { return quark::vec::get_bit(bits, i); });
+    }
+    return q_vec_keep(dv, [bits, valid](size_t i) QUARK_ALWAYS_INLINE {
+        return quark::vec::get_bit(valid, i) && quark::vec::get_bit(bits, i);
+    });
 }
 
 // v.drop_na(): the present entries of v, in order.
@@ -1852,7 +1917,8 @@ inline QValue q_drop_na(QValue vec) {
     }
     const QVector& v = *vec.data.vector_val;
     if (v.null_count == 0) return vec;  // vectors are immutable, so it can be shared
-    return q_vec_keep(v, [&](size_t i) { return !q_vec_is_null_at(v, i); });
+    const uint8_t* valid = v.validity;
+    return q_vec_keep(v, [valid](size_t i) QUARK_ALWAYS_INLINE { return quark::vec::get_bit(valid, i); });
 }
 
 #endif // QUARK_TYPES_VECTOR_HPP

@@ -1,8 +1,8 @@
 # Quark Data Work Improvements v0.1 Spec
 
-Status: Proposal. Nothing is implemented. Four parts: sorting a vec (§3), reading CSV within memory (§4), joins (§5), and a benchmark suite that shows where Quark stands against the tools it competes with, on a laptop-sized machine (§6-§12). The suite replaces the one described in `src/benchmarks/README.md`.
+Status: Proposal. Nothing is implemented. The parts: sorting a vec (§3), reading CSV within memory (§4), joins (§5), calling an imported function by its bare name (§6), backtick names for columns and fields (§7), TSV and other separators (§8), JSON (§9), what Excel support must answer (§10, waiting for research), and a benchmark suite that shows where Quark stands against the tools it competes with, on a laptop-sized machine (§11-§17). The suite replaces the one described in `src/benchmarks/README.md`. §6-§9 have open questions (§22).
 Last Updated: 2026-11-17
-Related: `src/benchmarks/README.md` and `src/benchmarks/RESULTS.md` (the current suite), `specs/tables_v0_3_spec.md` (aggregates in verbs, `contains`, threads), `stdlib.md` (vecs, `std/csv`, `std/blas`), `architecture.md` §15 (performance findings), and the DuckDB Labs database-like operations benchmark (db-benchmark), whose method §6 follows.
+Related: `src/benchmarks/README.md` and `src/benchmarks/RESULTS.md` (the current suite), `specs/tables_v0_3_spec.md` (aggregates in verbs, `contains`, threads), `specs/implemented/modules_v0_2_spec.md` (imports and name lookup, for §6), `specs/untyped_tables_v0_1_spec.md` (queries on tables read without a row struct, for §7), `stdlib.md` (vecs, `std/csv`, `std/blas`), `architecture.md` §15 (performance findings), and the DuckDB Labs database-like operations benchmark (db-benchmark), whose method §11 follows.
 
 ## Contents
 
@@ -11,27 +11,38 @@ Related: `src/benchmarks/README.md` and `src/benchmarks/RESULTS.md` (the current
 3. [Sorting a vec](#3-sorting-a-vec)
 4. [Reading CSV within memory](#4-reading-csv-within-memory)
 5. [Joins](#5-joins)
-6. [Benchmark method](#6-benchmark-method)
-7. [Parity](#7-parity)
-8. [Data](#8-data)
-9. [Questions](#9-questions)
-10. [What is removed](#10-what-is-removed)
-11. [What waits for a Quark feature](#11-what-waits-for-a-quark-feature)
-12. [What the 100M preset will show](#12-what-the-100m-preset-will-show)
-13. [Changes to other docs](#13-changes-to-other-docs)
-14. [Tests](#14-tests)
-15. [Plan](#15-plan)
-16. [Later](#16-later)
+6. [Bare names from an imported file](#6-bare-names-from-an-imported-file)
+7. [Backtick names for columns and fields](#7-backtick-names-for-columns-and-fields)
+8. [TSV and other separators](#8-tsv-and-other-separators)
+9. [JSON](#9-json)
+10. [Excel (waiting for research)](#10-excel-waiting-for-research)
+11. [Benchmark method](#11-benchmark-method)
+12. [Parity](#12-parity)
+13. [Data](#13-data)
+14. [Questions](#14-questions)
+15. [What is removed](#15-what-is-removed)
+16. [What waits for a Quark feature](#16-what-waits-for-a-quark-feature)
+17. [What the 100M preset will show](#17-what-the-100m-preset-will-show)
+18. [Changes to other docs](#18-changes-to-other-docs)
+19. [Tests](#19-tests)
+20. [Plan](#20-plan)
+21. [Later](#21-later)
+22. [Open questions](#22-open-questions)
 
 ## 1. Purpose
 
 The current suite measures many small things (21 benchmarks, most on 1M rows or 10M values, several under 10 ms), and in places it measures a Quark workaround instead of a Quark operation: vecs have no sort, so `sort`'s Quark `vec` time is `v.to_list().sort().to_vec()`, and `join` compares a `dict` loop with real data frame joins. Small inputs mostly measure fixed costs (setting up hash tables, allocating, starting threads), not the throughput that matters on real data. And headline claims such as "`groupby` 0.96 times Polars" rest on 5 runs with no measure of their spread.
 
+Working with real files shows three more gaps. Every call of a library function carries its file's name (`csv::read_file`), which is noise in a short script. Real headers often aren't plain names (`Employee Name`, `dept-id`, `result`), so a table read without a row struct has columns that code can't name. And CSV is the only format: tab-separated text can't be parsed, and there is no JSON.
+
 This spec adds what Quark is missing for that work, and replaces the suite:
 - A sort and a sorting permutation for vecs (§3).
 - A CSV reader whose peak memory is close to the size of the table it builds (§4); today it is about 3.7 times the file.
 - Joins: semi, anti, inner and left, on equal keys (§5).
-- Fewer benchmark tasks, with questions of increasing difficulty borrowed from db-benchmark, on 10M and 100M rows, run as on a laptop with 8 or 16 GB of memory, measuring only operations that Quark and its peers each do natively (§6-§12).
+- Calling a function of an imported file by its bare name, when the file lists it (`incl csv::read_file`), with `::` still the canonical form (§6).
+- Backtick names for columns and fields whose names aren't plain names: `` e.`Employee Name` ``, `` e.`result` `` (§7).
+- Tab-separated text, and separators other than a comma or a tab, in `std/csv` (§8); `std/json` for records, JSON Lines and any JSON value (§9). Excel comes once its implementation is chosen (§10).
+- Fewer benchmark tasks, with questions of increasing difficulty borrowed from db-benchmark, on 10M and 100M rows, run as on a laptop with 8 or 16 GB of memory, measuring only operations that Quark and its peers each do natively (§11-§17).
 
 ## 2. Decisions
 
@@ -41,18 +52,18 @@ This spec adds what Quark is missing for that work, and replaces the suite:
 | DW2 | **Vecs have `order()` and `order_desc()`**, the stable 0-based positions that sort the vec, as a `vec[int]` (NumPy's `argsort`, R's `order`; decided 2026-11-17). |
 | DW3 | **Reading a CSV file peaks at no more than 1.25 times the finished table's columns, plus 64 MB and 16 MB per thread** (§4; decided 2026-11-17). |
 | DW4 | **Joins are part of this spec**: `semi_join`, `anti_join`, `inner_join` and `left_join` (§5; decided 2026-11-17). Full joins come later. |
-| DW5 | **Loading data is never timed**, except in the read questions, where reading is the work (§9.1). The current suite already follows this rule; it stays. |
-| DW6 | **A question is in the suite only when Quark does it with its own operation**, and each peer runs it only with its own native operation. No conversion to another type, and no hand-written algorithm where the others call a built-in. A peer without one is `n/a` for that question; a question Quark can't do natively waits (§7, §11). |
-| DW7 | **The reference machine is a laptop**: 8 logical CPUs, and 8 GB of memory for the `10m` preset or 16 GB for `100m`. A process may use 6 GB or 12 GB. A run above that is reported as out of memory and isn't ranked (§6.2). |
+| DW5 | **Loading data is never timed**, except in the read questions, where reading is the work (§14.1). The current suite already follows this rule; it stays. |
+| DW6 | **A question is in the suite only when Quark does it with its own operation**, and each peer runs it only with its own native operation. No conversion to another type, and no hand-written algorithm where the others call a built-in. A peer without one is `n/a` for that question; a question Quark can't do natively waits (§12, §16). |
+| DW7 | **The reference machine is a laptop**: 8 logical CPUs, and 8 GB of memory for the `10m` preset or 16 GB for `100m`. A process may use 6 GB or 12 GB. A run above that is reported as out of memory and isn't ranked (§11.2). |
 | DW8 | **Two presets: `10m` (the default) and `100m`.** Data larger than memory is out of scope. |
-| DW9 | **Tasks have two or three questions of increasing difficulty**, after db-benchmark (§9). |
-| DW10 | **Every data question runs on two variants of the table**: `G` with no missing values and `G-NA` with 5% missing in every column, as db-benchmark does (§8.2; decided 2026-11-17). |
-| DW11 | **The first run of each question is reported on its own**, next to the median of the later runs, because a script runs each step once (§6.3). |
+| DW9 | **Tasks have two or three questions of increasing difficulty**, after db-benchmark (§14). |
+| DW10 | **Every data question runs on two variants of the table**: `G` with no missing values and `G-NA` with 5% missing in every column, as db-benchmark does (§13.2; decided 2026-11-17). |
+| DW11 | **The first run of each question is reported on its own**, next to the median of the later runs, because a script runs each step once (§11.3). |
 | DW12 | **Two thread settings.** 8 threads, the reference laptop, which is the headline once Quark runs queries on several threads (`specs/tables_v0_3_spec.md` §8); and 1 thread, which compares the code. |
-| DW13 | **A ratio is a tie when the two time ranges overlap.** The report and `RESULTS.md` don't call one tool faster than another inside a tie (§6.4). |
-| DW14 | **The peers are NumPy, pandas, Polars, base R and data.table.** DuckDB isn't included; Polars stands in for an in-memory columnar engine (decided 2026-11-17). The list tier (`quark_list`, `py_list`, `r_loop`) and base R's `data.frame` leave the suite (§10). |
-| DW15 | **`fib` stays**, as the measure of plain looping and function-call performance (§9.10; decided 2026-11-17). |
-| DW16 | **One BLAS benchmark stays, `gemm`**, to measure `std/blas` against NumPy and R on the same kind of library. It grows with a matrix type, when Quark has one (§9.11; decided 2026-11-17). |
+| DW13 | **A ratio is a tie when the two time ranges overlap.** The report and `RESULTS.md` don't call one tool faster than another inside a tie (§11.4). |
+| DW14 | **The peers are NumPy, pandas, Polars, base R and data.table.** DuckDB isn't included; Polars stands in for an in-memory columnar engine (decided 2026-11-17). The list tier (`quark_list`, `py_list`, `r_loop`) and base R's `data.frame` leave the suite (§15). |
+| DW15 | **`fib` stays**, as the measure of plain looping and function-call performance (§14.10; decided 2026-11-17). |
+| DW16 | **One BLAS benchmark stays, `gemm`**, to measure `std/blas` against NumPy and R on the same kind of library. It grows with a matrix type, when Quark has one (§14.11; decided 2026-11-17). |
 | DW17 | **A join is a query step that names the other table's row**: `left \| a -> semi_join(right \| b, a.id == b.key_id)`. `b` exists only inside the step; a right side that is itself a query is put in parentheses (§5.1; decided 2026-11-17). |
 | DW18 | **A join condition is one or more `a.col == b.col` joined by `and`.** Anything else is a compile-time error that says to `filter` after the join (decided 2026-11-17). |
 | DW19 | **The two keys of each pair have exactly the same type** in joins v0.1 (decided 2026-11-17). |
@@ -60,6 +71,9 @@ This spec adds what Quark is missing for that work, and replaces the suite:
 | DW21 | **Joined columns never clash silently.** An inner or left join keeps the left table's columns, then the right's other than its keys; a right column named like a left one is a compile-time error that names it and suggests `rename` (§5.3; decided 2026-11-17). |
 | DW22 | **Keyword arguments are not part of this spec**; they come with other syntax changes to the language. `sort_desc` and `order_desc` stand until then (decided 2026-11-17). |
 | DW23 | **Joins v0.1 run on one thread, and nothing else does because of them.** Only the join step is single-threaded: a query's other steps, and every query without a join, run on the thread count in force (the default, `--threads N` or `QUARK_THREADS`; `specs/tables_v0_3_spec.md` D54). The join is built in blocks so that a parallel version changes no output (§5.5; decided 2026-11-17). |
+| DW24 | **`::` stays the canonical way to name what an imported file defines, and `.` stays for fields and methods**, so `csv.read_file` stays an error. A file may also call a member by its bare name (`read_file(p)`); how the name is bound, and what happens when it clashes, is §6 (decided 2026-11-17; §6's design is open). |
+| DW25 | **TSV and JSON are in this spec (§8, §9). Excel waits** until the user has researched how best to read and write it in C++ (§10; decided 2026-11-17). |
+| DW26 | **Bare names (§6) and backtick names (§7) are in this spec** as data work changes, although both change the syntax. Keyword arguments stay with the other syntax changes (DW22) (decided 2026-11-17). |
 
 ## 3. Sorting a vec
 
@@ -95,7 +109,7 @@ On one thread, 10M values: `float` and `int` within 1.5 times NumPy's `np.sort` 
 
 ### 4.1 Today
 
-`csv::read_file` reads the whole file into one `std::string`, which grows by doubling (`read_file`, `table/csv.hpp`). An untyped read then scans that text twice: once to infer the column types, once to build the columns. The columns are built in `std::vector` builders that also grow by doubling, and are copied into the table's vecs at the end, while the text is still held. A 157 MB file of 10M rows (a float, an int and a short `str` column) peaks at 589 MB of resident memory, against about 235 MB for the finished columns: 3.7 times the file, 2.5 times the columns. For the 4.1 GB file of §8 that is about 15 GB, more than a 16 GB laptop gives one process (`known_issues.md`).
+`csv::read_file` reads the whole file into one `std::string`, which grows by doubling (`read_file`, `table/csv.hpp`). An untyped read then scans that text twice: once to infer the column types, once to build the columns. The columns are built in `std::vector` builders that also grow by doubling, and are copied into the table's vecs at the end, while the text is still held. A 157 MB file of 10M rows (a float, an int and a short `str` column) peaks at 589 MB of resident memory, against about 235 MB for the finished columns: 3.7 times the file, 2.5 times the columns. For the 4.1 GB file of §13 that is about 15 GB, more than a 16 GB laptop gives one process (`known_issues.md`).
 
 ### 4.2 The reader
 
@@ -188,38 +202,296 @@ The single-threaded join is written in the shape the parallel one will have, so 
 
 When the parallel version lands, `--checked` (D57) compares it with one thread, and `specs/tables_v0_3_spec.md` §8.1 lists joins.
 
-## 6. Benchmark method
+## 6. Bare names from an imported file
 
-### 6.1 Runs
+### 6.1 Today
+
+Every name of an imported file is written with the file's binding: `csv::read_file(p)` (`specs/implemented/modules_v0_2_spec.md`, rule 7). Nothing from another file is visible unqualified (rule 12, and CLAUDE.md's Robustness Bar rule 6), and `.` is only for fields and methods (rule 10), so `csv.read_file` is an error that points to `::`. The qualifier shows where every call goes, but a short script that calls a few library functions repeats it on every call.
+
+`::` stays the canonical form (DW24): the stdlib, the documentation and every diagnostic write `csv::read_file`, and `.` doesn't change.
+
+### 6.2 Proposal: names listed in an `incl`
+
+```quark
+incl 'std/csv'
+incl 'std/json'
+incl csv::read_file, csv::write_file
+incl json::read_file as read_json
+
+staff = unwrap(read_file('staff.csv'))       // csv::read_file
+events = unwrap(read_json('events.jsonl'))   // json::read_file
+write_file(staff, 'staff.tsv')               // csv::write_file
+```
+
+- `incl` followed by a qualified name, not a string, binds that name bare in this file, under its last part or its `as` name. Several names may be listed, separated by commas, each with its own `as`.
+- The qualified name is resolved as it is everywhere (rules 7 and 8): `binding::name` or `binding::module::name`, where `binding` is an `incl 'path'` of the same file (its stem or its `as` name). That `incl 'path'` may be anywhere in the file, since a file's names are all known before any is resolved.
+- Any top-level name of an imported file, or member of one of its modules, can be bound: a function, an `extern fn`, a struct or a constant. A module can't (`incl formats::csv` is an error; §21), and neither can a member of a module of the same file, which is written `m::name` as today.
+- A bound name is the definition it names. Diagnostics, `type()`, the editor's hover and runtime messages show `csv::read_file`. Call shapes, default arguments and the typed read (§9.5) apply unchanged, because the loader resolves both spellings to the same internal name; the analyzer and the back end see no difference.
+- The binding belongs to the file that writes it and, like an import binding, isn't re-exported (rule 11): an importer of this file can't write `this::read_file`.
+- Both spellings stay valid in the file: `csv::read_file` is the same function.
+
+### 6.3 Clashes
+
+Each case is decided when the program is loaded, in the file that binds the name:
+
+| Case | Result |
+|---|---|
+| The file defines `read_file` (a function, struct, `extern fn`, constant or top-level variable) and also binds `csv::read_file` | A load error naming both lines: `'read_file' is bound to csv::read_file on line 3 and defined on line 9; bind it under another name (incl csv::read_file as read_csv) or rename the function` |
+| Two bindings of one name (`incl csv::read_file` and `incl json::read_file`) | A load error; `as` gives one of them another name |
+| A bound name equal to a prelude builtin (`incl geo::len`) | An error, as a definition of that name is today (`'len' is a builtin function and can't be redefined or assigned`) |
+| A bound name equal to an import binding or a module of the file (`incl geo::csv` beside `incl 'std/csv'`) | A load error (rule 14) |
+| A bound name equal to an aggregate name (`incl lib::count`) | In a verb, `count(...)` is the error a definition of `count` gives there today (semantics.md §9.5); outside verbs it is the bound function |
+| A local named `read_file` (a parameter, loop variable, `when` binding, or variable assigned in a function) | The local wins in its scope, as a local already wins over a top-level function (`fn g(helper) -> helper * 2` beside `fn helper`). No new rule |
+| Another file defines `read_file` | No effect: names are per file, and that one stays reachable as `utils::read_file` |
+| The library renames or removes `read_file` | A load error at the `incl` line, with a suggestion, as for any unknown member (`'csv' (std/csv) has no 'reed_file'; did you mean 'read_file'?`) |
+| The library adds a name | No effect: only listed names are bare |
+
+So a bare name has one meaning, visible in its own file, and nothing another file does can change it.
+
+### 6.4 Trade-offs
+
+These alternatives were weighed against the proposal:
+
+- **Every name of the file bare** (`incl csv::*`, like R's `library()` or Python's `from csv import *`). It is shorter, but a name a library adds then changes its importers: if it clashes with a name an importer defines, a program that built stops building; if one side wins, a call silently changes target. Two such imports that share a name are ambiguous, and `std/csv` and `std/json` share four (§9.1). Rust makes a glob import lose to a definition and reports an ambiguity only where the name is used. That keeps builds working, but the meaning of a bare name then depends on what other files contain. Not proposed.
+- **The file's own definition wins over a bound name** (R's masking, which prints a message when the package is attached). This is silent: adding `fn read_file` at the end of a script changes every earlier bare call. Not proposed, because names never collide silently.
+- **The bound name wins over the file's own definition.** The definition is then dead code. Not proposed.
+- **Lookup as a fallback**: an unresolved bare name is looked up in every imported file. It has the problems of `*`, and no line says where a name comes from. Not proposed.
+
+What the proposal costs:
+- A reader of `read_file(p)` has to look at the file's `incl` lines to know it is CSV's; `::` shows that at the call. Hover and every message show the canonical name.
+- The stdlib's names were chosen to be read qualified. Bare, `read_file`, `parse`, `format`, `open` and `now` say little, and two formats can't both bind `read_file` without `as`.
+- One function has two spellings in a program.
+- CLAUDE.md's Robustness Bar rule 6 and modules rule 12 change from "nothing from another file is visible unqualified" to "nothing from another file is visible unqualified unless the file binds it by name".
+
+### 6.5 Syntax
+
+Proposed: `incl csv::read_file`. It needs no new keyword, because `incl` already parses a name after it (`incl m`, rejected today with `a module in the same file needs no incl`) and `as` already follows it. It also writes the canonical name where the bare one is made. The alternative takes one line per import, `incl 'std/csv' use read_file, write_file`, close to Python's `from csv import read_file`. It needs `use` as a keyword, which then can't name a variable or a function (`src/testfiles/smoke_shadowing.qrk` defines `fn use`), and the canonical name appears nowhere. Open (§22).
+
+### 6.6 What changes in the compiler
+
+- The parser: `incl` with a list of qualified names, each with an optional `as`.
+- The loader: a binding that points at its definition, the clashes of §6.3, and bound names in step 3 of rule 12's lookup.
+- The REPL: a binding is a definition of the session, so defining the name in a later input is an error.
+- The editor: completion after `incl csv::`.
+
+Nothing after the loader changes. A few hundred lines, with tests.
+
+## 7. Backtick names for columns and fields
+
+### 7.1 Today
+
+- A read without a row struct keeps each header as written. A file whose header is `Employee Name,Annual Salary ($),dept-id` gives a table with those three columns, which prints and writes, but code can't name them: `e.Employee Name` isn't an expression. Queries on such tables (`specs/untyped_tables_v0_1_spec.md`) will make this common.
+- A keyword can't be a field: a struct field `result: str` is the parse error `expected field name in struct definition`. `result`, `in`, `for`, `list`, `when` and `module` are all common column names.
+- A typed read maps fields to such headers (`dict { salary: 'Annual Salary ($)' }`, `specs/tables_v0_1_spec.md` D17). That stays.
+
+### 7.2 Surface
+
+A name in backticks is a field name that may be any text:
+
+```quark
+struct Emp:
+    `Employee Name`: str
+    `Annual Salary ($)`: float
+    `result`: str
+
+staff: tbl[Emp] = unwrap(csv::read_file('staff.csv'))   // the headers match the fields, so no mapping
+raised = staff | e -> mutate(`Annual Salary ($)` = e.`Annual Salary ($)` * 1.05)
+print(staff.`Employee Name`)
+```
+
+A backtick name may appear wherever a field, column or dict key is named:
+- after `.`: `` e.`Employee Name` ``, `` t.`dept-id` ``, `` r.`result` ``, `` d.`a key` ``;
+- as a struct field, in its declaration and in a struct literal (`` Emp { `Employee Name`: 'Ann', ... } ``);
+- as the name of a verb's named argument: in `mutate`, `summarize`, `rename`, `count` and a computed `group_by` key;
+- as a dict literal key (`` dict { `Employee Name`: 1 } ``), including the field side of a read's column mapping.
+
+Anywhere else it is a parse error. A variable, parameter, function, struct, module or import binding needs a plain name: `` `total sales` = 0 `` gives `` a name in backticks names a field or column; a variable needs a plain name ``. A backtick name used as a value on its own (`` mutate(x = `Employee Name`) ``) is the error `` `Employee Name` names a column; read it from the row: e.`Employee Name` ``, because a query reads columns through its row name.
+
+The text inside:
+- may be any UTF-8 text that isn't empty and has no backtick, no control character (U+0000-U+001F, U+007F) and no `__`. There are no escapes: a header with a backtick in it is renamed when it is read (D17). `__` stays reserved here, as in every user name (`checkReservedNames`), because diagnostics rewrite internal names, which contain `__`, and a field named like one would be shown wrong;
+- is the field's name exactly, spaces included. `` `mpg` `` is the field `mpg`, and `` `result` `` is the field `result`.
+
+### 7.3 How such a name is shown
+
+Wherever Quark shows a field in code form, a name that isn't a plain name, or that is a keyword, is shown in backticks so it can be pasted back: in types (`` tbl[{`Employee Name`: str, mpg: float}] ``), in the column lists of errors (`` (columns: `Employee Name`, mpg) ``), and in `print` of a struct (`` Emp { `Employee Name`: 'Ann', ... } ``). A table's printed header and `t.names()` show the text as it is, since they are data, not code.
+
+### 7.4 What changes in the compiler
+
+- **Lexer**: a token for a backtick name, whose literal is the text inside.
+- **Parser**: the places of §7.2 accept it wherever they accept a name; anywhere else it is the error above.
+- **Display**: one function decides whether a name needs backticks. The type printer, the column lists of errors and the runtime's struct printing (`builtins/repr.hpp`) use it, and a test checks that the Go and C++ keyword lists agree.
+- **Editor grammar**: the token.
+- **Unchanged**: the loader, the analyzer, lowering and emit. From the parser on, a field name is already a string (the fields of a `StructType`, `QStructDef`), and it reaches the generated C++ only as an escaped string literal (`_sfields_*` in `emit/emit.go`), never as a C++ name.
+
+About 200 lines plus tests: one to two days.
+
+## 8. TSV and other separators
+
+### 8.1 Today
+
+`std/csv` reads and writes tab-separated files. `csv::read_file` and `csv::write_file` use a tab when the path ends in `.tsv` or `.tab` (in either case), with CSV's quoting: a quoted field may hold a tab, a line break or `""`, and a `"` inside an unquoted field is kept. A UTF-8 byte order mark is skipped. Three things can't be done:
+- **Tab-separated text**: `csv::parse_text` and `csv::format_text` always use a comma, so `csv::parse_text('x\ty\n1\t2\n')` gives a one-column table whose column is named `x\ty`.
+- **A tab-separated file with another extension**, such as `.txt` or `.dat`.
+- **Another separator**: `;` (used where `,` is the decimal mark) or `|`.
+
+### 8.2 Proposal
+
+TSV stays in `std/csv`, since it is the same format with another separator. There are two ways to name the separator:
+
+- **A: a `sep` parameter**, last and with a default, on all four functions. `''`, the default of the file functions, means by extension, as today; the text functions default to `','`.
+  ```quark
+  t = unwrap(csv::read_file('data.txt', dict {}, '\t'))
+  u = unwrap(csv::parse_text(text, dict {}, ';'))
+  csv::write_file(t, 'out.txt', '|')
+  ```
+  When keyword arguments come (DW22), `csv::read_file('data.txt', sep = '\t')` works with no change to the function. Until then, a separator needs the column mapping written out (`dict {}`).
+- **B: tab functions**: `csv::read_tsv(path, columns)`, `csv::parse_tsv(text, columns)`, `csv::write_tsv(t, path)` and `csv::format_tsv(t)`, with a tab whatever the extension. They are easier to find and to write, but `;` and `|` still can't be read. Like `sort_desc` (DW22), they could give way to a keyword argument later.
+
+Recommended: A, because it covers every separator, adds no names, and is already the keyword-argument form. Open (§22).
+
+With A, a separator is one ASCII character other than `"`, a space, `\n` or `\r` (an unquoted field is trimmed of spaces, so a space can't separate). A literal separator is checked at compile time, since the analyzer already handles these calls (§9.5). A separator known only at runtime is checked when the call runs: it is an `err(...)` from the reads and writes, and a runtime error from `format_text`.
+
+## 9. JSON
+
+### 9.1 The module
+
+`std/json` reads and writes JSON: tables from records, and any JSON value. Its table functions have `std/csv`'s names, arguments and typing (§9.5), so moving a program from CSV to JSON changes only the module name:
+
+| | A file | Text |
+|---|---|---|
+| A table | `json::read_file(path, columns = dict {})`, `json::write_file(t, path)` | `json::parse_text(text, columns = dict {})`, `json::format_text(t)` |
+| Any value | `json::read_value(path)`, `json::write_value(x, path, indent = 0)` | `json::parse_value(text)`, `json::format_value(x, indent = 0)` |
+
+All eight return a `result`. Unlike `csv::format_text`, the format functions can fail, because JSON has no NaN or infinity (§9.3).
+
+```quark
+incl 'std/json'
+
+struct Event:
+    id: int
+    kind: str
+    at: date
+
+events: tbl[Event] = unwrap(json::read_file('events.jsonl'))
+config = unwrap(json::read_value('config.json'))   // a dict of any values
+print(config.threshold)
+clicks = events | e -> filter(e.kind == 'click')
+json::write_file(clicks, 'clicks.json')
+```
+
+This replaces the sketch in `specs/stdlib_expansion_v0_1_spec.md` §9.2.
+
+### 9.2 Reading a table
+
+**Shape.** The first character after white space and any byte order mark decides it:
+- `[`: an array of objects, one record each. `[]` is a table with no rows.
+- `{`: JSON Lines (`.jsonl`, `.ndjson`): one object per line. Blank lines are skipped.
+- Anything else is an error with the line and column, and so is an array element that isn't an object or a line that isn't one whole object: `events.json:3:5: expected an object (one record), found a number`. For an object whose values are arrays (columns, not records), the error suggests `json::read_value`.
+
+**Columns of an untyped read** are the keys of all the records, in order of first appearance. Where a record lacks a key, or has `null` for it, the value is missing. A key that appears twice in one object is an error naming the record: JSON leaves the meaning undefined, and keeping one value would silently drop the other.
+
+**Column types of an untyped read** follow CSV's inference (stdlib.md, `std/csv`) where JSON doesn't already give the type:
+
+| Present values | Column |
+|---|---|
+| `true` and `false` | `bool` |
+| Integers (no fraction or exponent) that fit an int | `int` |
+| Numbers, some with a fraction or an exponent, or too large for an int | `float` |
+| Strings, each one a calendar day as CSV reads one (`2024-01-02`, `2024-1-2`) | `date` (open, §22) |
+| Strings | `str` |
+| Values of different kinds (numbers and strings, bools and numbers) | `str`, each value as its text: a string's contents, or a number or `true`/`false` as written |
+| None | `str`, as for an empty CSV column |
+
+A string is never read as a number: `"01234"` stays text, unlike the same field in a CSV file.
+
+**A typed read** (`events: tbl[Event] = ...`) reads each field from the key of its name, or from the key the column mapping gives it (D17), and ignores other keys. A field takes a JSON value of its type; a float field also takes an int (int widens to float), and any field takes a string that a typed CSV read accepts for its type (`"42"` for an int, `"2024-01-31"` for a date). A str field takes any scalar, as its text. Anything else is an error with the record and the key: `events.jsonl:17: key 'id': "a7" is not an int`. A field that no record has is an error, as a column missing from a CSV header is, unless there are no records at all.
+
+**Nested values** are values of a record that are themselves objects or arrays. There are three options (open, §22):
+- **a. Flatten objects, and make an array an error** (recommended). `{"addr": {"city": "Oslo"}}` gives a column `addr.city`, read as `` e.`addr.city` `` (§7). An array value is an error naming the record and the key, with a hint to use `json::read_value`. It is also an error when two paths flatten to one name (a key `"addr.city"` beside `"addr": {"city": ...}`), or when a key is an object in one record and a scalar in another. pandas' `json_normalize` and jsonlite's `flatten` do the same.
+- **b. Any nested value is an error.** Flattening can be added later without breaking a program.
+- **c. A nested value is kept as its JSON text**, in a str column.
+
+**Text.** Escapes are decoded, and a `\u` surrogate pair gives one character. A lone surrogate, invalid UTF-8 and `\u0000` are errors, as invalid UTF-8 and NUL are in CSV. The grammar is RFC 8259's, so comments, trailing commas, single quotes, `NaN`, and a leading `+` or zero are errors. Nesting deeper than 512 levels is an error. A str column holds at most 2 GiB of text, as in CSV.
+
+**Errors** name the file, the line and the column. The first problem in file order is the one reported, whatever the thread count.
+
+### 9.3 Writing a table
+
+`json::write_file(t, path)` writes JSON Lines when the path ends in `.jsonl` or `.ndjson`. Otherwise it writes an array, with one record per line:
+
+```
+[
+{"name": "Ann", "salary": 100.5, "start": "2021-03-01"},
+{"name": "Bob", "salary": null, "start": "2022-11-15"}
+]
+```
+
+- Keys come in column order, each one the column's name as it is (`"addr.city"` stays one key).
+- A missing value is `null`, and an int is written as an integer. A float is written in shortest round-trip form with a fraction or an exponent (`2.0`, never `2`), so its column reads back as float. A date is a `"YYYY-MM-DD"` string. A str is escaped (`"`, `\` and control characters), and other characters are written as UTF-8.
+- A NaN or an infinity is an `err(...)` naming the column and the row, with a hint to use `fillna` or `mutate` first. Writing `null` instead would read back as a missing value, which is a different value.
+- `json::format_text(t)` gives the array form as text.
+- A table written by `json::write_file` reads back with the same columns, order, values and missing values. There are two differences, both as in CSV: a column with no present values comes back as `str`, and, with the date rule, a str column whose values are all calendar days comes back as `date`.
+
+### 9.4 Any value
+
+- `json::parse_value(text)` returns `ok(value)`. An object becomes a `dict` whose values are `any`, with its keys in input order. An array becomes a `list` of `any`, and a string a `str`. An integer that fits becomes an `int`, and any other number a `float`. `true` and `false` are `bool`, and `null` is `null`. The errors of §9.2 apply (a duplicate key, a lone surrogate, `\u0000`, nesting too deep), and so does an error for anything after the value. The value is `any` at compile time, so what is done with it is checked at runtime, as for any untyped value.
+- `json::format_value(x, indent = 0)` writes a `dict` as an object, a `list` or `vec` as an array (with a vec's missing values as `null`), a struct as an object of its fields, a table as §9.3's array, and scalars as §9.3 does. An `indent` above 0 puts each element on its own line, indented by that many spaces. A function, a `resource`, a `result` and a `period` have no JSON form. That is a compile-time error when the compiler knows the type (`json::format_value(f)` with `f: fn`, or a `list` or struct field of them); otherwise it is an `err(...)` naming where the value is (`[3].callback`). NaN and infinities are also an `err(...)`.
+- `json::read_value(path)` and `json::write_value(x, path, indent = 0)` do the same for a file.
+
+### 9.5 Typing a read by where it goes
+
+`std/csv`'s reads are typed by the expected type (D18), but the analyzer recognizes them by name: `tableReaders` in `types/analyzer_tables.go` lists `read_file` and `parse_text`, and `tableReaderOf` checks that the function is `std/csv`'s. `std/json`'s table reads need the same, and so would any later format. So the list of names becomes a property of the stdlib's declarations, a marker like the one `extern rowsafe fn` puts on row-safe native code, and the analyzer keeps no names. `std/csv` moves to the marker with no change in behaviour. The compile-time check of `json::format_value`'s argument is the same kind of property. The exact form is settled when it is implemented. User `extern fn`s don't get the marker in v0.1.
+
+### 9.6 How it runs
+
+- **An in-house reader**, as for CSV (D8). `table/json.hpp` parses straight into the column buffers of §4.2, in one pass over 16 MB blocks. A column can widen from int to float as it is read (its buffer is converted once), and a str column that might hold dates is checked at the end. No DOM is built, so the whole document is never held. v0.1 uses no third-party library: a DOM library (nlohmann/json, yyjson) holds the whole document, and simdjson is a large dependency. simdjson's on-demand parser is the candidate if the targets are missed.
+- **Memory**: DW3's bound, 1.25 times the finished columns plus 64 MB and 16 MB per thread.
+- **Threads**: JSON Lines can be split at line ends, because a JSON string can't hold a raw line break, so blocks parse on the thread pool. The array form is split the way CSV is split across quotes, by knowing whether a block starts inside a string. v0.1 may read on one thread, as joins may (DW23): that applies to the read only, and the output and errors are the same for every thread count.
+- **Speed**: per byte, at least as fast as the CSV reader on the same table. Measured against Polars' `read_ndjson` and pandas' `read_json(lines=True)`.
+- **Glue**: `std/json.qrk` binds the reader through an `extern source`, compiled once and cached, so importing `std/json` adds little to a build.
+
+## 10. Excel (waiting for research)
+
+Excel support waits until the user has looked at how best to read and write `.xlsx` in C++ (DW25). Whatever implementation is chosen has to answer these, to fit with §8 and §9:
+- **The same functions**: `excel::read_file(path, columns = dict {})` for the first sheet, a read of a sheet by name, the list of sheets, and `excel::write_file(t, path)`; typed by the expected type (§9.5), with missing values as in CSV and JSON.
+- **Numbers**: Excel stores every number as a double. Whether a column of whole numbers is an `int`, as CSV and JSON infer from integer text.
+- **Dates**: a number with a date format is a `date`. Quark has no type for a date with a time of day (`std/time` uses float seconds), and Excel has two date systems (1900 and 1904).
+- **Cells**: error cells (`#N/A`, `#DIV/0!`), a formula with no stored value, merged cells, and a table that doesn't start at A1.
+- **Limits when writing**: 1,048,576 rows, 16,384 columns, 32,767 characters in a cell, and ints past 2^53, which a double can't hold exactly. Each is an error, never a truncation.
+- **Nothing for the user to install**, and no whole sheet held as a DOM: a sheet is streamed, as CSV is.
+
+## 11. Benchmark method
+
+### 11.1 Runs
 
 - One process per tool, task, preset, table variant and thread setting. It loads the task's data once, untimed, then runs the task's questions in order. Each question's result is materialized (no lazy result) and checksummed outside the timed region; the checksum is compared across tools, as now.
 - `10m`: per question, a first run, then 5 timed runs. `100m`: a first run, then 2 timed runs, as db-benchmark does at its sizes.
 - A process is stopped after a timeout and the question is reported as `timeout`.
 
-### 6.2 Memory and CPUs
+### 11.2 Memory and CPUs
 
 - The driver measures each process's peak resident memory, and polls it while the process runs (every 100 ms). Above the preset's budget (6 GB for `10m`, 12 GB for `100m`) it stops the process. The question is then reported as `out of memory` and isn't ranked, as db-benchmark reports a solution that runs out of memory. This also keeps a run from exhausting the machine the suite runs on.
 - The 8-thread setting pins each process to 8 logical CPUs (CPU affinity where the OS has it) and sets every thread pool to 8. The 1-thread setting pins one CPU and sets every pool to 1 (`OMP_NUM_THREADS`, `OPENBLAS_NUM_THREADS`, `POLARS_MAX_THREADS`, `R_DATATABLE_NUM_THREADS`, `GC_MARKERS`, and Quark's `--threads` once it exists).
 
-### 6.3 What is reported
+### 11.3 What is reported
 
-Per question and tool: the first run, the median of the later runs, their minimum and maximum, peak memory, and the checksum result. `out of memory`, `timeout`, `wrong` (checksum mismatch) and `n/a` (no native operation, §7) are results, shown in the table. A summary per task gives each tool's total over the questions it ran.
+Per question and tool: the first run, the median of the later runs, their minimum and maximum, peak memory, and the checksum result. `out of memory`, `timeout`, `wrong` (checksum mismatch) and `n/a` (no native operation, §12) are results, shown in the table. A summary per task gives each tool's total over the questions it ran.
 
-### 6.4 Ties
+### 11.4 Ties
 
 When the minimum-to-maximum ranges of two tools overlap, the report prints `tie` instead of a ratio. A headline in `RESULTS.md` that one tool is faster needs ranges that don't overlap, at both presets.
 
-## 7. Parity
+## 12. Parity
 
 A question measures what each tool does natively. For each tool and question:
 
 - **Native**: the tool's own operation for this task, as an experienced user writes it (`df.group_by(...).agg(...)`, `dt[, .(...), by = ...]`, `t | e -> group_by(...) | summarize(...)`), with the options that give the same result as the others (`dropna=False`, `na.rm = TRUE`, `nulls_last=True`). That is what is timed.
 - **`n/a`**: the tool has no such operation. It is not replaced by a composition of other operations or a loop. NumPy has no group by, so NumPy is `n/a` in every group-by question, instead of `np.unique` with `np.bincount` as now. NumPy's integer arrays can't hold a missing value, so NumPy is `n/a` on `G-NA`.
-- **Quark**: if Quark has no native operation for a question, the question isn't in the suite until it does (§11). A Quark workaround, such as going through a list, is never measured.
+- **Quark**: if Quark has no native operation for a question, the question isn't in the suite until it does (§16). A Quark workaround, such as going through a list, is never measured.
 
-## 8. Data
+## 13. Data
 
-### 8.1 The table `G`
+### 13.1 The table `G`
 
 One seeded table, after db-benchmark's `groupby` data, with six columns:
 
@@ -240,25 +512,25 @@ Keys are drawn uniformly, so `k1` and `k2` give 100 groups each, `(k1, k2)` 10,0
 | In memory, 64-bit ints and Arrow strings (Quark, Polars, pandas with pyarrow strings) | about 0.6 GB | about 5.7 GB |
 | In memory, data.table (32-bit ints, shared strings) | about 0.4 GB | about 3.6 GB |
 
-Every tool reads the same CSV file before timing (untimed except in §9.1).
+Every tool reads the same CSV file before timing (untimed except in §14.1).
 
-### 8.2 The variant `G-NA`
+### 13.2 The variant `G-NA`
 
-`G` with 5% missing values in every column, by db-benchmark's rule: in a key column, 5% of its distinct values are replaced by a missing value in every row that has them, so the missing key is one group of about 5% of the rows; in a value column, 5% of the rows, drawn at random, are missing. A missing cell is an empty field in the CSV file. Quark aggregates skip missing values, and sort and group missing keys last (`specs/tables_v0_1_spec.md` §5); each peer uses the options that do the same (§7).
+`G` with 5% missing values in every column, by db-benchmark's rule: in a key column, 5% of its distinct values are replaced by a missing value in every row that has them, so the missing key is one group of about 5% of the rows; in a value column, 5% of the rows, drawn at random, are missing. A missing cell is an empty field in the CSV file. Quark aggregates skip missing values, and sort and group missing keys last (`specs/tables_v0_1_spec.md` §5); each peer uses the options that do the same (§12).
 
-### 8.3 The labels `L`
+### 13.3 The labels `L`
 
 N strings like `"  ITEM_4821_Lorem "` (padding, mixed case, underscores), as in the current `strings` benchmark, in a one-column CSV file. `L` has no missing-values variant.
 
-### 8.4 The keys `D`
+### 13.4 The keys `D`
 
 The right-hand table of the join questions: one row for each of 90% of the N/100 key values (the other 10%, drawn at random, are left out), with columns `k3: str`, `k4: int` and `w: float`. Row `i` has `k3 = 'id%010d' % i`, `k4 = i` and `w` uniform in [0, 1). About 90,000 rows at `10m` and 900,000 at `100m`. `D` has no missing values, so every tool gives the same result whatever it does with a missing key; `G-NA`'s missing keys are on the left. The questions use `D4`, its `(k4, w)` columns, and `D3`, its `(k3, w)` columns, selected before timing.
 
-## 9. Questions
+## 14. Questions
 
-Each question lists Quark's operation and each peer's, or `n/a`. Quark's table code assumes `struct G` with the columns of §8.1; `t` is the table, and `v1` and `v2` are its columns as vecs. Questions on `G` also run on `G-NA` (DW10).
+Each question lists Quark's operation and each peer's, or `n/a`. Quark's table code assumes `struct G` with the columns of §13.1; `t` is the table, and `v1` and `v2` are its columns as vecs. Questions on `G` also run on `G-NA` (DW10).
 
-### 9.1 Read
+### 14.1 Read
 
 | # | Question | Quark | NumPy | pandas | Polars | base R | data.table |
 |---|---|---|---|---|---|---|---|
@@ -267,7 +539,7 @@ Each question lists Quark's operation and each peer's, or `n/a`. Quark's table c
 
 The file is in the OS page cache after the first run, so this measures parsing and building the columns.
 
-### 9.2 Column expressions
+### 14.2 Column expressions
 
 | # | Question | Quark | NumPy | pandas | Polars | base R | data.table |
 |---|---|---|---|---|---|---|---|
@@ -277,16 +549,16 @@ The file is in the OS page cache after the first run, so this measures parsing a
 
 Quark runs each as a vec and as a table (two rows in the report); NumPy and base R are vecs, the frame libraries tables. EX3 separates fused evaluation (Quark's `mutate`, Polars) from evaluation that materializes every intermediate.
 
-### 9.3 Filter
+### 14.3 Filter
 
 | # | Question | Quark | NumPy | pandas | Polars | base R | data.table |
 |---|---|---|---|---|---|---|---|
 | FL1 | Rows where `v2 > 50` (about half) | `filter(e.v2 > 50.0)` | n/a | boolean indexing | `filter` | n/a | `dt[v2 > 50]` |
 | FL2 | Rows where `k1 == 'id042'` and `v1 >= 3` (about 0.6%) | `filter(e.k1 == 'id042' and e.v1 >= 3)` | n/a | boolean indexing | `filter` | n/a | `dt[k1 == 'id042' & v1 >= 3]` |
 
-Every column of the kept rows is materialized. A third question, rows whose `k4` is in a list of 1,000 values, waits for `contains` (§11).
+Every column of the kept rows is materialized. A third question, rows whose `k4` is in a list of 1,000 values, waits for `contains` (§16).
 
-### 9.4 Sort
+### 14.4 Sort
 
 | # | Question | Quark | NumPy | pandas | Polars | base R | data.table |
 |---|---|---|---|---|---|---|---|
@@ -296,7 +568,7 @@ Every column of the kept rows is materialized. A third question, rows whose `k4`
 
 SO2 and SO3 sort two-column tables (`select` before timing), so the gathered output stays inside the memory budget at `100m`. SO1 waits for §3.
 
-### 9.5 Group by
+### 14.5 Group by
 
 | # | Question | Quark | pandas | Polars | data.table | db-benchmark |
 |---|---|---|---|---|---|---|
@@ -306,7 +578,7 @@ SO2 and SO3 sort two-column tables (`select` before timing), so the gathered out
 
 NumPy is `n/a`. base R's `tapply` does one aggregate of one key, so base R runs GB1 only.
 
-### 9.6 Window
+### 14.6 Window
 
 | # | Question | Quark | pandas | Polars | data.table |
 |---|---|---|---|---|---|
@@ -315,7 +587,7 @@ NumPy is `n/a`. base R's `tapply` does one aggregate of one key, so base R runs 
 
 Both use aggregates in `mutate` (`specs/tables_v0_3_spec.md` D35, implemented).
 
-### 9.7 Pipeline
+### 14.7 Pipeline
 
 | # | Question | Quark |
 |---|---|---|
@@ -323,7 +595,7 @@ Both use aggregates in `mutate` (`specs/tables_v0_3_spec.md` D35, implemented).
 
 pandas, Polars and data.table each write it as one chain; NumPy and base R are `n/a`.
 
-### 9.8 Strings
+### 14.8 Strings
 
 | # | Question | Quark | NumPy | pandas | Polars | base R |
 |---|---|---|---|---|---|---|
@@ -332,9 +604,9 @@ pandas, Polars and data.table each write it as one chain; NumPy and base R are `
 
 data.table uses base R's string functions, so it is the base R row.
 
-### 9.9 Join
+### 14.9 Join
 
-After db-benchmark's join task, on a left table of N rows and the right table `D` (§8.4). The left side is `(k4, v2)` or `(k3, v2)` from `G`, selected before timing, so the joined result stays inside the memory budget at `100m`.
+After db-benchmark's join task, on a left table of N rows and the right table `D` (§13.4). The left side is `(k4, v2)` or `(k3, v2)` from `G`, selected before timing, so the joined result stays inside the memory budget at `100m`.
 
 | # | Question | Quark | pandas | Polars | data.table | db-benchmark |
 |---|---|---|---|---|---|---|
@@ -344,7 +616,7 @@ After db-benchmark's join task, on a left table of N rows and the right table `D
 
 NumPy and base R are `n/a` (base R's join, `merge`, works on `data.frame`, which left the suite). The checksums (row count, `sum(w)`, `sum(v2 * w)` over present values) don't depend on row order, which Polars doesn't keep by default. db-benchmark's big join (a right table as large as the left) isn't included: both tables and the result don't fit the 16 GB laptop at `100m`.
 
-### 9.10 Plain code
+### 14.10 Plain code
 
 | # | Question | Quark | Python | R |
 |---|---|---|---|---|
@@ -352,15 +624,15 @@ NumPy and base R are `n/a` (base R's join, `merge`, works on `data.frame`, which
 
 The cost of a function call, an integer comparison and integer arithmetic in a loop the tool can't vectorize. `fib(35)` takes about 120 ms in Quark, 3 s in CPython and 18 s in R (scaled from `fib(30)` in `RESULTS.md`). It runs at both presets unchanged and isn't part of the data headline.
 
-### 9.11 Matrix multiply
+### 14.11 Matrix multiply
 
 | # | Question | Quark | NumPy | R |
 |---|---|---|---|---|
 | MM1 | `C = A · B`, 1,000 × 1,000 | `blas::gemm(a, n, n, b, n)` (`std/blas`) | `a @ b` | `a %*% b` |
 
-All three call a BLAS `dgemm`; this measures what `std/blas` adds around it (a flat vec with explicit dimensions, the call and the result). Quark's plain `vec` loops are not run (§7). The question grows when Quark has a matrix type.
+All three call a BLAS `dgemm`; this measures what `std/blas` adds around it (a flat vec with explicit dimensions, the call and the result). Quark's plain `vec` loops are not run (§12). The question grows when Quark has a matrix type.
 
-## 10. What is removed
+## 15. What is removed
 
 | Benchmark or tier | Why |
 |---|---|
@@ -368,22 +640,22 @@ All three call a BLAS `dgemm`; this measures what `std/blas` adds around it (a f
 | `ewma` | Quark has no recurrence operation (its `vec` time is a loop), and neither does NumPy |
 | `reduce`, `arith`, `expr` | Folded into EX1-EX3, on `G` |
 | `dot`, `gemv`, `ols` | BLAS calls that `gemm` covers; `gemv` and `dot` finish in a few milliseconds |
-| `filter`, `sort`, `sortkeys`, `groupby`, `zscore`, `query`, `readcsv`, `strings` | Replaced by §9.3, §9.4, §9.5, §9.6, §9.7, §9.1 and §9.8 on `G`, `G-NA` and `L` |
+| `filter`, `sort`, `sortkeys`, `groupby`, `zscore`, `query`, `readcsv`, `strings` | Replaced by §14.3, §14.4, §14.5, §14.6, §14.7, §14.1 and §14.8 on `G`, `G-NA` and `L` |
 | `join`, `wordcount` | Quark has no join and can't build a table from a list, so its times were `dict` loops against real joins and counts. Joins come back with §5 |
 | The list tier, base R `data.frame` | Element-at-a-time loops aren't how any peer does data work; `data.table` is R's tool at these sizes. `quark_blas` stays for `gemm` only |
 
-## 11. What waits for a Quark feature
+## 16. What waits for a Quark feature
 
 | Question | Waits for |
 |---|---|
 | SO1 (sort a vec) | §3 |
-| The join questions (§9.9) | §5 |
+| The join questions (§14.9) | §5 |
 | FL3: rows whose `k4` is in a list of 1,000 values | `contains` in verbs (`specs/tables_v0_3_spec.md` D48) |
 | `median(v2)` by key, the largest two `v2` per group (db-benchmark q6, q8) | A quantile kernel; top-n per group |
 | Word count | Building a table from a list, and v0.3's `count` step |
 | The 8-thread headline (DW12) | The rest of `specs/tables_v0_3_spec.md` §8: the CSV reader, `distinct` and the grouped aggregates of many small groups still run on one thread |
 
-## 12. What the 100M preset will show
+## 17. What the 100M preset will show
 
 These are expected from today's code and are to be confirmed by the first `100m` run.
 
@@ -391,31 +663,64 @@ These are expected from today's code and are to be confirmed by the first `100m`
 - **A `str` column holds at most 2 GiB of text** (32-bit offsets; past that, `vec[str] data exceeds 2 GiB` is a runtime error). `k3` at `100m` is 1.2 GB and `L` about 1.8 GB, so both fit, `L` with little room.
 - **What still runs on one thread.** Query row loops, most of the table engine and the vec operations run on the thread pool (`specs/tables_v0_3_spec.md` §8); the CSV reader, `distinct`, the grouped aggregates of many small groups and joins v0.1 (DW23) don't yet, and the 8-thread setting shows what that costs.
 
-## 13. Changes to other docs
+## 18. Changes to other docs
 
 When each part is implemented: `stdlib.md` lists `sort`, `sort_desc`, `order` and `order_desc` under the vec methods (§3); `architecture.md` describes the CSV reader's blocks and buffers (§4); joins go into `semantics.md` §9.5 (the verbs and the joined row), `grammar.md` §10.5 (the `right | b` argument), `architecture.md` (the engine's hash join) and the editor grammar's verb names, and `specs/tables_v0_1_spec.md` §9 stops listing them as planned (§5); `specs/tables_v0_3_spec.md` §8.1 gets the radix kernel as the engine's single-key sort once it is parallel (§3.2), the streamed reader's parallel parse (§4.2), and joins once they are parallel (§5.5); `src/benchmarks/README.md` is rewritten for the tasks, presets, variants, method and parity rule here; `src/benchmarks/RESULTS.md` is measured again at both presets; `architecture.md` §15 takes its performance findings from the new results.
 
-## 14. Tests
+For §6-§9:
+- **Bare names (§6)**: `specs/implemented/modules_v0_2_spec.md` (the `incl` form, rules 12 and 14, its diagnostics), `grammar.md` (`incl`), `semantics.md` §10, `README.md` (the language tour), `error_codes.md` if a code is added, and the Robustness Bar's rule 6 in CLAUDE.md.
+- **Backtick names (§7)**: `grammar.md` (the token and where it may appear) and `semantics.md` (field names); `stdlib.md`'s `std/csv` section says that a backtick field matches a header as written.
+- **The separator (§8)**: `stdlib.md` (`std/csv`).
+- **JSON (§9)**: `stdlib.md` (`std/json`), `architecture.md` (the reader and the typed-read marker), and the editor's stdlib data (`go test ./internal/editordata -update`).
+- `specs/stdlib_expansion_v0_1_spec.md` §9.2 already points to §9.
+
+## 19. Tests
 
 - **Vec sort and order**: every element type; missing values, NaN, `-0.0` and `0.0`, ties (stability), empty and all-missing vecs, a vec of unknown element type, and both directions. The vec sort, the table sort and the list sort agree on the same values (differential); `t.x.sort()` equals `(t | e -> sort(e.x)).x`; `v.sort()` equals `v` read at `v.order()`. A wrong argument count is a compile-time error.
 - **CSV memory**: a generated file of 10M rows, typed and untyped, read within DW3's bound (checked as `integration_gc_test.go` checks heap size and peak resident memory). The existing CSV tests pass unchanged, including rows that cross a block boundary inside a quoted field, a row longer than a block, and a file of exactly one block.
 - **Joins**: each of the four joins on duplicate keys on both sides, missing and NaN keys on either side, `-0.0` against `0.0`, several keys, an empty table on either side, and keys with different names; the row order of §5.3; the result stored into a named struct by shape. Rejected at compile time (`TestSemanticsSafety_Rejected`): a condition other than `and`-joined equalities, a key of the wrong type, an unknown column on either side, the same row name for both sides, a missing `| b`, an unparenthesized query on the right, a clashing column, a right side of unknown row type or of type `any`, a right side that isn't a table, a right side that reads the query's row, and a join after `group_by`. A right side from an imported file, from an `extern fn` returning `tbl[R]`, and from a function's default-valued parameter. A result past the row limit is a runtime error.
+- **Bare names**: every case of §6.3. A bound function, `extern fn`, struct (in an annotation and in a literal) and constant. A bound name as a pipe target, as a function value, called with default arguments, and in a typed read (`t: tbl[R] = unwrap(read_file(p))`). Messages show the canonical name. A binding made in an imported file isn't reachable from its importer. The REPL rejects a later definition of a bound name. Binding a module, a member of a same-file module, or an unknown name is an error.
+- **Backtick names**: each place of §7.2, with a space, punctuation, non-ASCII text and a keyword. Rejected (`TestSemanticsSafety_Rejected`): a backtick name as a variable, parameter, function, struct, module or alias; as a value on its own in a verb; empty; with a control character, a backtick or `__`. Shown in backticks in types, in the column lists of errors and in struct printing. A typed CSV read whose fields match headers with spaces. A struct with backtick fields defined in an imported file, read through an untyped (`any`) value, and passed to an `extern fn`.
+- **Separators**: tab-separated text in both directions; a tab-separated file named `.txt`; `;` and `|`; a round trip. Rejected at compile time: a literal separator that is empty, longer than one character, `"`, a space or a line break. The same separators from a variable, rejected at runtime.
+- **JSON**: both shapes; every row of §9.2's inference table; a typed read of each field type from a JSON value of the type, from a string, and from a wrong value; a missing key, `null`, a duplicate key, and a key that no record has; nested values, by the option chosen; strings with escapes, surrogate pairs, a lone surrogate, `\u0000` and invalid UTF-8; the strict grammar (comments, trailing commas, `NaN`); nesting 513 levels deep; the line and column of errors. Writing then reading gives the same table (differential, with missing values and every column type). NaN on write is an `err`. `format_value` of each kind of value, and a function value rejected at compile time when its type is known and at runtime inside a `list` of `any`. Values from an imported file and through `any`. Memory within DW3's bound on a generated JSON Lines file of 10M rows.
 - **Suite**: the `small` check of today becomes a `tiny` preset (100K rows) that runs every question of every tool, on `G` and `G-NA`, in a few minutes, and fails when a checksum disagrees. The memory limit is tested with a process that allocates past it.
 
-## 15. Plan
+## 20. Plan
 
 1. The CSV reader (§4): the `100m` preset depends on it.
 2. The vec sort and order (§3), with the table engine's single-key sort moved to its kernel.
 3. The data generator for `G`, `G-NA` and `L` at `tiny`, `10m` and `100m`.
 4. The driver: one process per task and variant, first run reported separately, memory polling and the out-of-memory result, CPU pinning, ties.
-5. The questions of §9, per tool.
-6. Joins (§5), and their questions (§9.9).
+5. The questions of §14, per tool.
+6. Joins (§5), and their questions (§14.9).
 7. A run at both presets, both variants and both thread settings; `RESULTS.md` and `architecture.md` §15 from it.
 
-The window questions need tables v0.3's aggregates in `mutate`, which are implemented. FL3 and the 8-thread headline wait for v0.3 (§11).
+The window questions need tables v0.3's aggregates in `mutate`, which are implemented. FL3 and the 8-thread headline wait for v0.3 (§16).
 
-## 16. Later
+§6-§9 don't depend on the suite. Their order, once their open questions (§22) are answered:
+1. Backtick names (§7): queries on untyped tables need them, and so do JSON's flattened columns if §9.2's option a is chosen.
+2. Bare names (§6).
+3. The separator (§8).
+4. The typed-read marker (§9.5), with `std/csv` moved to it.
+5. `std/json` (§9), after the CSV reader (§4), whose block reading and column buffers it shares.
+
+Excel waits for §10.
+
+## 21. Later
 
 - **Keyword arguments** come with other syntax changes to the language (DW22). Then `v.sort(desc = true)` can replace `sort_desc` and `order_desc`.
 - **Joins**: `full_join`; conditions other than equality; keys of different numeric types; joins on tables whose row type the compiler doesn't know (`specs/untyped_tables_v0_1_spec.md`).
-- The questions of §11, as their features arrive.
+- The questions of §16, as their features arrive.
+- **Bare names**: binding a module (`incl formats::csv`, then `csv::read`); binding every name of a file, if the trade-offs of §6.4 change.
+- **Decimal commas**: reading `3,14` as a float, as `;`-separated files often write it.
+- **JSON**: reading a JSON value into a typed value (a struct, or a list of structs) by its expected type, as table reads are typed; JSON Lines as text (`format_text` gives only the array form); a read question for JSON Lines in the suite (§14.1).
+- **Excel** (§10).
+
+## 22. Open questions
+
+1. **Bare names (§6)**: the list in an `incl`, as proposed, and its syntax: `incl csv::read_file`, or `incl 'std/csv' use read_file`.
+2. **Where backtick names may appear (§7.2)**: only where a field, column or key is named, as proposed, or also for variables and functions, which would need the generated C++ names to be mangled, for little gain in data work.
+3. **Cleaning names**: whether to add `t.clean_names()`, and a read option, that turn headers into snake_case plain names (`Employee Name` becomes `employee_name`), with a clash after cleaning an error. On a typed table the compiler knows the names, so it can compute the new row type.
+4. **The separator (§8.2)**: a `sep` parameter (A, recommended) or tab functions (B).
+5. **JSON nested values (§9.2)**: flatten objects (a, recommended), an error (b), or JSON text (c).
+6. **JSON dates (§9.2)**: whether an untyped read makes a str column of calendar days a `date`, as CSV does, so that a written table reads back the same; or keeps JSON strings as `str`, as Polars and jsonlite do.

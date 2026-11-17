@@ -214,15 +214,36 @@ def first_line(s):
 
 def thread_env(threads):
     """Environment that pins every library's thread pool to `threads`
-    (0 leaves each library at its default)."""
+    (0 leaves each library at its default). Quark reads QUARK_THREADS, which
+    `quark run --threads` sets; a QUARK_THREADS already in the environment is
+    dropped for library defaults, so Quark uses its own default too."""
     env = dict(os.environ)
     env["BENCH_THREADS"] = str(threads)
+    env.pop("QUARK_THREADS", None)
     if threads > 0:
         t = str(threads)
         for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "POLARS_MAX_THREADS",
-                    "R_DATATABLE_NUM_THREADS", "GC_MARKERS"):
+                    "R_DATATABLE_NUM_THREADS", "GC_MARKERS", "QUARK_THREADS"):
             env[var] = t
     return env
+
+
+def cpu_quota():
+    """The CPUs the process may use: its affinity mask, and its cgroup v2
+    CPU quota (None when there is none), as Quark's default counts them."""
+    try:
+        affinity = len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        affinity = os.cpu_count()
+    quota = None
+    try:
+        with open("/sys/fs/cgroup/cpu.max") as f:
+            q, period = f.read().split()[:2]
+        if q != "max":
+            quota = int(q) / int(period)
+    except (OSError, ValueError):
+        pass
+    return affinity, quota
 
 
 def fmt_time(s):
@@ -325,6 +346,7 @@ def environment(quark_exe, threads):
     else:
         env["virtualized"] = "unknown"
     env["threads"] = threads
+    env["cpus_allowed"], env["cpu_quota"] = cpu_quota()
     env["clang"] = first_line(sh(["clang++", "--version"]))
     env["go"] = sh(["go", "version"])
     env["system_openblas"] = system_openblas()
@@ -663,6 +685,9 @@ def write_report(results, path):
         ("Threads", "library defaults" if cfg["threads"] == 0 else cfg["threads"]),
         ("Runs", f"{cfg['warmup']} warmup + up to {cfg['reps']} timed, {cfg['budget']} s budget per implementation"),
         ("CPU", f"{env.get('cpu')} ({env.get('cpus')} logical CPUs, {env.get('virtualized')})"),
+        ("CPUs the process may use", (f"{env['cpus_allowed']} in its affinity mask" +
+         (f", a CPU quota of {env['cpu_quota']:g}" if env.get("cpu_quota") else ", no CPU quota"))
+         if env.get("cpus_allowed") else "not recorded"),
         ("Memory", f"{env.get('memory_gb')} GB"), ("OS", env.get("os")),
         ("Load average", f"{env.get('load_average_start')} at start, {env.get('load_average_end')} at end"),
         ("Quark toolchain", f"{env.get('clang')}; {env.get('go')}"),

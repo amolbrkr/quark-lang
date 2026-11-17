@@ -6,8 +6,8 @@ incl 'std/blas'
 fn zscore_blas(a: vec) vec ->
     m = sum(a) / len(a)
     d = a - m
-    sd = sqrt(blas::dot(d, d) / (len(a) - 1))
-    blas::scal(1.0 / sd, d)
+    sdev = sqrt(blas::dot(d, d) / (len(a) - 1))
+    blas::scal(1.0 / sdev, d)
 
 p = harness::params()
 impl: str = p.impl

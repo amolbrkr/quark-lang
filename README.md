@@ -844,7 +844,9 @@ print(stats)
 
 The verbs are `filter`, `mutate`, `select`, `deselect`, `rename`, `distinct`,
 `sort`, `group_by` + `summarize`, `head` and `tail`. `summarize` also has
-`n_distinct`. The rules are in
+`n_distinct`. A call in a verb has to be row-safe (it can run for any row, in
+any order), and a call that doesn't use the row, such as `mean(t.salary)`,
+runs once for the step. The rules are in
 [specs/tables_v0_2_spec.md](specs/tables_v0_2_spec.md). A query's result has an anonymous row (`{dept: str, avg: float, top: float, n: int}`), which matches a struct with exactly those fields where
 it is stored (`s: tbl[DeptStats] = ...`). Missing values (empty or `NA` cells)
 are skipped by aggregates and make an expression missing, and `and`/`or`
@@ -1079,10 +1081,11 @@ and don't. An `INV-*` diagnostic is a compiler bug.
 
 **Planned:**
 
-- Tables v0.3 ([specs/tables_v0_3_spec.md](specs/tables_v0_3_spec.md), a proposal):
-aggregates in `filter` and `mutate` (whole table and per group), missing values in
-queries, `contains`, the `count` step, and verbs, vec operations and the CSV reader
-on every core with the same output for every thread count.
+- Tables v0.3 ([specs/tables_v0_3_spec.md](specs/tables_v0_3_spec.md)):
+aggregates in `filter` and `mutate`, and row-safe calls in a verb, are in.
+Still to come: missing values in verbs, `contains`, `nrow`, the `count` step,
+two-argument `min`/`max` typing, and running a query on more than one thread
+with the same output for every thread count.
 - Tables still later: the column-wise table literal, joins, `summary(t)`, and
 compile-time schema inference for CSV files
 ([specs/tables_v0_1_spec.md](specs/tables_v0_1_spec.md) §9-10,

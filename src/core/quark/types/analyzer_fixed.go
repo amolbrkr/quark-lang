@@ -37,6 +37,11 @@ type FixedFn struct {
 	Sym      *Symbol // the declaration's symbol (its binding, when it needs a closure)
 	scope    *Scope
 	TopLevel bool // declared in the root scope or a module body
+
+	// Set by finalizeRowSafety (analyzer_rowsafe.go).
+	rowSafe bool
+	draws   bool // calls a random draw; row-safe, but not computed once per step
+	events  []rowEvent
 }
 
 // HoistScope is what lowering emits at the start of a scope that declares
@@ -49,6 +54,7 @@ type HoistScope struct {
 }
 
 type fixedCall struct {
+	node *ast.TreeNode
 	plan *ir.CallPlan
 	fn   *FixedFn
 }
@@ -174,9 +180,9 @@ func (a *Analyzer) fixedFnOf(sym *Symbol) *FixedFn {
 
 // deferFixedDispatch records a call to a declared function; its dispatch is
 // set by finalizeFixedFns.
-func (a *Analyzer) deferFixedDispatch(plan *ir.CallPlan, sym *Symbol) {
+func (a *Analyzer) deferFixedDispatch(node *ast.TreeNode, plan *ir.CallPlan, sym *Symbol) {
 	if f := a.fixedFnOf(sym); f != nil && plan != nil {
-		a.fixedCalls = append(a.fixedCalls, fixedCall{plan: plan, fn: f})
+		a.fixedCalls = append(a.fixedCalls, fixedCall{node: node, plan: plan, fn: f})
 	}
 }
 
@@ -274,6 +280,7 @@ func (a *Analyzer) finalizeFixedFns() {
 			delete(a.fixedRefs, node)
 		}
 	}
+	a.finalizeRowSafety()
 }
 
 // checkDefiniteAssignment implements rule 23 for every scope that declares

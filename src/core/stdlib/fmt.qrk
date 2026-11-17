@@ -1,10 +1,10 @@
 extern 'fmt.hpp'
 
-extern fn fmt_list(lst: list, n: int, show_index: bool) str as 'q_fmt_list'
-extern fn fmt_vec(v: vec, n: int, show_index: bool) str as 'q_fmt_vec'
-extern fn fmt_dict(dct: dict, n: int, show_index: bool) str as 'q_fmt_dict'
-extern fn fmt_table(df: any, n: int, show_index: bool) str as 'q_fmt_table'
-extern fn fmt_full(x: any) str as 'q_fmt_full'
+extern rowsafe fn fmt_list(lst: list, n: int, show_index: bool) str as 'q_fmt_list'
+extern rowsafe fn fmt_vec(v: vec, n: int, show_index: bool) str as 'q_fmt_vec'
+extern rowsafe fn fmt_dict(dct: dict, n: int, show_index: bool) str as 'q_fmt_dict'
+extern rowsafe fn fmt_table(df: any, n: int, show_index: bool) str as 'q_fmt_table'
+extern rowsafe fn fmt_full(x: any) str as 'q_fmt_full'
 
 module fmt:
     fn show_list(lst: list, n: int = 10, show_index: bool = true) str ->

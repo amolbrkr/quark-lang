@@ -64,6 +64,11 @@ type lowerer struct {
 	rowSubst map[*ast.TreeNode]Expr
 	included map[string]bool
 	agg      *aggBind
+	// once collects the calls a row loop evaluates at most once (D44).
+	// onceNode is the call currently being evaluated into its slot, so it
+	// isn't wrapped a second time.
+	once     *onceSlots
+	onceNode *ast.TreeNode
 
 	// externHome is the C++ symbols of extern fns declared in this REPL
 	// input. Nil for an ordinary program, where every extern fn is local.

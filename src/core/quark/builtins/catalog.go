@@ -36,6 +36,13 @@ type Spec struct {
 	// of quark.hpp (the table runtime); generated code includes it when it
 	// calls the builtin.
 	Header string
+	// RowSafe is true when the builtin can run for any row, in any order,
+	// on several threads, and gives the same result for the same arguments
+	// (specs/tables_v0_3_spec.md D41). A builtin is not row-safe until this
+	// is set.
+	RowSafe bool
+	// Mutates is true when the method changes its receiver in place.
+	Mutates bool
 }
 
 // TableHeader is the table runtime (queries, table methods), which
@@ -43,86 +50,88 @@ type Spec struct {
 const TableHeader = "quark/table/query.hpp"
 
 var catalog = []Spec{
-	// I/O (free functions)
+	// I/O (free functions). print and input are not row-safe.
 	{Name: "print", Runtime: "q_print", MinArgs: 1, MaxArgs: 5, ParamTypes: []TypeKey{TypeAny, TypeString, TypeInt, TypeString, TypeString}, ReturnType: TypeVoid},
 	{Name: "input", Runtime: "q_input", MinArgs: 0, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeResultAny},
 
 	// Conversions (free functions)
-	{Name: "len", Runtime: "q_len", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeInt},
-	{Name: "to_str", Runtime: "q_str", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeString},
-	{Name: "to_int", Runtime: "q_int", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeInt},
-	{Name: "to_float", Runtime: "q_float", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeFloat},
-	{Name: "to_bool", Runtime: "q_bool", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeBool},
-	{Name: "type", Runtime: "q_type", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeString},
-	{Name: "is_ok", Runtime: "q_is_ok_builtin", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeBool},
-	{Name: "is_err", Runtime: "q_is_err_builtin", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeBool},
-	{Name: "unwrap", Runtime: "q_unwrap", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeAny},
+	{Name: "len", Runtime: "q_len", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeInt, RowSafe: true},
+	{Name: "to_str", Runtime: "q_str", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeString, RowSafe: true},
+	{Name: "to_int", Runtime: "q_int", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeInt, RowSafe: true},
+	{Name: "to_float", Runtime: "q_float", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeFloat, RowSafe: true},
+	{Name: "to_bool", Runtime: "q_bool", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeBool, RowSafe: true},
+	{Name: "type", Runtime: "q_type", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeString, RowSafe: true},
+	{Name: "is_ok", Runtime: "q_is_ok_builtin", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeBool, RowSafe: true},
+	{Name: "is_err", Runtime: "q_is_err_builtin", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeBool, RowSafe: true},
+	{Name: "unwrap", Runtime: "q_unwrap", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeAny, RowSafe: true},
 
 	// Range (free function)
-	{Name: "range", Runtime: "q_range", MinArgs: 1, MaxArgs: 3, ParamTypes: []TypeKey{TypeInt, TypeInt, TypeInt}, ReturnType: TypeListInt},
+	{Name: "range", Runtime: "q_range", MinArgs: 1, MaxArgs: 3, ParamTypes: []TypeKey{TypeInt, TypeInt, TypeInt}, ReturnType: TypeListInt, RowSafe: true},
 
 	// Math (free functions)
-	{Name: "abs", Runtime: "q_abs", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeAny},
-	{Name: "min", Runtime: "q_min", MinArgs: 1, MaxArgs: 2, ParamTypes: []TypeKey{TypeAny, TypeAny}, ReturnType: TypeAny},
-	{Name: "max", Runtime: "q_max", MinArgs: 1, MaxArgs: 2, ParamTypes: []TypeKey{TypeAny, TypeAny}, ReturnType: TypeAny},
-	{Name: "sum", Runtime: "q_sum", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeAny},
-	{Name: "mean", Runtime: "q_mean", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeFloat},
-	{Name: "sd", Runtime: "q_sd", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeFloat},
-	{Name: "all", Runtime: "q_all", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeBool},
-	{Name: "any", Runtime: "q_any", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeBool},
-	{Name: "sqrt", Runtime: "q_sqrt", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeFloat}, ReturnType: TypeFloat},
-	{Name: "floor", Runtime: "q_floor", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeFloat}, ReturnType: TypeInt},
-	{Name: "ceil", Runtime: "q_ceil", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeFloat}, ReturnType: TypeInt},
-	{Name: "round", Runtime: "q_round", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeFloat}, ReturnType: TypeInt},
+	{Name: "abs", Runtime: "q_abs", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeAny, RowSafe: true},
+	{Name: "min", Runtime: "q_min", MinArgs: 1, MaxArgs: 2, ParamTypes: []TypeKey{TypeAny, TypeAny}, ReturnType: TypeAny, RowSafe: true},
+	{Name: "max", Runtime: "q_max", MinArgs: 1, MaxArgs: 2, ParamTypes: []TypeKey{TypeAny, TypeAny}, ReturnType: TypeAny, RowSafe: true},
+	{Name: "sum", Runtime: "q_sum", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeAny, RowSafe: true},
+	{Name: "mean", Runtime: "q_mean", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeFloat, RowSafe: true},
+	{Name: "sd", Runtime: "q_sd", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeFloat, RowSafe: true},
+	{Name: "all", Runtime: "q_all", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeBool, RowSafe: true},
+	{Name: "any", Runtime: "q_any", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeBool, RowSafe: true},
+	{Name: "sqrt", Runtime: "q_sqrt", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeFloat}, ReturnType: TypeFloat, RowSafe: true},
+	{Name: "floor", Runtime: "q_floor", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeFloat}, ReturnType: TypeInt, RowSafe: true},
+	{Name: "ceil", Runtime: "q_ceil", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeFloat}, ReturnType: TypeInt, RowSafe: true},
+	{Name: "round", Runtime: "q_round", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeFloat}, ReturnType: TypeInt, RowSafe: true},
 
 	// String methods (receiver = str)
-	{Name: "upper", Runtime: "q_upper", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeString, ReceiverType: TypeString},
-	{Name: "lower", Runtime: "q_lower", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeString, ReceiverType: TypeString},
-	{Name: "trim", Runtime: "q_trim", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeString, ReceiverType: TypeString},
-	{Name: "contains", Runtime: "q_contains", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeBool, ReceiverType: TypeString},
-	{Name: "startswith", Runtime: "q_startswith", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeBool, ReceiverType: TypeString},
-	{Name: "endswith", Runtime: "q_endswith", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeBool, ReceiverType: TypeString},
-	{Name: "replace", Runtime: "q_replace", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeString, TypeString}, ReturnType: TypeString, ReceiverType: TypeString},
-	{Name: "split", Runtime: "q_split", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeListString, ReceiverType: TypeString},
-	{Name: "slice", Runtime: "q_str_slice", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeInt, TypeInt}, ReturnType: TypeString, ReceiverType: TypeString},
+	{Name: "upper", Runtime: "q_upper", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeString, ReceiverType: TypeString, RowSafe: true},
+	{Name: "lower", Runtime: "q_lower", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeString, ReceiverType: TypeString, RowSafe: true},
+	{Name: "trim", Runtime: "q_trim", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeString, ReceiverType: TypeString, RowSafe: true},
+	{Name: "contains", Runtime: "q_contains", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeBool, ReceiverType: TypeString, RowSafe: true},
+	{Name: "startswith", Runtime: "q_startswith", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeBool, ReceiverType: TypeString, RowSafe: true},
+	{Name: "endswith", Runtime: "q_endswith", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeBool, ReceiverType: TypeString, RowSafe: true},
+	{Name: "replace", Runtime: "q_replace", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeString, TypeString}, ReturnType: TypeString, ReceiverType: TypeString, RowSafe: true},
+	{Name: "split", Runtime: "q_split", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeListString, ReceiverType: TypeString, RowSafe: true},
+	{Name: "slice", Runtime: "q_str_slice", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeInt, TypeInt}, ReturnType: TypeString, ReceiverType: TypeString, RowSafe: true},
 	// Note: join is on list, not str — runtime signature is q_str_join(list, sep).
 
-	// List methods (receiver = list)
-	{Name: "concat", Runtime: "q_list_concat", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeListAny}, ReturnType: TypeListAny, ReceiverType: TypeListAny},
-	{Name: "push", Runtime: "q_push", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeListAny, ReceiverType: TypeListAny},
-	{Name: "pop", Runtime: "q_pop", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeAny, ReceiverType: TypeListAny},
-	{Name: "get", Runtime: "q_get", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeInt}, ReturnType: TypeAny, ReceiverType: TypeListAny},
-	{Name: "set", Runtime: "q_set", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeInt, TypeAny}, ReturnType: TypeAny, ReceiverType: TypeListAny},
-	{Name: "insert", Runtime: "q_insert", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeInt, TypeAny}, ReturnType: TypeListAny, ReceiverType: TypeListAny},
-	{Name: "remove", Runtime: "q_remove", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeInt}, ReturnType: TypeAny, ReceiverType: TypeListAny},
-	{Name: "slice", Runtime: "q_slice", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeInt, TypeInt}, ReturnType: TypeListAny, ReceiverType: TypeListAny},
-	{Name: "reverse", Runtime: "q_reverse", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeListAny},
-	{Name: "sort", Runtime: "q_sort", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeListAny},
-	{Name: "sort_by", Runtime: "q_sort_by", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeListAny, ReceiverType: TypeListAny},
-	{Name: "enumerate", Runtime: "q_enumerate", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeListAny},
-	{Name: "join", Runtime: "q_str_join", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeString, ReceiverType: TypeListAny},
-	{Name: "to_vec", Runtime: "q_to_vec", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeAny, ReceiverType: TypeListAny},
+	// List methods (receiver = list). push, pop, set, insert, remove, reverse,
+	// sort and sort_by change the list, so they are not row-safe.
+	{Name: "concat", Runtime: "q_list_concat", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeListAny}, ReturnType: TypeListAny, ReceiverType: TypeListAny, RowSafe: true},
+	{Name: "push", Runtime: "q_push", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeListAny, ReceiverType: TypeListAny, Mutates: true},
+	{Name: "pop", Runtime: "q_pop", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeAny, ReceiverType: TypeListAny, Mutates: true},
+	{Name: "get", Runtime: "q_get", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeInt}, ReturnType: TypeAny, ReceiverType: TypeListAny, RowSafe: true},
+	{Name: "set", Runtime: "q_set", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeInt, TypeAny}, ReturnType: TypeAny, ReceiverType: TypeListAny, Mutates: true},
+	{Name: "insert", Runtime: "q_insert", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeInt, TypeAny}, ReturnType: TypeListAny, ReceiverType: TypeListAny, Mutates: true},
+	{Name: "remove", Runtime: "q_remove", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeInt}, ReturnType: TypeAny, ReceiverType: TypeListAny, Mutates: true},
+	{Name: "slice", Runtime: "q_slice", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeInt, TypeInt}, ReturnType: TypeListAny, ReceiverType: TypeListAny, RowSafe: true},
+	{Name: "reverse", Runtime: "q_reverse", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeListAny, Mutates: true},
+	{Name: "sort", Runtime: "q_sort", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeListAny, Mutates: true},
+	{Name: "sort_by", Runtime: "q_sort_by", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeListAny, ReceiverType: TypeListAny, Mutates: true},
+	{Name: "enumerate", Runtime: "q_enumerate", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeListAny, RowSafe: true},
+	{Name: "join", Runtime: "q_str_join", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeString, ReceiverType: TypeListAny, RowSafe: true},
+	{Name: "to_vec", Runtime: "q_to_vec", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeAny, ReceiverType: TypeListAny, RowSafe: true},
 
-	// Dict methods (receiver = dict)
-	{Name: "get", Runtime: "q_dget", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeAny, ReceiverType: TypeDictAny},
-	{Name: "set", Runtime: "q_dset", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeString, TypeAny}, ReturnType: TypeDictAny, ReceiverType: TypeDictAny},
-	{Name: "keys", Runtime: "q_dkeys", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeDictAny},
-	{Name: "values", Runtime: "q_dvalues", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeDictAny},
-	{Name: "items", Runtime: "q_ditems", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeDictAny},
+	// Dict methods (receiver = dict). set changes the dict.
+	{Name: "get", Runtime: "q_dget", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeAny, ReceiverType: TypeDictAny, RowSafe: true},
+	{Name: "set", Runtime: "q_dset", MinArgs: 2, MaxArgs: 2, ParamTypes: []TypeKey{TypeString, TypeAny}, ReturnType: TypeDictAny, ReceiverType: TypeDictAny, Mutates: true},
+	{Name: "keys", Runtime: "q_dkeys", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeDictAny, RowSafe: true},
+	{Name: "values", Runtime: "q_dvalues", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeDictAny, RowSafe: true},
+	{Name: "items", Runtime: "q_ditems", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeDictAny, RowSafe: true},
 
 	// Vector methods (receiver = vector)
-	{Name: "get", Runtime: "q_vec_get", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeInt}, ReturnType: TypeAny, ReceiverType: TypeVectorAny},
-	{Name: "fillna", Runtime: "q_fillna", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeVectorAny, ReceiverType: TypeVectorAny},
-	{Name: "drop_na", Runtime: "q_drop_na", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeVectorAny, ReceiverType: TypeVectorAny},
+	{Name: "get", Runtime: "q_vec_get", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeInt}, ReturnType: TypeAny, ReceiverType: TypeVectorAny, RowSafe: true},
+	{Name: "fillna", Runtime: "q_fillna", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeVectorAny, ReceiverType: TypeVectorAny, RowSafe: true},
+	{Name: "drop_na", Runtime: "q_drop_na", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeVectorAny, ReceiverType: TypeVectorAny, RowSafe: true},
 
 	// Table methods (specs/tables_v0_1_spec.md §6, D25): the first or last n rows
 	// (6 by default) as a table of the same row type, and one line per column.
-	{Name: "head", Runtime: "q_tbl_head_method", MinArgs: 0, MaxArgs: 1, ParamTypes: []TypeKey{TypeInt}, ReturnType: TypeTableAny, ReceiverType: TypeTableAny, Header: TableHeader},
-	{Name: "tail", Runtime: "q_tbl_tail_method", MinArgs: 0, MaxArgs: 1, ParamTypes: []TypeKey{TypeInt}, ReturnType: TypeTableAny, ReceiverType: TypeTableAny, Header: TableHeader},
+	// describe prints, so it is not row-safe.
+	{Name: "head", Runtime: "q_tbl_head_method", MinArgs: 0, MaxArgs: 1, ParamTypes: []TypeKey{TypeInt}, ReturnType: TypeTableAny, ReceiverType: TypeTableAny, Header: TableHeader, RowSafe: true},
+	{Name: "tail", Runtime: "q_tbl_tail_method", MinArgs: 0, MaxArgs: 1, ParamTypes: []TypeKey{TypeInt}, ReturnType: TypeTableAny, ReceiverType: TypeTableAny, Header: TableHeader, RowSafe: true},
 	{Name: "describe", Runtime: "q_tbl_describe", MinArgs: 0, MaxArgs: 1, ParamTypes: []TypeKey{TypeInt}, ReturnType: TypeVoid, ReceiverType: TypeTableAny, Header: TableHeader},
-	{Name: "astype", Runtime: "q_astype", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeVectorAny, ReceiverType: TypeVectorAny},
-	{Name: "to_list", Runtime: "q_to_list", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeVectorAny},
-	{Name: "enumerate", Runtime: "q_enumerate", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeVectorAny},
+	{Name: "astype", Runtime: "q_astype", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeString}, ReturnType: TypeVectorAny, ReceiverType: TypeVectorAny, RowSafe: true},
+	{Name: "to_list", Runtime: "q_to_list", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeVectorAny, RowSafe: true},
+	{Name: "enumerate", Runtime: "q_enumerate", MinArgs: 0, MaxArgs: 0, ParamTypes: []TypeKey{}, ReturnType: TypeListAny, ReceiverType: TypeVectorAny, RowSafe: true},
 }
 
 var byName map[string]Spec

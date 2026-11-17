@@ -991,9 +991,10 @@ func (p *Parser) parseModule() *ast.TreeNode {
 //	extern include_path 'dir'
 //	extern source 'file.cpp'
 //	extern fn name(params) ReturnType as 'symbol'
+//	extern rowsafe fn name(params) ReturnType as 'symbol'
 //	extern fn type.name(params) ReturnType as 'symbol'
 //
-// `link`, `include_path` and `source` are contextual words, not keywords.
+// `link`, `include_path`, `source` and `rowsafe` are contextual words, not keywords.
 func (p *Parser) parseExtern() *ast.TreeNode {
 	tok := p.curToken
 	p.nextToken() // skip 'extern'
@@ -1004,6 +1005,18 @@ func (p *Parser) parseExtern() *ast.TreeNode {
 	case token.FN:
 		return p.parseExternFn()
 	case token.ID:
+		if p.curToken.Literal == "rowsafe" {
+			p.nextToken()
+			if p.curToken.Type != token.FN {
+				p.addError("expected 'fn' after 'extern rowsafe', got %s", p.curToken.Type)
+				return nil
+			}
+			node := p.parseExternFn()
+			if node != nil {
+				node.ExternRowSafe = true
+			}
+			return node
+		}
 		switch p.curToken.Literal {
 		case "link":
 			p.nextToken()
@@ -1019,7 +1032,7 @@ func (p *Parser) parseExtern() *ast.TreeNode {
 			return nil
 		}
 	}
-	p.addError("expected string path, 'fn', 'link', 'include_path' or 'source' after 'extern', got %s", p.curToken.Type)
+	p.addError("expected string path, 'fn', 'rowsafe', 'link', 'include_path' or 'source' after 'extern', got %s", p.curToken.Type)
 	return nil
 }
 

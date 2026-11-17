@@ -10,6 +10,7 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 
 ## Contents
 
+- [2026-11-16: Tables v0.3, row-safe calls](#2026-11-16-tables-v03-row-safe-calls)
 - [2026-11-16: Tables v0.3, aggregates on one thread](#2026-11-16-tables-v03-aggregates-on-one-thread)
 - [2026-11-16: CI on Linux and Windows](#2026-11-16-ci-on-linux-and-windows)
 - [2026-11-16: std/random, std/sys and std/time at their edges](#2026-11-16-stdrandom-stdsys-and-stdtime-at-their-edges)
@@ -54,6 +55,36 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 - [2026-04-03: Table runtime scaffolding; struct fixes](#2026-04-03-table-runtime-scaffolding-struct-fixes)
 - [2026-04-02: Structs v0.1](#2026-04-02-structs-v01)
 - [2026-03-28: Vector soundness, `std/fmt` on `extern`, build output](#2026-03-28-vector-soundness-stdfmt-on-extern-build-output)
+
+## 2026-11-16: Tables v0.3, row-safe calls
+
+A call written in a query has to be safe to run for any row, in any order. One that isn't is a compile error that names it.
+
+### Breaking
+
+- A query that calls a function that isn't row-safe no longer compiles. That includes `print` and `input`, `t.describe()`, a method that changes a list or a dict (`push`, `pop`, `set`, `insert`, `remove`, `reverse`, `sort`, `sort_by`, and `set` on a dict), anything in `std/io`, `std/sys`, `std/csv` or `std/blas`, `time::now`, `time::clock`, `time::today`, `time::sleep` and `time::since`, `random::seed` and `random::shuffle`, an `extern fn` that isn't declared `rowsafe`, a call through a function value, and a helper that assigns a variable from outside its body or changes a list or dict. The error names the helper and the call inside it: `'band' can't be called in a query: it calls 'print' (line 3)`.
+
+### Added
+
+- `extern rowsafe fn` (and `extern rowsafe fn str.tag() ...` for a method) marks native code as safe to call from a query. The compiler takes the author's word for it.
+
+```quark
+extern rowsafe fn norm(x: float, y: float) float as 'geo_norm'
+above = cars | c -> filter(c.mpg > norm(c.hp, 100.0))
+```
+
+### Changed
+
+- A row-safe call whose arguments don't use the row runs the first time a row needs it, and every later row reuses that result. `filter(c.mpg > mean(t.mpg))` computes the mean once. A call that no row reaches, including one on an empty table, is not made. If the call fails, the error is the one at the first row that needs it.
+- A random draw in a query still comes from the one generator, and each row draws its own number. The generator that makes those numbers the same for every thread count is not in yet.
+
+### Fixed
+
+- A call in a verb that doesn't read the row, such as `mean(t.mpg)`, no longer runs once per row.
+
+### Internal
+
+- Each builtin catalog entry says whether it is row-safe and whether it changes its receiver. The analyzer works out row-safety for every `fn` the way it works out which declarations need a closure.
 
 ## 2026-11-16: Tables v0.3, aggregates on one thread
 

@@ -43,7 +43,7 @@ Reserved (`token/token.go`):
 
 `incl as module extern fn struct if elseif else for while break continue when in and or true false null ok err list dict vec result`
 
-`_` is its own token (the wildcard pattern). The type names `int`, `float`, `str`, `bool`, `any`, `date`, `period` and `resource` are ordinary identifiers that the checker resolves in type positions. `link`, `include_path` and `source` are contextual words after `extern`.
+`_` is its own token (the wildcard pattern). The type names `int`, `float`, `str`, `bool`, `any`, `date`, `period` and `resource` are ordinary identifiers that the checker resolves in type positions. `link`, `include_path`, `source` and `rowsafe` are contextual words after `extern`.
 
 Identifiers are letters, digits and `_`, starting with a letter or `_`. A name containing `__` is a load error: that form is reserved for compiler-generated names.
 
@@ -144,13 +144,13 @@ ExternStatement   ::= "extern" STRING                          (header)
                   |   "extern" "source" STRING
                   |   ExternFnDecl
 
-ExternFnDecl      ::= "extern" "fn" ExternName Parameters [ Type ] "as" STRING
+ExternFnDecl      ::= "extern" [ "rowsafe" ] "fn" ExternName Parameters [ Type ] "as" STRING
 ExternName        ::= ID | ReceiverType "." ID
 ReceiverType      ::= "int" | "float" | "str" | "bool" | "list" | "dict" | "vec"
 ```
 
 - `extern 'path.hpp'` `#include`s a C++ header, resolved relative to the declaring file (`std/...` in the stdlib).
-- `extern fn name(...) T as 'symbol'` binds a free function; `extern fn list.name(...) T as 'symbol'` adds a method to a builtin type. The return type comes before `as`, with no `->`.
+- `extern fn name(...) T as 'symbol'` binds a free function; `extern fn list.name(...) T as 'symbol'` adds a method to a builtin type. `extern rowsafe fn` is the same form with the row-safe promise (semantics.md §9.5). The return type comes before `as`, with no `->`.
 - Nothing may follow a directive's string on its line. `extern link` takes a bare library name (`'openblas'`, not `'-lopenblas'` or `'libopenblas.so'`).
 - `extern source 'file.cpp'` names a glue file compiled on its own (`specs/ffi_v0_1_spec.md`). `extern include` is a parse error (`use extern include_path`).
 

@@ -156,6 +156,10 @@ type TreeNode struct {
 	// ReturnType = TypeNode for the return type (reusing existing field)
 	ExternSymbol   string // The 'as' symbol (C++ function name)
 	ExternReceiver string // The receiver type prefix (e.g. "list", "vec", "str") — empty for free functions
+	// ExternRowSafe is the `rowsafe` qualifier (specs/tables_v0_3_spec.md D43):
+	// the native author's promise that the function may run per row, in any
+	// order, on several threads.
+	ExternRowSafe bool
 
 	// Piped marks a FunctionCallNode the parser made from a pipe: `x | f(a)`
 	// is parsed as `f(x, a)`, so the piped input is the first argument.

@@ -92,6 +92,11 @@ type Analyzer struct {
 	columnRefs  map[*ast.TreeNode]int
 	rowCtx      *rowContext
 	lambdaDepth int
+	// verbGrouped is copied into rowCtx: an aggregate value differs per row.
+	// verbCalls are the calls in verb expressions, checked for row-safety
+	// once every function's body is known (finalizeRowSafety).
+	verbGrouped bool
+	verbCalls   []verbCall
 	// Aggregates in the verb expression being analyzed (analyzer_agg.go).
 	// aggUses records every aggregate call for lowering; aggs is the step's
 	// scope (nil outside filter, mutate and summarize); inAgg is set while

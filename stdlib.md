@@ -445,6 +445,8 @@ Each module is a `.qrk` file in `src/core/stdlib/` whose API is a `module` block
 
 The `extern fn` bindings a module is built on (`io_open`, `fmt_vec`, `blas_dot`, ...) sit at the file's top level and are reachable too (`fmt::fmt_vec`), since Quark has no access modifiers. They are implementation details: they take every argument explicitly (no defaults) and may change. Use the module functions. Native bindings are specified in `specs/ffi_v0_1_spec.md`.
 
+A query may call a module function only when it is row-safe (semantics.md §9.5). `std/fmt` is. `std/io`, `std/sys`, `std/csv` and `std/blas` are not. `std/time` is, except the clocks `now`, `clock`, `today`, `sleep` and `since`. `std/random`'s draws are; `seed` and `shuffle` are not. A draw in a query runs per row, not once for the step.
+
 Module functions check their annotated parameters like any Quark function: `list`, `dict`, `vec` and `fn` parameters reject `null`; `resource` parameters accept it (and the function then reports an invalid handle).
 
 `std/` paths are found in this order: the directory in `QUARK_STDLIB_ROOT`; else the first directory named `stdlib` in the importing file's directory or one of its parents; else a `stdlib` directory next to the `quark` executable or one or two levels above it. A project directory named `stdlib` above your script therefore replaces the standard library.
@@ -609,7 +611,7 @@ when csv::write_file(rich, 'rich.csv'):
 
 ## `std/time`
 
-Clocks, calendar dates and instants. Import with `incl 'std/time' as time`. A `date` is a calendar day (Arrow `date32`: days since 1970-01-01). A `period` is a calendar offset. An instant is still a `float`, seconds since the Unix epoch. The design is `specs/dates_v0_1_spec.md`.
+Clocks, calendar dates and instants. Import with `incl 'std/time' as time`. The calendar, formatting, parsing and duration functions can be called from a query; `now`, `clock`, `today`, `sleep` and `since` cannot (they read a clock or sleep). A `date` is a calendar day (Arrow `date32`: days since 1970-01-01). A `period` is a calendar offset. An instant is still a `float`, seconds since the Unix epoch. The design is `specs/dates_v0_1_spec.md`.
 
 | Function | Signature | Description |
 |---|---|---|
@@ -655,7 +657,7 @@ when time::parse('2024-02-29'):
 
 ## `std/random`
 
-Pseudo-random numbers (64-bit Mersenne Twister), seeded randomly at startup; `seed(n)` makes the sequence reproducible. Not for cryptography. Import with `incl 'std/random' as random`.
+Pseudo-random numbers (64-bit Mersenne Twister), seeded randomly at startup; `seed(n)` makes the sequence reproducible. Not for cryptography. Import with `incl 'std/random' as random`. The draws can be called from a query, and each row draws its own number; `seed` and `shuffle` cannot.
 
 | Function | Signature | Description |
 |---|---|---|

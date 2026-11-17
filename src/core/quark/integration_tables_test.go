@@ -219,8 +219,9 @@ func TestTables_Query(t *testing.T) {
 		q("mutate_ternary", "print((staff | e -> mutate(band = 'high' if e.salary > 100000.0 else 'low')).band)\n", "['high', 'low', null, 'high', 'low']"),
 		q("mutate_bool_column", "r = staff | e -> mutate(rich = e.salary > 100000.0)\nprint(r.rich)\nprint(show(r | e -> summarize(n = sum(e.rich), share = mean(e.rich))))\n",
 			"[true, false, null, true, false]\nn,share\n2,0.5"),
-		q("mutate_calls_skip_missing", "seen = list []\nfn note(s: float) float ->\n    seen.push(s)\n    s / 2.0\nr = staff | e -> mutate(half = note(e.salary))\nprint(r.half)\nprint(len(seen))\n",
-			"[60000.0, 45000.25, null, 75000.0, 40000.0]\n4"),
+		{name: "mutate_calls_skip_missing", files: map[string]string{"staff.csv": queryCSV, "tick.hpp": rowSafeTickH},
+			source: queryPre + "extern 'tick.hpp'\nextern rowsafe fn tick() int as 'q_rowsafe_tick'\nextern rowsafe fn ticks() int as 'q_rowsafe_ticks'\nfn note(s: float) float ->\n    tick()\n    s / 2.0\nr = staff | e -> mutate(half = note(e.salary))\nprint(r.half)\nprint(ticks())\n",
+			want:   "[60000.0, 45000.25, null, 75000.0, 40000.0]\n4"},
 		q("mutate_user_fn", "fn band(s: float) str -> 'high' if s > 100000.0 else 'low'\nprint((staff | e -> mutate(b = band(e.salary))).b)\n", "['high', 'low', null, 'high', 'low']"),
 		q("group_summarize", "print(show(staff | e -> group_by(e.dept) | summarize(avg = mean(e.salary), top = max(e.salary), n = count(), k = count(e.salary), s = sum(e.id))))\n",
 			"dept,avg,top,n,k,s\neng,120000.0,120000.0,2,1,4\nops,120000.25,150000.0,2,2,6\n,80000.0,80000.0,1,1,5"),
@@ -490,5 +491,144 @@ func TestTables_Aggregates(t *testing.T) {
 		{name: "vec_where_cell", files: files, source: queryPre + "fn f(v: vec) -> 1\nr = staff | e -> filter(f(e.salary) == 1)\n", err: "'e.salary' is one row's float here, not the column"},
 		{name: "key_name_clash", files: files, source: queryPre + "r = staff | e -> group_by(e.dept, dept = e.id) | summarize(n = count())\n", err: "group_by names key 'dept' twice"},
 		{name: "sd_of_str", files: files, source: queryPre + "r = staff | e -> summarize(s = sd(e.name))\n", err: "sd needs a number or bool column; column 'name' is str"},
+	})
+}
+
+// rowSafeTickH is a glue header whose rowsafe functions count calls or fail.
+// The generated program includes quark.hpp first, so q_runtime_reportf is in scope.
+const rowSafeTickH = `#pragma once
+static int q_rowsafe_tick_n = 0;
+inline int64_t q_rowsafe_tick() { return ++q_rowsafe_tick_n; }
+inline int64_t q_rowsafe_ticks() { return q_rowsafe_tick_n; }
+inline int64_t q_rowsafe_boom() {
+    q_runtime_reportf("runtime error: boom\n");
+    q_exit(1);
+    return 0;
+}
+`
+
+const rowSafeTagH = `#pragma once
+inline const char* q_tag(const char* s) { return s != nullptr ? s : ""; }
+`
+
+// TestTables_RowSafety is tables v0.3 D41-D43: a verb may call only row-safe
+// functions, and the error names the call that makes a user function unsafe.
+func TestTables_RowSafety(t *testing.T) {
+	staff := map[string]string{"staff.csv": queryCSV}
+	use := func(name, head, call, err string) tableCase {
+		return tableCase{name: name, files: staff, err: err,
+			source: head + queryPre + "r = staff | e -> filter(" + call + ")\n"}
+	}
+	runTableCases(t, []tableCase{
+		use("direct_print", "", "print(e.name) == null", "'print' can't be called in a query"),
+		use("direct_input", "", "is_ok(input())", "'input' can't be called in a query"),
+		use("direct_describe", "", "e.id > 0 or type(staff.describe()) == 'int'", "'describe' can't be called in a query"),
+		use("direct_push", "", "len(list [e.id].push(1)) > 0", "'push' can't be called in a query"),
+		use("direct_pop", "", "list [1].pop() != null", "'pop' can't be called in a query"),
+		use("direct_set", "", "len(list [1].set(0, 2)) > 0", "'set' can't be called in a query"),
+		use("direct_insert", "", "len(list [1].insert(0, 2)) > 0", "'insert' can't be called in a query"),
+		use("direct_remove", "", "list [1].remove(0) != null", "'remove' can't be called in a query"),
+		use("direct_reverse", "", "len(list [1].reverse()) > 0", "'reverse' can't be called in a query"),
+		use("direct_sort", "", "len(list [1].sort()) > 0", "'sort' can't be called in a query"),
+		use("direct_sort_by", "", "len(list [1].sort_by(fn(a, b) -> a)) > 0", "'sort_by' can't be called in a query"),
+		use("direct_dict_set", "", "dict { a: 1 }.set('a', 2) != null", "'set' can't be called in a query"),
+		use("helper_print", "fn bad(x: float) float ->\n    print(x)\n    x\n", "bad(e.salary) > 0.0",
+			"'bad' can't be called in a query: it calls 'print' (line 2)"),
+		use("two_helpers", "fn inner(x: float) float ->\n    print(x)\n    x\nfn mid(x: float) float -> inner(x)\nfn outer(x: float) float -> mid(x)\n",
+			"outer(e.salary) > 0.0",
+			"'outer' can't be called in a query: it calls 'mid' (line 5), which calls 'inner' (line 4), which calls 'print' (line 2)"),
+		use("mutual", "fn a(x: float) float -> b(x)\nfn b(x: float) float ->\n    print(x)\n    a(x)\n",
+			"a(e.salary) > 0.0",
+			"'a' can't be called in a query: it calls 'b' (line 1), which calls 'print' (line 3)"),
+		use("assign_outer", "n = 0\nfn bump(x: float) float ->\n    n = n + 1\n    x\n", "bump(e.salary) > 0.0",
+			"'bump' can't be called in a query: it assigns 'n' (line 3)"),
+		use("push_local", "fn traced(x: float) float ->\n    log = list []\n    log.push(x)\n    x\n", "traced(e.salary) > 0.0",
+			"'traced' can't be called in a query: it calls 'push' (line 3)"),
+		use("elem_assign", "fn bad(x: float) float ->\n    xs = list [x]\n    xs[0] = x\n    x\n", "bad(e.salary) > 0.0",
+			"'bad' can't be called in a query: it changes a list or dict (line 3)"),
+		use("dict_assign", "fn bad(x: float) float ->\n    d = dict { a: x }\n    d.a = x\n    x\n", "bad(e.salary) > 0.0",
+			"'bad' can't be called in a query: it changes a list or dict (line 3)"),
+		use("calls_lambda", "fn apply(x: float) float ->\n    f = fn(y: float) float -> y * 2.0\n    f(x)\n", "apply(e.salary) > 0.0",
+			"'apply' can't be called in a query: it calls a function value (line 3)"),
+		use("function_value", "f = fn(x: float) float -> x\n", "f(e.salary) > 0.0",
+			"'f' can't be called in a query: it's a function value"),
+		use("lambda_direct", "", "(fn(x: float) float -> x)(e.salary) > 0.0",
+			"a function value can't be called in a query"),
+		use("default_param", "fn pad(x: float, k: float = 1.0) float ->\n    print(k)\n    x\n", "pad(e.salary) > 0.0",
+			"'pad' can't be called in a query: it calls 'print' (line 2)"),
+		use("io_exists", "incl 'std/io'\n", "io::exists('nope')",
+			"'io::exists' can't be called in a query: it calls the native function 'io_exists', which isn't declared rowsafe"),
+		use("sys_cpu", "incl 'std/sys'\n", "sys::cpu_count() > 0",
+			"'sys::cpu_count' can't be called in a query: it calls the native function 'sys_cpu_count', which isn't declared rowsafe"),
+		use("csv_format", "", "csv::format_text(staff) == ''",
+			"'csv::format_text' can't be called in a query: it calls the native function 'csv_format_text', which isn't declared rowsafe"),
+		use("time_now", "incl 'std/time'\n", "time::now() > 0.0",
+			"'time::now' can't be called in a query: it calls the native function 'time_now', which isn't declared rowsafe"),
+		use("time_since", "incl 'std/time'\n", "time::since(0.0) > 0.0",
+			"'time::since' can't be called in a query: it calls 'time::clock'"),
+		use("time_today", "incl 'std/time'\n", "time::today() == time::date(2020, 1, 1)",
+			"'time::today' can't be called in a query"),
+		use("time_sleep", "incl 'std/time'\n", "time::sleep(0.0) == null",
+			"'time::sleep' can't be called in a query"),
+		use("random_seed", "incl 'std/random'\n", "random::seed(1) == null",
+			"'random::seed' can't be called in a query"),
+		use("random_shuffle", "incl 'std/random'\n", "len(random::shuffle(list [1])) > 0",
+			"'random::shuffle' can't be called in a query"),
+		use("blas_dot", "incl 'std/blas'\n", "blas::dot(vec [1.0], vec [1.0]) > 0.0",
+			"'blas::dot' can't be called in a query: it calls the native function 'blas_dot', which isn't declared rowsafe"),
+		{name: "module_helper", files: map[string]string{"staff.csv": queryCSV, "lib.qrk": "fn loud(x: float) float ->\n    print(x)\n    x\n"},
+			source: "incl './lib'\n" + queryPre + "r = staff | e -> filter(lib::loud(e.salary) > 0.0)\n",
+			err:    "'lib::loud' can't be called in a query: it calls 'print' (line 2)"},
+		{name: "extern_not_rowsafe", files: map[string]string{"staff.csv": queryCSV, "h.hpp": rowSafeTagH, "lib.qrk": "extern 'h.hpp'\nextern fn c_norm(x: float) float as 'q_tag'\nmodule lib:\n    fn norm(x: float) float -> c_norm(x)\n"},
+			source: "incl './lib'\n" + queryPre + "r = staff | e -> filter(lib::norm(e.salary) > 0.0)\n",
+			err:    "'lib::norm' can't be called in a query: it calls the native function 'c_norm', which isn't declared rowsafe"},
+		{name: "extern_method_not_rowsafe", files: map[string]string{"staff.csv": queryCSV, "h.hpp": rowSafeTagH},
+			source: "extern 'h.hpp'\nextern fn str.tag() str as 'q_tag'\nfn labeled(s: str) str -> s.tag()\n" + queryPre + "r = staff | e -> filter(labeled(e.name) == 'Ann')\n",
+			err:    "'labeled' can't be called in a query: it calls the native function 'tag', which isn't declared rowsafe"},
+		{name: "reads_outer", files: staff,
+			source: "threshold = 100000.0\nfn band(x: float) str -> 'high' if x > threshold else 'low'\n" + queryPre + "print((staff | e -> mutate(b = band(e.salary))).b)\n",
+			want:   "['high', 'low', null, 'high', 'low']"},
+		{name: "mutual_safe", files: staff,
+			source: "fn a(x: float) float -> b(x)\nfn b(x: float) float -> x\n" + queryPre + "print((staff | e -> mutate(z = a(e.salary))).z)\n",
+			want:   "[120000.0, 90000.5, null, 150000.0, 80000.0]"},
+		{name: "default_ok", files: staff,
+			source: "fn pad(x: float, k: float = 1.0) float -> x + k\n" + queryPre + "print((staff | e -> mutate(y = pad(e.id))).y)\n",
+			want:   "[2.0, 3.0, 4.0, 5.0, 6.0]"},
+		{name: "time_year", files: staff,
+			source: "incl 'std/time'\n" + queryPre + "print((staff | e -> mutate(y = time::year(time::date(2020, 1, e.id)))).y)\n",
+			want:   "[2020, 2020, 2020, 2020, 2020]"},
+		{name: "extern_method_rowsafe", files: map[string]string{"staff.csv": queryCSV, "h.hpp": rowSafeTagH},
+			source: "extern 'h.hpp'\nextern rowsafe fn str.tag() str as 'q_tag'\nfn labeled(s: str) str -> s.tag()\n" + queryPre + "print((staff | e -> mutate(n = labeled(e.name))).n)\n",
+			want:   "['Ann', 'Bo', 'Cy', 'Di', 'Ed']"},
+	})
+}
+
+// TestTables_Once is D44: a row-safe call whose arguments don't read the row
+// runs the first time a row needs it, and not at all when no row does.
+// A random draw is not reused.
+func TestTables_Once(t *testing.T) {
+	files := map[string]string{"staff.csv": queryCSV, "tick.hpp": rowSafeTickH}
+	tick := "extern 'tick.hpp'\nextern rowsafe fn tick() int as 'q_rowsafe_tick'\nextern rowsafe fn ticks() int as 'q_rowsafe_ticks'\nextern rowsafe fn boom() int as 'q_rowsafe_boom'\n"
+	q := func(name, body, want, err string) tableCase {
+		return tableCase{name: name, files: files, source: tick + queryPre + body, want: want, err: err}
+	}
+	runTableCases(t, []tableCase{
+		q("counted_once", "r = staff | e -> mutate(n = tick())\nprint(r.n)\nprint(ticks())\n", "[1, 1, 1, 1, 1]\n1", ""),
+		q("mean_of_outside_column", "fn mark(x: float) float ->\n    tick()\n    x\nr = staff | e -> filter(e.salary > mark(mean(staff.salary)))\nprint(r.name)\nprint(ticks())\n", "['Ann', 'Di']\n1", ""),
+		q("ungrouped_aggregate_arg", "fn mark(x: float) float ->\n    tick()\n    x\nr = staff | e -> filter(e.salary > mark(mean(e.salary)))\nprint(ticks())\n", "1", ""),
+		q("grouped_not_once", "fn mark(x: float) float ->\n    tick()\n    x\nr = staff | e -> group_by(e.dept) | filter(e.salary > mark(mean(e.salary)))\nprint(ticks())\n", "4", ""),
+		q("never_and", "r = staff | e -> filter(false and tick() > 0)\nprint(len(r.id))\nprint(ticks())\n", "0\n0", ""),
+		q("never_ternary", "r = staff | e -> mutate(n = tick() if false else e.id)\nprint(r.n)\nprint(ticks())\n", "[1, 2, 3, 4, 5]\n0", ""),
+		q("empty_table", "none = staff | e -> filter(e.id > 99)\nr = none | e -> mutate(n = tick())\nprint(len(r.id))\nprint(ticks())\n", "0\n0", ""),
+		q("empty_does_not_fail", "none = staff | e -> filter(e.id > 99)\nr = none | e -> filter(boom() > 0)\nprint(len(r.id))\n", "0", ""),
+		q("never_branch_does_not_fail", "r = staff | e -> filter(false and boom() > 0)\nprint(len(r.id))\n", "0", ""),
+		q("earlier_row_error_wins", "struct S:\n    x: int\n    s: str\nt: tbl[S] = unwrap(csv::parse_text('x,s\\n0,no\\n1,2\\n'))\nr = t | e -> filter(to_int(e.s) > 0 and boom() > 0)\n", "", "cannot parse 'no'"),
+		q("fails_at_first_row_that_needs_it", "struct S:\n    x: int\nt: tbl[S] = unwrap(csv::parse_text('x\\n0\\n1\\n'))\nr = t | e -> filter(e.x == 1 and boom() > 0)\n", "", "boom"),
+		{name: "draw_not_once", files: map[string]string{"staff.csv": queryCSV},
+			source: "incl 'std/random'\n" + queryPre + "random::seed(1)\nr = staff | e -> mutate(u = random::uniform())\nprint((r | e -> summarize(k = n_distinct(e.u))).k[0])\n",
+			want:   "5"},
+		{name: "draw_in_helper_not_once", files: map[string]string{"staff.csv": queryCSV},
+			source: "incl 'std/random'\nfn jitter() float -> random::uniform()\n" + queryPre + "random::seed(1)\nr = staff | e -> mutate(u = jitter())\nprint((r | e -> summarize(k = n_distinct(e.u))).k[0])\n",
+			want:   "5"},
 	})
 }

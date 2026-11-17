@@ -174,6 +174,8 @@ func (a *Analyzer) analyzeExternFn(node *ast.TreeNode) Type {
 		ParamTypes: paramTypes,
 		ReturnType: returnType,
 	}
+	rowSafe := node.ExternRowSafe
+	draws := drawSymbols[symbol]
 	sig := &builtinSignature{
 		Type:    funcType,
 		MinArgs: len(paramTypes),
@@ -200,6 +202,8 @@ func (a *Analyzer) analyzeExternFn(node *ast.TreeNode) Type {
 			RuntimeSymbol:    symbol,
 			NativeParamTypes: nativeParams,
 			NativeReturnType: nativeReturn,
+			RowSafe:          rowSafe,
+			Draws:            draws,
 		}
 	} else {
 		// Method on a type
@@ -228,6 +232,8 @@ func (a *Analyzer) analyzeExternFn(node *ast.TreeNode) Type {
 			NativeParamTypes:   nativeParams,
 			NativeReturnType:   nativeReturn,
 			NativeReceiverType: nativeReceiver,
+			RowSafe:            rowSafe,
+			Draws:              draws,
 		}
 	}
 

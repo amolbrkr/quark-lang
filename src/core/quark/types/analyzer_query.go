@@ -78,13 +78,16 @@ const queryVerbs = "filter, mutate, select, deselect, rename, distinct, sort, gr
 // rowContext is the row a verb expression reads: the row name's symbol, the
 // row type, and the function nesting where it is bound (a function written
 // inside a verb expression can't read the row). noReads marks an argument
-// computed once for the whole step (head's count).
+// computed once for the whole step (head's count). grouped means an aggregate
+// in this expression differs from row to row (a grouped filter or mutate, or
+// any summarize).
 type rowContext struct {
 	sym     *Symbol
 	row     *StructType
 	depth   int
 	noReads bool
 	verb    string
+	grouped bool
 }
 
 // analyzeQuery checks a query and records it for lowering.
@@ -114,6 +117,10 @@ func (a *Analyzer) analyzeQuery(node *ast.TreeNode) Type {
 			break
 		}
 		step := &QueryStep{Node: stepNode, Verb: verb, In: row, Out: row}
+		// An aggregate is one value for the whole step unless the step is
+		// grouped, in which case it is the row's group. summarize always
+		// has one result per group.
+		a.verbGrouped = (groupBy != nil && verb != "group_by") || verb == "summarize"
 		ok := true
 		switch verb {
 		case "filter":
@@ -199,7 +206,7 @@ func (a *Analyzer) inRow(name, verb string, row *StructType, noReads bool, fn fu
 	sym := a.currentScope.Define(name, TypeVoid, false)
 	sym.Kind = SymRow
 	saved := a.rowCtx
-	a.rowCtx = &rowContext{sym: sym, row: row, depth: a.lambdaDepth, noReads: noReads, verb: verb}
+	a.rowCtx = &rowContext{sym: sym, row: row, depth: a.lambdaDepth, noReads: noReads, verb: verb, grouped: a.verbGrouped}
 	fn()
 	a.rowCtx = saved
 	a.popScope()

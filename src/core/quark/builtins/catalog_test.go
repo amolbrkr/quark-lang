@@ -30,6 +30,49 @@ func TestCatalog_AllSpecsHaveRuntimePrefixQ(t *testing.T) {
 	}
 }
 
+// TestCatalog_RowSafe locks the spec's list (tables v0.3 §4.2): print, input,
+// describe, and the methods that change a list or dict are not row-safe, and
+// every other builtin is. A new builtin stays unsafe until its entry says so.
+func TestCatalog_RowSafe(t *testing.T) {
+	notSafe := map[string]bool{
+		"print": true, "input": true,
+		"list_any.push": true, "list_any.pop": true, "list_any.set": true,
+		"list_any.insert": true, "list_any.remove": true, "list_any.reverse": true,
+		"list_any.sort": true, "list_any.sort_by": true,
+		"dict_any.set":     true,
+		"tbl_any.describe": true,
+	}
+	mutates := map[string]bool{
+		"list_any.push": true, "list_any.pop": true, "list_any.set": true,
+		"list_any.insert": true, "list_any.remove": true, "list_any.reverse": true,
+		"list_any.sort": true, "list_any.sort_by": true,
+		"dict_any.set": true,
+	}
+	seen := map[string]bool{}
+	for _, s := range catalog {
+		key := s.Name
+		if s.ReceiverType != "" {
+			key = string(s.ReceiverType) + "." + s.Name
+		}
+		seen[key] = true
+		if notSafe[key] {
+			if s.RowSafe {
+				t.Errorf("%s is row-safe; the spec says it is not", key)
+			}
+		} else if !s.RowSafe {
+			t.Errorf("%s is not row-safe; set RowSafe, or add it to the unsafe set if it must not run per row", key)
+		}
+		if s.Mutates != mutates[key] {
+			t.Errorf("%s Mutates=%v, want %v", key, s.Mutates, mutates[key])
+		}
+	}
+	for key := range notSafe {
+		if !seen[key] {
+			t.Errorf("unsafe builtin %s is not in the catalog", key)
+		}
+	}
+}
+
 func TestCatalog_MinArgsNotGreaterThanMaxArgs(t *testing.T) {
 	for i, s := range catalog {
 		if s.MinArgs > s.MaxArgs {

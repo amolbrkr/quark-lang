@@ -23,6 +23,13 @@ func (l *lowerer) call(node *ast.TreeNode) Expr {
 	if plan == nil {
 		l.ice("INV-CALLPLAN-MISSING", node, "missing call plan")
 	}
+	// A call that doesn't depend on the row is the same for every row. It
+	// stays where the expression evaluates it, so a row that doesn't reach
+	// it doesn't run it, and the first row that does is where an error is
+	// reported (D44).
+	if plan.Once && l.row != nil && l.onceNode != node {
+		return l.onceCall(node)
+	}
 	if funcNode.NodeType == ast.MemberNode && plan.Dispatch == ir.DispatchClosure {
 		l.ice("INV-DOT-CALL", node, "dot-call syntax is not supported")
 	}
@@ -143,6 +150,34 @@ func (l *lowerer) call(node *ast.TreeNode) Expr {
 	}
 	l.ice("INV-CALLPLAN-DISPATCH", node, "unknown dispatch for '%s'", funcNode.TokenLiteral())
 	return nil
+}
+
+// onceCall evaluates node the first time a row reaches it and reuses the
+// result for later rows. The slot is declared before the loop (rowFor);
+// the call itself stays in this branch, so a row that doesn't reach here
+// doesn't make it, and a failure is reported at this row.
+func (l *lowerer) onceCall(node *ast.TreeNode) Expr {
+	if l.once == nil {
+		l.ice("INV-QUERY-ONCE", node, "a call computed once per step is outside a row loop")
+	}
+	var value Expr
+	then := l.sub(func() {
+		l.setLoc(node)
+		prev := l.onceNode
+		l.onceNode = node
+		value = l.call(node)
+		l.onceNode = prev
+	})
+	if value == nil {
+		return nullValue()
+	}
+	slot := l.once.slot(l, node, value.Rep())
+	then.Stmts = append(then.Stmts,
+		&SetTemp{T: slot.value, Value: value},
+		&SetTemp{T: slot.ready, Value: trueExpr},
+	)
+	l.add(&If{Cond: &Not{X: &TempRef{T: slot.ready}}, Then: then})
+	return &TempRef{T: slot.value}
 }
 
 // keepArgsAlive keeps every argument of a call into native code that refers

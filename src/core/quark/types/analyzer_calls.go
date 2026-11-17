@@ -264,6 +264,10 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 	if t, handled := a.tryAggregate(node, funcNode, argNodes); handled {
 		return t
 	}
+	if a.inVerbExpr() {
+		grouped := a.rowCtx.grouped
+		defer func() { a.noteVerbCall(node, grouped) }()
+	}
 	argCount := len(argNodes)
 	argTypes := make([]Type, 0, argCount)
 	a.expectArgs(node, funcNode, argNodes)
@@ -352,7 +356,7 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 	if funcNode.NodeType == ast.IdentifierNode {
 		calleeName = funcNode.TokenLiteral()
 		what = "function '" + calleeName + "'"
-		a.deferFixedDispatch(a.callPlans[node], a.currentScope.Lookup(calleeName))
+		a.deferFixedDispatch(node, a.callPlans[node], a.currentScope.Lookup(calleeName))
 	}
 	a.checkArity(node, what, minArity, maxArity, argCount)
 	a.settleArgs(funcType.ParamTypes, argTypes, argNodes)

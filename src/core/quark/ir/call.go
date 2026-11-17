@@ -48,6 +48,15 @@ type CallPlan struct {
 	// supports, in switch order.
 	MethodCandidates []MethodCandidate
 
+	// RowSafe is set on an extern fn declared `extern rowsafe fn` (D43).
+	// Draws is set on a random draw: row-safe, but each call draws its own
+	// number, so a verb does not compute it once (D44).
+	// Once is set on a verb call whose result is the same for every row of
+	// the step. Lowering evaluates it the first time a row needs it.
+	RowSafe bool
+	Draws   bool
+	Once    bool
+
 	// Populated for DispatchExtern and DispatchNative calls:
 	// C++ type per explicit parameter: "int64_t", "double", "bool", "const char*",
 	// "QVector*", "QList*", "QDict*", "QClosure*", "QValue"

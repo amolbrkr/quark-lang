@@ -132,12 +132,55 @@ func (l *lowerer) openRow(cur Expr, row *types.StructType, exprs []*ast.TreeNode
 	return rl, n, l.let(all)
 }
 
+// onceSlot is one call a row loop evaluates the first time a row needs it.
+type onceSlot struct {
+	ready *Temp
+	value *Temp
+}
+
+// onceSlots are the once-calls of the row loop being lowered.
+type onceSlots struct {
+	list   []*onceSlot
+	byNode map[*ast.TreeNode]*onceSlot
+}
+
+func (o *onceSlots) slot(l *lowerer, node *ast.TreeNode, rep Rep) *onceSlot {
+	if s := o.byNode[node]; s != nil {
+		return s
+	}
+	s := &onceSlot{ready: l.newTemp(RepBool), value: l.newTemp(rep)}
+	o.byNode[node] = s
+	o.list = append(o.list, s)
+	return s
+}
+
+// onceZero is the placeholder a once-slot holds until a row needs the call.
+// A pointer result keeps the pointer the call returned; a row-safe function's
+// pointer refers to memory that outlives the call (a broken rowsafe promise
+// can dangle, like any other broken native contract).
+func onceZero(r Rep) Expr {
+	switch r {
+	case RepInt, RepFloat, RepBool, RepDate:
+		return zeroOf(r)
+	case RepValue:
+		return nullValue()
+	default:
+		return &Const{R: r, Text: "nullptr"}
+	}
+}
+
 // rowFor lowers body as a loop over the rows openRow bound.
 func (l *lowerer) rowFor(rl *rowLoop, n Expr, body func()) {
-	saved := l.row
+	saved, savedOnce := l.row, l.once
 	l.row = rl
+	l.once = &onceSlots{byNode: map[*ast.TreeNode]*onceSlot{}}
 	loop := l.sub(body)
-	l.row = saved
+	slots := l.once
+	l.row, l.once = saved, savedOnce
+	for _, s := range slots.list {
+		l.add(&Let{T: s.ready, Value: falseExpr})
+		l.add(&Let{T: s.value, Value: onceZero(s.value.R)})
+	}
 	l.add(&ForIndex{Idx: rl.idx, Len: n, Body: loop})
 }
 

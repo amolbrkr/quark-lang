@@ -410,11 +410,9 @@ A pipe whose target starts with a name and `->` is a table query (semantics.md �
 Query           ::= ID "->" Step { "|" Step }
                 |   ID "->" NEWLINE INDENT Step { NEWLINE "|" Step } NEWLINE DEDENT
 Step            ::= ID "(" [ StepArg { "," StepArg } [ "," ] ] ")"
-StepArg         ::= ID "=" PipeExpr               (mutate)
-                |   ID "=" Aggregate              (summarize)
+StepArg         ::= ID "=" PipeExpr               (mutate, summarize, group_by)
                 |   "desc" "(" PipeExpr ")"       (sort)
                 |   PipeExpr
-Aggregate       ::= ID "(" [ PipeExpr ] ")"       (count(), sum(e.x), ...)
 ```
 
 ```quark
@@ -430,8 +428,8 @@ top = staff | e -> sort(desc(e.salary)) | head(3)
 
 - The steps continue on lines that start with `|`, as for pipes (§10.4), or form an indented block after `e ->` at the end of a line.
 - Every `| step` after `e ->` belongs to the query, so a query's result can't be piped into a function directly: `(t | e -> head(3)) | f()`. A second `| x ->` is a parse error (`a query names its row once`).
-- The verb (`filter`, `mutate`, `select`, `deselect`, `rename`, `distinct`, `sort`, `group_by`, `summarize`, `head`, `tail`), the aggregate names (`count`, `sum`, `mean`, `min`, `max`, `n_distinct`), `desc` and the `name =` column names are part of the query, never functions or variables, so a user function named `filter` or `mean` doesn't affect them. Which verbs exist and what their arguments may be is checked by the compiler (`specs/tables_v0_2_spec.md`).
-- A summarize column is exactly one aggregate: `r = max(e.x) - min(e.x)` is a parse error (`a summarize column is exactly one aggregate of a column`).
+- The verb (`filter`, `mutate`, `select`, `deselect`, `rename`, `distinct`, `sort`, `group_by`, `summarize`, `head`, `tail`), `desc` and the `name =` column names are part of the query, never functions or variables, so a user function named `filter` doesn't affect them. Which verbs exist and what their arguments may be is checked by the compiler (semantics.md §9.5).
+- Inside `filter`, `mutate` and `summarize`, `count()`, `count(e.x)`, `sum`, `mean`, `sd`, `min`, `max` and `n_distinct` of an expression that reads the row are aggregates, not function calls. `min` and `max` with two arguments, and `sum`, `mean`, `sd`, `min` and `max` of a value that doesn't read the row, are the prelude functions.
 
 ## 11) Not in the Language
 

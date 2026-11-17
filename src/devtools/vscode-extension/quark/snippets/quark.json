@@ -114,7 +114,7 @@
   },
   "Incl (stdlib)": {
     "prefix": "incl",
-    "body": ["incl '${1|std/io,std/fmt,std/csv,std/sys,std/time,std/random,std/blas,std/stats|}' as ${0:io}"],
+    "body": ["incl '${1|std/io,std/fmt,std/csv,std/sys,std/time,std/random,std/blas|}' as ${0:io}"],
     "description": "Import a stdlib module under an alias, then call alias::fn(...)"
   },
   "Incl (file)": {

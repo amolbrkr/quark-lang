@@ -162,6 +162,9 @@ func (l *lowerer) columnReads(node *ast.TreeNode, skip map[*ast.TreeNode]bool) [
 		if n == nil || skip[n] || n.NodeType == ast.LambdaNode {
 			return
 		}
+		if l.an.AggUses[n] != nil {
+			return
+		}
 		if c, ok := l.an.ColumnRefs[n]; ok {
 			if !seen[c] {
 				seen[c] = true
@@ -292,6 +295,11 @@ func (l *lowerer) rowStrict(node *ast.TreeNode) (Expr, Expr) {
 	for _, c := range l.columnReads(node, skip) {
 		pres = append(pres, &Call{Fn: "q_tbl_present", Args: []Expr{&TempRef{T: l.row.cols[c]}, &TempRef{T: l.row.idx}}, R: RepBool})
 	}
+	for _, u := range l.aggUsesIn(node, skip) {
+		if u.CanMiss {
+			pres = append(pres, l.aggPresent(u))
+		}
+	}
 	r := rowRep(l.nodeType(node))
 	if len(pres) == 0 {
 		return l.asRowRep(node, l.expr(node), r), nil
@@ -413,9 +421,16 @@ func (l *lowerer) columnRead(node *ast.TreeNode, col int) Expr {
 }
 
 func (l *lowerer) queryFilter(cur Expr, st *types.QueryStep) Expr {
+	if len(st.Aggs) > 0 {
+		l.bindGrouping(cur, st.GroupKeys, st.In)
+		for _, a := range st.Aggs {
+			l.agg.vecs[a] = l.evalAgg(cur, a, st.In)
+		}
+	}
 	rows := l.newTemp(repRowSet)
 	l.add(&Let{T: rows, Value: &Call{Fn: "q_rows_new", Args: []Expr{&Call{Fn: "q_tbl_rows", Args: []Expr{cur}, R: RepInt}}, R: repRowSet}})
 	rl, n, dense := l.openRow(cur, st.In, []*ast.TreeNode{st.Pred})
+	dense = l.andDense(dense, l.aggDense(st.Pred))
 	l.denseOrSlow(dense, func() {
 		// No missing values: the predicate is an ordinary bool, and the
 		// selected indexes are gathered without a branch on it.
@@ -434,6 +449,7 @@ func (l *lowerer) queryFilter(cur Expr, st *types.QueryStep) Expr {
 			l.add(&If{Cond: keep, Then: &Block{Stmts: []Stmt{push}}})
 		})
 	})
+	l.agg = nil
 	return l.let(&Call{Fn: "q_tbl_take", Args: []Expr{cur, &TempRef{T: rows}}, R: RepTable})
 }
 
@@ -441,35 +457,28 @@ func (l *lowerer) queryFilter(cur Expr, st *types.QueryStep) Expr {
 var pushFns = map[Rep]string{RepInt: "q_col_push_int", RepFloat: "q_col_push_float", RepBool: "q_col_push_bool", RepDate: "q_col_push_date", RepValue: "q_col_push_str"}
 
 func (l *lowerer) queryMutate(cur Expr, st *types.QueryStep) Expr {
+	needsAgg := false
 	for _, c := range st.Cols {
-		r := rowRep(c.Type)
-		b := l.newTemp(repColOut)
-		rows := &Call{Fn: "q_tbl_rows", Args: []Expr{cur}, R: RepInt}
-		l.add(&Let{T: b, Value: &Call{Fn: "q_col_new", Args: []Expr{intConst(ColumnDtype(c.Type)), rows}, R: repColOut}})
-		rl, n, dense := l.openRow(cur, c.Reads, []*ast.TreeNode{c.Value})
-		pushOf := func(v Expr) *Do {
-			return &Do{X: &Call{Fn: pushFns[r], Args: []Expr{&TempRef{T: b}, l.asRowRep(c.Value, v, r)}, R: Rep("void")}}
+		if len(c.Aggs) > 0 {
+			needsAgg = true
+			break
 		}
-		l.denseOrSlow(dense, func() {
-			l.rowFor(rl, n, func() {
-				l.add(pushOf(l.expr(c.Value)))
-			})
-		}, func() {
-			l.rowFor(rl, n, func() {
-				v, p := l.rowValue(c.Value)
-				push := pushOf(v)
-				if p == nil {
-					l.add(push)
-					return
-				}
-				null := &Do{X: &Call{Fn: "q_col_push_null", Args: []Expr{&TempRef{T: b}}, R: Rep("void")}}
-				l.add(&If{Cond: p, Then: &Block{Stmts: []Stmt{push}}, Else: &Block{Stmts: []Stmt{null}}})
-			})
-		})
-		vec := l.let(&Call{Fn: "q_col_finish", Args: []Expr{&TempRef{T: b}}, R: RepVector})
+	}
+	if needsAgg {
+		l.bindGrouping(cur, st.GroupKeys, st.In)
+	}
+	for _, c := range st.Cols {
+		for _, a := range c.Aggs {
+			if l.agg.vecs[a] != nil {
+				continue
+			}
+			l.agg.vecs[a] = l.evalAgg(cur, a, c.Reads)
+		}
+		vec := l.buildColumn(cur, c.Reads, c.Value, c.Type)
 		def := &Const{R: Rep("const QStructDef*"), Text: "&_sdef_" + structCName(c.After.Name)}
 		cur = l.let(&Call{Fn: "q_tbl_put", Args: []Expr{cur, def, intConst(c.Index), vec}, R: RepTable})
 	}
+	l.agg = nil
 	return cur
 }
 
@@ -494,32 +503,237 @@ func (l *lowerer) queryDistinct(cur Expr, st *types.QueryStep) Expr {
 }
 
 func (l *lowerer) querySummarize(cur Expr, st *types.QueryStep) Expr {
-	var g Expr
-	if st.Group == nil {
-		g = l.let(&Call{Fn: "q_tbl_whole", Args: []Expr{cur}, R: repGrouping})
-	} else {
-		keys := make([]Expr, len(st.Group))
-		for i, k := range st.Group {
-			keys[i] = intConst(k)
-		}
-		g = l.let(&Call{Fn: "q_tbl_group", Args: []Expr{cur, &InitList{Type: "std::initializer_list<int>", Elems: keys}}, R: repGrouping})
-	}
-	var cols []Expr
-	for _, k := range st.Group {
-		cols = append(cols, l.let(&Call{Fn: "q_tbl_group_key", Args: []Expr{cur, g, intConst(k)}, R: RepVector}))
-	}
+	l.bindGrouping(cur, st.GroupKeys, st.In)
 	for _, a := range st.Aggs {
-		var call *Call
-		switch {
-		case a.Fn == "count" && a.Col < 0:
-			call = &Call{Fn: "q_tbl_agg_count", Args: []Expr{g}, R: RepVector}
-		case a.Fn == "count":
-			call = &Call{Fn: "q_tbl_agg_count_values", Args: []Expr{cur, intConst(a.Col), g}, R: RepVector}
-		default:
-			call = &Call{Fn: "q_tbl_agg_" + a.Fn, Args: []Expr{cur, intConst(a.Col), g}, R: RepVector}
+		l.agg.vecs[a] = l.evalAgg(cur, a, st.In)
+	}
+	cols := append([]Expr{}, l.agg.keyVecs...)
+	if len(st.SumCols) > 0 {
+		n := l.let(&Call{Fn: "q_tbl_ngroups", Args: []Expr{l.agg.group}, R: RepInt})
+		keyRefs := map[int]*Temp{}
+		for i, k := range st.GroupKeys {
+			if k.Col < 0 || keyRefs[k.Col] != nil {
+				continue
+			}
+			ref := l.newTemp(RepVecRef)
+			l.add(&Let{T: ref, Value: &Call{Fn: "q_vec_deref", Args: []Expr{l.agg.keyVecs[i]}, R: RepVecRef}})
+			keyRefs[k.Col] = ref
 		}
-		cols = append(cols, l.let(call))
+		l.agg.perGroup = true
+		for _, sc := range st.SumCols {
+			cols = append(cols, l.buildGroupColumn(n, keyRefs, st.In, sc.Expr, sc.Type))
+		}
+		l.agg.perGroup = false
 	}
 	def := &Const{R: Rep("const QStructDef*"), Text: "&_sdef_" + structCName(st.Out.Name)}
-	return l.let(&Call{Fn: "q_tbl_make", Args: []Expr{def, &InitList{Type: "std::initializer_list<QVector*>", Elems: cols}}, R: RepTable})
+	out := l.let(&Call{Fn: "q_tbl_make", Args: []Expr{def, &InitList{Type: "std::initializer_list<QVector*>", Elems: cols}}, R: RepTable})
+	l.agg = nil
+	return out
+}
+
+// aggBind is the grouping and the aggregate values of the step being lowered.
+type aggBind struct {
+	group    Expr
+	whole    bool
+	perGroup bool
+	vecs     map[*types.AggUse]Expr
+	keyVecs  []Expr
+}
+
+// bindGrouping computes the step's groups: the whole table, or the group_by
+// keys (a computed key is evaluated into a column first).
+func (l *lowerer) bindGrouping(cur Expr, keys []types.GroupKey, row *types.StructType) {
+	l.agg = &aggBind{vecs: map[*types.AggUse]Expr{}, keyVecs: make([]Expr, len(keys))}
+	if len(keys) == 0 {
+		l.agg.group = l.let(&Call{Fn: "q_tbl_whole", Args: []Expr{cur}, R: repGrouping})
+		l.agg.whole = true
+		return
+	}
+	ptrs := make([]Expr, len(keys))
+	full := make([]Expr, len(keys))
+	for i, k := range keys {
+		if k.Expr != nil {
+			full[i] = l.buildColumn(cur, row, k.Expr, k.Type)
+			ptrs[i] = full[i]
+		} else {
+			ptrs[i] = &Call{Fn: "q_tbl_col_ptr", Args: []Expr{cur, intConst(k.Col)}, R: Rep("const QVector*")}
+		}
+	}
+	n := &Call{Fn: "q_tbl_rows", Args: []Expr{cur}, R: RepInt}
+	g := l.let(&Call{Fn: "q_tbl_group_vecs", Args: []Expr{n, &InitList{Type: "std::initializer_list<const QVector*>", Elems: ptrs}}, R: repGrouping})
+	l.agg.group = g
+	for i, k := range keys {
+		if k.Expr != nil {
+			l.agg.keyVecs[i] = l.let(&Call{Fn: "q_tbl_key_col", Args: []Expr{full[i], g}, R: RepVector})
+		} else {
+			l.agg.keyVecs[i] = l.let(&Call{Fn: "q_tbl_group_key", Args: []Expr{cur, g, intConst(k.Col)}, R: RepVector})
+		}
+	}
+}
+
+// evalAgg computes one aggregate into a vector of one value per group.
+// A column argument uses the column in place; an expression is evaluated
+// into a temporary column first, then the same kernel.
+func (l *lowerer) evalAgg(cur Expr, a *types.AggUse, row *types.StructType) Expr {
+	g := l.agg.group
+	switch {
+	case a.Fn == "count" && a.Arg == nil:
+		return l.let(&Call{Fn: "q_tbl_agg_count", Args: []Expr{g}, R: RepVector})
+	case a.Col >= 0 && a.Fn == "count":
+		return l.let(&Call{Fn: "q_tbl_agg_count_values", Args: []Expr{cur, intConst(a.Col), g}, R: RepVector})
+	case a.Col >= 0:
+		return l.let(&Call{Fn: "q_tbl_agg_" + a.Fn, Args: []Expr{cur, intConst(a.Col), g}, R: RepVector})
+	}
+	vec := l.buildColumn(cur, row, a.Arg, a.ArgType)
+	fn := "q_tbl_agg_" + a.Fn + "_vec"
+	if a.Fn == "count" {
+		fn = "q_tbl_agg_count_values_vec"
+	}
+	return l.let(&Call{Fn: fn, Args: []Expr{vec, g}, R: RepVector})
+}
+
+// buildColumn evaluates expr once per row into a new column.
+func (l *lowerer) buildColumn(cur Expr, row *types.StructType, expr *ast.TreeNode, typ types.Type) Expr {
+	r := rowRep(typ)
+	b := l.newTemp(repColOut)
+	rows := &Call{Fn: "q_tbl_rows", Args: []Expr{cur}, R: RepInt}
+	l.add(&Let{T: b, Value: &Call{Fn: "q_col_new", Args: []Expr{intConst(ColumnDtype(typ)), rows}, R: repColOut}})
+	rl, n, dense := l.openRow(cur, row, []*ast.TreeNode{expr})
+	dense = l.andDense(dense, l.aggDense(expr))
+	pushOf := func(v Expr) *Do {
+		return &Do{X: &Call{Fn: pushFns[r], Args: []Expr{&TempRef{T: b}, l.asRowRep(expr, v, r)}, R: Rep("void")}}
+	}
+	l.denseOrSlow(dense, func() {
+		l.rowFor(rl, n, func() {
+			l.add(pushOf(l.expr(expr)))
+		})
+	}, func() {
+		l.rowFor(rl, n, func() {
+			v, p := l.rowValue(expr)
+			l.pushOrNull(b, p, pushOf(v))
+		})
+	})
+	return l.let(&Call{Fn: "q_col_finish", Args: []Expr{&TempRef{T: b}}, R: RepVector})
+}
+
+// buildGroupColumn evaluates expr once per group. keys are the group-key
+// columns, indexed by the input column, already one value per group.
+func (l *lowerer) buildGroupColumn(n Expr, keys map[int]*Temp, row *types.StructType, expr *ast.TreeNode, typ types.Type) Expr {
+	r := rowRep(typ)
+	b := l.newTemp(repColOut)
+	l.add(&Let{T: b, Value: &Call{Fn: "q_col_new", Args: []Expr{intConst(ColumnDtype(typ)), n}, R: repColOut}})
+	idx := l.newTemp(RepInt)
+	rl := &rowLoop{idx: idx, row: row, cols: keys}
+	l.rowFor(rl, n, func() {
+		v, p := l.rowValue(expr)
+		l.pushOrNull(b, p, &Do{X: &Call{Fn: pushFns[r], Args: []Expr{&TempRef{T: b}, l.asRowRep(expr, v, r)}, R: Rep("void")}})
+	})
+	return l.let(&Call{Fn: "q_col_finish", Args: []Expr{&TempRef{T: b}}, R: RepVector})
+}
+
+func (l *lowerer) pushOrNull(b *Temp, present Expr, push *Do) {
+	if present == nil {
+		l.add(push)
+		return
+	}
+	null := &Do{X: &Call{Fn: "q_col_push_null", Args: []Expr{&TempRef{T: b}}, R: Rep("void")}}
+	l.add(&If{Cond: present, Then: &Block{Stmts: []Stmt{push}}, Else: &Block{Stmts: []Stmt{null}}})
+}
+
+func (l *lowerer) andDense(a, b Expr) Expr {
+	switch {
+	case a == nil:
+		return b
+	case b == nil:
+		return a
+	default:
+		return l.let(&AndAlso{L: a, X: b})
+	}
+}
+
+// aggDense is true when every aggregate expr reads that can be missing is
+// present for every group. Nil when none of them can be missing.
+func (l *lowerer) aggDense(exprs ...*ast.TreeNode) Expr {
+	if l.agg == nil {
+		return nil
+	}
+	var checks []Expr
+	seen := map[*types.AggUse]bool{}
+	for _, e := range exprs {
+		for _, u := range l.aggUsesIn(e, nil) {
+			if seen[u] || !u.CanMiss {
+				continue
+			}
+			seen[u] = true
+			checks = append(checks, &Call{Fn: "q_grp_dense", Args: []Expr{l.agg.vecs[u]}, R: RepBool})
+		}
+	}
+	if len(checks) == 0 {
+		return nil
+	}
+	all := checks[0]
+	for _, c := range checks[1:] {
+		all = &AndAlso{L: all, X: c}
+	}
+	return l.let(all)
+}
+
+func (l *lowerer) aggUsesIn(node *ast.TreeNode, skip map[*ast.TreeNode]bool) []*types.AggUse {
+	var out []*types.AggUse
+	seen := map[*types.AggUse]bool{}
+	var walk func(*ast.TreeNode)
+	walk = func(n *ast.TreeNode) {
+		if n == nil || skip[n] || n.NodeType == ast.LambdaNode {
+			return
+		}
+		if u := l.an.AggUses[n]; u != nil {
+			if !seen[u] {
+				seen[u] = true
+				out = append(out, u)
+			}
+			return
+		}
+		if _, ok := l.an.ColumnRefs[n]; ok {
+			return
+		}
+		for _, ch := range n.Children {
+			walk(ch)
+		}
+	}
+	walk(node)
+	return out
+}
+
+func (l *lowerer) groupIndex() Expr {
+	if l.agg.perGroup {
+		return &TempRef{T: l.row.idx}
+	}
+	if l.agg.whole {
+		return intConst(0)
+	}
+	return &Call{Fn: "q_tbl_group_of", Args: []Expr{l.agg.group, &TempRef{T: l.row.idx}}, R: RepInt}
+}
+
+func (l *lowerer) aggPresent(u *types.AggUse) Expr {
+	return &Call{Fn: "q_grp_present", Args: []Expr{l.agg.vecs[u], l.groupIndex()}, R: RepBool}
+}
+
+func (l *lowerer) aggValue(node *ast.TreeNode, u *types.AggUse) Expr {
+	if l.agg == nil || l.agg.vecs[u] == nil {
+		l.ice("INV-QUERY-AGG", node, "aggregate %s was not computed", u.Fn)
+	}
+	idx := l.groupIndex()
+	vec := l.agg.vecs[u]
+	switch rowRep(u.Type) {
+	case RepFloat:
+		return &Call{Fn: "q_grp_f64", Args: []Expr{vec, idx}, R: RepFloat}
+	case RepInt:
+		return &Call{Fn: "q_grp_i64", Args: []Expr{vec, idx}, R: RepInt}
+	case RepBool:
+		return &Call{Fn: "q_grp_bool", Args: []Expr{vec, idx}, R: RepBool}
+	case RepDate:
+		return &Call{Fn: "q_grp_date", Args: []Expr{vec, idx}, R: RepDate}
+	default:
+		return &Call{Fn: "q_grp_str", Args: []Expr{vec, idx}, R: RepStrView}
+	}
 }

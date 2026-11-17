@@ -104,6 +104,58 @@ inline QValue q_max(QValue v) {
     q_exit(1);
 }
 
+// Mean of the present values of a numeric or bool vec (tables D13, D40).
+// Missing entries and NaN are skipped; a bool vec is the share of true
+// values. No present values is an error. Dates can't be averaged.
+inline QValue q_mean(QValue v) {
+    if (v.type != QValue::VAL_VECTOR || !q_vec_has_valid_handle(v) || !q_vec_validate(*v.data.vector_val)) {
+        q_runtime_reportf("runtime error: mean() expects a numeric or bool vec, got %s\n", q_type_name_math(v.type));
+        q_exit(1);
+    }
+    const QVector& vec = *v.data.vector_val;
+    if (vec.type == QVector::Type::STR) {
+        q_runtime_reportf("runtime error: mean() expects a numeric or bool vec, got vec[str]\n");
+        q_exit(1);
+    }
+    if (vec.type == QVector::Type::DATE) {
+        q_runtime_reportf("runtime error: mean of a vec[date]: dates can't be averaged\n");
+        q_exit(1);
+    }
+    size_t count = 0;
+    const double mean = q_vec_mean_present(vec, &count);
+    if (count == 0) {
+        q_runtime_reportf("runtime error: mean() of a vec with no present values\n");
+        q_exit(1);
+    }
+    return qv_float(mean);
+}
+
+// Sample standard deviation (divisor n - 1) of a numeric or bool vec. Fewer
+// than two present values is an error. The kernel is q_sd_present, shared
+// with the table aggregate.
+inline QValue q_sd(QValue v) {
+    if (v.type != QValue::VAL_VECTOR || !q_vec_has_valid_handle(v) || !q_vec_validate(*v.data.vector_val)) {
+        q_runtime_reportf("runtime error: sd() expects a numeric or bool vec, got %s\n", q_type_name_math(v.type));
+        q_exit(1);
+    }
+    const QVector& vec = *v.data.vector_val;
+    if (vec.type == QVector::Type::STR) {
+        q_runtime_reportf("runtime error: sd() expects a numeric or bool vec, got vec[str]\n");
+        q_exit(1);
+    }
+    if (vec.type == QVector::Type::DATE) {
+        q_runtime_reportf("runtime error: sd of a vec[date]: dates can't be averaged\n");
+        q_exit(1);
+    }
+    bool ok = false;
+    const double sd = q_sd_present(vec, &ok);
+    if (!ok) {
+        q_runtime_reportf("runtime error: sd() of a vec with fewer than 2 present values\n");
+        q_exit(1);
+    }
+    return qv_float(sd);
+}
+
 // Sum of vector values
 inline QValue q_sum(QValue v) {
     if (v.type == QValue::VAL_VECTOR) {

@@ -176,7 +176,7 @@ Standardize a column: `z = (a − mean(a)) / sd(a)` with the `n − 1` standard 
 - `quark_list`, `py_list`: three passes (mean, squared deviations, result).
 - `quark_vec`: `d = a - m`, `sqrt(sum(d * d) / (n - 1))`, `d / sd`. `quark_blas`: the same with `blas::dot(d, d)` and `blas::scal(1 / sd, d)`.
 - `numpy`: `(a - a.mean()) / a.std(ddof=1)`; `r_vec`: `(a - mean(a)) / sd(a)`; tables add `z` as a column.
-- `quark_tbl`: the mean and sd from the column as a vec (`stats::mean(t.a)`, then `sum(d * d)`, as in `quark_vec`: there is no sd aggregate), then `mutate(z = (e.a - m) / sd)`. pandas also takes the mean and sd of the column (`a.mean()`, `a.std()`) before `assign`.
+- `quark_tbl`: the mean and sd from the column as a vec (`mean(t.a)`, then `sum(d * d)`, as in `quark_vec`), then `mutate(z = (e.a - m) / sd)`. pandas also takes the mean and sd of the column (`a.mean()`, `a.std()`) before `assign`.
 
 #### filter
 

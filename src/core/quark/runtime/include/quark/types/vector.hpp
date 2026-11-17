@@ -813,6 +813,54 @@ inline double q_vec_mean_present(const QVector& v, size_t* count) {
     return 0.0;
 }
 
+// q_vec_present_doubles appends v's present values as doubles, in order.
+// Float NaN is skipped. A bool's true is 1. str and date are not numeric
+// (the caller reports them); date is not an error here.
+inline bool q_vec_present_doubles(const QVector& v, std::vector<double>& out) {
+    switch (v.type) {
+        case QVector::Type::F64: {
+            const double* d = q_vec_f64_data(v);
+            for (size_t i = 0; i < v.count; i++) {
+                if (q_vec_skips(v, i)) continue;
+                out.push_back(d[i]);
+            }
+            return true;
+        }
+        case QVector::Type::I64: {
+            const int64_t* d = q_vec_i64_data(v);
+            for (size_t i = 0; i < v.count; i++) {
+                if (q_vec_is_null_at(v, i)) continue;
+                out.push_back(static_cast<double>(d[i]));
+            }
+            return true;
+        }
+        case QVector::Type::BOOL: {
+            for (size_t i = 0; i < v.count; i++) {
+                if (q_vec_is_null_at(v, i)) continue;
+                out.push_back(q_vec_bool_at(v, i) ? 1.0 : 0.0);
+            }
+            return true;
+        }
+        case QVector::Type::STR:
+        case QVector::Type::DATE:
+            return false;
+    }
+    return false;
+}
+
+// q_sd_present is the sample standard deviation of v, or *ok false when
+// fewer than two values are present (or v isn't numeric). The table
+// aggregate uses the same function for a whole column (agg_sd).
+inline double q_sd_present(const QVector& v, bool* ok) {
+    std::vector<double> xs;
+    if (!q_vec_present_doubles(v, xs) || xs.size() < 2) {
+        *ok = false;
+        return 0.0;
+    }
+    *ok = true;
+    return q_sample_sd(xs.data(), xs.size());
+}
+
 // sum: an int for int and bool vectors (bools count as 0 and 1; overflow is
 // fatal), a float for float vectors; no values sum to 0.
 inline QValue q_vec_sum(QValue vec) {

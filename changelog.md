@@ -10,6 +10,7 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 
 ## Contents
 
+- [2026-11-16: Tables v0.3, aggregates on one thread](#2026-11-16-tables-v03-aggregates-on-one-thread)
 - [2026-11-16: CI on Linux and Windows](#2026-11-16-ci-on-linux-and-windows)
 - [2026-11-16: std/random, std/sys and std/time at their edges](#2026-11-16-stdrandom-stdsys-and-stdtime-at-their-edges)
 - [2026-11-16: CI, current editor data](#2026-11-16-ci-current-editor-data)
@@ -53,6 +54,42 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 - [2026-04-03: Table runtime scaffolding; struct fixes](#2026-04-03-table-runtime-scaffolding-struct-fixes)
 - [2026-04-02: Structs v0.1](#2026-04-02-structs-v01)
 - [2026-03-28: Vector soundness, `std/fmt` on `extern`, build output](#2026-03-28-vector-soundness-stdfmt-on-extern-build-output)
+
+## 2026-11-16: Tables v0.3, aggregates on one thread
+
+The first part of `specs/tables_v0_3_spec.md`: aggregates work in `filter` and `mutate`, a `group_by` applies only to the next `filter`, `mutate` or `summarize`, a `summarize` column is an expression, and `mean` and `sd` are prelude functions. Still to come in that spec: testing missing values, `contains`, `nrow`, the `count` step, two-argument `min`/`max` typing, row-safety, and running queries on more than one thread.
+
+### Breaking
+
+- **`incl 'std/stats'` no longer works**, and `stats::mean(v)` is written `mean(v)`. `mean` and `sd` are builtin names, so a variable or function named `mean` or `sd` is a compile-time error (`'mean' is a builtin function and can't be redefined or assigned`). A column or struct field may still be named `mean`.
+- **`group_by` is no longer only followed by `summarize`.** It applies to the next `filter`, `mutate` or `summarize`, and that step's output is not grouped. `group_by(e.dept) | filter(...) | summarize(...)` summarizes the whole filtered table. A query that ends on `group_by`, or follows it with `select`, `sort` or another verb, still fails to compile, with a message that names `filter`, `mutate` and `summarize`.
+- **A computed `group_by` key needs a name.** `group_by(e.id > 1)` is a compile-time error; write `group_by(hi = e.id > 1)`.
+
+### Added
+
+- **Aggregates in `filter` and `mutate`, over the whole table or over the row's group.** `count()`, `count(x)`, `sum`, `mean`, `sd`, `min`, `max` and `n_distinct` of an expression that reads the row are computed once before the row loop. Every row of the table, or of the row's group, sees the same value.
+
+```quark
+above = cars | c -> filter(c.mpg > mean(c.mpg))
+dev = cars | c -> group_by(c.cyl) | mutate(dev = c.mpg - mean(c.mpg))
+```
+
+- **An aggregate's argument is an expression**, not only a column: `sum(c.price * c.qty)`, `mean(c.mpg > 25)`, `n_distinct(time::year(c.d))`. A row where the expression is missing is skipped. An aggregate inside another aggregate is a compile-time error.
+- **A `summarize` column is an expression of aggregates and group keys**: `spread = max(c.mpg) - min(c.mpg)`, `label = c.dept + ' team'`. A reference to the row outside an aggregate, other than a group key, is a compile-time error that suggests an aggregate or grouping by it.
+- **A group key may be computed, and is then named**: `group_by(year = time::year(s.day), s.region)`. The name is a column of the `summarize`. A grouped `filter` or `mutate` does not add it.
+- **`sd` is the sample standard deviation** (divisor n − 1). In a table it is missing when fewer than two values are present. `sd(v)` on a vec is an error in that case. `sd(t.x)` and `summarize(s = sd(e.x))` give the same bits, as `mean` does.
+- **`mean(v)` and `sd(v)` are prelude functions** for a numeric or bool vec. A bool's `mean` is the share of true values.
+
+### Fixed
+
+- **`summarize` of `min` or `max` over a whole table** uses one loop that keeps the best value, instead of looking up each row's group. `filter(c.x == max(c.x))` uses that loop.
+
+### Internal
+
+- A whole-table float aggregate of an expression is evaluated into a temporary column and then aggregated with the column kernel, so the bits match. The spec's blockwise evaluation with no temporary column is recorded in `known_issues.md`.
+- `DispatchAggregate` marks an aggregate call so it is not type-checked or emitted as a function call. The same aggregate text in one step, of columns that have not been overwritten, is computed once.
+
+---
 
 ## 2026-11-16: CI on Linux and Windows
 

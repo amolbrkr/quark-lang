@@ -153,6 +153,9 @@ func (l *lowerer) expr(node *ast.TreeNode) Expr {
 	case ast.BinaryNode:
 		return l.binary(node)
 	case ast.FunctionCallNode:
+		if u := l.an.AggUses[node]; u != nil {
+			return l.aggValue(node, u)
+		}
 		return l.call(node)
 	case ast.TernaryNode:
 		return l.ternary(node)

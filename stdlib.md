@@ -26,7 +26,6 @@ The prelude builtins (available everywhere without an import) and the stdlib mod
 - [`std/fmt`](#stdfmt)
 - [`std/sys`](#stdsys)
 - [`std/csv`](#stdcsv)
-- [`std/stats`](#stdstats)
 - [`std/time`](#stdtime)
 - [`std/random`](#stdrandom)
 - [`std/blas` (OpenBLAS)](#stdblas-openblas)
@@ -201,7 +200,7 @@ A float argument is an error, not truncated: a compile-time error when the type 
 |---|---|---|
 | `abs` | `int\|float -> int\|float` | Absolute value, same type as the argument |
 | `min`, `max` | `number, number -> number` | The smaller/larger of two numbers, ordered exactly (§2 of semantics.md). Both ints give an int. An int and a float give a float when the float wins, when they are equal, or when the int wins and fits in a float (`min(1, 2.5)` is `1.0`); an int that wins and does not fit is returned as that int (`min(9007199254740993, 9007199254740994.0)` is `9007199254740993`), a deliberate choice of exactness over speed (`architecture.md` §15). If either is NaN the result is NaN, in either order, as in arithmetic (the vector reductions skip NaN instead). With one argument they reduce a vector ([Reductions](#reductions)) |
-| `sum`, `all`, `any` | `vec -> ...` | Vector reductions ([Reductions](#reductions)); the mean is `stats::mean` (`std/stats`) |
+| `sum`, `mean`, `sd`, `all`, `any` | `vec -> ...` | Vector reductions ([Reductions](#reductions)) |
 | `sqrt` | `float -> float` | Square root; an int argument is widened. A negative argument is a runtime error |
 | `floor`, `ceil` | `float -> int` | Round down / up |
 | `round` | `float -> int` | Round to nearest, halves away from zero (`round(2.5)` is `3`, `round(-2.5)` is `-3`) |
@@ -385,11 +384,13 @@ Reductions follow the table aggregates (`specs/tables_v0_1_spec.md` D6, D13), so
 |---|---|---|
 | `sum` | `vec[int] -> int`, `vec[bool] -> int`, `vec[float] -> float` | Sum of the present values: exact for ints (overflow is a runtime error), `true` counts 1. Floats are summed pairwise in `double` (NumPy's method): the rounding error grows with the log of the length, and the result is the same on every platform. No values sum to `0` (`0.0` for floats) |
 | `min`, `max` | `vec[T] -> T` | Smallest / largest present value, with the vector's element type: numbers by value, `false` before `true`, strings in byte order. A vector with no present values is a runtime error |
+| `mean` | `vec -> float` | Mean of the present values of a numeric or bool vector (a bool vector is the share of `true`). Floats are summed as `sum` sums them, ints exactly, then divided once. No present values is a runtime error |
+| `sd` | `vec -> float` | Sample standard deviation of the present values (divisor n − 1): the mean, then the pairwise sum of squared deviations, then the square root. Fewer than two present values is a runtime error |
 | `all` | `vec[bool] -> bool` | Every present element is `true` (`true` for an empty vector) |
 | `any` | `vec[bool] -> bool` | Some present element is `true` (`false` for an empty vector) |
 
 - Missing entries are skipped, and NaN in float vectors too.
-- `min`, `max` and `stats::mean` (`std/stats`) of a vector with no present values (empty, all missing, or all NaN) are runtime errors: `min() of a vec with no present values`. A value taken out of a vector must be present (D12); in a table, `summarize` gives a missing value instead, since a column can hold one.
+- `min`, `max` and `mean` of a vector with no present values (empty, all missing, or all NaN) are runtime errors: `min() of a vec with no present values`. `sd` (the sample standard deviation, divisor n − 1) is an error when fewer than two values are present. A value taken out of a vector must be present (D12); in a table, `summarize` gives a missing value instead, since a column can hold one. `mean(v)` and `sd(v)` give the same bits as `summarize`'s `mean` and `sd` of that column.
 
 ```quark
 vi = vec [1, 2, 3, 4]
@@ -401,6 +402,8 @@ print(sum(vi > 2))                      // 2: true values count 1
 print(sum(vec [1.5, to_float('nan')]))  // 1.5: NaN is skipped
 print(max(vec ['pear', 'apple']))       // pear
 print(any(vi > 3))                      // true
+print(mean(vi))                         // 2.5
+print(sd(vec [1.0, 2.0, 3.0]))          // 1.0
 ```
 
 ---
@@ -600,24 +603,6 @@ rich = staff | e -> filter(e.salary > 100_000)
 when csv::write_file(rich, 'rich.csv'):
     ok _ -> print('written')
     err e -> print(e)
-```
-
----
-
-## `std/stats`
-
-Statistics on vectors. Import with `incl 'std/stats'`. The functions follow the table aggregates (`specs/tables_v0_1_spec.md` D6), so they agree with `summarize`.
-
-| Function | Signature | Description |
-|---|---|---|
-| `mean` | `v: vec -> float` | Mean of the present values of a numeric or bool vector (a bool vector gives the share of `true` values): floats summed as `sum` sums them, ints summed exactly, then divided once. Missing entries and NaN are skipped; a vector with no present values, and a `vec[str]`, are runtime errors |
-
-```quark
-incl 'std/stats'
-
-print(stats::mean(vec [1, 2, 3, 4]))                  // 2.5
-print(stats::mean(list [1, null, 4].to_vec()))        // 2.5
-print(stats::mean(vec [true, false, false, true]))    // 0.5
 ```
 
 ---

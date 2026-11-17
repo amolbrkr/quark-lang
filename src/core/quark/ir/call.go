@@ -16,6 +16,9 @@ const (
 	// unknown at compile time (e.g. the result of unwrap). Lowering tests the
 	// receiver's runtime type tag over MethodCandidates.
 	DispatchDynamicMethod
+	// DispatchAggregate is a query aggregate (sum(e.x) inside a verb). It is
+	// syntax, not a call: lowering reads the value computed for the row's group.
+	DispatchAggregate
 )
 
 // MethodCandidate is one receiver type a DispatchDynamicMethod call may resolve to.

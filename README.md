@@ -145,7 +145,7 @@ fn apply(k, v) -> k(v)
 fn add(a, b) -> a + b
 print(apply(add, 1))
 
-fn mean(xs) float ->
+fn average(xs) float ->
     if len(xs) > 0:
         sum(xs) / len(xs)
 ```
@@ -153,7 +153,7 @@ fn mean(xs) float ->
 ```text
 error[QK-CHECK-001] (check): cannot add str to list[float]: a list keeps the element type it was created with; create it as 'xs: list = list [...]' to hold mixed values at ov.qrk:2:13
 error[QK-CHECK-001] (check): argument 1 of 'apply' is called with 1 argument (line 4), but 'add' takes 2 arguments at ov.qrk:6:13
-error[QK-CHECK-001] (check): function 'mean' declares return type 'float' but can end without a value (an if without else, or a when with no matching arm, returns null); give every branch a value at ov.qrk:8:1
+error[QK-CHECK-001] (check): function 'average' declares return type 'float' but can end without a value (an if without else, or a when with no matching arm, returns null); give every branch a value at ov.qrk:8:1
 ```
 
 Values the compiler can't know are checked when they are used. The same
@@ -177,10 +177,8 @@ column is a `vec`, shared rather than copied. Arithmetic, comparisons, masks
 and reductions work on the whole column, and missing values are skipped:
 
 ```quark
-incl 'std/stats'
-
 price = sales.price                       // vec[f64]
-print(stats::mean(price))                 // 3.875
+print(mean(price))                        // 3.875
 print(price[price > 4.0] * 0.9)           // [3.825, 3.825, 3.825]
 print(sum(sales.units))                   // 47: the missing entry is skipped
 ```
@@ -777,7 +775,7 @@ runtime error that names `fillna` and `drop_na`.
 `sum`, `min` and `max` of a vector follow the table aggregates: an int vector
 sums exactly to an int, `min`/`max` keep the element type, and missing entries
 and NaN are skipped. `min`/`max` of a vector with no present values is an
-error. The mean is `stats::mean` from `std/stats`.
+error. `mean` and `sd` follow the same rules: `mean` of no present values is an error, and `sd` (the sample standard deviation, divisor n − 1) of fewer than two present values is an error.
 
 The buffers use the Apache Arrow columnar layout: contiguous `int64`/`double`
 values, bit-packed bools, `int32` offsets plus UTF-8 bytes for strings, a

@@ -149,7 +149,7 @@ Header-only C++17 library at `src/core/quark/runtime/include/quark/`. Key files:
 - `ops/` — Arithmetic, comparison, logical, member access operators
 - `builtins/` — prelude builtins (console I/O, string, math, list, dict, conversion); each header must be listed in `quark.hpp`
 - `builtins/repr.hpp` — how values print (`print`/`to_str`: contents, 100-item elision); `core/format.hpp` — float text (shortest round-trip)
-- `core/sum.hpp` — pairwise float summation, shared by the vec reductions, `std/stats` and the table aggregates so they give the same bits (no `long double`)
+- `core/sum.hpp` — pairwise float summation, shared by the vec reductions (`sum`, `mean`, `sd`) and the table aggregates so they give the same bits (no `long double`)
 - `types/resource.hpp` — generational registry for native handles; every handle has the single Quark type `resource` (the kind, e.g. `file`, is runtime-only)
 - `table/engine.hpp`, `table/csv.hpp`, `table/query.hpp` — the eager columnar table engine (gather, sort, group, aggregates), the CSV/TSV reader/writer (`specs/tables_v0_1_spec.md` §7-8), and what generated query code and the table methods call. Not included by `quark.hpp`: a program includes `table/query.hpp` when it has a query or calls a builtin whose catalog `Spec.Header` names it (passed on as `CallPlan.RuntimeHeader`), and `std/csv`'s glue includes `table/csv.hpp`
 

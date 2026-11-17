@@ -66,6 +66,8 @@ var catalog = []Spec{
 	{Name: "min", Runtime: "q_min", MinArgs: 1, MaxArgs: 2, ParamTypes: []TypeKey{TypeAny, TypeAny}, ReturnType: TypeAny},
 	{Name: "max", Runtime: "q_max", MinArgs: 1, MaxArgs: 2, ParamTypes: []TypeKey{TypeAny, TypeAny}, ReturnType: TypeAny},
 	{Name: "sum", Runtime: "q_sum", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeAny},
+	{Name: "mean", Runtime: "q_mean", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeFloat},
+	{Name: "sd", Runtime: "q_sd", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeFloat},
 	{Name: "all", Runtime: "q_all", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeBool},
 	{Name: "any", Runtime: "q_any", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeAny}, ReturnType: TypeBool},
 	{Name: "sqrt", Runtime: "q_sqrt", MinArgs: 1, MaxArgs: 1, ParamTypes: []TypeKey{TypeFloat}, ReturnType: TypeFloat},

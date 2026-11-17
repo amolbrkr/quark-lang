@@ -70,6 +70,9 @@ type Analysis struct {
 	// expression reads.
 	Queries    map[*ast.TreeNode]*Query
 	ColumnRefs map[*ast.TreeNode]int
+	// AggUses maps each aggregate call in a verb (sum(e.x), count(), ...) to
+	// the value lowering computes once for the row's group.
+	AggUses map[*ast.TreeNode]*AggUse
 }
 
 // Analysis returns the analyzer outputs for root, which must be the tree
@@ -92,6 +95,7 @@ func (a *Analyzer) Analysis(root *ast.TreeNode) *Analysis {
 		TableReads:       a.tableReads,
 		Queries:          a.queries,
 		ColumnRefs:       a.columnRefs,
+		AggUses:          a.aggUses,
 	}
 }
 

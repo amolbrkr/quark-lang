@@ -97,7 +97,7 @@ print(fmt::table(t))
 			source: "incl 'std/time' as time\nincl 'std/csv' as csv\nstruct E:\n    d: date\nt: tbl[E] = unwrap(csv::parse_text('d\\n2022-01-05\\n'))\nxs = t.d.to_list()\nfn add(l, v) -> l.push(v)\nadd(xs, 5)\n",
 			err:    "push()",
 		},
-		{name: "mean_of_dates", source: "incl 'std/time' as time\nincl 'std/csv' as csv\nincl 'std/stats' as stats\nstruct E:\n    d: date\nt: tbl[E] = unwrap(csv::parse_text('d\\n2022-01-05\\n'))\nprint(stats::mean(t.d))\n", err: "dates can't be averaged"},
+		{name: "mean_of_dates", source: "incl 'std/time' as time\nincl 'std/csv' as csv\nstruct E:\n    d: date\nt: tbl[E] = unwrap(csv::parse_text('d\\n2022-01-05\\n'))\nprint(mean(t.d))\n", err: "dates can't be averaged"},
 		{name: "compare_date_vec_with_int", source: "incl 'std/time' as time\nincl 'std/csv' as csv\nstruct E:\n    d: date\nt: tbl[E] = unwrap(csv::parse_text('d\\n2022-01-05\\n'))\nprint(t.d < 3)\n", err: "dates compare with dates"},
 		{name: "period_scale_overflow", source: "incl 'std/time' as time\nprint(time::years(4) * 4611686018427387904)\n", err: "period is too large"},
 		{name: "date_add_overflow", source: "incl 'std/time' as time\nprint(time::ymd('2022-01-05') + 9223372036854775807)\n", err: "outside the range of dates"},

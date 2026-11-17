@@ -1,9 +1,9 @@
 // Vector reductions agree with the table aggregates (specs/tables_v0_1_spec.md
-// D13): sum(v), min(v), max(v) and stats::mean(v) of a vec must give what
-// summarize gives for the same column over the whole table.
+// D13, specs/tables_v0_3_spec.md D40): sum(v), min(v), max(v), mean(v) and
+// sd(v) of a vec must give what summarize gives for the same column over the
+// whole table.
 
 #include "check.hpp"
-#include "../../core/stdlib/stats.hpp"
 
 #include <cmath>
 
@@ -12,10 +12,12 @@ using namespace quark::tbl;
 static QValue boxed(QVector* v) { return qv_vector_from(v); }
 
 // The single value of a one-group aggregate column, as a QValue.
-static QValue first(const QVector* out) {
-    if (q_vec_is_null_at(*out, 0)) return qv_null();
-    return q_vec_box_at(*out, 0);
+static QValue at(const QVector* out, size_t i) {
+    if (q_vec_is_null_at(*out, i)) return qv_null();
+    return q_vec_box_at(*out, i);
 }
+
+static QValue first(const QVector* out) { return at(out, 0); }
 
 static bool same(QValue a, QValue b) {
     if (a.type != b.type) return false;
@@ -34,7 +36,8 @@ static void agree(const char* label, QVector* col) {
     std::string l(label);
     if (col->type != QVector::Type::STR) {
         EXPECT((l + ": sum").c_str(), same(q_vec_sum(boxed(col)), first(agg_sum(*col, all))));
-        EXPECT((l + ": mean").c_str(), q_stats_mean(col) == q_vec_f64_data(*agg_mean(*col, all))[0]);
+        EXPECT((l + ": mean").c_str(), q_mean(boxed(col)).data.float_val == q_vec_f64_data(*agg_mean(*col, all))[0]);
+        EXPECT((l + ": sd").c_str(), same(q_sd(boxed(col)), first(agg_sd(*col, all))));
     }
     EXPECT((l + ": min").c_str(), same(q_vec_min(boxed(col)), first(agg_min(*col, all))));
     EXPECT((l + ": max").c_str(), same(q_vec_max(boxed(col)), first(agg_max(*col, all))));
@@ -99,8 +102,11 @@ int main() {
     QVector* means = agg_mean(*col(t, 1), g);
     EXPECT("group a sums as a vec of its values", q_vec_f64_data(*sums)[0] == q_vec_sum(boxed(f64_col(group_a))).data.float_val);
     EXPECT("group b sums as a vec of its values", q_vec_f64_data(*sums)[1] == q_vec_sum(boxed(f64_col(group_b))).data.float_val);
-    EXPECT("group a mean as a vec of its values", q_vec_f64_data(*means)[0] == q_stats_mean(f64_col(group_a)));
-    EXPECT("group b mean as a vec of its values", q_vec_f64_data(*means)[1] == q_stats_mean(f64_col(group_b)));
+    EXPECT("group a mean as a vec of its values", q_vec_f64_data(*means)[0] == q_mean(boxed(f64_col(group_a))).data.float_val);
+    EXPECT("group b mean as a vec of its values", q_vec_f64_data(*means)[1] == q_mean(boxed(f64_col(group_b))).data.float_val);
+    QVector* sds = agg_sd(*col(t, 1), g);
+    EXPECT("group a sd as a vec of its values", same(q_sd(boxed(f64_col(group_a))), at(sds, 0)));
+    EXPECT("group b sd as a vec of its values", same(q_sd(boxed(f64_col(group_b))), at(sds, 1)));
 
     // Pairwise summation keeps the error near log n ulps: a million 0.1s sum
     // to within 1e-8 of 100000 (summing one by one is off by about 1e-6).
@@ -111,7 +117,7 @@ int main() {
     EXPECT("naive summation is less accurate (the test can tell)", std::fabs(naive - 100000.0) > 1e-8);
 
     // Int means are exact sums divided once, also beyond 2^53.
-    EXPECT("int mean above 2^53", q_stats_mean(i64_col({9007199254740993LL, 9007199254740995LL})) == 9007199254740994.0);
+    EXPECT("int mean above 2^53", q_mean(boxed(i64_col({9007199254740993LL, 9007199254740995LL}))).data.float_val == 9007199254740994.0);
 
     return finish("vec reductions");
 }

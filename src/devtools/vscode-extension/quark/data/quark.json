@@ -94,6 +94,14 @@
       "signature": "sum(any) any"
     },
     {
+      "name": "mean",
+      "signature": "mean(any) float"
+    },
+    {
+      "name": "sd",
+      "signature": "sd(any) float"
+    },
+    {
       "name": "all",
       "signature": "all(any) bool"
     },
@@ -483,16 +491,6 @@
           "name": "randint_vec",
           "signature": "randint_vec(n: int, lo: int, hi: int) vec",
           "doc": "n ints in [lo, hi], both ends included, as a vec."
-        }
-      ]
-    },
-    {
-      "name": "stats",
-      "functions": [
-        {
-          "name": "mean",
-          "signature": "mean(v: vec) float",
-          "doc": "runtime error."
         }
       ]
     },

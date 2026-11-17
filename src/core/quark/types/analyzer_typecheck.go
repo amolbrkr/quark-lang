@@ -71,6 +71,31 @@ func (a *Analyzer) inferBuiltinReturnType(name string, argTypes []Type, callNode
 			}
 		}
 		return TypeAny
+	case "mean", "sd":
+		// Prelude reductions (tables v0.3 D40): a float, with the table
+		// aggregate's rules. A vec[date] is rejected here; an untyped vec is
+		// checked when it runs.
+		if len(argTypes) >= 1 && !isUnknownType(argTypes[0]) {
+			t := argTypes[0]
+			vec, isVec := t.(*VectorType)
+			if !isVec {
+				a.errorAt(callNode, "argument 1 of '%s' expects numeric or bool vec, got %s", name, t.String())
+				return TypeError
+			}
+			switch el := vec.ElementType; {
+			case isUnknownType(el):
+				return TypeFloat
+			case el.Equals(TypeDate):
+				a.errorAt(callNode, "%s of a vec[date]: dates can't be averaged", name)
+				return TypeError
+			case el.Equals(TypeInt), el.Equals(TypeFloat), el.Equals(TypeBool):
+				return TypeFloat
+			default:
+				a.errorAt(callNode, "argument 1 of '%s' expects numeric or bool vec, got %s", name, t.String())
+				return TypeError
+			}
+		}
+		return TypeAny
 	case "min", "max":
 		// min(v) / max(v) of a vec keep its element type; a vec with no present
 		// values is a runtime error, never a null typed as the element (D13).

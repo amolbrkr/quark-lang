@@ -1,5 +1,3 @@
-incl 'std/stats'
-
 print('== smoke: vec soundness ==')
 
 a = vec [1, 2, 3]
@@ -49,5 +47,5 @@ print(vn[2])
 // Reductions follow the table aggregates (D13): int sums stay exact ints.
 print(sum(vec [9007199254740993, 1]))
 print(max(vec ['pear', 'apple', 'fig']))
-print(stats::mean(vn))
-print(stats::mean(vec [true, false, false, true]))
+print(mean(vn))
+print(mean(vec [true, false, false, true]))

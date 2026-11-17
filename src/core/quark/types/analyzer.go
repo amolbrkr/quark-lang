@@ -92,6 +92,13 @@ type Analyzer struct {
 	columnRefs  map[*ast.TreeNode]int
 	rowCtx      *rowContext
 	lambdaDepth int
+	// Aggregates in the verb expression being analyzed (analyzer_agg.go).
+	// aggUses records every aggregate call for lowering; aggs is the step's
+	// scope (nil outside filter, mutate and summarize); inAgg is set while
+	// an aggregate's argument is analyzed.
+	aggs    *aggScope
+	aggUses map[*ast.TreeNode]*AggUse
+	inAgg   bool
 
 	// REPL session (specs/repl_v0_1_spec.md). session is set when the tree's
 	// children are input blocks. sessionUses lists the session variables a
@@ -160,6 +167,7 @@ func NewAnalyzer() *Analyzer {
 		anonRows:        make(map[string]*StructType),
 		queries:         make(map[*ast.TreeNode]*Query),
 		columnRefs:      make(map[*ast.TreeNode]int),
+		aggUses:         make(map[*ast.TreeNode]*AggUse),
 		sessionUses:     make(map[*ast.TreeNode][]*Symbol),
 		structHome:      make(map[string]string),
 	}

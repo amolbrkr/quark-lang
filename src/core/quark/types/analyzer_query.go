@@ -23,13 +23,32 @@ type QueryStep struct {
 	In   *StructType
 	Out  *StructType
 
-	Pred  *ast.TreeNode   // filter: the condition
-	Cols  []*MutateColumn // mutate: the columns, in the order written
-	Keys  []SortKey       // sort; group_by (Desc unused); distinct (Desc unused)
-	Keep  []int           // select, deselect: columns of In kept, in output order
-	Aggs  []*AggregateCol // summarize
-	Group []int           // summarize: the group_by key columns of In; nil for the whole table
-	Count *ast.TreeNode   // head, tail: the row count; nil for the default (6)
+	Pred      *ast.TreeNode   // filter: the condition
+	Cols      []*MutateColumn // mutate: the columns, in the order written
+	Keys      []SortKey       // sort; distinct (Desc unused)
+	Keep      []int           // select, deselect: columns of In kept, in output order
+	SumCols   []*SumCol       // summarize: the columns, after the group keys
+	GroupKeys []GroupKey      // the group_by this step consumes; a group_by step's own keys
+	Aggs      []*AggUse       // filter and summarize: aggregates computed before the step
+	Count     *ast.TreeNode   // head, tail: the row count; nil for the default (6)
+}
+
+// SumCol is one `name = expression` of a summarize. The expression's
+// references to the row are aggregates or group keys (D38).
+type SumCol struct {
+	Name string
+	Expr *ast.TreeNode
+	Type Type
+}
+
+// GroupKey is a group_by key. Col is a column of the input when the key is
+// that column (bare, or name = e.col); Expr is set when the key is computed
+// from something other than one column. Name is the summarize output's name.
+type GroupKey struct {
+	Name string
+	Col  int
+	Expr *ast.TreeNode
+	Type Type
 }
 
 // MutateColumn is one `name = value` of a mutate (D23): its value reads the
@@ -42,21 +61,15 @@ type MutateColumn struct {
 	Reads *StructType
 	After *StructType
 	Index int
+	// Aggs are the aggregates this column introduces. One computed for an
+	// earlier column of the same mutate is not repeated here.
+	Aggs []*AggUse
 }
 
 // SortKey is a sort or group key: a column of the step's input row.
 type SortKey struct {
 	Col  int
 	Desc bool
-}
-
-// AggregateCol is one `name = agg(e.col)` of a summarize (D24). Col is the
-// aggregated column of the input row, -1 for count().
-type AggregateCol struct {
-	Name string
-	Fn   string
-	Col  int
-	Type Type
 }
 
 // queryVerbs are the steps a query may have, for messages.
@@ -95,8 +108,8 @@ func (a *Analyzer) analyzeQuery(node *ast.TreeNode) Type {
 	failed := false
 	for _, stepNode := range node.Children[2:] {
 		verb := stepNode.TokenLiteral()
-		if groupBy != nil && verb != "summarize" {
-			a.errorAt(stepNode, "after group_by comes summarize: a grouped table can only be summarized (got %s)", verb)
+		if groupBy != nil && verb != "filter" && verb != "mutate" && verb != "summarize" {
+			a.errorAt(stepNode, "group_by applies to the next step, which must be filter, mutate or summarize (got %s)", verb)
 			failed = true
 			break
 		}
@@ -120,7 +133,11 @@ func (a *Analyzer) analyzeQuery(node *ast.TreeNode) Type {
 		case "group_by":
 			ok = a.queryGroupBy(step, rowName)
 		case "summarize":
-			ok = a.querySummarize(step, rowName, groupBy)
+			var keys []GroupKey
+			if groupBy != nil {
+				keys = groupBy.GroupKeys
+			}
+			ok = a.querySummarize(step, rowName, keys)
 		case "head", "tail":
 			ok = a.querySlice(step, rowName)
 		default:
@@ -134,6 +151,9 @@ func (a *Analyzer) analyzeQuery(node *ast.TreeNode) Type {
 		if verb == "group_by" {
 			groupBy = step
 		} else {
+			if groupBy != nil && verb != "summarize" {
+				step.GroupKeys = groupBy.GroupKeys
+			}
 			groupBy = nil
 		}
 		q.Steps = append(q.Steps, step)
@@ -143,7 +163,7 @@ func (a *Analyzer) analyzeQuery(node *ast.TreeNode) Type {
 		return TypeError
 	}
 	if groupBy != nil {
-		a.errorAt(groupBy.Node, "group_by must be followed by summarize in the same query: a grouped table can't be stored or passed on")
+		a.errorAt(groupBy.Node, "group_by must be followed by filter, mutate or summarize in the same query")
 		return TypeError
 	}
 	q.Row = row
@@ -262,7 +282,9 @@ func (a *Analyzer) queryFilter(step *QueryStep, rowName string) bool {
 		a.errorAt(step.Node, "filter takes one condition, got %d; join conditions with 'and'", len(args))
 		return false
 	}
+	done := a.openAggs()
 	t := a.rowExpr(args[0], rowName, "filter", step.In)
+	step.Aggs = done()
 	if IsErrorType(t) {
 		return false
 	}
@@ -281,6 +303,10 @@ func (a *Analyzer) queryMutate(step *QueryStep, rowName string) bool {
 	}
 	row := step.In
 	written := map[string]bool{}
+	saved := a.aggs
+	scope := &aggScope{byKey: map[string]*AggUse{}, gen: map[int]int{}}
+	a.aggs = scope
+	defer func() { a.aggs = saved }()
 	for _, arg := range step.Node.Children {
 		if arg.NodeType != ast.ColumnDefNode || len(arg.Children) != 1 {
 			a.errorAt(arg, "mutate's columns are written name = expression")
@@ -292,7 +318,9 @@ func (a *Analyzer) queryMutate(step *QueryStep, rowName string) bool {
 			return false
 		}
 		written[name] = true
+		before := len(scope.list)
 		t := a.rowExpr(arg.Children[0], rowName, "mutate", row)
+		fresh := append([]*AggUse(nil), scope.list[before:]...)
 		if IsErrorType(t) {
 			return false
 		}
@@ -308,7 +336,9 @@ func (a *Analyzer) queryMutate(step *QueryStep, rowName string) bool {
 			fields = append(fields, StructField{Name: name, Type: t})
 		}
 		after := a.anonRow(fields)
-		step.Cols = append(step.Cols, &MutateColumn{Name: name, Value: arg.Children[0], Type: t, Reads: row, After: after, Index: idx})
+		step.Cols = append(step.Cols, &MutateColumn{Name: name, Value: arg.Children[0], Type: t, Reads: row, After: after, Index: idx, Aggs: fresh})
+		// The next column reads what this one wrote.
+		scope.gen[idx]++
 		row = after
 	}
 	step.Out = row
@@ -527,107 +557,157 @@ func (a *Analyzer) querySort(step *QueryStep, rowName string) bool {
 }
 
 func (a *Analyzer) queryGroupBy(step *QueryStep, rowName string) bool {
-	return a.keyColumns(step, rowName, false)
+	if len(step.Node.Children) == 0 {
+		a.errorAt(step.Node, "group_by needs at least one key: group_by(%s.col)", rowName)
+		return false
+	}
+	seenCol := map[int]bool{}
+	seenName := map[string]bool{}
+	for _, arg := range step.Node.Children {
+		name, expr := "", arg
+		named := false
+		if arg.NodeType == ast.ColumnDefNode && len(arg.Children) == 1 {
+			named, name, expr = true, arg.TokenLiteral(), arg.Children[0]
+		}
+		t := a.rowExpr(expr, rowName, "group_by", step.In)
+		if IsErrorType(t) {
+			return false
+		}
+		col, isCol := a.isColumnRef(expr)
+		if !named && !isCol {
+			a.errorAt(expr, "a computed group key needs a name: group_by(year = time::year(%s.day))", rowName)
+			return false
+		}
+		if !named {
+			name = step.In.Fields[col].Name
+		}
+		if !a.columnTypeOK(expr, name, t) {
+			return false
+		}
+		if seenName[name] {
+			if !named && isCol {
+				a.errorAt(expr, "group_by names column '%s' twice", name)
+			} else {
+				a.errorAt(arg, "group_by names key '%s' twice", name)
+			}
+			return false
+		}
+		if isCol && !named && seenCol[col] {
+			a.errorAt(expr, "group_by names column '%s' twice", name)
+			return false
+		}
+		seenName[name] = true
+		key := GroupKey{Name: name, Col: -1, Type: t}
+		if isCol {
+			key.Col = col
+			if !named {
+				seenCol[col] = true
+			}
+		} else {
+			key.Expr = expr
+		}
+		step.GroupKeys = append(step.GroupKeys, key)
+	}
+	return true
 }
 
-func (a *Analyzer) querySummarize(step *QueryStep, rowName string, groupBy *QueryStep) bool {
+func (a *Analyzer) querySummarize(step *QueryStep, rowName string, keys []GroupKey) bool {
 	if len(step.Node.Children) == 0 {
 		a.errorAt(step.Node, "summarize needs at least one column: summarize(n = count())")
 		return false
 	}
+	step.GroupKeys = keys
 	var fields []StructField
-	names := map[string]string{} // column name -> what defined it
-	if groupBy != nil {
-		for _, k := range groupBy.Keys {
-			f := step.In.Fields[k.Col]
-			fields = append(fields, StructField{Name: f.Name, Type: f.Type})
-			names[f.Name] = "a group key"
-			step.Group = append(step.Group, k.Col)
+	keyNames := map[string]bool{}
+	keyCols := map[int]bool{}
+	for _, k := range keys {
+		fields = append(fields, StructField{Name: k.Name, Type: k.Type})
+		keyNames[k.Name] = true
+		if k.Col >= 0 && k.Expr == nil {
+			keyCols[k.Col] = true
 		}
 	}
+	done := a.openAggs()
+	names := map[string]bool{}
+	ok := true
 	for _, arg := range step.Node.Children {
-		if arg.NodeType == ast.AggregateNode {
-			a.errorAt(arg, "give the summarize column a name: name = %s(...)", arg.TokenLiteral())
-			return false
-		}
-		if arg.NodeType != ast.ColumnDefNode || len(arg.Children) != 1 || arg.Children[0].NodeType != ast.AggregateNode {
-			a.errorAt(arg, "summarize's columns are written name = agg(%s.col)", rowName)
-			return false
+		if arg.NodeType != ast.ColumnDefNode || len(arg.Children) != 1 {
+			if arg.NodeType == ast.FunctionCallNode && len(arg.Children) > 0 && arg.Children[0].NodeType == ast.IdentifierNode {
+				a.errorAt(arg, "give the summarize column a name: name = %s(...)", arg.Children[0].TokenLiteral())
+			} else {
+				a.errorAt(arg, "give the summarize column a name: name = expression")
+			}
+			ok = false
+			break
 		}
 		name := arg.TokenLiteral()
-		if what, dup := names[name]; dup {
-			if what == "a group key" {
-				a.errorAt(arg, "summarize column '%s' has the name of a group key; choose another name", name)
-			} else {
-				a.errorAt(arg, "summarize defines column '%s' twice", name)
-			}
-			return false
+		if keyNames[name] {
+			a.errorAt(arg, "summarize column '%s' has the name of a group key; choose another name", name)
+			ok = false
+			break
 		}
-		names[name] = "a column"
-		agg := a.aggregate(arg.Children[0], name, rowName, step.In)
-		if agg == nil {
-			return false
+		if names[name] {
+			a.errorAt(arg, "summarize defines column '%s' twice", name)
+			ok = false
+			break
 		}
-		step.Aggs = append(step.Aggs, agg)
-		fields = append(fields, StructField{Name: name, Type: agg.Type})
+		names[name] = true
+		expr := arg.Children[0]
+		t := a.rowExpr(expr, rowName, "summarize", step.In)
+		if IsErrorType(t) {
+			ok = false
+			break
+		}
+		if !a.summarizeRefsOK(expr, keyCols) {
+			ok = false
+			break
+		}
+		if !a.columnTypeOK(expr, name, t) {
+			ok = false
+			break
+		}
+		step.SumCols = append(step.SumCols, &SumCol{Name: name, Expr: expr, Type: t})
+		fields = append(fields, StructField{Name: name, Type: t})
+	}
+	step.Aggs = done()
+	if !ok {
+		return false
 	}
 	step.Out = a.anonRow(fields)
 	return true
 }
 
-// aggregates are the summarize aggregates (D24, and n_distinct from tables v0.2).
-const aggregates = "count, sum, mean, min, max, n_distinct"
-
-// aggregate checks one aggregate: count() or agg(e.col) (D6, §4).
-func (a *Analyzer) aggregate(node *ast.TreeNode, name, rowName string, row *StructType) *AggregateCol {
-	fn := node.TokenLiteral()
-	args := node.Children
-	switch fn {
-	case "count", "sum", "mean", "min", "max", "n_distinct":
-	default:
-		a.errorAt(node, "'%s' is not an aggregate (aggregates: %s); to summarize a computed value, add it with mutate first", fn, aggregates)
-		return nil
-	}
-	if fn == "count" && len(args) == 0 {
-		return &AggregateCol{Name: name, Fn: fn, Col: -1, Type: TypeInt}
-	}
-	if len(args) != 1 {
-		a.errorAt(node, "%s takes one column, %s(%s.col)", fn, fn, rowName)
-		return nil
-	}
-	t := a.rowExpr(args[0], rowName, "summarize", row)
-	if IsErrorType(t) {
-		return nil
-	}
-	col, ok := a.isColumnRef(args[0])
-	if !ok {
-		a.errorAt(args[0], "%s aggregates a column (%s.col), not an expression; compute the value with mutate first", fn, rowName)
-		return nil
-	}
-	ct := row.Fields[col].Type
-	agg := &AggregateCol{Name: name, Fn: fn, Col: col}
-	switch fn {
-	case "count", "n_distinct":
-		agg.Type = TypeInt
-	case "sum":
-		switch {
-		case ct.Equals(TypeFloat):
-			agg.Type = TypeFloat
-		case ct.Equals(TypeInt), ct.Equals(TypeBool):
-			agg.Type = TypeInt
+// summarizeRefsOK reports whether every reference to the row outside an
+// aggregate is a group key (D38).
+func (a *Analyzer) summarizeRefsOK(node *ast.TreeNode, keyCols map[int]bool) bool {
+	var walk func(*ast.TreeNode) bool
+	walk = func(n *ast.TreeNode) bool {
+		if n == nil || n.NodeType == ast.LambdaNode {
+			return true
 		}
-	case "mean":
-		if ct.Equals(TypeInt) || ct.Equals(TypeFloat) || ct.Equals(TypeBool) {
-			agg.Type = TypeFloat
+		if _, isAgg := a.aggUses[n]; isAgg {
+			return true
 		}
-	default:
-		agg.Type = ct
+		if col, ok := a.columnRefs[n]; ok && n.NodeType == ast.MemberNode {
+			if keyCols[col] {
+				return true
+			}
+			sug := "min"
+			if t := a.nodeTypes[n]; t != nil && (IsNumeric(t) || t.Equals(TypeBool)) {
+				sug = "mean"
+			}
+			shown := exprText(n)
+			a.errorAt(n, "'%s' has a value per row; use it in an aggregate (%s(%s)) or group by it", shown, sug, shown)
+			return false
+		}
+		for _, ch := range n.Children {
+			if !walk(ch) {
+				return false
+			}
+		}
+		return true
 	}
-	if agg.Type == nil {
-		a.errorAt(args[0], "%s needs a number or bool column; column '%s' is %s", fn, row.Fields[col].Name, ct.String())
-		return nil
-	}
-	return agg
+	return walk(node)
 }
 
 func (a *Analyzer) querySlice(step *QueryStep, rowName string) bool {

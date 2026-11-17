@@ -15,8 +15,9 @@
 //   agg_*                  per-group aggregates for summarize
 //
 // Missing values (nulls, and NaN in float columns) follow na.rm = TRUE:
-// aggregates skip them. sum of no values is 0; mean, min and max of no values
-// are null; count counts rows. Group keys and sort keys put nulls last.
+// aggregates skip them. sum of no values is 0; mean, sd, min and max of no
+// values are null (sd also when fewer than two are present); count counts
+// rows. Group keys and sort keys put nulls last.
 //
 // Generated code evaluates filter predicates and mutate expressions with its own
 // typed loops over the column buffers; this header supplies the column
@@ -513,12 +514,14 @@ inline uint64_t hash_value(const QVector& v, int32_t i) {
     return 0;
 }
 
-// group_rows groups the rows of t by the key columns.
-inline Grouping group_rows(QTable* t, const int* key_cols, int nkeys) {
-    const int32_t n = t->nrows;
-    if (nkeys == 0) return whole_table(n);
+// group_by_vecs groups nrows rows by nkeys key columns (pointers into column
+// buffers, or into a column built for a computed key). Groups are numbered
+// in key order, nulls last. nkeys 0 is the whole table.
+inline Grouping group_by_vecs(int32_t nrows, const QVector* const* key_ptrs, int nkeys) {
+    const int32_t n = nrows;
+    if (nkeys == 0 || key_ptrs == nullptr) return whole_table(n);
     std::vector<const QVector*> keys(static_cast<size_t>(nkeys));
-    for (int k = 0; k < nkeys; k++) keys[static_cast<size_t>(k)] = column(t, key_cols[k]);
+    for (int k = 0; k < nkeys; k++) keys[static_cast<size_t>(k)] = key_ptrs[k];
 
     std::vector<uint64_t> row_hash(static_cast<size_t>(n));
     for (int32_t r = 0; r < n; r++) {
@@ -589,6 +592,14 @@ inline Grouping group_rows(QTable* t, const int* key_cols, int nkeys) {
     for (int32_t r = 0; r < n; r++) group_of_row[r] = rank[static_cast<size_t>(group_of_row[r])];
     out.group_of_row = group_of_row;
     return out;
+}
+
+// group_rows groups the rows of t by the key columns.
+inline Grouping group_rows(QTable* t, const int* key_cols, int nkeys) {
+    if (nkeys == 0) return whole_table(t->nrows);
+    std::vector<const QVector*> keys(static_cast<size_t>(nkeys));
+    for (int k = 0; k < nkeys; k++) keys[static_cast<size_t>(k)] = column(t, key_cols[k]);
+    return group_by_vecs(t->nrows, keys.data(), nkeys);
 }
 
 inline int32_t group_of(const Grouping& g, int32_t r) {
@@ -764,10 +775,106 @@ inline QVector* finish_extremum(const QVector& col, const Grouping& g, const std
     return out;
 }
 
+// agg_extremum_whole is the dense loop for a summarize with no group_by
+// (tables v0.2 §4.1): the best value lives in a register, and a tie keeps
+// the first. A group_of lookup per row is the slow path this replaces.
+inline QVector* agg_extremum_whole(const QVector& col, int32_t nrows, bool want_max) {
+    auto missing = [&](QVector* out) {
+        set_null(*out, 0);
+        return out;
+    };
+    switch (col.type) {
+        case Type::I64: {
+            const int64_t* x = q_vec_i64_data(col);
+            bool any = false;
+            int64_t best = 0;
+            for (int32_t r = 0; r < nrows; r++) {
+                if (is_null(col, r)) continue;
+                if (!any || (want_max ? x[r] > best : x[r] < best)) {
+                    best = x[r];
+                    any = true;
+                }
+            }
+            QVector* out = q_vec_alloc(Type::I64, 1);
+            if (!any) return missing(out);
+            q_vec_i64_data_mut(*out)[0] = best;
+            return out;
+        }
+        case Type::DATE: {
+            const int32_t* x = q_vec_date_data(col);
+            bool any = false;
+            int32_t best = 0;
+            for (int32_t r = 0; r < nrows; r++) {
+                if (is_null(col, r)) continue;
+                if (!any || (want_max ? x[r] > best : x[r] < best)) {
+                    best = x[r];
+                    any = true;
+                }
+            }
+            QVector* out = q_vec_alloc(Type::DATE, 1);
+            if (!any) return missing(out);
+            q_vec_date_data_mut(*out)[0] = best;
+            return out;
+        }
+        case Type::F64: {
+            const double* x = q_vec_f64_data(col);
+            bool any = false;
+            double best = 0;
+            for (int32_t r = 0; r < nrows; r++) {
+                if (is_null(col, r) || std::isnan(x[r])) continue;
+                if (!any || (want_max ? x[r] > best : x[r] < best)) {
+                    best = x[r];
+                    any = true;
+                }
+            }
+            QVector* out = q_vec_alloc(Type::F64, 1);
+            if (!any) return missing(out);
+            q_vec_f64_data_mut(*out)[0] = best;
+            return out;
+        }
+        case Type::BOOL: {
+            bool any = false;
+            bool best = false;
+            for (int32_t r = 0; r < nrows; r++) {
+                if (is_null(col, r)) continue;
+                const bool x = q_vec_bool_at(col, static_cast<size_t>(r));
+                if (!any || (want_max ? x && !best : !x && best)) {
+                    best = x;
+                    any = true;
+                }
+            }
+            QVector* out = q_vec_alloc(Type::BOOL, 1);
+            if (!any) return missing(out);
+            if (best) quark::vec::put_bit(out->values, 0, true);
+            return out;
+        }
+        case Type::STR: {
+            int32_t best = -1;
+            for (int32_t r = 0; r < nrows; r++) {
+                if (is_null(col, r)) continue;
+                if (best < 0) {
+                    best = r;
+                    continue;
+                }
+                const std::string_view xs = q_vec_str_at(col, static_cast<size_t>(r));
+                const std::string_view ys = q_vec_str_at(col, static_cast<size_t>(best));
+                if (want_max ? ys < xs : xs < ys) best = r;
+            }
+            if (best < 0) {
+                QVector* out = q_vec_alloc(Type::STR, 1);
+                return missing(out);
+            }
+            return take(col, &best, 1);
+        }
+    }
+    fail("min/max of an unknown column type");
+}
+
 // agg_extremum (min / max): one typed loop per column type. A float loop
 // skips NaN, so the comparisons that remain are raw doubles. Null for a
 // group with no present value. Ties keep the first value.
 inline QVector* agg_extremum(const QVector& col, const Grouping& g, bool want_max) {
+    if (is_whole_table(g)) return agg_extremum_whole(col, g.nrows, want_max);
     const size_t ng = static_cast<size_t>(g.ngroups);
     std::vector<int32_t> best(ng, -1);
     switch (col.type) {
@@ -921,6 +1028,47 @@ inline QVector* agg_n_distinct(const QVector& col, const Grouping& g) {
 
 inline QVector* agg_min(const QVector& col, const Grouping& g) { return agg_extremum(col, g, false); }
 inline QVector* agg_max(const QVector& col, const Grouping& g) { return agg_extremum(col, g, true); }
+
+// agg_sd is the sample standard deviation (divisor n - 1). Fewer than two
+// present values is missing. Float groups use the same present-value order
+// as mean (gather_f64); int and bool values are converted to double first.
+// The square deviations go through q_sample_sd, which mean's vec builtin
+// shares, so sd(v) and summarize(s = sd(e.x)) give the same bits.
+inline QVector* agg_sd(const QVector& col, const Grouping& g) {
+    if (col.type == Type::STR) fail("sd needs a number or bool column, got str");
+    if (col.type == Type::DATE) fail("sd needs a number or bool column, got date");
+    const size_t ng = static_cast<size_t>(g.ngroups);
+    QVector* out = q_vec_alloc(Type::F64, ng);
+    double* d = q_vec_f64_data_mut(*out);
+    if (col.type == Type::F64) {
+        if (is_whole_table(g)) {
+            bool ok = false;
+            const double s = q_sd_present(col, &ok);
+            if (!ok) set_null(*out, 0);
+            else d[0] = s;
+            return out;
+        }
+        const GroupValues gv = gather_f64(col, g);
+        for (size_t i = 0; i < ng; i++) {
+            if (gv.count(i) < 2) set_null(*out, static_cast<int32_t>(i));
+            else d[i] = q_sample_sd(gv.of(i), gv.count(i));
+        }
+        return out;
+    }
+    std::vector<std::vector<double>> vals(ng);
+    for (int32_t r = 0; r < g.nrows; r++) {
+        if (is_null(col, r)) continue;
+        const double x = col.type == Type::I64
+            ? static_cast<double>(q_vec_i64_data(col)[r])
+            : (q_vec_bool_at(col, static_cast<size_t>(r)) ? 1.0 : 0.0);
+        vals[static_cast<size_t>(group_of(g, r))].push_back(x);
+    }
+    for (size_t i = 0; i < ng; i++) {
+        if (vals[i].size() < 2) set_null(*out, static_cast<int32_t>(i));
+        else d[i] = q_sample_sd(vals[i].data(), vals[i].size());
+    }
+    return out;
+}
 
 } // namespace tbl
 } // namespace quark

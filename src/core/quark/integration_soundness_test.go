@@ -117,7 +117,7 @@ func TestCheckedMode_SmokeAgrees(t *testing.T) {
 
 // The staff table shared by the query agreement cases: one missing salary
 // (Cy) and one missing dept (Ed).
-const agreeStaff = "incl 'std/csv'\nincl 'std/stats'\n" +
+const agreeStaff = "incl 'std/csv'\n" +
 	"struct Emp:\n    id: int\n    name: str\n    dept: str\n    salary: float\n" +
 	"staff: tbl[Emp] = unwrap(csv::parse_text('id,name,dept,salary\\n" +
 	"1,Ann,eng,120000\\n2,Bo,ops,90000.5\\n3,Cy,eng,\\n4,Di,ops,150000\\n5,Ed,,80000\\n'))\n" +
@@ -138,7 +138,7 @@ print((staff | e -> summarize(s = sum(e.salary))).s[0])
 print(m::total(staff))
 print(sum(staff.id))
 print((staff | e -> summarize(s = sum(e.id))).s[0])
-print(stats::mean(staff.salary))
+print(mean(staff.salary))
 print((staff | e -> summarize(m = mean(e.salary))).m[0])
 print(min(staff.salary))
 print((staff | e -> summarize(lo = min(e.salary))).lo[0])
@@ -178,9 +178,9 @@ got = (staff | e -> group_by(e.dept) | summarize(s = sum(e.salary))).s
 print(want)
 print(got)
 print(sum(want == got) == len(got))
-engm = stats::mean(staff.salary[staff.dept == 'eng'])
-opsm = stats::mean(staff.salary[staff.dept == 'ops'])
-gapm = stats::mean(staff.salary[staff.dept.fillna('?') == '?'])
+engm = mean(staff.salary[staff.dept == 'eng'])
+opsm = mean(staff.salary[staff.dept == 'ops'])
+gapm = mean(staff.salary[staff.dept.fillna('?') == '?'])
 wantm = vec [engm, opsm, gapm]
 gotm = (staff | e -> group_by(e.dept) | summarize(m = mean(e.salary))).m
 print(sum(wantm == gotm) == len(gotm))
@@ -202,7 +202,7 @@ true
 rich = (staff | e -> mutate(rich = e.salary > 100000.0)).rich
 print(sum(rich))
 print((staff | e -> mutate(rich = e.salary > 100000.0) | summarize(s = sum(e.rich))).s[0])
-print(stats::mean(rich))
+print(mean(rich))
 print((staff | e -> mutate(rich = e.salary > 100000.0) | summarize(m = mean(e.rich))).m[0])
 none = staff | e -> filter(e.id < 0)
 print(sum(none.id))

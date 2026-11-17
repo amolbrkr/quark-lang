@@ -1,6 +1,8 @@
 package types
 
 import (
+	"fmt"
+
 	"quark/ast"
 	"quark/builtins"
 	"quark/ir"
@@ -43,7 +45,15 @@ func (a *Analyzer) checkArgTypes(calleeName string, paramTypes []Type, argTypes 
 			if i < len(argNodes) {
 				errorNode = argNodes[i]
 			}
-			a.errorAt(errorNode, "argument %d of '%s' expects %s, got %s%s", i+1, calleeName, paramType.String(), argType.String(), mismatchDetail(paramType, argType))
+			hint := ""
+			if a.inVerbExpr() {
+				if _, isVec := paramType.(*VectorType); isVec {
+					if _, ok := a.isColumnRef(errorNode); ok {
+						hint = fmt.Sprintf(" ('%s' is one row's %s here, not the column)", exprText(errorNode), argType.String())
+					}
+				}
+			}
+			a.errorAt(errorNode, "argument %d of '%s' expects %s, got %s%s%s", i+1, calleeName, paramType.String(), argType.String(), mismatchDetail(paramType, argType), hint)
 		}
 	}
 }
@@ -251,6 +261,9 @@ func (a *Analyzer) analyzeFunctionCall(node *ast.TreeNode) Type {
 
 	funcNode := node.Children[0]
 	argNodes := node.Children[1].Children
+	if t, handled := a.tryAggregate(node, funcNode, argNodes); handled {
+		return t
+	}
 	argCount := len(argNodes)
 	argTypes := make([]Type, 0, argCount)
 	a.expectArgs(node, funcNode, argNodes)

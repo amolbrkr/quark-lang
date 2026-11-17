@@ -249,7 +249,7 @@
         {
           "comment": "Free builtins",
           "name": "support.function.builtin.quark",
-          "match": "\\b(print|input|len|to_str|to_int|to_float|to_bool|type|is_ok|is_err|unwrap|range|abs|min|max|sum|all|any|sqrt|floor|ceil|round)\\b(?=\\s*\\()"
+          "match": "\\b(print|input|len|to_str|to_int|to_float|to_bool|type|is_ok|is_err|unwrap|range|abs|min|max|sum|mean|sd|all|any|sqrt|floor|ceil|round)\\b(?=\\s*\\()"
         },
         {
           "comment": "Builtin methods (str, list, dict, vec, tbl), after a dot",

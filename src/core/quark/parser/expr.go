@@ -619,9 +619,9 @@ func (p *Parser) parseQuery(source *ast.TreeNode, pipeTok token.Token) *ast.Tree
 	}
 }
 
-// parseQueryStep parses `verb(args)`. In mutate and summarize an argument
-// may be `name = value` (a ColumnDefNode); summarize values are aggregates
-// and sort arguments sort keys, so neither is resolved as a function call.
+// parseQueryStep parses `verb(args)`. In mutate, summarize and group_by an
+// argument may be `name = value` (a ColumnDefNode); sort arguments are sort
+// keys, so those are not resolved as function calls.
 func (p *Parser) parseQueryStep() *ast.TreeNode {
 	if p.curToken.Type != token.ID || p.peek(1).Type != token.LPAR {
 		p.addError("expected a query step, verb(...) (filter, mutate, select, deselect, rename, distinct, sort, group_by, summarize, head or tail), but got %s; to pipe a query's result into a function, put the query in parentheses", sourceText(p.curToken))
@@ -654,12 +654,7 @@ func (p *Parser) parseStepArg(verb string) *ast.TreeNode {
 		p.nextToken()
 		p.nextToken()
 		def := ast.NewNode(ast.ColumnDefNode, &nameTok)
-		var value *ast.TreeNode
-		if verb == "summarize" {
-			value = p.parseAggregate()
-		} else {
-			value = p.parseExpression(ast.PrecPipe)
-		}
+		value := p.parseExpression(ast.PrecPipe)
 		if value == nil {
 			return nil
 		}
@@ -667,9 +662,6 @@ func (p *Parser) parseStepArg(verb string) *ast.TreeNode {
 		return def
 	}
 	switch verb {
-	case "summarize":
-		// A column without a name; the checker asks for one.
-		return p.parseAggregate()
 	case "sort":
 		key := ast.NewNode(ast.SortKeyNode, nil)
 		if p.curToken.Type == token.ID && p.curToken.Literal == "desc" && p.peek(1).Type == token.LPAR {
@@ -694,38 +686,6 @@ func (p *Parser) parseStepArg(verb string) *ast.TreeNode {
 		return key
 	}
 	return p.parseExpression(ast.PrecPipe)
-}
-
-// parseAggregate parses a summarize aggregate: `agg(args)`, nothing more
-// (tables D24: one aggregate of a column per summarize column).
-func (p *Parser) parseAggregate() *ast.TreeNode {
-	if p.curToken.Type != token.ID || p.peek(1).Type != token.LPAR {
-		p.addError("a summarize column is one aggregate, name = agg(e.col): count(), count(e.col), sum, mean, min, max or n_distinct; got %s", sourceText(p.curToken))
-		return nil
-	}
-	tok := p.curToken
-	node := ast.NewNode(ast.AggregateNode, &tok)
-	p.nextToken()
-	p.nextToken()
-	for p.curToken.Type != token.RPAR {
-		arg := p.parseExpression(ast.PrecPipe)
-		if arg == nil {
-			return nil
-		}
-		node.AddChild(arg)
-		if p.curToken.Type != token.COMMA {
-			break
-		}
-		p.nextToken()
-	}
-	if !p.expect(token.RPAR) {
-		return nil
-	}
-	if p.curToken.Type != token.COMMA && p.curToken.Type != token.RPAR {
-		p.addError("a summarize column is exactly one aggregate of a column (%s(...) followed by %s); compute other values with mutate first, or in a second step", tok.Literal, sourceText(p.curToken))
-		return nil
-	}
-	return node
 }
 
 func (p *Parser) parseMemberAccess(left *ast.TreeNode) *ast.TreeNode {

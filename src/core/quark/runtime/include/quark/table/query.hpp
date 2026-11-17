@@ -220,20 +220,65 @@ inline quark::tbl::Grouping q_tbl_group(QTable* t, std::initializer_list<int> ke
     return quark::tbl::group_rows(t, ks.data(), static_cast<int>(ks.size()));
 }
 
+// q_tbl_group_vecs groups by key columns that may be computed (a QVector*
+// per key, length nrows). q_tbl_col_ptr is a table column; a computed key
+// is a column the query built.
+inline const QVector* q_tbl_col_ptr(const QTable* t, int c) { return quark::tbl::column(t, c); }
+
+inline quark::tbl::Grouping q_tbl_group_vecs(long long nrows, std::initializer_list<const QVector*> keys) {
+    return quark::tbl::group_by_vecs(static_cast<int32_t>(nrows), keys.begin(), static_cast<int>(keys.size()));
+}
+
 inline quark::tbl::Grouping q_tbl_whole(QTable* t) { return quark::tbl::whole_table(t->nrows); }
 
+inline long long q_tbl_ngroups(const quark::tbl::Grouping& g) { return g.ngroups; }
+
+inline long long q_tbl_group_of(const quark::tbl::Grouping& g, long long row) {
+    return quark::tbl::group_of(g, static_cast<int32_t>(row));
+}
+
 inline QVector* q_tbl_group_key(QTable* t, const quark::tbl::Grouping& g, int c) { return quark::tbl::group_keys(t, g, c); }
+
+// q_tbl_key_col is group_keys for a column that isn't one of the table's
+// (a computed group key).
+inline QVector* q_tbl_key_col(const QVector* col, const quark::tbl::Grouping& g) {
+    return quark::tbl::take(*col, g.first_row, g.ngroups);
+}
+
 inline QVector* q_tbl_agg_count(const quark::tbl::Grouping& g) { return quark::tbl::agg_count(g); }
 inline QVector* q_tbl_agg_count_values(QTable* t, int c, const quark::tbl::Grouping& g) {
     return quark::tbl::agg_count_values(*quark::tbl::column(t, c), g);
 }
+inline QVector* q_tbl_agg_count_values_vec(const QVector* col, const quark::tbl::Grouping& g) {
+    return quark::tbl::agg_count_values(*col, g);
+}
 inline QVector* q_tbl_agg_sum(QTable* t, int c, const quark::tbl::Grouping& g) { return quark::tbl::agg_sum(*quark::tbl::column(t, c), g); }
+inline QVector* q_tbl_agg_sum_vec(const QVector* col, const quark::tbl::Grouping& g) { return quark::tbl::agg_sum(*col, g); }
 inline QVector* q_tbl_agg_mean(QTable* t, int c, const quark::tbl::Grouping& g) { return quark::tbl::agg_mean(*quark::tbl::column(t, c), g); }
+inline QVector* q_tbl_agg_mean_vec(const QVector* col, const quark::tbl::Grouping& g) { return quark::tbl::agg_mean(*col, g); }
+inline QVector* q_tbl_agg_sd(QTable* t, int c, const quark::tbl::Grouping& g) { return quark::tbl::agg_sd(*quark::tbl::column(t, c), g); }
+inline QVector* q_tbl_agg_sd_vec(const QVector* col, const quark::tbl::Grouping& g) { return quark::tbl::agg_sd(*col, g); }
 inline QVector* q_tbl_agg_min(QTable* t, int c, const quark::tbl::Grouping& g) { return quark::tbl::agg_min(*quark::tbl::column(t, c), g); }
+inline QVector* q_tbl_agg_min_vec(const QVector* col, const quark::tbl::Grouping& g) { return quark::tbl::agg_min(*col, g); }
 inline QVector* q_tbl_agg_max(QTable* t, int c, const quark::tbl::Grouping& g) { return quark::tbl::agg_max(*quark::tbl::column(t, c), g); }
+inline QVector* q_tbl_agg_max_vec(const QVector* col, const quark::tbl::Grouping& g) { return quark::tbl::agg_max(*col, g); }
 inline QVector* q_tbl_agg_n_distinct(QTable* t, int c, const quark::tbl::Grouping& g) {
     return quark::tbl::agg_n_distinct(*quark::tbl::column(t, c), g);
 }
+inline QVector* q_tbl_agg_n_distinct_vec(const QVector* col, const quark::tbl::Grouping& g) {
+    return quark::tbl::agg_n_distinct(*col, g);
+}
+
+// A group's aggregate value, read by the row loop. The vector is one value
+// per group; i is the group index (0 for the whole table).
+inline const QVector& q_vec_deref(const QVector* v) { return *v; }
+inline bool q_grp_dense(const QVector* v) { return v->null_count == 0; }
+inline bool q_grp_present(const QVector* v, long long i) { return q_tbl_present(*v, i); }
+inline double q_grp_f64(const QVector* v, long long i) { return q_vec_f64_data(*v)[i]; }
+inline long long q_grp_i64(const QVector* v, long long i) { return q_vec_i64_data(*v)[i]; }
+inline bool q_grp_bool(const QVector* v, long long i) { return q_vec_bool_at(*v, static_cast<size_t>(i)); }
+inline int32_t q_grp_date(const QVector* v, long long i) { return q_vec_date_data(*v)[i]; }
+inline std::string_view q_grp_str(const QVector* v, long long i) { return q_tbl_str_view(*v, i); }
 
 // q_tbl_project builds a table of def from columns of t (shared, not copied).
 inline QTable* q_tbl_project(QTable* t, const QStructDef* def, std::initializer_list<int> cols) {

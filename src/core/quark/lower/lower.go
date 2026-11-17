@@ -58,10 +58,12 @@ type lowerer struct {
 
 	// Queries (query.go): the row a verb expression is being lowered for,
 	// the three-valued parts already lowered inside it (by node), and
-	// the runtime headers included beyond quark.hpp.
+	// the runtime headers included beyond quark.hpp. agg is the grouping
+	// and aggregate values of the step being lowered.
 	row      *rowLoop
 	rowSubst map[*ast.TreeNode]Expr
 	included map[string]bool
+	agg      *aggBind
 
 	// externHome is the C++ symbols of extern fns declared in this REPL
 	// input. Nil for an ordinary program, where every extern fn is local.

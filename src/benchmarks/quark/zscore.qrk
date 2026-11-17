@@ -4,7 +4,6 @@
 // OpenBLAS skips only that one.
 incl './lib/harness'
 incl './lib/tables'
-incl 'std/stats'
 
 struct Z:
     a: float
@@ -35,11 +34,11 @@ fn zscore_vec(a: vec) vec ->
     sd = sqrt(sum(d * d) / (len(a) - 1))
     d / sd
 
-// The mean and sd come from the column as a vec (there is no sd aggregate),
+// The mean and sd come from the column as a vec, the way quark_vec does,
 // and z is added with mutate.
 fn zscore_tbl(t: tbl[tables::Cols]) tbl[Z] ->
     a = t.a
-    m = stats::mean(a)
+    m = mean(a)
     d = a - m
     sd = sqrt(sum(d * d) / (len(a) - 1))
     t | e -> mutate(z = (e.a - m) / sd)

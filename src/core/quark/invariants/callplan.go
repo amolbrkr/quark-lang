@@ -67,7 +67,7 @@ func validateCallPlan(n *ast.TreeNode, plan *ir.CallPlan) error {
 		if err := validateDynamicMethodPlan(n, plan); err != nil {
 			return err
 		}
-	case ir.DispatchClosure:
+	case ir.DispatchAggregate, ir.DispatchClosure:
 	default:
 		return invError("INV-DISPATCH-MODE", n, "call plan for '%s' has unresolved dispatch mode", plan.CalleeName)
 	}

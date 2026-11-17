@@ -446,7 +446,7 @@ type Symbol struct {
 	// lives in the host process. Slot is its index in the host array for its
 	// storage: a raw scalar for int, float and bool, a QCell for everything
 	// else. Replaces is the previous symbol when this assignment changed the
-	// variable's type (specs/repl_v0_1_spec.md §3.4).
+	// variable's type (specs/implemented/repl_v0_1_spec.md §3.4).
 	Session  bool
 	Slot     int
 	Replaces *Symbol

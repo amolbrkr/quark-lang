@@ -41,49 +41,39 @@ inline void q_protect_and_run(void (*fn)()) {
 #include <cstdint>
 #include <pthread.h>
 
-// One jump buffer for the thread that armed the guard. A signal on another
-// thread (a library's worker) is not this overflow and is re-raised.
-inline sigjmp_buf& q_stack_jmp() {
-    static sigjmp_buf buf;
-    return buf;
-}
-inline volatile sig_atomic_t& q_stack_ready() {
-    static volatile sig_atomic_t ready = 0;
-    return ready;
-}
-inline pthread_t& q_stack_thread() {
-    static pthread_t thread;
-    return thread;
-}
-inline uintptr_t& q_stack_lo() {
-    static uintptr_t lo = 0;
-    return lo;
-}
-inline uintptr_t& q_stack_hi() {
-    static uintptr_t hi = 0;
-    return hi;
-}
+// QStackGuard is one thread's guard: where its stack is, and where to jump
+// when it overflows. Each thread that runs Quark code has its own: the main
+// thread (q_protect_and_run) and every worker of the thread pool, which arms
+// it around each block it runs (core/par.hpp). A signal on a thread without
+// an armed guard (a library's worker) is not this overflow and is re-raised.
+struct QStackGuard {
+    sigjmp_buf jb;
+    uintptr_t lo = 0;
+    uintptr_t hi = 0;
+    volatile sig_atomic_t ready = 0;
+};
 
+inline thread_local QStackGuard q_stack_guard;
+
+// q_stack_read_bounds records the calling thread's stack in its guard.
 inline void q_stack_read_bounds() {
-    uintptr_t marker = 0;
+    QStackGuard& g = q_stack_guard;
 #if defined(__APPLE__)
     const uintptr_t top = reinterpret_cast<uintptr_t>(pthread_get_stackaddr_np(pthread_self()));
     const uintptr_t size = pthread_get_stacksize_np(pthread_self());
-    q_stack_hi() = top;
-    q_stack_lo() = top - size;
-    (void)marker;
+    g.hi = top;
+    g.lo = top - size;
 #else
     // The whole stack the thread may use, not just the part it has used so
     // far (the main thread's [stack] mapping grows on demand, up to the
     // stack limit). For the main thread glibc derives it from the limit.
-    (void)marker;
     pthread_attr_t attr;
     if (pthread_getattr_np(pthread_self(), &attr) != 0) return;
     void* addr = nullptr;
     size_t size = 0;
     if (pthread_attr_getstack(&attr, &addr, &size) == 0 && addr != nullptr && size > 0) {
-        q_stack_lo() = reinterpret_cast<uintptr_t>(addr);
-        q_stack_hi() = q_stack_lo() + size;
+        g.lo = reinterpret_cast<uintptr_t>(addr);
+        g.hi = g.lo + size;
     }
     pthread_attr_destroy(&attr);
 #endif
@@ -99,21 +89,32 @@ inline void q_stack_reraise(int sig) {
 }
 
 inline void q_stack_on_signal(int sig, siginfo_t* info, void*) {
-    if (!q_stack_ready() || !pthread_equal(pthread_self(), q_stack_thread()) || info == nullptr) {
+    QStackGuard& g = q_stack_guard;
+    if (!g.ready || info == nullptr) {
         q_stack_reraise(sig);
         return;
     }
     const uintptr_t addr = reinterpret_cast<uintptr_t>(info->si_addr);
-    const uintptr_t lo = q_stack_lo();
-    const uintptr_t hi = q_stack_hi();
     // The guard page is the page below the stack mapping, not inside it.
-    const bool on_stack = lo != 0 && addr + 65536 >= lo && addr < hi;
+    const bool on_stack = g.lo != 0 && addr + 65536 >= g.lo && addr < g.hi;
     if (!on_stack) {
         q_stack_reraise(sig);
         return;
     }
-    q_stack_ready() = 0;
-    siglongjmp(q_stack_jmp(), 1);
+    g.ready = 0;
+    siglongjmp(g.jb, 1);
+}
+
+// q_stack_alt_stack gives the calling thread an alternate signal stack, so
+// the handler can run after the thread's own stack is exhausted. It is
+// ordinary memory, never freed: a thread that runs Quark code lives as long
+// as the program.
+inline void q_stack_alt_stack(void* mem, size_t size) {
+    stack_t ss;
+    ss.ss_sp = mem;
+    ss.ss_size = size;
+    ss.ss_flags = 0;
+    sigaltstack(&ss, nullptr);
 }
 
 inline void q_stack_install() {
@@ -124,11 +125,7 @@ inline void q_stack_install() {
     // Static, not on the main stack: the handler has to run after that
     // stack is exhausted.
     alignas(16) static unsigned char alt[65536];
-    stack_t ss;
-    ss.ss_sp = alt;
-    ss.ss_size = sizeof(alt);
-    ss.ss_flags = 0;
-    sigaltstack(&ss, nullptr);
+    q_stack_alt_stack(alt, sizeof(alt));
     struct sigaction sa;
     sa.sa_sigaction = q_stack_on_signal;
     sigemptyset(&sa.sa_mask);
@@ -139,15 +136,25 @@ inline void q_stack_install() {
 #endif
 }
 
+// q_stack_thread_init sets up a worker thread of the pool: its stack bounds
+// and its alternate signal stack. The handler is the process's, installed
+// by the main thread.
+inline void q_stack_thread_init() {
+    q_stack_read_bounds();
+    const size_t size = 65536;
+    void* alt = std::malloc(size);
+    if (alt != nullptr) q_stack_alt_stack(alt, size);
+}
+
 inline void q_protect_and_run(void (*fn)()) {
     q_stack_install();
-    q_stack_thread() = pthread_self();
-    if (sigsetjmp(q_stack_jmp(), 1) != 0) {
+    QStackGuard& g = q_stack_guard;
+    if (sigsetjmp(g.jb, 1) != 0) {
         q_stack_overflow_exit();
     }
-    q_stack_ready() = 1;
+    g.ready = 1;
     fn();
-    q_stack_ready() = 0;
+    g.ready = 0;
 }
 
 #endif // _WIN32

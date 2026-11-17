@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-// REPL host and input libraries (specs/repl_v0_1_spec.md §5.2). The runtime
+// REPL host and input libraries (specs/implemented/repl_v0_1_spec.md §5.2). The runtime
 // is compiled once into the host at -O3. Each input is a shared library
 // compiled at -O0 against that runtime.
 

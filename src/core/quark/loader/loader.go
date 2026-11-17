@@ -43,7 +43,7 @@ type ModuleLoader struct {
 	seenSources  map[string]bool
 
 	// snapshot, when set, holds the text of files read earlier: a REPL
-	// session reads each included file once (specs/repl_v0_1_spec.md §3.7).
+	// session reads each included file once (specs/implemented/repl_v0_1_spec.md §3.7).
 	// read is every imported file's text this load used, by absolute path.
 	snapshot map[string][]byte
 	read     map[string][]byte

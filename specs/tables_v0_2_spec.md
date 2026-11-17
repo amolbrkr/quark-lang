@@ -271,9 +271,9 @@ When this is implemented, the tests are: a missing field, an unknown field, a re
 
 Specified elsewhere:
 
-- **Joins**, of every kind. They need their own spec: the syntax for a second row, which joins exist, whether a missing key matches another missing key, and what happens when a column name exists on both sides.
+- **Joins**: `semi_join`, `anti_join`, `inner_join` and `left_join` are proposed in `specs/data_work_v0_1_spec.md` §5, which answers these questions (the syntax for a second row, which joins exist, whether a missing key matches another, and a column name on both sides).
 - **`summary(t)`** and the quantile kernel (`specs/tables_v0_1_spec.md` §6).
-- **`slice`**, date columns (`specs/dates_v0_1_spec.md`), categorical columns, `map`, `list[T]`, DuckDB, and compile-time schema inference (`specs/untyped_tables_v0_1_spec.md` §6).
+- **`slice`**, date columns (`specs/implemented/dates_v0_1_spec.md`), categorical columns, `map`, `list[T]`, DuckDB, and compile-time schema inference (`specs/untyped_tables_v0_1_spec.md` §6).
 - **Row access** (`t[i]`) and masks (`specs/tables_v0_1_spec.md` §12).
 
 Out of scope because they are not table operations. The suite measured them, and this spec does not schedule them:

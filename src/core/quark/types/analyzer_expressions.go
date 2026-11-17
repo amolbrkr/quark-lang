@@ -494,7 +494,7 @@ func (a *Analyzer) analyzeVectorArith(node *ast.TreeNode, leftType, rightType Ty
 	return nil, false
 }
 
-// temporalArith types date and period arithmetic (specs/dates_v0_1_spec.md).
+// temporalArith types date and period arithmetic (specs/implemented/dates_v0_1_spec.md).
 // ok is false when neither operand is a date or a period.
 func (a *Analyzer) temporalArith(node *ast.TreeNode, leftType, rightType Type) (Type, bool) {
 	op := node.Token.Type

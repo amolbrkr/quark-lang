@@ -213,6 +213,12 @@ inline int64_t q_sys_cpu_count() {
     return static_cast<int64_t>(std::thread::hardware_concurrency());
 }
 
+// The program's thread count (runtime/.../core/threads.hpp): what its
+// parallel steps run on, the calling thread included.
+inline int64_t q_sys_threads() {
+    return static_cast<int64_t>(q_par_threads());
+}
+
 // x rendered the way print renders it, written to stderr, then end.
 inline QValue q_sys_eprint(QValue v, const char* end) {
     if (end == nullptr) {

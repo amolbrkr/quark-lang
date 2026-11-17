@@ -588,6 +588,11 @@
           "doc": "Logical CPUs, or 0 when the operating system does not report a count."
         },
         {
+          "name": "threads",
+          "signature": "threads() int",
+          "doc": "or QUARK_THREADS, else the CPUs the program may use. 1 in the REPL."
+        },
+        {
           "name": "eprint",
           "signature": "eprint(x, end: str = '\n')",
           "doc": "Write `x` to stderr, rendered like print, then `end`."

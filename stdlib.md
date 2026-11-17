@@ -384,7 +384,7 @@ Reductions follow the table aggregates (`specs/tables_v0_1_spec.md` D6, D13), so
 
 | Function | Signature | Description |
 |---|---|---|
-| `sum` | `vec[int] -> int`, `vec[bool] -> int`, `vec[float] -> float` | Sum of the present values: exact for ints (overflow is a runtime error), `true` counts 1. Floats are summed pairwise in `double` (NumPy's method): the rounding error grows with the log of the length, and the result is the same on every platform. No values sum to `0` (`0.0` for floats) |
+| `sum` | `vec[int] -> int`, `vec[bool] -> int`, `vec[float] -> float` | Sum of the present values: exact for ints, so it is a runtime error (`integer overflow in 'sum'`) only when the total doesn't fit in an int, whatever the order of the values (`sum(vec [9223372036854775807, 1, -1])` is `9223372036854775807`); `true` counts 1. Floats are summed pairwise in `double` (NumPy's method): the rounding error grows with the log of the length, and the result is the same on every platform. No values sum to `0` (`0.0` for floats) |
 | `min`, `max` | `vec[T] -> T` | Smallest / largest present value, with the vector's element type: numbers by value, `false` before `true`, strings in byte order. A vector with no present values is a runtime error |
 | `mean` | `vec -> float` | Mean of the present values of a numeric or bool vector (a bool vector is the share of `true`). Floats are summed as `sum` sums them, ints exactly, then divided once. No present values is a runtime error |
 | `sd` | `vec -> float` | Sample standard deviation of the present values (divisor n − 1): the mean, then the pairwise sum of squared deviations, then the square root. Fewer than two present values is a runtime error |
@@ -557,6 +557,7 @@ Program arguments, the environment, the working directory and the process. Impor
 | `arch` | `-> str` | `'x86_64'`, `'arm64'`, `'x86'`, or `'unknown'` |
 | `pid` | `-> int` | The process id |
 | `cpu_count` | `-> int` | Logical CPUs, or `0` when the operating system does not report a count |
+| `threads` | `-> int` | The number of threads the program's parallel query steps run on (`semantics.md` §9.5): `quark run --threads N` or `QUARK_THREADS`, else the logical CPUs the program may use after its CPU affinity and its container's CPU quota. Always 1 in the REPL |
 | `eprint` | `x, end: str = '\n'` | Write `x` to stderr, rendered the way `print` renders it, then `end` |
 
 ```quark
@@ -615,7 +616,7 @@ when csv::write_file(rich, 'rich.csv'):
 
 ## `std/time`
 
-Clocks, calendar dates and instants. Import with `incl 'std/time' as time`. The calendar, formatting, parsing and duration functions can be called from a query; `now`, `clock`, `today`, `sleep` and `since` cannot (they read a clock or sleep). A `date` is a calendar day (Arrow `date32`: days since 1970-01-01). A `period` is a calendar offset. An instant is still a `float`, seconds since the Unix epoch. The design is `specs/dates_v0_1_spec.md`.
+Clocks, calendar dates and instants. Import with `incl 'std/time' as time`. The calendar, formatting, parsing and duration functions can be called from a query; `now`, `clock`, `today`, `sleep` and `since` cannot (they read a clock or sleep). A `date` is a calendar day (Arrow `date32`: days since 1970-01-01). A `period` is a calendar offset. An instant is still a `float`, seconds since the Unix epoch. The design is `specs/implemented/dates_v0_1_spec.md`.
 
 | Function | Signature | Description |
 |---|---|---|

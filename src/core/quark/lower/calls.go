@@ -169,12 +169,17 @@ func (l *lowerer) call(node *ast.TreeNode) Expr {
 // doesn't make it, and a failure is reported at this row. Like a call made
 // on every row, it runs under the step's source location: setting its own
 // would leave later rows' errors pointing at it.
+//
+// The loop's blocks may run on several threads: the first row to get here
+// makes the call (q_once_begin gives it the slot), a row of another block
+// that gets here meanwhile waits for it, and when it fails, every row that
+// needs it fails with its error (runtime/.../core/par.hpp Once).
 func (l *lowerer) onceCall(node *ast.TreeNode) Expr {
 	if l.once == nil {
 		l.ice("INV-QUERY-ONCE", node, "a call computed once per step is outside a row loop")
 	}
 	var value Expr
-	then := l.sub(func() {
+	compute := l.sub(func() {
 		prev := l.onceNode
 		l.onceNode = node
 		value = l.call(node)
@@ -184,12 +189,23 @@ func (l *lowerer) onceCall(node *ast.TreeNode) Expr {
 		return nullValue()
 	}
 	slot := l.once.slot(l, node, value.Rep())
-	then.Stmts = append(then.Stmts,
-		&SetTemp{T: slot.value, Value: value},
-		&SetTemp{T: slot.ready, Value: trueExpr},
-	)
-	l.add(&If{Cond: &Not{X: &TempRef{T: slot.ready}}, Then: then})
+	l.onceBlock(slot, compute, value)
 	return &TempRef{T: slot.value}
+}
+
+// onceBlock adds the statements that make slot's call, compute (the call's
+// statements) then its value stored, when no row has made it yet.
+func (l *lowerer) onceBlock(slot *onceSlot, compute *Block, value Expr) {
+	guard := l.newTemp(repOnceRun)
+	compute.Stmts = append(compute.Stmts,
+		&SetTemp{T: slot.value, Value: value},
+		&Do{X: &Call{Fn: "q_once_done", Args: []Expr{&TempRef{T: guard}}, R: Rep("void")}},
+	)
+	then := &Block{Stmts: []Stmt{
+		&Let{T: guard, Value: &Call{Fn: "q_once_begin", Args: []Expr{&TempRef{T: slot.ctl}}, R: repOnceRun}},
+		&If{Cond: &Call{Fn: "q_once_mine", Args: []Expr{&TempRef{T: guard}}, R: RepBool}, Then: compute},
+	}}
+	l.add(&If{Cond: &Not{X: &Call{Fn: "q_once_ready", Args: []Expr{&TempRef{T: slot.ctl}}, R: RepBool}}, Then: then})
 }
 
 // lookupCall lowers xs.contains(x) in a row loop when xs is the same for
@@ -207,12 +223,12 @@ func (l *lowerer) lookupCall(node *ast.TreeNode, plan *ir.CallPlan) Expr {
 	}
 	l.include(builtins.TableHeader)
 	slot := l.once.slot(l, node, repLookup)
-	then := l.sub(func() {
+	var set Expr
+	compute := l.sub(func() {
 		recv := l.expr(plan.ReceiverNode)
-		l.add(&SetTemp{T: slot.value, Value: &Call{Fn: "q_lookup_build", Args: []Expr{boxed(recv)}, R: repLookup}})
-		l.add(&SetTemp{T: slot.ready, Value: trueExpr})
+		set = &Call{Fn: "q_lookup_build", Args: []Expr{boxed(recv)}, R: repLookup}
 	})
-	l.add(&If{Cond: &Not{X: &TempRef{T: slot.ready}}, Then: then})
+	l.onceBlock(slot, compute, set)
 	x := l.expr(args[0])
 	fn := "q_lookup_has_val"
 	switch x.Rep() {

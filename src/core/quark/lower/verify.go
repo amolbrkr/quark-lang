@@ -17,10 +17,12 @@ import (
 //   - every Unbox says why the value's tag is known, and the reason fits it;
 //   - values a loop re-evaluates on each iteration are stable;
 //   - break and continue are inside a loop, return inside a function;
+//   - a parallel loop's rows assign only what the loop declares and shared
+//     temporaries, and don't break out of it or return (it is a lambda);
 //   - closures are bound by a Let and capture cells that are in scope;
 //   - calls of generated functions pass one argument per parameter.
 func Verify(p *Program) error {
-	v := &verifier{funcs: map[string]*Func{}, locs: len(p.Locs)}
+	v := &verifier{funcs: map[string]*Func{}, locs: len(p.Locs), parBase: -1}
 	for _, f := range p.Decls {
 		v.funcs[f.CName] = f
 	}
@@ -66,6 +68,9 @@ type verifier struct {
 	fn     *Func
 	where  string
 	err    error
+	// parBase is the number of scopes outside the innermost ParFor (-1:
+	// not in one): what those scopes declare, its rows may not assign.
+	parBase int
 }
 
 func (v *verifier) fail(code, format string, args ...interface{}) {
@@ -92,6 +97,20 @@ func (v *verifier) inScope(key interface{}) bool {
 		}
 	}
 	return false
+}
+
+// declaredOutsidePar reports whether key is declared outside the innermost
+// ParFor the verifier is in.
+func (v *verifier) declaredOutsidePar(key interface{}) bool {
+	if v.parBase < 0 {
+		return false
+	}
+	for i := len(v.scopes) - 1; i >= v.parBase; i-- {
+		if v.scopes[i][key] {
+			return false
+		}
+	}
+	return true
 }
 
 func symName(s *types.Symbol) string { return fmt.Sprintf("variable '%s' (%s)", s.Name, s.CName) }
@@ -206,6 +225,9 @@ func (v *verifier) stmt(s Stmt) {
 		if !v.inScope(s.T) {
 			v.fail("INV-IR-SCOPE", "temporary _t%d assigned outside its scope", s.T.ID)
 		}
+		if !s.T.Shared && v.declaredOutsidePar(s.T) {
+			v.fail("INV-IR-PAR", "a parallel loop assigns temporary _t%d, declared outside it", s.T.ID)
+		}
 		v.expr(s.Value)
 		v.wantRep(s.Value, s.T.R, fmt.Sprintf("value assigned to _t%d", s.T.ID))
 	case *DeclVar:
@@ -219,6 +241,9 @@ func (v *verifier) stmt(s Stmt) {
 	case *SetVar:
 		if !v.inScope(s.Sym) {
 			v.fail("INV-IR-SCOPE", "%s assigned outside its scope", symName(s.Sym))
+		}
+		if v.declaredOutsidePar(s.Sym) {
+			v.fail("INV-IR-PAR", "a parallel loop assigns %s, declared outside it", symName(s.Sym))
 		}
 		v.expr(s.Value)
 		v.wantRep(s.Value, storageRep(s.Sym), "value assigned to "+symName(s.Sym))
@@ -289,11 +314,34 @@ func (v *verifier) stmt(s Stmt) {
 		v.block(s.Body)
 		v.loops--
 		v.pop()
+	case *ParFor:
+		v.expr(s.Plan)
+		v.wantRep(s.Plan, RepPlan, "parallel loop plan")
+		if !loopStable(s.Plan) {
+			v.fail("INV-IR-LOOP", "a parallel loop's plan must be a temporary")
+		}
+		savedBase, savedLoops := v.parBase, v.loops
+		v.parBase, v.loops = len(v.scopes), 0
+		v.push()
+		v.declare(s.Lo, fmt.Sprintf("temporary _t%d", s.Lo.ID))
+		v.declare(s.Hi, fmt.Sprintf("temporary _t%d", s.Hi.ID))
+		v.declare(s.Blk, fmt.Sprintf("temporary _t%d", s.Blk.ID))
+		v.block(s.Pre)
+		v.push()
+		v.declare(s.Idx, fmt.Sprintf("temporary _t%d", s.Idx.ID))
+		v.block(s.Body)
+		v.pop()
+		v.block(s.Post)
+		v.pop()
+		v.parBase, v.loops = savedBase, savedLoops
 	case *Break, *Continue:
 		if v.loops == 0 {
 			v.fail("INV-IR-LOOP", "break or continue outside a loop")
 		}
 	case *Return:
+		if v.parBase >= 0 {
+			v.fail("INV-IR-PAR", "return inside a parallel loop")
+		}
 		if v.fn == nil {
 			v.fail("INV-IR-RETURN", "return outside a function")
 			return

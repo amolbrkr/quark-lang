@@ -46,16 +46,16 @@ inline QStruct* q_struct_create(const QStructDef* def) {
 inline QValue q_struct_get_field(QValue val, int index) {
     if (val.type == QValue::VAL_NULL) {
         q_runtime_reportf("runtime error: cannot read a field of null (expected a struct value)\n");
-        exit(1);
+        q_exit(1);
     }
     if (val.type != QValue::VAL_STRUCT || !val.data.struct_val) {
         q_runtime_reportf("runtime error: expected struct, got different type\n");
-        exit(1);
+        q_exit(1);
     }
     QStruct* s = val.data.struct_val;
     if (index < 0 || index >= s->def->field_count) {
         q_runtime_reportf("runtime error: struct field index %d out of range\n", index);
-        exit(1);
+        q_exit(1);
     }
     return s->fields[index];
 }

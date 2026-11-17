@@ -11,6 +11,7 @@
 #define QUARK_TABLE_QUERY_HPP
 
 #include "engine.hpp"
+#include "../core/par.hpp"
 #include "../builtins/repr.hpp"
 #include "../builtins/contains.hpp"
 
@@ -23,20 +24,51 @@
 namespace quark {
 namespace tbl {
 
-// RowSet collects the rows a filter keeps, in order.
+// A row loop runs in blocks (core/par.hpp), possibly on several threads at
+// once, so what it builds is built a block at a time: each block has a
+// cursor, made at the block's start (q_rows_cursor, q_col_cursor) and closed
+// at its end, and the blocks are joined in block order after the loop. The
+// result doesn't depend on how many blocks or threads there were
+// (specs/tables_v0_3_spec.md §8.4).
+
+// RowSet collects the rows a filter keeps, in order. Block b writes its rows
+// from idx[b * q_par_block]; q_rows_join moves them together.
 struct RowSet {
     int32_t* idx = nullptr;
+    int32_t n = 0;                 // the kept rows, once joined
+    long long nblocks = 1;
+    std::vector<int32_t> counts;   // rows kept by each block
+};
+
+// RowCursor is one block's part of a RowSet.
+struct RowCursor {
+    int32_t* out = nullptr;
     int32_t n = 0;
 };
 
-// ColOut builds one column, a row at a time in row order.
+// ColOut builds one column, written at each row's position. Values of
+// F64, I64, BOOL and DATE columns go straight into v (a block's rows are
+// whole bytes of a bool bitmap, since blocks are multiples of 8 rows); str
+// bytes and missing rows are collected by each block and joined by
+// q_col_finish.
 struct ColOut {
     QVector::Type type = QVector::Type::F64;
-    QVector* v = nullptr;          // F64, I64, BOOL: allocated for every row
-    std::string bytes;             // STR
-    std::vector<int32_t> offsets;  // STR
+    QVector* v = nullptr;          // F64, I64, BOOL, DATE: allocated for every row
+    long long n = 0;
+    long long nblocks = 1;
+    std::vector<std::vector<int32_t>> nulls; // each block's missing rows
+    std::vector<std::string> bytes;          // STR: each block's text
+    std::vector<std::vector<int32_t>> ends;  // STR: each row's end in its block's text
+};
+
+// ColCursor is one block's part of a ColOut.
+struct ColCursor {
+    uint8_t* values = nullptr;
+    int width = 0;                 // bytes per value: 8 or 4, 0 for bool and str
+    long long pos = 0;             // the row the next push writes
     std::vector<int32_t> nulls;
-    int32_t n = 0;                 // rows pushed
+    std::string bytes;
+    std::vector<int32_t> ends;
 };
 
 } // namespace tbl
@@ -114,68 +146,150 @@ inline bool q_vec_dense(const QVector& v) { return v.null_count == 0; }
 // ------------------------------------------------------------
 // filter
 
-inline quark::tbl::RowSet q_rows_new(long long n) {
+inline quark::tbl::RowSet q_rows_new(const quark::par::Plan& p) {
     quark::tbl::RowSet s;
-    s.idx = quark::tbl::alloc_i32(static_cast<size_t>(n));
+    s.idx = quark::tbl::alloc_i32(static_cast<size_t>(p.n));
+    s.nblocks = p.nblocks;
+    s.counts.assign(static_cast<size_t>(p.nblocks), 0);
     return s;
 }
 
-inline void q_rows_push(quark::tbl::RowSet& s, long long i) { s.idx[s.n++] = static_cast<int32_t>(i); }
-
-// q_rows_keep records row i when keep is true, without a branch on keep.
-inline void q_rows_keep(quark::tbl::RowSet& s, long long i, bool keep) {
-    s.idx[s.n] = static_cast<int32_t>(i);
-    s.n += static_cast<int32_t>(keep);
+inline quark::tbl::RowCursor q_rows_cursor(quark::tbl::RowSet& s, long long lo) {
+    quark::tbl::RowCursor c;
+    c.out = s.idx + lo;
+    return c;
 }
 
-inline QTable* q_tbl_take(QTable* t, const quark::tbl::RowSet& s) { return quark::tbl::take_table(t, s.idx, s.n); }
+inline void q_rows_push(quark::tbl::RowCursor& c, long long i) { c.out[c.n++] = static_cast<int32_t>(i); }
+
+// q_rows_keep records row i when keep is true, without a branch on keep.
+// The block's rows fit its part of idx, so the write past the kept ones is
+// in bounds.
+inline void q_rows_keep(quark::tbl::RowCursor& c, long long i, bool keep) {
+    c.out[c.n] = static_cast<int32_t>(i);
+    c.n += static_cast<int32_t>(keep);
+}
+
+inline void q_rows_close(quark::tbl::RowSet& s, long long blk, const quark::tbl::RowCursor& c) {
+    s.counts[static_cast<size_t>(blk)] = c.n;
+}
+
+// q_rows_join puts the blocks' rows one after another, in block order.
+inline void q_rows_join(quark::tbl::RowSet& s) {
+    if (s.nblocks <= 1) {
+        s.n = s.counts.empty() ? 0 : s.counts[0];
+        return;
+    }
+    std::vector<long long> start(static_cast<size_t>(s.nblocks) + 1, 0);
+    for (long long b = 0; b < s.nblocks; b++) start[static_cast<size_t>(b) + 1] = start[static_cast<size_t>(b)] + s.counts[static_cast<size_t>(b)];
+    const long long total = start[static_cast<size_t>(s.nblocks)];
+    int32_t* out = quark::tbl::alloc_i32(static_cast<size_t>(total));
+    quark::par::Plan p;
+    p.n = s.nblocks * q_par_block;
+    p.nblocks = s.nblocks;
+    q_par_run(p, [&](long long, long long, long long b) {
+        const size_t cnt = static_cast<size_t>(s.counts[static_cast<size_t>(b)]);
+        if (cnt > 0) std::memcpy(out + start[static_cast<size_t>(b)], s.idx + b * q_par_block, cnt * sizeof(int32_t));
+    });
+    s.idx = out;
+    s.n = static_cast<int32_t>(total);
+    s.nblocks = 1;
+    s.counts.assign(1, s.n);
+}
+
+inline QTable* q_tbl_take(QTable* t, quark::tbl::RowSet& s) {
+    q_rows_join(s);
+    return quark::tbl::take_table(t, s.idx, s.n);
+}
 
 // ------------------------------------------------------------
 // mutate
 
-inline quark::tbl::ColOut q_col_new(int dtype, long long n) {
+inline quark::tbl::ColOut q_col_new(int dtype, const quark::par::Plan& p) {
     quark::tbl::ColOut b;
     b.type = static_cast<QVector::Type>(dtype);
+    b.n = p.n;
+    b.nblocks = p.nblocks;
+    b.nulls.resize(static_cast<size_t>(p.nblocks));
     if (b.type == QVector::Type::STR) {
-        b.offsets.reserve(static_cast<size_t>(n) + 1);
-        b.offsets.push_back(0);
+        b.bytes.resize(static_cast<size_t>(p.nblocks));
+        b.ends.resize(static_cast<size_t>(p.nblocks));
     } else {
-        b.v = q_vec_alloc(b.type, static_cast<size_t>(n));
+        // Every row is written (a missing one with zero), so the values
+        // aren't zeroed first; a bool column's bitmap is.
+        b.v = q_vec_alloc_raw(b.type, static_cast<size_t>(p.n));
     }
     return b;
 }
 
-inline void q_col_push_float(quark::tbl::ColOut& b, double x) { q_vec_f64_data_mut(*b.v)[b.n++] = x; }
-inline void q_col_push_int(quark::tbl::ColOut& b, long long x) { q_vec_i64_data_mut(*b.v)[b.n++] = static_cast<int64_t>(x); }
-inline void q_col_push_date(quark::tbl::ColOut& b, int32_t x) { q_vec_date_data_mut(*b.v)[b.n++] = x; }
-inline void q_col_push_bool(quark::tbl::ColOut& b, bool x) {
-    if (x) quark::vec::put_bit(b.v->values, static_cast<size_t>(b.n), true);
-    b.n++;
+inline quark::tbl::ColCursor q_col_cursor(quark::tbl::ColOut& b, long long lo) {
+    quark::tbl::ColCursor c;
+    c.values = b.v != nullptr ? b.v->values : nullptr;
+    c.width = b.v != nullptr ? static_cast<int>(quark::vec::elem_width(b.type)) : 0;
+    c.pos = lo;
+    return c;
 }
-inline void q_col_push_str(quark::tbl::ColOut& b, QValue s) {
+
+inline void q_col_push_float(quark::tbl::ColCursor& c, double x) { reinterpret_cast<double*>(c.values)[c.pos++] = x; }
+inline void q_col_push_int(quark::tbl::ColCursor& c, long long x) { reinterpret_cast<int64_t*>(c.values)[c.pos++] = static_cast<int64_t>(x); }
+inline void q_col_push_date(quark::tbl::ColCursor& c, int32_t x) { reinterpret_cast<int32_t*>(c.values)[c.pos++] = x; }
+inline void q_col_push_bool(quark::tbl::ColCursor& c, bool x) {
+    if (x) quark::vec::put_bit(c.values, static_cast<size_t>(c.pos), true);
+    c.pos++;
+}
+inline void q_col_push_str(quark::tbl::ColCursor& c, QValue s) {
     if (s.type != QValue::VAL_STRING || !s.data.string_val) {
         q_runtime_reportf("runtime error: internal: a str column got a %s\n", q_type_name(s.type));
         q_exit(1);
     }
-    b.bytes += s.data.string_val;
-    if (b.bytes.size() > static_cast<size_t>(INT32_MAX)) quark::tbl::fail("a str column holds more than 2 GiB of text");
-    b.offsets.push_back(static_cast<int32_t>(b.bytes.size()));
-    b.n++;
+    c.bytes += s.data.string_val;
+    if (c.bytes.size() > static_cast<size_t>(INT32_MAX)) quark::tbl::fail("a str column holds more than 2 GiB of text");
+    c.ends.push_back(static_cast<int32_t>(c.bytes.size()));
+    c.pos++;
 }
-inline void q_col_push_null(quark::tbl::ColOut& b) {
-    b.nulls.push_back(b.n);
-    if (b.type == QVector::Type::STR) b.offsets.push_back(static_cast<int32_t>(b.bytes.size()));
-    b.n++;
+// q_col_push_null marks the row missing. A str row gets no text, a bool
+// row keeps the bitmap's zero, and an int, float or date row is zeroed.
+inline void q_col_push_null(quark::tbl::ColCursor& c) {
+    c.nulls.push_back(static_cast<int32_t>(c.pos));
+    if (c.values == nullptr) c.ends.push_back(static_cast<int32_t>(c.bytes.size()));
+    else if (c.width > 0) std::memset(c.values + c.pos * c.width, 0, static_cast<size_t>(c.width));
+    c.pos++;
 }
 
+inline void q_col_close(quark::tbl::ColOut& b, long long blk, quark::tbl::ColCursor& c) {
+    const size_t i = static_cast<size_t>(blk);
+    b.nulls[i] = std::move(c.nulls);
+    if (b.type == QVector::Type::STR) {
+        b.bytes[i] = std::move(c.bytes);
+        b.ends[i] = std::move(c.ends);
+    }
+}
+
+// q_col_finish joins the blocks: their text one after another (each row's
+// offset moved by the text before its block), and their missing rows.
 inline QVector* q_col_finish(quark::tbl::ColOut& b) {
     QVector* v = b.v;
     if (b.type == QVector::Type::STR) {
-        v = q_vec_alloc(QVector::Type::STR, static_cast<size_t>(b.n), b.bytes.size());
-        if (!b.bytes.empty()) std::memcpy(v->values, b.bytes.data(), b.bytes.size());
-        std::memcpy(v->offsets, b.offsets.data(), b.offsets.size() * sizeof(int32_t));
+        std::vector<size_t> start(static_cast<size_t>(b.nblocks) + 1, 0);
+        for (long long k = 0; k < b.nblocks; k++) start[static_cast<size_t>(k) + 1] = start[static_cast<size_t>(k)] + b.bytes[static_cast<size_t>(k)].size();
+        const size_t total = start[static_cast<size_t>(b.nblocks)];
+        if (total > static_cast<size_t>(INT32_MAX)) quark::tbl::fail("a str column holds more than 2 GiB of text");
+        v = q_vec_alloc(QVector::Type::STR, static_cast<size_t>(b.n), total);
+        quark::par::Plan p;
+        p.n = b.n;
+        p.nblocks = b.nblocks;
+        q_par_run(p, [&](long long lo, long long, long long k) {
+            const std::string& text = b.bytes[static_cast<size_t>(k)];
+            const std::vector<int32_t>& ends = b.ends[static_cast<size_t>(k)];
+            const size_t at = start[static_cast<size_t>(k)];
+            if (!text.empty()) std::memcpy(v->values + at, text.data(), text.size());
+            const int32_t shift = static_cast<int32_t>(at);
+            for (size_t r = 0; r < ends.size(); r++) v->offsets[static_cast<size_t>(lo) + r + 1] = ends[r] + shift;
+        });
     }
-    for (int32_t i : b.nulls) quark::tbl::set_null(*v, i);
+    for (const std::vector<int32_t>& nulls : b.nulls) {
+        for (int32_t i : nulls) quark::tbl::set_null(*v, i);
+    }
     return v;
 }
 
@@ -305,17 +419,22 @@ inline QTable* q_tbl_drop_na(QTable* t, std::initializer_list<int> cols) {
         if (v->null_count != 0) gaps.push_back(v);
     }
     if (gaps.empty()) return t;
-    quark::tbl::RowSet s = q_rows_new(t->nrows);
-    for (int32_t r = 0; r < t->nrows; r++) {
-        bool keep = true;
-        for (const QVector* v : gaps) {
-            if (quark::tbl::is_null(*v, r)) {
-                keep = false;
-                break;
+    const quark::par::Plan p = q_par_plan(t->nrows);
+    quark::tbl::RowSet s = q_rows_new(p);
+    q_par_run(p, [&](long long lo, long long hi, long long blk) {
+        quark::tbl::RowCursor c = q_rows_cursor(s, lo);
+        for (long long r = lo; r < hi; r++) {
+            bool keep = true;
+            for (const QVector* v : gaps) {
+                if (quark::tbl::is_null(*v, static_cast<int32_t>(r))) {
+                    keep = false;
+                    break;
+                }
             }
+            q_rows_keep(c, r, keep);
         }
-        if (keep) q_rows_push(s, r);
-    }
+        q_rows_close(s, blk, c);
+    });
     return q_tbl_take(t, s);
 }
 

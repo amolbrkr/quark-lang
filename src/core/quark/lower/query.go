@@ -2,6 +2,7 @@ package lower
 
 import (
 	"fmt"
+	"sort"
 
 	"quark/ast"
 	"quark/builtins"
@@ -25,10 +26,20 @@ import (
 
 // rowLoop is the row a verb expression is lowered for: the loop's row index,
 // the table it reads, its row type, and the columns bound for the loop.
+//
+// A row loop is a ParFor (specs/tables_v0_3_spec.md §8): its rows run in
+// blocks, possibly on several threads, so what it builds goes through a
+// cursor per block (made in the block's Pre from lo, closed in its Post with
+// blk), and the values it reads that don't change are copied into the
+// block's locals first (localize).
 type rowLoop struct {
 	idx  *Temp
 	row  *types.StructType
 	cols map[int]*Temp // column index -> const QVector& temp
+	plan Expr          // the loop's quark::par::Plan
+	// lo and blk are the block being lowered (inside rowFor): its first
+	// row and its number.
+	lo, blk *Temp
 	// key and saved are set when the loop's expressions draw random
 	// numbers (specs/tables_v0_3_spec.md §5): the loop's key, and the draw
 	// context to restore after the loop (endRow).
@@ -43,6 +54,10 @@ const (
 	repLookup   Rep = "quark::tbl::LookupSet"
 	repRandKey  Rep = "uint64_t"
 	repRowCtx   Rep = "QRowCtx"
+	repRowCur   Rep = "quark::tbl::RowCursor"
+	repColCur   Rep = "quark::tbl::ColCursor"
+	repOnce     Rep = "quark::par::Once"
+	repOnceRun  Rep = "quark::par::OnceGuard"
 )
 
 func intConst(n int) Expr { return &Const{R: RepInt, Text: fmt.Sprint(n)} }
@@ -118,13 +133,14 @@ func (l *lowerer) include(header string) {
 	l.prog.Includes = append(l.prog.Includes, header)
 }
 
-// openRow binds the columns the expressions read of table cur. dense is true
-// when every one of those columns has no missing values (nil when the
-// expressions read no column, which is dense too). The caller runs one loop
-// or both.
-func (l *lowerer) openRow(cur Expr, row *types.StructType, exprs []*ast.TreeNode) (*rowLoop, Expr, Expr) {
+// openRow binds the columns the expressions read of table cur, and plans
+// the loop over its rows. dense is true when every one of those columns has
+// no missing values (nil when the expressions read no column, which is
+// dense too). The caller runs one loop or both.
+func (l *lowerer) openRow(cur Expr, row *types.StructType, exprs []*ast.TreeNode) (*rowLoop, Expr) {
 	n := l.let(&Call{Fn: "q_tbl_rows", Args: []Expr{cur}, R: RepInt})
 	rl := &rowLoop{row: row, cols: map[int]*Temp{}}
+	rl.plan = l.let(&Call{Fn: "q_par_plan", Args: []Expr{n}, R: RepPlan})
 	var checks []Expr
 	for _, e := range exprs {
 		for _, c := range l.columnReads(e, nil) {
@@ -140,18 +156,20 @@ func (l *lowerer) openRow(cur Expr, row *types.StructType, exprs []*ast.TreeNode
 	rl.idx = l.newTemp(RepInt)
 	l.drawContext(rl, exprs)
 	if len(checks) == 0 {
-		return rl, n, nil
+		return rl, nil
 	}
 	all := checks[0]
 	for _, c := range checks[1:] {
 		all = &AndAlso{L: all, X: c}
 	}
-	return rl, n, l.let(all)
+	return rl, l.let(all)
 }
 
-// onceSlot is one call a row loop evaluates the first time a row needs it.
+// onceSlot is one call a row loop evaluates the first time a row needs it:
+// ctl says whether it has been made (rows on other threads wait while it is
+// being made), and value, assigned by the row that makes it, is shared.
 type onceSlot struct {
-	ready *Temp
+	ctl   *Temp
 	value *Temp
 }
 
@@ -165,7 +183,8 @@ func (o *onceSlots) slot(l *lowerer, node *ast.TreeNode, rep Rep) *onceSlot {
 	if s := o.byNode[node]; s != nil {
 		return s
 	}
-	s := &onceSlot{ready: l.newTemp(RepBool), value: l.newTemp(rep)}
+	s := &onceSlot{ctl: l.newTemp(repOnce), value: l.newTemp(rep)}
+	s.value.Shared = true
 	o.byNode[node] = s
 	o.list = append(o.list, s)
 	return s
@@ -238,25 +257,111 @@ func (l *lowerer) drawsIn(exprs []*ast.TreeNode) bool {
 	return false
 }
 
-// rowFor lowers body as a loop over the rows openRow bound. With a draw
-// context, each row starts by setting it.
-func (l *lowerer) rowFor(rl *rowLoop, n Expr, body func()) {
+// rowFor lowers body as the loop over the rows rl plans, a ParFor. Each
+// block runs pre (which makes the block's cursors from rl.lo), the rows,
+// then post (which closes them with rl.blk). With a draw context, each row
+// starts by setting it. The once-calls the rows make are declared before
+// the loop, shared by its blocks.
+func (l *lowerer) rowFor(rl *rowLoop, pre, body, post func()) {
 	saved, savedOnce := l.row, l.once
+	pf := &ParFor{Plan: rl.plan, Lo: l.newTemp(RepInt), Hi: l.newTemp(RepInt), Blk: l.newTemp(RepInt), Idx: rl.idx}
+	rl.lo, rl.blk = pf.Lo, pf.Blk
 	l.row = rl
 	l.once = &onceSlots{byNode: map[*ast.TreeNode]*onceSlot{}}
-	loop := l.sub(func() {
+	var restore func()
+	pf.Pre = l.sub(func() {
+		restore = l.localize(rl)
+		if pre != nil {
+			pre()
+		}
+	})
+	pf.Body = l.sub(func() {
 		if rl.key != nil {
 			l.add(&Do{X: &Call{Fn: "q_row_ctx_set", Args: []Expr{&TempRef{T: rl.key}, &TempRef{T: rl.idx}}, R: Rep("void")}})
 		}
 		body()
 	})
+	pf.Post = l.sub(func() {
+		if post != nil {
+			post()
+		}
+	})
+	restore()
 	slots := l.once
 	l.row, l.once = saved, savedOnce
+	rl.lo, rl.blk = nil, nil
 	for _, s := range slots.list {
-		l.add(&Let{T: s.ready, Value: falseExpr})
+		l.add(&Let{T: s.ctl, Value: &Const{R: repOnce, Text: "quark::par::Once{}"}})
 		l.add(&Let{T: s.value, Value: onceZero(s.value.R)})
 	}
-	l.add(&ForIndex{Idx: rl.idx, Len: n, Body: loop})
+	l.add(pf)
+}
+
+// localize copies what rl's rows read and no row changes, the columns, the
+// draw key and the step's aggregates, into locals of the block, and points
+// the lowering at the copies until the returned function restores it. The
+// loop body is a lambda: a value it reads through its captures is a load
+// clang can't hoist past the loop's stores, where a local is a register.
+func (l *lowerer) localize(rl *rowLoop) func() {
+	savedCols, savedKey, savedAgg := rl.cols, rl.key, l.agg
+	cols := make(map[int]*Temp, len(rl.cols))
+	keys := make([]int, 0, len(rl.cols))
+	for c := range rl.cols {
+		keys = append(keys, c)
+	}
+	sort.Ints(keys)
+	for _, c := range keys {
+		t := l.newTemp(RepVecRef)
+		l.add(&Let{T: t, Value: &TempRef{T: rl.cols[c]}})
+		cols[c] = t
+	}
+	rl.cols = cols
+	if rl.key != nil {
+		t := l.newTemp(repRandKey)
+		l.add(&Let{T: t, Value: &TempRef{T: rl.key}})
+		rl.key = t
+	}
+	if a := l.agg; a != nil {
+		la := *a
+		la.vecs = make(map[*types.AggUse]Expr, len(a.vecs))
+		la.wholeVals = make(map[*types.AggUse]wholeAgg, len(a.wholeVals))
+		for _, u := range a.order {
+			la.vecs[u] = l.localCopy(a.vecs[u])
+			if w, ok := a.wholeVals[u]; ok {
+				lw := wholeAgg{value: l.localCopy(w.value)}
+				if w.present != nil {
+					lw.present = l.localCopy(w.present)
+				}
+				la.wholeVals[u] = lw
+			}
+		}
+		if !a.whole && a.group != nil {
+			la.group = l.localCopy(a.group)
+		}
+		l.agg = &la
+	}
+	return func() {
+		rl.cols, rl.key, l.agg = savedCols, savedKey, savedAgg
+	}
+}
+
+// localCopy is e, a temporary's value, copied into a new local (a grouping
+// is a few words: its arrays are shared); anything else is returned as it
+// is.
+func (l *lowerer) localCopy(e Expr) Expr {
+	ref, ok := e.(*TempRef)
+	if !ok {
+		return e
+	}
+	r := ref.T.R
+	switch {
+	case r.IsScalar(), r == RepStrView, r == RepVector, r == RepVecRef, r == repGrouping:
+	default:
+		return e
+	}
+	t := l.newTemp(r)
+	l.add(&Let{T: t, Value: e})
+	return &TempRef{T: t}
 }
 
 // denseOrSlow runs fast when dense is true and slow otherwise. dense nil
@@ -618,27 +723,37 @@ func (l *lowerer) queryFilter(cur Expr, st *types.QueryStep) Expr {
 			l.bindAgg(a, l.evalAgg(cur, a, st.In))
 		}
 	}
+	rl, dense := l.openRow(cur, st.In, []*ast.TreeNode{st.Pred})
 	rows := l.newTemp(repRowSet)
-	l.add(&Let{T: rows, Value: &Call{Fn: "q_rows_new", Args: []Expr{&Call{Fn: "q_tbl_rows", Args: []Expr{cur}, R: RepInt}}, R: repRowSet}})
-	rl, n, dense := l.openRow(cur, st.In, []*ast.TreeNode{st.Pred})
+	l.add(&Let{T: rows, Value: &Call{Fn: "q_rows_new", Args: []Expr{rl.plan}, R: repRowSet}})
 	dense = l.andDense(dense, l.aggDense(st.Pred))
+	// Each block keeps its rows through its own cursor; q_tbl_take joins
+	// the blocks in order.
+	var c *Temp
+	pre := func() {
+		c = l.newTemp(repRowCur)
+		l.add(&Let{T: c, Value: &Call{Fn: "q_rows_cursor", Args: []Expr{&TempRef{T: rows}, &TempRef{T: rl.lo}}, R: repRowCur}})
+	}
+	post := func() {
+		l.add(&Do{X: &Call{Fn: "q_rows_close", Args: []Expr{&TempRef{T: rows}, &TempRef{T: rl.blk}, &TempRef{T: c}}, R: Rep("void")}})
+	}
 	l.denseOrSlow(dense, func() {
 		// No missing values: the predicate is an ordinary bool, and the
 		// selected indexes are gathered without a branch on it.
-		l.rowFor(rl, n, func() {
+		l.rowFor(rl, pre, func() {
 			keep := l.asRowRep(st.Pred, l.expr(st.Pred), RepBool)
-			l.add(&Do{X: &Call{Fn: "q_rows_keep", Args: []Expr{&TempRef{T: rows}, &TempRef{T: rl.idx}, keep}, R: Rep("void")}})
-		})
+			l.add(&Do{X: &Call{Fn: "q_rows_keep", Args: []Expr{&TempRef{T: c}, &TempRef{T: rl.idx}, keep}, R: Rep("void")}})
+		}, post)
 	}, func() {
-		l.rowFor(rl, n, func() {
+		l.rowFor(rl, pre, func() {
 			v, p := l.rowValue(st.Pred)
 			var keep Expr = l.asRowRep(st.Pred, v, RepBool)
 			if p != nil {
 				keep = &AndAlso{L: p, X: keep}
 			}
-			push := &Do{X: &Call{Fn: "q_rows_push", Args: []Expr{&TempRef{T: rows}, &TempRef{T: l.row.idx}}, R: Rep("void")}}
+			push := &Do{X: &Call{Fn: "q_rows_push", Args: []Expr{&TempRef{T: c}, &TempRef{T: l.row.idx}}, R: Rep("void")}}
 			l.add(&If{Cond: keep, Then: &Block{Stmts: []Stmt{push}}})
-		})
+		}, post)
 	})
 	l.endRow(rl)
 	l.agg = nil
@@ -698,7 +813,7 @@ func (l *lowerer) querySummarize(cur Expr, st *types.QueryStep) Expr {
 	l.bindGrouping(cur, st.GroupKeys, st.In)
 	for _, a := range st.Aggs {
 		// Read per group (perGroup), so nothing is hoisted.
-		l.agg.vecs[a] = l.evalAgg(cur, a, st.In)
+		l.agg.setVec(a, l.evalAgg(cur, a, st.In))
 	}
 	cols := append([]Expr{}, l.agg.keyVecs...)
 	if len(st.SumCols) > 0 {
@@ -742,6 +857,7 @@ type aggBind struct {
 	whole    bool
 	perGroup bool
 	vecs     map[*types.AggUse]Expr
+	order    []*types.AggUse // vecs' keys, in the order they were bound
 	keyVecs  []Expr
 	// wholeVals are the value and presence of each aggregate of a
 	// whole-table step, read once before the row loop (bindAgg).
@@ -810,41 +926,56 @@ func (l *lowerer) evalAgg(cur Expr, a *types.AggUse, row *types.StructType) Expr
 // buildColumn evaluates expr once per row into a new column.
 func (l *lowerer) buildColumn(cur Expr, row *types.StructType, expr *ast.TreeNode, typ types.Type) Expr {
 	r := rowRep(typ)
+	rl, dense := l.openRow(cur, row, []*ast.TreeNode{expr})
 	b := l.newTemp(repColOut)
-	rows := &Call{Fn: "q_tbl_rows", Args: []Expr{cur}, R: RepInt}
-	l.add(&Let{T: b, Value: &Call{Fn: "q_col_new", Args: []Expr{intConst(ColumnDtype(typ)), rows}, R: repColOut}})
-	rl, n, dense := l.openRow(cur, row, []*ast.TreeNode{expr})
+	l.add(&Let{T: b, Value: &Call{Fn: "q_col_new", Args: []Expr{intConst(ColumnDtype(typ)), rl.plan}, R: repColOut}})
 	dense = l.andDense(dense, l.aggDense(expr))
+	c, pre, post := l.colCursor(rl, b)
 	pushOf := func(v Expr) *Do {
-		return &Do{X: &Call{Fn: pushFns[r], Args: []Expr{&TempRef{T: b}, l.asRowRep(expr, v, r)}, R: Rep("void")}}
+		return &Do{X: &Call{Fn: pushFns[r], Args: []Expr{&TempRef{T: *c}, l.asRowRep(expr, v, r)}, R: Rep("void")}}
 	}
 	l.denseOrSlow(dense, func() {
-		l.rowFor(rl, n, func() {
+		l.rowFor(rl, pre, func() {
 			l.add(pushOf(l.expr(expr)))
-		})
+		}, post)
 	}, func() {
-		l.rowFor(rl, n, func() {
+		l.rowFor(rl, pre, func() {
 			v, p := l.rowValue(expr)
-			l.pushOrNull(b, p, pushOf(v))
-		})
+			l.pushOrNull(*c, p, pushOf(v))
+		}, post)
 	})
 	l.endRow(rl)
 	return l.let(&Call{Fn: "q_col_finish", Args: []Expr{&TempRef{T: b}}, R: RepVector})
+}
+
+// colCursor is the cursor of column b in each block of rl's loop: pre makes
+// it (into *c) from the block's first row, post closes it.
+func (l *lowerer) colCursor(rl *rowLoop, b *Temp) (**Temp, func(), func()) {
+	c := new(*Temp)
+	pre := func() {
+		*c = l.newTemp(repColCur)
+		l.add(&Let{T: *c, Value: &Call{Fn: "q_col_cursor", Args: []Expr{&TempRef{T: b}, &TempRef{T: rl.lo}}, R: repColCur}})
+	}
+	post := func() {
+		l.add(&Do{X: &Call{Fn: "q_col_close", Args: []Expr{&TempRef{T: b}, &TempRef{T: rl.blk}, &TempRef{T: *c}}, R: Rep("void")}})
+	}
+	return c, pre, post
 }
 
 // buildGroupColumn evaluates expr once per group. keys are the group-key
 // columns, indexed by the input column, already one value per group.
 func (l *lowerer) buildGroupColumn(n Expr, keys map[int]*Temp, row *types.StructType, expr *ast.TreeNode, typ types.Type) Expr {
 	r := rowRep(typ)
+	rl := &rowLoop{idx: l.newTemp(RepInt), row: row, cols: keys}
+	rl.plan = l.let(&Call{Fn: "q_par_plan", Args: []Expr{n}, R: RepPlan})
 	b := l.newTemp(repColOut)
-	l.add(&Let{T: b, Value: &Call{Fn: "q_col_new", Args: []Expr{intConst(ColumnDtype(typ)), n}, R: repColOut}})
-	idx := l.newTemp(RepInt)
-	rl := &rowLoop{idx: idx, row: row, cols: keys}
+	l.add(&Let{T: b, Value: &Call{Fn: "q_col_new", Args: []Expr{intConst(ColumnDtype(typ)), rl.plan}, R: repColOut}})
 	l.drawContext(rl, []*ast.TreeNode{expr})
-	l.rowFor(rl, n, func() {
+	c, pre, post := l.colCursor(rl, b)
+	l.rowFor(rl, pre, func() {
 		v, p := l.rowValue(expr)
-		l.pushOrNull(b, p, &Do{X: &Call{Fn: pushFns[r], Args: []Expr{&TempRef{T: b}, l.asRowRep(expr, v, r)}, R: Rep("void")}})
-	})
+		l.pushOrNull(*c, p, &Do{X: &Call{Fn: pushFns[r], Args: []Expr{&TempRef{T: *c}, l.asRowRep(expr, v, r)}, R: Rep("void")}})
+	}, post)
 	l.endRow(rl)
 	return l.let(&Call{Fn: "q_col_finish", Args: []Expr{&TempRef{T: b}}, R: RepVector})
 }
@@ -939,7 +1070,7 @@ func (l *lowerer) groupIndex() Expr {
 // loop's writes (specs/tables_v0_3_spec.md §3.7). An entry of a missing
 // aggregate is zeroed, so the read is defined; the row checks present first.
 func (l *lowerer) bindAgg(u *types.AggUse, vec Expr) {
-	l.agg.vecs[u] = vec
+	l.agg.setVec(u, vec)
 	if !l.agg.whole {
 		return
 	}
@@ -948,6 +1079,14 @@ func (l *lowerer) bindAgg(u *types.AggUse, vec Expr) {
 		w.present = l.let(&Call{Fn: "q_grp_present", Args: []Expr{vec, intConst(0)}, R: RepBool})
 	}
 	l.agg.wholeVals[u] = w
+}
+
+// setVec records u's per-group vector.
+func (a *aggBind) setVec(u *types.AggUse, vec Expr) {
+	if _, ok := a.vecs[u]; !ok {
+		a.order = append(a.order, u)
+	}
+	a.vecs[u] = vec
 }
 
 func (l *lowerer) aggPresent(u *types.AggUse) Expr {

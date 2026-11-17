@@ -10,6 +10,8 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 
 ## Contents
 
+- [2026-11-17: Dates and REPL specs moved; data work and untyped tables proposals](#2026-11-17-dates-and-repl-specs-moved-data-work-and-untyped-tables-proposals)
+- [2026-11-17: Tables v0.3, a thread pool for queries, the table engine and vecs](#2026-11-17-tables-v03-a-thread-pool-for-queries-the-table-engine-and-vecs)
 - [2026-11-17: Tables v0.3, random draws in verbs](#2026-11-17-tables-v03-random-draws-in-verbs)
 - [2026-11-17: Tables v0.3, missing values in verbs, contains, count step](#2026-11-17-tables-v03-missing-values-in-verbs-contains-count-step)
 - [2026-11-17: Tables v0.3, aggregate names and rowsafe hardened](#2026-11-17-tables-v03-aggregate-names-and-rowsafe-hardened)
@@ -59,7 +61,57 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 - [2026-04-02: Structs v0.1](#2026-04-02-structs-v01)
 - [2026-03-28: Vector soundness, `std/fmt` on `extern`, build output](#2026-03-28-vector-soundness-stdfmt-on-extern-build-output)
 
+## 2026-11-17: Dates and REPL specs moved; data work and untyped tables proposals
+
+### Internal
+
+- `specs/dates_v0_1_spec.md` and `specs/repl_v0_1_spec.md`, whose designs are implemented, are in `specs/implemented/`. Every link and mention in the docs, code comments and this changelog points to the new paths.
+- Two proposals, nothing implemented: `specs/untyped_tables_v0_1_spec.md` (column reads and queries on a table read without a row struct, checked at runtime, with a warning for slow queries) and `specs/data_work_v0_1_spec.md` (a sort and a sorting order for vecs, a CSV reader that stays within memory, semi, anti, inner and left joins, and a benchmark suite after db-benchmark, sized for a laptop). The compile-time schema inference of `specs/tables_v0_1_spec.md` §10 moved to the untyped tables proposal.
+
+---
+
+## 2026-11-17: Tables v0.3, a thread pool for queries, the table engine and vecs
+
+`specs/tables_v0_3_spec.md` §8, phase 4, first part: a program has a thread pool, and a query's row loops, most of the table engine and the vec operations run on it. The output is the same for every thread count (D53): the same rows in the same order, the same float bits, the same random draws, and the same error. The CSV reader, the grouped aggregates of many small groups and `distinct` still run on one thread.
+
+### Breaking
+
+- **A program fails at startup when `QUARK_THREADS` is set to something other than a whole number from 1 to 4096** (`error[QK-RUNTIME-001] (runtime): QUARK_THREADS must be a whole number of threads from 1 to 4096, got 'x'`). It was ignored before.
+
+### Changed
+
+- **An int `sum` is exact, so it fails only when the total doesn't fit in an int.** `sum(vec [9223372036854775807, 1, -1])` is `9223372036854775807`; it was `integer overflow in 'sum'`, because the running total overflowed on the way. The same holds for `sum` in `summarize`, `filter` and `mutate`. A total that doesn't fit is still the error. This is what lets a sum split across threads give the same answer for every count.
+
+### Added
+
+- A query's row loops run in blocks of 65,536 rows, on several threads when the loop has 131,072 rows or more: a `filter` condition, each `mutate` column, an aggregate's argument, a computed group key, a `summarize` column, and the `drop_na` step.
+- So do vec arithmetic, comparisons, `sum`, `mean`, `sd`, `min`, `max`, `all`, `any`, mask filters, `fillna`, `drop_na` and `astype`, and in the table engine the gather behind `filter`, `sort` and `distinct`, the hashing of group keys, `sort` (a stable merge sort, so its output is the one stable order), the whole-table aggregates, and the float sums of large groups. Float sums split along the pairwise halving, so they keep their bits.
+- On 10M rows and 6 threads (`--threads 1` in parentheses, then the compiler before this change): `filter(e.a > mean(e.a) and e.b < 0.9)` takes 35-40 ms (101 ms; 107 ms), a two-column `mutate` 29 ms (48 ms; 64 ms) and `summarize(s = sum(e.a * e.b), m = mean(e.a - e.b))` 35 ms (47 ms; 62 ms). One thread is faster too, because a new column is no longer zeroed before every row is written.
+- The thread count is the logical CPUs the program may use, after its CPU affinity and its container's CPU quota (6 on a 16-CPU machine under a 6-CPU cgroup quota). `quark run --threads N` sets it; a built program reads `QUARK_THREADS`, which `--threads` overrides. `--threads 1` runs everything on one thread, as before. The REPL always uses one.
+- `sys::threads()` is the thread count in use.
+- A failing parallel step reports the error of its first failing row in row order, as one thread does, and exits with status 1: `mutate(y = check(e.i))` where `check` fails at rows 150000 and 270000 reports row 150000 at every thread count. A call made once per step (D44) is still made once, by the first row to reach it; a row on another thread that needs it meanwhile waits for it.
+- A stack overflow in a row on another thread is reported like one on the main thread (`stack overflow at main.qrk:3:24`, with stdout flushed first). It is reported at once by the thread it happens on, so when an earlier row fails in another way, a run on several threads can report the overflow instead (§8.5, decided while implementing it).
+
+### Fixed
+
+- Reading a field of `null` through a struct slot (`p: Point = null`, then `p.x`: `cannot read a field of null`) and the runtime's table accessors called `exit` directly; they now go through the runtime's exit path, so the Windows REPL recovers from the error instead of ending the session, and in a parallel step the error is the step's error like any other.
+
+### Internal
+
+- `core/threads.hpp`: the thread count (`q_par_threads`, `q_par_init`, `q_par_one_thread` for the REPL host), with the Linux cgroup v1/v2 quota walk. `core/par.hpp`: the pool (`q_par_plan`, `q_par_run`), blocks taken in increasing order by the calling thread and the workers, cancellation of the blocks after the lowest failing one, and once-calls (`quark::par::Once`, `OnceGuard`). Workers are registered with the collector, have the main thread's stack size, and are never joined.
+- `core/diagnostics.hpp`: while a thread runs a block, `q_error_capture` collects its error text and `q_exit` throws `QBlockExit`; the caller reports the lowest failing block's text. `core/stack.hpp`: the stack guard is per thread (`q_stack_guard`, `q_stack_thread_init`).
+- `core/gc.hpp` defines `GC_THREADS` (with `GC_NO_THREAD_REDIRECTS`) and sets the collector's marker threads to the thread count, so collections mark in parallel once the pool has started, and on one thread with `--threads 1`.
+- The IR has `ParFor` (`lower/ir.go`): a row loop whose blocks run `Pre`, the rows, then `Post`, emitted as `q_par_run(plan, [&](lo, hi, blk) {...})`. A filter keeps rows through a `RowCursor` per block and `q_tbl_take` joins them; a column is written at each row through a `ColCursor`, and `q_col_finish` joins the blocks' text and missing rows. Loop invariants are copied into the block's locals (`localize`), so one thread is as fast as before. A once-call's value temporary is `Shared`. The verifier rejects a parallel loop that assigns a temporary or variable from outside it, returns or breaks out (`INV-IR-PAR`).
+- The resource registry is locked (`q_resource_lock`), and its slots are a `std::deque`, since a finalizer can now run on a worker; `TestGCManagedSelfCheck` checks a slot's storage through its address.
+- Vec kernels (`types/vector.hpp`): `par_range`, a parallel `fill_bits`, `gather_doubles`, `sum_i128`, `q_vec_alloc_raw` (no zeroing, for outputs whose every element is written), `q_vec_i64_present_sum` and `q_sum_fits` (shared by the vec `sum` and `agg_sum`). Engine (`table/engine.hpp`): a parallel `take`, `par_stable_sort`, `best_in_blocks`. `core/sum.hpp`: `q_pairwise_sum_par`, which sums the subtrees of the halving of at most 65,536 values in parallel and adds them in the tree's order.
+- Tests: `integration_parallel_test.go` (every row loop, and the engine and vec kernels, at 1, 2, 3, 7 and 16 threads on 131,071, 131,072, 131,073 and 300,000 rows; exact int sums; errors in several blocks, a once-call that fails after a row error and one before it, an overflow on a worker; once-calls counted across threads; strings built on every thread while the collector runs; `QUARK_THREADS` and `--threads` values; the default under a cgroup CPU quota, on Linux; the REPL on one thread).
+- Docs: `semantics.md` §9.5 (Threads, the exact int `sum`), `stdlib.md` (`sys::threads`, `sum`), `architecture.md` §1.6, §2.6 (the thread pool), §3 and §8, `error_codes.md` (`INV-IR-PAR`), `README.md`, `specs/tables_v0_3_spec.md` (status, D56 and §8.5 for stack overflows, §4.5, §8.6), `specs/tables_v0_1_spec.md` (D13 and §4: the exact int `sum`). `CLAUDE.md` lists the pool's rules for runtime and generated code.
+
+---
+
 ## 2026-11-17: Tables v0.3, random draws in verbs
+
+Commits: `8ba37e0`
 
 `specs/tables_v0_3_spec.md` §5 (D45): a random draw in a query no longer takes the next number of `std/random`'s sequence. It is computed from the seed, the row loop, the row and the draw's place in the row, with the counter-based generator Philox4x32-10, so the numbers don't depend on the order rows run in, which the parallel queries of phase 4 need.
 
@@ -83,6 +135,8 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 ---
 
 ## 2026-11-17: Tables v0.3, missing values in verbs, contains, count step
+
+Commits: `8ba37e0`
 
 The rest of the tables v0.3 language on one thread (`specs/tables_v0_3_spec.md` §6, §7): a query can test and replace a missing value, test membership, and count rows; tables report their shape; two-argument `min` and `max` have types.
 
@@ -140,6 +194,8 @@ known = orders | o -> filter(customers.id.contains(o.customer_id))
 ---
 
 ## 2026-11-17: Tables v0.3, aggregate names and rowsafe hardened
+
+Commits: `f51163d`
 
 Fixes for what a check of the two tables v0.3 commits of 2026-11-16 found.
 
@@ -328,8 +384,8 @@ Commits: `771bf84`
 
 - **A type change read the variable after its old value was cleared.** `t = 'abc'`, then `t = t == 'abc'` made `t` `false`; it is `true` (with the type-change warning). `xs = len(xs)` on a list failed with `len() expects str, list, dict, or vec`; it is the length.
 - **A top-level `int`, `float` or `bool` of a later input started with a random value instead of unassigned**, so a function that read it before its first assignment got garbage (`1`, or a large number) instead of `'n' is used before it is assigned`, which a file gives.
-- **An included file was read again for every input**, so editing it in the middle of a session called already-compiled code through the new definition (a function changed to return a float printed `0.0`), or made every later input fail. A session reads each file once, when an input that includes it first succeeds, as `specs/repl_v0_1_spec.md` §3.7 says.
-- **A list made by an earlier input's function could be read as the wrong type.** With `fn mk() -> list []` in one input, a later `zs = mk()` and `zs.push(1)` typed every list `mk` makes as a list of ints, but `mk` was already compiled and kept making lists that take anything: a string pushed into one through an untyped function was then read as an int (`y: int = ws[0]` printed pointer bits). An empty `list []` or `dict {}` inside a function of an input that has run now holds any value, and a typed read of one is checked (`variable 'y' is declared int but got str`). This differs from a file, where the first write types every list the function makes (`specs/repl_v0_1_spec.md` §3.5, §3.8). A top-level `xs = list []` still takes its type from a later input's first write.
+- **An included file was read again for every input**, so editing it in the middle of a session called already-compiled code through the new definition (a function changed to return a float printed `0.0`), or made every later input fail. A session reads each file once, when an input that includes it first succeeds, as `specs/implemented/repl_v0_1_spec.md` §3.7 says.
+- **A list made by an earlier input's function could be read as the wrong type.** With `fn mk() -> list []` in one input, a later `zs = mk()` and `zs.push(1)` typed every list `mk` makes as a list of ints, but `mk` was already compiled and kept making lists that take anything: a string pushed into one through an untyped function was then read as an int (`y: int = ws[0]` printed pointer bits). An empty `list []` or `dict {}` inside a function of an input that has run now holds any value, and a typed read of one is checked (`variable 'y' is declared int but got str`). This differs from a file, where the first write types every list the function makes (`specs/implemented/repl_v0_1_spec.md` §3.5, §3.8). A top-level `xs = list []` still takes its type from a later input's first write.
 - **Two internal compiler errors on ordinary inputs.** After a later input fixed the element type of an earlier `list []`, every following input failed with `INV-IR-SCOPE` (the spec's first example did); a function from an earlier input used as a value (`g = sq`) failed with `INV-IR-CALL`.
 
 ```
@@ -478,7 +534,7 @@ sq(4)
 
 ## 2026-11-14: REPL
 
-`quark repl` opens an interactive session (`specs/repl_v0_1_spec.md`). Each input is compiled with the same compiler as `quark run` and runs in a long-lived process, so variables, functions and structs survive from one input to the next. A compile error, a runtime error, Ctrl-C or a crash in native code ends that input only. Linux, macOS and Windows.
+`quark repl` opens an interactive session (`specs/implemented/repl_v0_1_spec.md`). Each input is compiled with the same compiler as `quark run` and runs in a long-lived process, so variables, functions and structs survive from one input to the next. A compile error, a runtime error, Ctrl-C or a crash in native code ends that input only. Linux, macOS and Windows.
 
 ```
 $ quark repl

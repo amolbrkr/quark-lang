@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cstdio>
+#include <atomic>
 #include <cmath>
 
 // Helper: type name lookup for error messages
@@ -182,13 +183,20 @@ inline QValue q_vec_bool_reduce(QValue v, bool want_all, const char* name) {
         q_exit(1);
     }
     const QVector& vec = *v.data.vector_val;
-    for (size_t i = 0; i < vec.count; i++) {
-        if (q_vec_is_null_at(vec, i)) continue;
-        const bool bit = q_vec_bool_at(vec, i);
-        if (want_all && !bit) return qv_bool(false);
-        if (!want_all && bit) return qv_bool(true);
-    }
-    return qv_bool(want_all);
+    // all() looks for a false entry and any() for a true one; each block of
+    // the thread pool looks in its own entries.
+    const bool target = !want_all;
+    std::atomic<bool> seen{false};
+    quark::vec::par_range(vec.count, [&](size_t lo, size_t hi) {
+        for (size_t i = lo; i < hi; i++) {
+            if (q_vec_is_null_at(vec, i)) continue;
+            if (q_vec_bool_at(vec, i) == target) {
+                seen.store(true, std::memory_order_relaxed);
+                return;
+            }
+        }
+    });
+    return qv_bool(seen.load() ? !want_all : want_all);
 }
 
 inline QValue q_all(QValue v) { return q_vec_bool_reduce(v, true, "all"); }

@@ -1,7 +1,7 @@
 // quark/types/date.hpp — calendar dates (Arrow date32) and calendar periods.
 //
 // A date is a signed count of days since 1970-01-01, stored in 32 bits
-// (specs/dates_v0_1_spec.md). A period is years, months and days. Adding a
+// (specs/implemented/dates_v0_1_spec.md). A period is years, months and days. Adding a
 // period applies years and months, rolls an impossible day back to the last
 // day of that month (lubridate's %m+%), then adds the day count exactly.
 #ifndef QUARK_TYPES_DATE_HPP

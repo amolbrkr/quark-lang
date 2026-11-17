@@ -22,6 +22,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -59,15 +61,29 @@ struct QResourceSlot {
     bool occupied;
 };
 
-// The slot vector must use the GC allocator: a slot's payload (for example a
+// The slots must use the GC allocator: a slot's payload (for example a
 // file's QFilePayload) is GC-allocated and is referenced only from here, so a
 // buffer the collector doesn't scan would let it free a live payload.
 // The free list is integers, not GC pointers, and a finalizer may push to it,
 // so it stays on the ordinary allocator and never calls the collector.
+//
+// The registry is shared by the threads of the thread pool (core/par.hpp): a
+// finalizer runs on whichever thread allocates, and a rowsafe native function
+// may resolve or create handles in a row. Every access holds
+// q_resource_lock, which is recursive because a finalizer can run inside the
+// slots' own allocation on the thread that holds it. The slots are a deque,
+// so a slot q_resource_resolve returns stays where it is while another
+// thread adds one.
 struct QResourceRegistry {
-    std::vector<QResourceSlot, q_allocator<QResourceSlot>> slots;
+    std::deque<QResourceSlot, q_allocator<QResourceSlot>> slots;
     std::vector<uint32_t> free_list;
 };
+
+// Never destroyed: a finalizer may run while the program exits.
+inline std::recursive_mutex& q_resource_lock() {
+    static std::recursive_mutex* m = new std::recursive_mutex();
+    return *m;
+}
 
 struct QResourceKindInfo {
     std::string name;
@@ -103,6 +119,7 @@ inline const char* q_resource_kind_name(uint16_t kind) {
 }
 
 inline void q_resource_set_close(uint16_t kind, QResourceCloseFn fn) {
+    std::lock_guard<std::recursive_mutex> lock(q_resource_lock());
     auto& kinds = q_resource_kinds();
     if (kind < kinds.size()) {
         kinds[kind].close = fn;
@@ -116,6 +133,7 @@ inline uint16_t q_define_handle_kind(const char* name, QResourceCloseFn close_fn
         q_runtime_reportf("runtime error: define_handle_kind needs a non-empty name\n");
         q_exit(1);
     }
+    std::lock_guard<std::recursive_mutex> lock(q_resource_lock());
     auto& kinds = q_resource_kinds();
     for (const auto& k : kinds) {
         if (k.name == name) {
@@ -163,19 +181,26 @@ inline QResourceHandle* q_resource_create(uint16_t kind, void* payload, uint16_t
     QResourceRegistry& registry = q_resource_registry();
 
     uint32_t slotIndex = 0;
-    if (!registry.free_list.empty()) {
-        slotIndex = registry.free_list.back();
-        registry.free_list.pop_back();
+    uint32_t generation = 0;
+    uint16_t slotFlags = 0;
+    {
+        std::lock_guard<std::recursive_mutex> lock(q_resource_lock());
+        if (!registry.free_list.empty()) {
+            slotIndex = registry.free_list.back();
+            registry.free_list.pop_back();
 
-        QResourceSlot& slot = registry.slots[slotIndex];
-        slot.generation += 1;
-        slot.kind = kind;
-        slot.flags = static_cast<uint16_t>(flags & ~QRES_FLAG_CLOSED);
-        slot.payload = payload;
-        slot.occupied = true;
-    } else {
-        slotIndex = static_cast<uint32_t>(registry.slots.size());
-        registry.slots.push_back(QResourceSlot{1, kind, static_cast<uint16_t>(flags & ~QRES_FLAG_CLOSED), payload, true});
+            QResourceSlot& slot = registry.slots[slotIndex];
+            slot.generation += 1;
+            slot.kind = kind;
+            slot.flags = static_cast<uint16_t>(flags & ~QRES_FLAG_CLOSED);
+            slot.payload = payload;
+            slot.occupied = true;
+        } else {
+            slotIndex = static_cast<uint32_t>(registry.slots.size());
+            registry.slots.push_back(QResourceSlot{1, kind, static_cast<uint16_t>(flags & ~QRES_FLAG_CLOSED), payload, true});
+        }
+        generation = registry.slots[slotIndex].generation;
+        slotFlags = registry.slots[slotIndex].flags;
     }
 
     // Scanned, not atomic: `parent` may point at another handle.
@@ -184,11 +209,10 @@ inline QResourceHandle* q_resource_create(uint16_t kind, void* payload, uint16_t
         return nullptr;
     }
 
-    const QResourceSlot& slot = registry.slots[slotIndex];
     handle->slot = slotIndex;
-    handle->generation = slot.generation;
+    handle->generation = generation;
     handle->kind = kind;
-    handle->flags = slot.flags;
+    handle->flags = slotFlags;
     handle->parent = parent;
     if ((handle->flags & QRES_FLAG_FINALIZABLE) != 0) {
         q_resource_arm_finalizer(handle);
@@ -204,6 +228,7 @@ inline bool q_resource_resolve(const QValue& value, uint16_t expectedKind, QReso
 
     QResourceHandle* handle = value.data.resource_val;
     QResourceRegistry& registry = q_resource_registry();
+    std::lock_guard<std::recursive_mutex> lock(q_resource_lock());
     if (handle->slot >= registry.slots.size()) {
         err = "invalid resource handle";
         return false;
@@ -239,6 +264,7 @@ inline void q_resource_invalidate(const QResourceHandle* handle) {
     }
 
     QResourceRegistry& registry = q_resource_registry();
+    std::lock_guard<std::recursive_mutex> lock(q_resource_lock());
     if (handle->slot >= registry.slots.size()) {
         return;
     }
@@ -262,24 +288,30 @@ inline void q_resource_release(const QResourceHandle* handle) {
         return;
     }
     QResourceRegistry& registry = q_resource_registry();
-    if (handle->slot >= registry.slots.size()) {
-        return;
+    void* payload = nullptr;
+    QResourceCloseFn close = nullptr;
+    {
+        std::lock_guard<std::recursive_mutex> lock(q_resource_lock());
+        if (handle->slot >= registry.slots.size()) {
+            return;
+        }
+        QResourceSlot& slot = registry.slots[handle->slot];
+        if (!slot.occupied || slot.generation != handle->generation) {
+            return;
+        }
+        payload = slot.payload;
+        const uint16_t kind = slot.kind;
+        const auto& kinds = q_resource_kinds();
+        if (kind < kinds.size()) close = kinds[kind].close;
+        slot.occupied = false;
+        slot.payload = nullptr;
+        slot.kind = QRES_KIND_NONE;
+        slot.flags = QRES_FLAG_CLOSED;
+        registry.free_list.push_back(handle->slot);
     }
-    QResourceSlot& slot = registry.slots[handle->slot];
-    if (!slot.occupied || slot.generation != handle->generation) {
-        return;
-    }
-    void* payload = slot.payload;
-    uint16_t kind = slot.kind;
-    slot.occupied = false;
-    slot.payload = nullptr;
-    slot.kind = QRES_KIND_NONE;
-    slot.flags = QRES_FLAG_CLOSED;
-    registry.free_list.push_back(handle->slot);
 
-    const auto& kinds = q_resource_kinds();
-    if (payload != nullptr && kind < kinds.size() && kinds[kind].close != nullptr) {
-        kinds[kind].close(payload);
+    if (payload != nullptr && close != nullptr) {
+        close(payload);
     }
 }
 

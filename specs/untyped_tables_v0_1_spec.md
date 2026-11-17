@@ -203,3 +203,4 @@ After tables v0.3 is implemented: both change the query analysis and lowering (`
 3. **Writable anonymous rows** (`t: tbl[{mpg: float, cyl: int}]`), so a function can name an inferred row (§6) or a query's result without a struct.
 4. **§6, unreadable file**: a warning and an untyped table (§6), or a compile-time error unless a flag says otherwise.
 5. **Help with writing the struct**: `describe()` could end with a struct to paste, and `quark schema <file>` could print one.
+6. **Joins** (`specs/data_work_v0_1_spec.md` §5) on an untyped table. A join's condition names only columns, so it could run as a column-only step (§4.1), with the keys found and their types compared when the step starts; the joined columns' names, and any clash between them, would then be checked at runtime too.

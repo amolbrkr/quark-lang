@@ -2,7 +2,7 @@ package main
 
 import "testing"
 
-// Dates v0.1 (specs/dates_v0_1_spec.md): the date and period types, calendar
+// Dates v0.1 (specs/implemented/dates_v0_1_spec.md): the date and period types, calendar
 // arithmetic, and date columns in tables and CSV.
 func TestDates(t *testing.T) {
 	runTableCases(t, []tableCase{

@@ -68,7 +68,7 @@ const (
 	// SortKeyNode is a sort key: Children [key]; Descending is set for
 	// desc(key).
 	SortKeyNode
-	// InputBlockNode is one REPL input (specs/repl_v0_1_spec.md). A session's
+	// InputBlockNode is one REPL input (specs/implemented/repl_v0_1_spec.md). A session's
 	// compilation unit is a list of these; each block is hoisted on its own.
 	// Children are the input's statements. SourceFile is `<input N>`.
 	InputBlockNode

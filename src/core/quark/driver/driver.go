@@ -182,7 +182,7 @@ func CompileSession(dir string, inputs []string) *Unit {
 // CompileSessionFiles is CompileSession with the text of files the session
 // has already read (Unit.Files of the last committed input): an imported file
 // is read from disk once per session, so editing it doesn't change code that
-// is already compiled (specs/repl_v0_1_spec.md §3.7).
+// is already compiled (specs/implemented/repl_v0_1_spec.md §3.7).
 func CompileSessionFiles(dir string, inputs []string, files map[string][]byte) *Unit {
 	u := &Unit{File: "<session>"}
 	if len(inputs) == 0 {

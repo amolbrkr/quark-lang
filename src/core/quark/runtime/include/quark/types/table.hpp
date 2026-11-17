@@ -149,12 +149,12 @@ inline bool q_table_conform(QValue v, const QStructDef* want, QValue* out) {
 inline QValue q_table_get_col(QValue tbl, int col_idx) {
     if (tbl.type != QValue::VAL_TABLE || !tbl.data.table_val) {
         q_runtime_reportf("runtime error: q_table_get_col: expected table\n");
-        exit(1);
+        q_exit(1);
     }
     QTable* t = tbl.data.table_val;
     if (col_idx < 0 || col_idx >= t->ncols) {
         q_runtime_reportf("runtime error: q_table_get_col: column index %d out of range (ncols=%d)\n", col_idx, t->ncols);
-        exit(1);
+        q_exit(1);
     }
     return t->cols[col_idx];
 }
@@ -163,7 +163,7 @@ inline QValue q_table_get_col(QValue tbl, int col_idx) {
 inline QValue q_table_get_col_by_name(QValue tbl, const char* name) {
     if (tbl.type != QValue::VAL_TABLE || !tbl.data.table_val) {
         q_runtime_reportf("runtime error: q_table_get_col_by_name: expected table\n");
-        exit(1);
+        q_exit(1);
     }
     QTable* t = tbl.data.table_val;
     for (int i = 0; i < t->ncols; i++) {
@@ -172,7 +172,7 @@ inline QValue q_table_get_col_by_name(QValue tbl, const char* name) {
         }
     }
     q_runtime_reportf("runtime error: table has no column '%s'\n", name);
-    exit(1);
+    q_exit(1);
 }
 
 // q_table_get_row materialises row i as a QStruct value.
@@ -180,13 +180,13 @@ inline QValue q_table_get_col_by_name(QValue tbl, const char* name) {
 inline QValue q_table_get_row(QValue tbl, int idx) {
     if (tbl.type != QValue::VAL_TABLE || !tbl.data.table_val) {
         q_runtime_reportf("runtime error: q_table_get_row: expected table\n");
-        exit(1);
+        q_exit(1);
     }
     QTable* t = tbl.data.table_val;
     if (idx < 0) idx = t->nrows + idx;
     if (idx < 0 || idx >= t->nrows) {
         q_runtime_reportf("runtime error: row index %d out of bounds for table with %d rows\n", idx, t->nrows);
-        exit(1);
+        q_exit(1);
     }
     QStruct* s = q_struct_create(t->def);
     for (int c = 0; c < t->ncols; c++) {
@@ -200,21 +200,21 @@ inline QValue q_table_get_row(QValue tbl, int idx) {
 inline QValue q_table_mask_filter(QValue tbl, QValue mask) {
     if (tbl.type != QValue::VAL_TABLE || !tbl.data.table_val) {
         q_runtime_reportf("runtime error: q_table_mask_filter: expected table as first argument\n");
-        exit(1);
+        q_exit(1);
     }
     if (mask.type != QValue::VAL_VECTOR || !mask.data.vector_val) {
         q_runtime_reportf("runtime error: q_table_mask_filter: expected bool vec as mask\n");
-        exit(1);
+        q_exit(1);
     }
     QTable* src = tbl.data.table_val;
     QVector* mv = mask.data.vector_val;
     if (mv->type != QVector::Type::BOOL) {
         q_runtime_reportf("runtime error: table mask index requires bool vec\n");
-        exit(1);
+        q_exit(1);
     }
     if (mv->count != static_cast<size_t>(src->nrows)) {
         q_runtime_reportf("runtime error: table mask length mismatch: rows=%d, mask=%zu\n", src->nrows, mv->count);
-        exit(1);
+        q_exit(1);
     }
     // Build filtered column vectors
     QTable* dst = q_table_create(src->def, 0);
@@ -232,7 +232,7 @@ inline QValue q_table_mask_filter(QValue tbl, QValue mask) {
 inline QValue q_table_index(QValue tbl, QValue index) {
     if (tbl.type != QValue::VAL_TABLE || !tbl.data.table_val) {
         q_runtime_reportf("runtime error: q_table_index: expected table\n");
-        exit(1);
+        q_exit(1);
     }
     if (index.type == QValue::VAL_INT) {
         return q_table_get_row(tbl, static_cast<int>(index.data.int_val));
@@ -241,7 +241,7 @@ inline QValue q_table_index(QValue tbl, QValue index) {
         return q_table_mask_filter(tbl, index);
     }
     q_runtime_reportf("runtime error: table index must be int or bool vec\n");
-    exit(1);
+    q_exit(1);
 }
 
 #endif // QUARK_TYPES_TABLE_HPP

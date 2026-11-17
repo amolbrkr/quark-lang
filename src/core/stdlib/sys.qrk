@@ -14,6 +14,7 @@ extern fn sys_platform() str as 'q_sys_platform'
 extern fn sys_arch() str as 'q_sys_arch'
 extern fn sys_pid() int as 'q_sys_pid'
 extern fn sys_cpu_count() int as 'q_sys_cpu_count'
+extern fn sys_threads() int as 'q_sys_threads'
 extern fn sys_eprint(x, end: str) any as 'q_sys_eprint'
 
 module sys:
@@ -58,6 +59,10 @@ module sys:
 
     // Logical CPUs, or 0 when the operating system does not report a count.
     fn cpu_count() int -> sys_cpu_count()
+
+    // The number of threads the program's parallel steps run on: --threads
+    // or QUARK_THREADS, else the CPUs the program may use. 1 in the REPL.
+    fn threads() int -> sys_threads()
 
     // Write `x` to stderr, rendered like print, then `end`.
     fn eprint(x, end: str = '\n') -> sys_eprint(x, end)

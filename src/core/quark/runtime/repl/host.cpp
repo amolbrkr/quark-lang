@@ -60,6 +60,9 @@ int main(int argc, char** argv) {
         }
     }
     GC_set_handle_fork(1);
+    // The REPL runs every input on one thread (specs/tables_v0_3_spec.md
+    // D52), whatever QUARK_THREADS says.
+    q_par_one_thread();
     q_gc_init();
     std::signal(SIGINT, SIG_IGN);
 

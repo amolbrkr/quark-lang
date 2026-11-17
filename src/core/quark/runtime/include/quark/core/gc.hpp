@@ -19,13 +19,25 @@
 #include <memory>     // std::allocator (non-GC fallback)
 #include <utility>    // std::forward
 #include "diagnostics.hpp"
+#include "threads.hpp"
 
 #ifdef QUARK_USE_GC
+    // The thread pool's workers register with the collector themselves
+    // (core/par.hpp), so gc.h's redirection of thread creation is off.
+    #ifndef GC_THREADS
+        #define GC_THREADS
+    #endif
+    #ifndef GC_NO_THREAD_REDIRECTS
+        #define GC_NO_THREAD_REDIRECTS
+    #endif
     #include <gc.h>
     #include <gc/gc_allocator.h>
 
-    // Initialize GC (call once at program start)
+    // Initialize GC (call once at program start). The collector marks with
+    // as many threads as the program uses (one: no marker threads); they
+    // start with the thread pool.
     inline void q_gc_init() {
+        GC_set_markers_count(static_cast<unsigned>(q_par_threads()));
         GC_INIT();
     }
 

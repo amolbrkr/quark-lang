@@ -32,6 +32,7 @@ const (
 	RepTable   Rep = "QTable*"
 	RepVecRef  Rep = "const QVector&"
 	RepLoc     Rep = "const QSourceLoc*"
+	RepPlan    Rep = "quark::par::Plan"
 )
 
 // IsScalar reports whether r is a raw C++ scalar.
@@ -67,10 +68,13 @@ type Const struct {
 	Text string
 }
 
-// Temp is a temporary declared by a Let.
+// Temp is a temporary declared by a Let. Shared marks one that the rows of
+// a parallel loop (ParFor) assign: a once-call's value, written by the row
+// that makes the call while the others wait (runtime/.../core/par.hpp Once).
 type Temp struct {
-	ID int
-	R  Rep
+	ID     int
+	R      Rep
+	Shared bool
 }
 
 // TempRef reads a temporary.
@@ -394,6 +398,20 @@ type ForIndex struct {
 	Body  *Block
 }
 
+// ParFor is a row loop split into blocks (specs/tables_v0_3_spec.md §8,
+// runtime/.../core/par.hpp): Plan (a quark::par::Plan temporary) is the
+// rows and the number of blocks, and each block of rows [Lo, Hi), number
+// Blk, runs Pre, then Body for Idx from Lo to Hi, then Post. Blocks may run
+// at once on several threads, so the loop may assign only the temporaries
+// it declares and Shared ones; Pre and Post set up and close what one block
+// builds.
+type ParFor struct {
+	Plan            Expr
+	Lo, Hi, Blk     *Temp
+	Idx             *Temp
+	Pre, Body, Post *Block
+}
+
 // Break and Continue leave or restart the innermost loop.
 type Break struct{}
 type Continue struct{}
@@ -421,6 +439,7 @@ func (*If) stmt()       {}
 func (*While) stmt()    {}
 func (*ForRange) stmt() {}
 func (*ForIndex) stmt() {}
+func (*ParFor) stmt()   {}
 func (*Break) stmt()    {}
 func (*Continue) stmt() {}
 func (*Return) stmt()   {}

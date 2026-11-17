@@ -26,7 +26,7 @@ warning[CODE] (stage): message at file:line:col
 
 The location is `file:line` when there is no column, and is left out when unknown. Notes follow on their own lines. Every name in a message is shown as written in the source (`geo::Point`), never as a compiler-internal name.
 
-Stages: `parse`, `load`, `check`, `build` (clang++ compile and link), `runtime`, `repl`. Errors stop `check`, `emit`, `build` and `run`; warnings are printed and don't. A REPL input that fails to compile or exits at runtime does not end the session (`specs/repl_v0_1_spec.md`).
+Stages: `parse`, `load`, `check`, `build` (clang++ compile and link), `runtime`, `repl`. Errors stop `check`, `emit`, `build` and `run`; warnings are printed and don't. A REPL input that fails to compile or exits at runtime does not end the session (`specs/implemented/repl_v0_1_spec.md`).
 
 ## QK codes
 
@@ -127,6 +127,7 @@ Run on every compile after lowering (`src/core/quark/lower/verify.go`, `architec
 | `INV-IR-RETURN` | `return` is inside a function |
 | `INV-IR-CALL` | A call of a generated function passes one argument per parameter, of the parameter's type; `q_callN` gets N arguments; a function value names a generated function |
 | `INV-IR-NODE` | Every node is known; a closure is bound by a `Let`; a tag test reads a stable value; a source location is an entry of the location table |
+| `INV-IR-PAR` | A query's row loop, whose blocks may run on several threads (`ParFor`, `architecture.md` §2.6), assigns only the temporaries it declares and the shared value of a call made once per step, never a variable, and neither returns nor breaks out of the loop; its plan is a temporary |
 
 ## Planned codes
 

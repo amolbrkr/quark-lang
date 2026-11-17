@@ -41,6 +41,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <cstring>
+#include <memory>
 #include <vector>
 #include <string>
 #include <string_view>
@@ -137,7 +138,7 @@ inline size_t count_set_bits(const uint8_t* bits, size_t n) {
 
 // Packs op(i) for i in [0, n) into a bitmap, eight results per byte.
 template <typename F>
-inline void fill_bits(uint8_t* out, size_t n, F f) {
+inline void fill_bits_seq(uint8_t* out, size_t n, F f) {
     const size_t full = n / 8;
     for (size_t byte = 0; byte < full; byte++) {
         uint8_t bits = 0;
@@ -156,6 +157,23 @@ inline void fill_bits(uint8_t* out, size_t n, F f) {
         }
         out[full] = bits;
     }
+}
+
+// par_range runs f(lo, hi) over the blocks of [0, n) on the thread pool
+// (core/par.hpp): a large range is split in blocks of q_par_block entries,
+// which start on a byte of a bitmap. f must write only its own entries.
+template <class F>
+inline void par_range(size_t n, F&& f) {
+    const quark::par::Plan p = q_par_plan(static_cast<long long>(n));
+    q_par_run(p, [&](long long lo, long long hi, long long) { f(static_cast<size_t>(lo), static_cast<size_t>(hi)); });
+}
+
+// fill_bits is fill_bits_seq, a block of the range at a time.
+template <typename F>
+inline void fill_bits(uint8_t* out, size_t n, F f) {
+    par_range(n, [&](size_t lo, size_t hi) {
+        fill_bits_seq(out + lo / 8, hi - lo, [&](size_t j) { return f(lo + j); });
+    });
 }
 
 inline size_t elem_width(QVector::Type t) {
@@ -267,6 +285,20 @@ inline QVector* q_vec_alloc(QVector::Type type, size_t n, size_t str_bytes = 0) 
             v->values = quark::vec::alloc_zeroed(v->values_cap, &v->values_base);
             break;
     }
+    return v;
+}
+
+// q_vec_alloc_raw is q_vec_alloc for an F64, I64 or DATE vector whose every
+// element the caller writes: the values aren't zeroed first (a sequential
+// write of the whole buffer that a parallel kernel would wait for). Other
+// types are zeroed as usual.
+inline QVector* q_vec_alloc_raw(QVector::Type type, size_t n) {
+    if (type != QVector::Type::F64 && type != QVector::Type::I64 && type != QVector::Type::DATE) return q_vec_alloc(type, n);
+    QVector* v = q_new<QVector>();
+    v->type = type;
+    v->count = n;
+    v->values_cap = n * quark::vec::elem_width(type);
+    v->values = quark::vec::alloc(v->values_cap, &v->values_base);
     return v;
 }
 
@@ -678,7 +710,10 @@ inline QValue q_vec_binary_numeric(QValue a, QValue b, QVecArithOp op) {
                          (av && av->type == QVector::Type::F64) || (bv && bv->type == QVector::Type::F64) ||
                          (!av && a.type == QValue::VAL_FLOAT) || (!bv && b.type == QValue::VAL_FLOAT);
 
-    QVector* out = q_vec_alloc(wantF64 ? QVector::Type::F64 : QVector::Type::I64, n);
+    // Every element is written (a missing one too), so the output isn't
+    // zeroed first. The loops run a block at a time on the thread pool; an
+    // error is the first failing element's (core/par.hpp).
+    QVector* out = q_vec_alloc_raw(wantF64 ? QVector::Type::F64 : QVector::Type::I64, n);
     q_vec_and_validity(*out, av, bv);
     const QVector& res = *out;
 
@@ -686,22 +721,24 @@ inline QValue q_vec_binary_numeric(QValue a, QValue b, QVecArithOp op) {
         double* od = q_vec_f64_data_mut(*out);
         with_f64_reader(a, [&](auto ra) {
             with_f64_reader(b, [&](auto rb) {
-                switch (op) {
-                    case QVecArithOp::Add: for (size_t i = 0; i < n; i++) od[i] = ra(i) + rb(i); break;
-                    case QVecArithOp::Sub: for (size_t i = 0; i < n; i++) od[i] = ra(i) - rb(i); break;
-                    case QVecArithOp::Mul: for (size_t i = 0; i < n; i++) od[i] = ra(i) * rb(i); break;
-                    case QVecArithOp::Div:
-                        for (size_t i = 0; i < n; i++) {
-                            if (q_vec_is_null_at(res, i)) { od[i] = 0.0; continue; }
-                            const double y = rb(i);
-                            if (y == 0.0) {
-                                q_runtime_reportf("runtime error: vec division by zero (f64)\n");
-                                q_exit(1);
+                par_range(n, [&](size_t lo, size_t hi) {
+                    switch (op) {
+                        case QVecArithOp::Add: for (size_t i = lo; i < hi; i++) od[i] = ra(i) + rb(i); break;
+                        case QVecArithOp::Sub: for (size_t i = lo; i < hi; i++) od[i] = ra(i) - rb(i); break;
+                        case QVecArithOp::Mul: for (size_t i = lo; i < hi; i++) od[i] = ra(i) * rb(i); break;
+                        case QVecArithOp::Div:
+                            for (size_t i = lo; i < hi; i++) {
+                                if (q_vec_is_null_at(res, i)) { od[i] = 0.0; continue; }
+                                const double y = rb(i);
+                                if (y == 0.0) {
+                                    q_runtime_reportf("runtime error: vec division by zero (f64)\n");
+                                    q_exit(1);
+                                }
+                                od[i] = ra(i) / y;
                             }
-                            od[i] = ra(i) / y;
-                        }
-                        break;
-                }
+                            break;
+                    }
+                });
             });
         });
         return qv_vector_from(out);
@@ -713,15 +750,17 @@ inline QValue q_vec_binary_numeric(QValue a, QValue b, QVecArithOp op) {
     const bool anyNull = res.null_count > 0;
     with_i64_reader(a, [&](auto ra) {
         with_i64_reader(b, [&](auto rb) {
-            for (size_t i = 0; i < n; i++) {
-                if (anyNull && q_vec_is_null_at(res, i)) { od[i] = 0; continue; }
-                switch (op) {
-                    case QVecArithOp::Add: od[i] = q_checked_add(ra(i), rb(i)); break;
-                    case QVecArithOp::Sub: od[i] = q_checked_sub(ra(i), rb(i)); break;
-                    case QVecArithOp::Mul: od[i] = q_checked_mul(ra(i), rb(i)); break;
-                    case QVecArithOp::Div: od[i] = 0; break;  // Div always takes the f64 path.
+            par_range(n, [&](size_t lo, size_t hi) {
+                for (size_t i = lo; i < hi; i++) {
+                    if (anyNull && q_vec_is_null_at(res, i)) { od[i] = 0; continue; }
+                    switch (op) {
+                        case QVecArithOp::Add: od[i] = q_checked_add(ra(i), rb(i)); break;
+                        case QVecArithOp::Sub: od[i] = q_checked_sub(ra(i), rb(i)); break;
+                        case QVecArithOp::Mul: od[i] = q_checked_mul(ra(i), rb(i)); break;
+                        case QVecArithOp::Div: od[i] = 0; break;  // Div always takes the f64 path.
+                    }
                 }
-            }
+            });
         });
     });
     return qv_vector_from(out);
@@ -745,6 +784,78 @@ inline bool q_vec_skips(const QVector& v, size_t i) {
     return q_vec_is_null_at(v, i) || (v.type == QVector::Type::F64 && std::isnan(q_vec_f64_data(v)[i]));
 }
 
+// The reductions run on the thread pool (core/par.hpp) with results that
+// don't depend on the thread count (specs/tables_v0_3_spec.md §8.4): float
+// sums follow the pairwise halving (q_pairwise_sum_par), int sums are exact
+// (128-bit), and the present values of a vector with missing entries are
+// gathered a block at a time, in order.
+namespace quark {
+namespace vec {
+
+// DoubleBuf is a buffer of doubles that isn't zeroed first.
+struct DoubleBuf {
+    std::unique_ptr<double[]> p;
+    size_t n = 0;
+};
+
+// gather_doubles collects val(i) for the entries of [0, n) where keep(i), in
+// order.
+template <class Keep, class Val>
+inline DoubleBuf gather_doubles(size_t n, Keep keep, Val val) {
+    const quark::par::Plan plan = q_par_plan(static_cast<long long>(n));
+    const size_t nb = static_cast<size_t>(plan.nblocks);
+    std::vector<size_t> start(nb + 1, 0);
+    q_par_run(plan, [&](long long lo, long long hi, long long b) {
+        size_t c = 0;
+        for (long long i = lo; i < hi; i++) c += keep(static_cast<size_t>(i)) ? 1 : 0;
+        start[static_cast<size_t>(b) + 1] = c;
+    });
+    for (size_t b = 0; b < nb; b++) start[b + 1] += start[b];
+    DoubleBuf out;
+    out.n = start[nb];
+    out.p.reset(new double[out.n > 0 ? out.n : 1]);
+    double* dst = out.p.get();
+    q_par_run(plan, [&](long long lo, long long hi, long long b) {
+        size_t at = start[static_cast<size_t>(b)];
+        for (long long i = lo; i < hi; i++) {
+            if (keep(static_cast<size_t>(i))) dst[at++] = val(static_cast<size_t>(i));
+        }
+    });
+    return out;
+}
+
+// sum_i128 is the exact sum of val(i), and the count, over the entries of
+// [0, n) where keep(i).
+template <class Keep, class Val>
+inline __int128 sum_i128(size_t n, Keep keep, Val val, size_t* count) {
+    const quark::par::Plan plan = q_par_plan(static_cast<long long>(n));
+    const size_t nb = static_cast<size_t>(plan.nblocks);
+    std::vector<__int128> part(nb, 0);
+    std::vector<size_t> cnt(nb, 0);
+    q_par_run(plan, [&](long long lo, long long hi, long long b) {
+        __int128 acc = 0;
+        size_t c = 0;
+        for (long long i = lo; i < hi; i++) {
+            if (!keep(static_cast<size_t>(i))) continue;
+            acc += val(static_cast<size_t>(i));
+            c++;
+        }
+        part[static_cast<size_t>(b)] = acc;
+        cnt[static_cast<size_t>(b)] = c;
+    });
+    __int128 total = 0;
+    size_t c = 0;
+    for (size_t b = 0; b < nb; b++) {
+        total += part[b];
+        c += cnt[b];
+    }
+    if (count != nullptr) *count = c;
+    return total;
+}
+
+} // namespace vec
+} // namespace quark
+
 // q_vec_f64_present_sum is the pairwise sum (core/sum.hpp) of a float
 // vector's present values in order: missing entries and NaN are left out.
 // *count, when given, receives how many values were summed. A dense vector
@@ -754,20 +865,44 @@ inline bool q_vec_skips(const QVector& v, size_t i) {
 inline double q_vec_f64_present_sum(const QVector& v, size_t* count = nullptr) {
     const double* d = q_vec_f64_data(v);
     if (v.null_count == 0) {
-        const double s = q_pairwise_sum(d, v.count);
+        const double s = q_pairwise_sum_par(d, v.count);
         // A NaN entry makes the sum NaN, so a sum that isn't NaN had none.
         if (!std::isnan(s)) {
             if (count != nullptr) *count = v.count;
             return s;
         }
     }
-    std::vector<double> present;
-    present.reserve(v.count - v.null_count);
-    for (size_t i = 0; i < v.count; i++) {
-        if (!q_vec_skips(v, i)) present.push_back(d[i]);
+    const quark::vec::DoubleBuf present = quark::vec::gather_doubles(
+        v.count, [&](size_t i) { return !q_vec_skips(v, i); }, [&](size_t i) { return d[i]; });
+    if (count != nullptr) *count = present.n;
+    return q_pairwise_sum_par(present.p.get(), present.n);
+}
+
+// q_vec_i64_present_sum is the exact sum of an int vector's present entries,
+// and how many there are.
+inline __int128 q_vec_i64_present_sum(const QVector& v, size_t* count) {
+    const int64_t* d = q_vec_i64_data(v);
+    if (v.null_count == 0) {
+        return quark::vec::sum_i128(v.count, [](size_t) { return true; }, [&](size_t i) { return d[i]; }, count);
     }
-    if (count != nullptr) *count = present.size();
-    return q_pairwise_sum(present.data(), present.size());
+    return quark::vec::sum_i128(v.count, [&](size_t i) { return !q_vec_is_null_at(v, i); }, [&](size_t i) { return d[i]; }, count);
+}
+
+// q_vec_bool_present_trues is the number of true entries of a bool vector,
+// and *count the number of present ones.
+inline size_t q_vec_bool_present_trues(const QVector& v, size_t* count) {
+    const __int128 trues = quark::vec::sum_i128(
+        v.count, [&](size_t i) { return !q_vec_is_null_at(v, i); }, [&](size_t i) { return q_vec_bool_at(v, i) ? 1 : 0; }, count);
+    return static_cast<size_t>(trues);
+}
+
+// q_sum_fits is an exact int sum as an int, or the overflow error.
+inline int64_t q_sum_fits(__int128 total) {
+    if (total < INT64_MIN || total > INT64_MAX) {
+        q_runtime_reportf("runtime error: integer overflow in 'sum'\n");
+        q_exit(1);
+    }
+    return static_cast<int64_t>(total);
 }
 
 // q_vec_mean_present is the mean of a numeric or bool vector's present
@@ -782,26 +917,12 @@ inline double q_vec_mean_present(const QVector& v, size_t* count) {
             return *count == 0 ? 0.0 : s / static_cast<double>(*count);
         }
         case QVector::Type::I64: {
-            const int64_t* d = q_vec_i64_data(v);
-            __int128 acc = 0;
-            size_t n = 0;
-            for (size_t i = 0; i < v.count; i++) {
-                if (q_vec_is_null_at(v, i)) continue;
-                acc += d[i];
-                n++;
-            }
-            *count = n;
-            return n == 0 ? 0.0 : q_i128_to_double(acc) / static_cast<double>(n);
+            const __int128 acc = q_vec_i64_present_sum(v, count);
+            return *count == 0 ? 0.0 : q_i128_to_double(acc) / static_cast<double>(*count);
         }
         case QVector::Type::BOOL: {
-            size_t n = 0, trues = 0;
-            for (size_t i = 0; i < v.count; i++) {
-                if (q_vec_is_null_at(v, i)) continue;
-                n++;
-                if (q_vec_bool_at(v, i)) trues++;
-            }
-            *count = n;
-            return n == 0 ? 0.0 : static_cast<double>(trues) / static_cast<double>(n);
+            const size_t trues = q_vec_bool_present_trues(v, count);
+            return *count == 0 ? 0.0 : static_cast<double>(trues) / static_cast<double>(*count);
         }
         case QVector::Type::STR:
             break;
@@ -813,32 +934,25 @@ inline double q_vec_mean_present(const QVector& v, size_t* count) {
     return 0.0;
 }
 
-// q_vec_present_doubles appends v's present values as doubles, in order.
-// Float NaN is skipped. A bool's true is 1. str and date are not numeric
-// (the caller reports them); date is not an error here.
-inline bool q_vec_present_doubles(const QVector& v, std::vector<double>& out) {
+// q_vec_present_doubles is v's present values as doubles, in order. Float
+// NaN is skipped. A bool's true is 1. str and date are not numeric (false;
+// the caller reports them); date is not an error here.
+inline bool q_vec_present_doubles(const QVector& v, quark::vec::DoubleBuf& out) {
     switch (v.type) {
         case QVector::Type::F64: {
             const double* d = q_vec_f64_data(v);
-            for (size_t i = 0; i < v.count; i++) {
-                if (q_vec_skips(v, i)) continue;
-                out.push_back(d[i]);
-            }
+            out = quark::vec::gather_doubles(v.count, [&](size_t i) { return !q_vec_skips(v, i); }, [&](size_t i) { return d[i]; });
             return true;
         }
         case QVector::Type::I64: {
             const int64_t* d = q_vec_i64_data(v);
-            for (size_t i = 0; i < v.count; i++) {
-                if (q_vec_is_null_at(v, i)) continue;
-                out.push_back(static_cast<double>(d[i]));
-            }
+            out = quark::vec::gather_doubles(
+                v.count, [&](size_t i) { return !q_vec_is_null_at(v, i); }, [&](size_t i) { return static_cast<double>(d[i]); });
             return true;
         }
         case QVector::Type::BOOL: {
-            for (size_t i = 0; i < v.count; i++) {
-                if (q_vec_is_null_at(v, i)) continue;
-                out.push_back(q_vec_bool_at(v, i) ? 1.0 : 0.0);
-            }
+            out = quark::vec::gather_doubles(
+                v.count, [&](size_t i) { return !q_vec_is_null_at(v, i); }, [&](size_t i) { return q_vec_bool_at(v, i) ? 1.0 : 0.0; });
             return true;
         }
         case QVector::Type::STR:
@@ -852,17 +966,19 @@ inline bool q_vec_present_doubles(const QVector& v, std::vector<double>& out) {
 // fewer than two values are present (or v isn't numeric). The table
 // aggregate uses the same function for a whole column (agg_sd).
 inline double q_sd_present(const QVector& v, bool* ok) {
-    std::vector<double> xs;
-    if (!q_vec_present_doubles(v, xs) || xs.size() < 2) {
+    quark::vec::DoubleBuf xs;
+    if (!q_vec_present_doubles(v, xs) || xs.n < 2) {
         *ok = false;
         return 0.0;
     }
     *ok = true;
-    return q_sample_sd(xs.data(), xs.size());
+    return q_sample_sd(xs.p.get(), xs.n);
 }
 
-// sum: an int for int and bool vectors (bools count as 0 and 1; overflow is
-// fatal), a float for float vectors; no values sum to 0.
+// sum: an int for int and bool vectors (bools count as 0 and 1), a float
+// for float vectors; no values sum to 0. An int sum is exact, so it is an
+// error only when the total doesn't fit in an int (specs/tables_v0_3_spec.md
+// §8.4), whatever the order of the values.
 inline QValue q_vec_sum(QValue vec) {
     if (!q_vec_has_valid_handle(vec) || !q_vec_validate(*vec.data.vector_val)) {
         q_runtime_reportf("runtime error: sum() requires numeric or bool vec\n");
@@ -871,24 +987,12 @@ inline QValue q_vec_sum(QValue vec) {
     const QVector& v = *vec.data.vector_val;
     switch (v.type) {
         case QVector::Type::I64: {
-            const int64_t* d = q_vec_i64_data(v);
-            const bool dense = v.null_count == 0;
-            int64_t acc = 0;
-            for (size_t i = 0; i < v.count; i++) {
-                if (!dense && q_vec_is_null_at(v, i)) continue;
-                if (__builtin_add_overflow(acc, d[i], &acc)) {
-                    q_runtime_reportf("runtime error: integer overflow in 'sum'\n");
-                    q_exit(1);
-                }
-            }
-            return qv_int(acc);
+            size_t n = 0;
+            return qv_int(q_sum_fits(q_vec_i64_present_sum(v, &n)));
         }
         case QVector::Type::BOOL: {
-            int64_t acc = 0;
-            for (size_t i = 0; i < v.count; i++) {
-                if (!q_vec_is_null_at(v, i) && q_vec_bool_at(v, i)) acc++;
-            }
-            return qv_int(acc);
+            size_t n = 0;
+            return qv_int(static_cast<int64_t>(q_vec_bool_present_trues(v, &n)));
         }
         case QVector::Type::F64:
             return qv_float(q_vec_f64_present_sum(v));
@@ -935,43 +1039,80 @@ inline QValue q_vec_extremum(QValue vec, bool want_min, const char* name) {
         q_exit(1);
     }
     const QVector& v = *vec.data.vector_val;
+    // Each block of the thread pool finds its best entry, and the blocks are
+    // compared in order, so a tie keeps the first entry, as one loop does.
+    const quark::par::Plan plan = q_par_plan(static_cast<long long>(v.count));
+    const size_t nb = static_cast<size_t>(plan.nblocks);
     // Dense numeric vectors compare values directly (the generic loop below
-    // switches on the dtype for every entry). A tie keeps the first entry,
-    // as the generic loop and the table aggregate do.
+    // switches on the dtype for every entry).
     if (v.null_count == 0 && v.count > 0 && v.type == QVector::Type::I64) {
         const int64_t* d = q_vec_i64_data(v);
-        int64_t best = d[0];
-        for (size_t i = 1; i < v.count; i++) best = want_min ? (d[i] < best ? d[i] : best) : (d[i] > best ? d[i] : best);
+        std::vector<int64_t> part(nb);
+        q_par_run(plan, [&](long long lo, long long hi, long long b) {
+            int64_t best = d[lo];
+            for (long long i = lo + 1; i < hi; i++) best = want_min ? (d[i] < best ? d[i] : best) : (d[i] > best ? d[i] : best);
+            part[static_cast<size_t>(b)] = best;
+        });
+        int64_t best = part[0];
+        for (size_t b = 1; b < nb; b++) best = want_min ? (part[b] < best ? part[b] : best) : (part[b] > best ? part[b] : best);
         return qv_int(best);
     }
     if (v.null_count == 0 && v.type == QVector::Type::F64) {
         const double* d = q_vec_f64_data(v);
-        size_t first = 0;
-        while (first < v.count && std::isnan(d[first])) first++;
-        if (first < v.count) {
+        std::vector<double> part(nb);
+        std::vector<char> found(nb, 0);
+        q_par_run(plan, [&](long long lo, long long hi, long long b) {
+            long long first = lo;
+            while (first < hi && std::isnan(d[first])) first++;
+            if (first == hi) return;
             // A NaN never compares less or greater, so it never wins.
             double best = d[first];
-            for (size_t i = first + 1; i < v.count; i++) best = want_min ? (d[i] < best ? d[i] : best) : (d[i] > best ? d[i] : best);
-            return qv_float(best);
+            for (long long i = first + 1; i < hi; i++) best = want_min ? (d[i] < best ? d[i] : best) : (d[i] > best ? d[i] : best);
+            part[static_cast<size_t>(b)] = best;
+            found[static_cast<size_t>(b)] = 1;
+        });
+        bool any = false;
+        double best = 0.0;
+        for (size_t b = 0; b < nb; b++) {
+            if (!found[b]) continue;
+            if (!any) {
+                best = part[b];
+                any = true;
+            } else {
+                best = want_min ? (part[b] < best ? part[b] : best) : (part[b] > best ? part[b] : best);
+            }
         }
+        if (any) return qv_float(best);
     }
-    bool found = false;
-    size_t best = 0;
-    for (size_t i = 0; i < v.count; i++) {
-        if (q_vec_skips(v, i)) continue;
-        if (!found) {
-            best = i;
-            found = true;
+    std::vector<long long> part(nb, -1);
+    q_par_run(plan, [&](long long lo, long long hi, long long b) {
+        long long best = -1;
+        for (long long i = lo; i < hi; i++) {
+            if (q_vec_skips(v, static_cast<size_t>(i))) continue;
+            if (best < 0) {
+                best = i;
+                continue;
+            }
+            const int c = q_vec_compare(v, static_cast<size_t>(i), static_cast<size_t>(best));
+            if (want_min ? c < 0 : c > 0) best = i;
+        }
+        part[static_cast<size_t>(b)] = best;
+    });
+    long long best = -1;
+    for (size_t b = 0; b < nb; b++) {
+        if (part[b] < 0) continue;
+        if (best < 0) {
+            best = part[b];
             continue;
         }
-        const int c = q_vec_compare(v, i, best);
-        if (want_min ? c < 0 : c > 0) best = i;
+        const int c = q_vec_compare(v, static_cast<size_t>(part[b]), static_cast<size_t>(best));
+        if (want_min ? c < 0 : c > 0) best = part[b];
     }
-    if (!found) {
+    if (best < 0) {
         q_runtime_reportf("runtime error: %s() of a vec with no present values\n", name);
         q_exit(1);
     }
-    return q_vec_box_at(v, best);
+    return q_vec_box_at(v, static_cast<size_t>(best));
 }
 
 inline QValue q_vec_min(QValue vec) { return q_vec_extremum(vec, true, "min"); }
@@ -1013,7 +1154,9 @@ inline QValue q_fillna(QValue vec, QValue value) {
             QValue out = q_vec_clone(vec);
             double* d = q_vec_f64_data_mut(*out.data.vector_val);
             const double fill = q_to_double_scalar(value);
-            for (size_t i = 0; i < src.count; i++) if (q_vec_is_null_at(src, i)) d[i] = fill;
+            quark::vec::par_range(src.count, [&](size_t lo, size_t hi) {
+                for (size_t i = lo; i < hi; i++) if (q_vec_is_null_at(src, i)) d[i] = fill;
+            });
             out.data.vector_val->validity = nullptr;
             out.data.vector_val->null_count = 0;
             return out;
@@ -1022,7 +1165,9 @@ inline QValue q_fillna(QValue vec, QValue value) {
             QValue out = q_vec_clone(vec);
             int64_t* d = q_vec_i64_data_mut(*out.data.vector_val);
             const int64_t fill = value.data.int_val;
-            for (size_t i = 0; i < src.count; i++) if (q_vec_is_null_at(src, i)) d[i] = fill;
+            quark::vec::par_range(src.count, [&](size_t lo, size_t hi) {
+                for (size_t i = lo; i < hi; i++) if (q_vec_is_null_at(src, i)) d[i] = fill;
+            });
             out.data.vector_val->validity = nullptr;
             out.data.vector_val->null_count = 0;
             return out;
@@ -1030,9 +1175,12 @@ inline QValue q_fillna(QValue vec, QValue value) {
         case QVector::Type::BOOL: {
             QValue out = q_vec_clone(vec);
             const bool fill = value.data.bool_val;
-            for (size_t i = 0; i < src.count; i++) {
-                if (q_vec_is_null_at(src, i)) q_vec_bool_put(*out.data.vector_val, i, fill);
-            }
+            QVector& ov = *out.data.vector_val;
+            quark::vec::par_range(src.count, [&](size_t lo, size_t hi) {
+                for (size_t i = lo; i < hi; i++) {
+                    if (q_vec_is_null_at(src, i)) q_vec_bool_put(ov, i, fill);
+                }
+            });
             out.data.vector_val->validity = nullptr;
             out.data.vector_val->null_count = 0;
             return out;
@@ -1041,7 +1189,9 @@ inline QValue q_fillna(QValue vec, QValue value) {
             QValue out = q_vec_clone(vec);
             int32_t* d = q_vec_date_data_mut(*out.data.vector_val);
             const int32_t fill = static_cast<int32_t>(value.data.int_val);
-            for (size_t i = 0; i < src.count; i++) if (q_vec_is_null_at(src, i)) d[i] = fill;
+            quark::vec::par_range(src.count, [&](size_t lo, size_t hi) {
+                for (size_t i = lo; i < hi; i++) if (q_vec_is_null_at(src, i)) d[i] = fill;
+            });
             out.data.vector_val->validity = nullptr;
             out.data.vector_val->null_count = 0;
             return out;
@@ -1081,13 +1231,17 @@ inline QValue q_astype(QValue vec, QValue dtype) {
             q_runtime_reportf("runtime error: astype() cannot cast source vec to f64\n");
             q_exit(1);
         }
-        QVector* out = q_vec_alloc(QVector::Type::F64, n);
+        QVector* out = q_vec_alloc_raw(QVector::Type::F64, n);
         double* d = q_vec_f64_data_mut(*out);
         if (src.type == QVector::Type::I64) {
             const int64_t* in = q_vec_i64_data(src);
-            for (size_t i = 0; i < n; i++) d[i] = static_cast<double>(in[i]);
+            quark::vec::par_range(n, [&](size_t lo, size_t hi) {
+                for (size_t i = lo; i < hi; i++) d[i] = static_cast<double>(in[i]);
+            });
         } else {
-            for (size_t i = 0; i < n; i++) d[i] = q_vec_bool_at(src, i) ? 1.0 : 0.0;
+            quark::vec::par_range(n, [&](size_t lo, size_t hi) {
+                for (size_t i = lo; i < hi; i++) d[i] = q_vec_bool_at(src, i) ? 1.0 : 0.0;
+            });
         }
         q_vec_copy_validity(*out, src);
         return qv_vector_from(out);
@@ -1099,23 +1253,27 @@ inline QValue q_astype(QValue vec, QValue dtype) {
             q_runtime_reportf("runtime error: astype() cannot cast source vec to i64\n");
             q_exit(1);
         }
-        QVector* out = q_vec_alloc(QVector::Type::I64, n);
+        QVector* out = q_vec_alloc_raw(QVector::Type::I64, n);
         int64_t* d = q_vec_i64_data_mut(*out);
         if (src.type == QVector::Type::F64) {
             const double* in = q_vec_f64_data(src);
-            for (size_t i = 0; i < n; i++) {
-                if (q_vec_is_null_at(src, i)) { d[i] = 0; continue; }
-                const double x = in[i];
-                // Casting NaN or an out-of-range double to int64 is undefined.
-                if (!(x >= -9223372036854775808.0 && x < 9223372036854775808.0)) {
-                    char fbuf[32];
-                    q_runtime_reportf("runtime error: astype('i64'): value %s at index %zu is out of i64 range\n", q_format_float(x, fbuf, sizeof(fbuf)), i);
-                    q_exit(1);
+            quark::vec::par_range(n, [&](size_t lo, size_t hi) {
+                for (size_t i = lo; i < hi; i++) {
+                    if (q_vec_is_null_at(src, i)) { d[i] = 0; continue; }
+                    const double x = in[i];
+                    // Casting NaN or an out-of-range double to int64 is undefined.
+                    if (!(x >= -9223372036854775808.0 && x < 9223372036854775808.0)) {
+                        char fbuf[32];
+                        q_runtime_reportf("runtime error: astype('i64'): value %s at index %zu is out of i64 range\n", q_format_float(x, fbuf, sizeof(fbuf)), i);
+                        q_exit(1);
+                    }
+                    d[i] = static_cast<int64_t>(x);
                 }
-                d[i] = static_cast<int64_t>(x);
-            }
+            });
         } else {
-            for (size_t i = 0; i < n; i++) d[i] = q_vec_bool_at(src, i) ? 1 : 0;
+            quark::vec::par_range(n, [&](size_t lo, size_t hi) {
+                for (size_t i = lo; i < hi; i++) d[i] = q_vec_bool_at(src, i) ? 1 : 0;
+            });
         }
         q_vec_copy_validity(*out, src);
         return qv_vector_from(out);
@@ -1407,16 +1565,19 @@ inline bool all_exact_in_float(const int64_t* iv, size_t n) {
 template <CmpKind K>
 inline void cmp_int_vec_float_vec(uint8_t* bits, const int64_t* iv, const double* fv, size_t n) {
     constexpr size_t kBlock = 1024;  // a multiple of 8, so each block starts on a byte
-    for (size_t base = 0; base < n; base += kBlock) {
-        const size_t m = n - base < kBlock ? n - base : kBlock;
-        const int64_t* ib = iv + base;
-        const double* fb = fv + base;
-        if (all_exact_in_float(ib, m)) {
-            fill_bits(bits + base / 8, m, [ib, fb](size_t j) { return cmp_apply<K>(static_cast<double>(ib[j]), fb[j]); });
-        } else {
-            fill_bits(bits + base / 8, m, [ib, fb](size_t j) { return cmp_int_float_exact<K>(static_cast<long long>(ib[j]), fb[j]); });
+    // A pool block is a multiple of kBlock, so the blocks are the same.
+    par_range(n, [&](size_t lo, size_t hi) {
+        for (size_t base = lo; base < hi; base += kBlock) {
+            const size_t m = hi - base < kBlock ? hi - base : kBlock;
+            const int64_t* ib = iv + base;
+            const double* fb = fv + base;
+            if (all_exact_in_float(ib, m)) {
+                fill_bits_seq(bits + base / 8, m, [ib, fb](size_t j) { return cmp_apply<K>(static_cast<double>(ib[j]), fb[j]); });
+            } else {
+                fill_bits_seq(bits + base / 8, m, [ib, fb](size_t j) { return cmp_int_float_exact<K>(static_cast<long long>(ib[j]), fb[j]); });
+            }
         }
-    }
+    });
 }
 
 // cmp_exact_int_float is an element-wise `int_side K float_side`, where
@@ -1589,45 +1750,77 @@ inline bool q_vec_mask_selects(const QVector& mask, size_t i) {
 
 inline size_t q_vec_mask_count(const QVector& mask) {
     size_t selected = 0;
-    for (size_t i = 0; i < mask.count; i++) {
-        if (q_vec_mask_selects(mask, i)) selected++;
-    }
+    quark::vec::sum_i128(mask.count, [&](size_t i) { return q_vec_mask_selects(mask, i); }, [](size_t) { return 0; }, &selected);
     return selected;
 }
 
 // q_vec_keep is the elements of dv for which keep(i) holds, in order, with
-// their missing marks (mask filtering, drop_na).
+// their missing marks (mask filtering, drop_na). It runs in two passes over
+// the blocks of the thread pool: each block counts what it keeps (and the
+// bytes of a str vector), then copies it from where the blocks before it end.
+// A bool vector's blocks would share bytes of the output bitmap, so its copy
+// is one pass on the calling thread.
 template <class Keep>
 inline QValue q_vec_keep(const QVector& dv, Keep keep) {
     const size_t n = dv.count;
-    size_t selected = 0;
-    size_t str_bytes = 0;
-    for (size_t i = 0; i < n; i++) {
-        if (!keep(i)) continue;
-        selected++;
-        if (dv.type == QVector::Type::STR) str_bytes += q_vec_str_at(dv, i).size();
+    const bool is_str = dv.type == QVector::Type::STR;
+    const quark::par::Plan plan = q_par_plan(static_cast<long long>(n));
+    const size_t nb = static_cast<size_t>(plan.nblocks);
+    std::vector<size_t> start(nb + 1, 0), bytes(nb + 1, 0);
+    q_par_run(plan, [&](long long lo, long long hi, long long b) {
+        size_t c = 0, sb = 0;
+        for (long long i = lo; i < hi; i++) {
+            if (!keep(static_cast<size_t>(i))) continue;
+            c++;
+            if (is_str) sb += q_vec_str_at(dv, static_cast<size_t>(i)).size();
+        }
+        start[static_cast<size_t>(b) + 1] = c;
+        bytes[static_cast<size_t>(b) + 1] = sb;
+    });
+    for (size_t b = 0; b < nb; b++) {
+        start[b + 1] += start[b];
+        bytes[b + 1] += bytes[b];
+    }
+    const size_t selected = start[nb];
+    if (is_str && bytes[nb] > static_cast<size_t>(INT32_MAX)) {
+        q_runtime_reportf("runtime error: a str vec holds more than 2 GiB of text\n");
+        q_exit(1);
     }
 
-    QVector* out = q_vec_alloc(dv.type, selected, str_bytes);
-    size_t j = 0;
-    int32_t pos = 0;
-    for (size_t i = 0; i < n; i++) {
-        if (!keep(i)) continue;
-        switch (dv.type) {
-            case QVector::Type::F64: q_vec_f64_data_mut(*out)[j] = q_vec_f64_data(dv)[i]; break;
-            case QVector::Type::I64: q_vec_i64_data_mut(*out)[j] = q_vec_i64_data(dv)[i]; break;
-            case QVector::Type::DATE: q_vec_date_data_mut(*out)[j] = q_vec_date_data(dv)[i]; break;
-            case QVector::Type::BOOL: q_vec_bool_put(*out, j, q_vec_bool_at(dv, i)); break;
-            case QVector::Type::STR: {
-                const std::string_view s = q_vec_str_at(dv, i);
-                if (!s.empty()) std::memcpy(out->values + pos, s.data(), s.size());
-                pos += static_cast<int32_t>(s.size());
-                out->offsets[j + 1] = pos;
-                break;
+    QVector* out = q_vec_alloc(dv.type, selected, is_str ? bytes[nb] : 0);
+    std::vector<std::vector<size_t>> nulls(nb);
+    auto copy = [&](size_t lo, size_t hi, size_t b) {
+        size_t j = start[b];
+        int32_t pos = static_cast<int32_t>(bytes[b]);
+        for (size_t i = lo; i < hi; i++) {
+            if (!keep(i)) continue;
+            switch (dv.type) {
+                case QVector::Type::F64: q_vec_f64_data_mut(*out)[j] = q_vec_f64_data(dv)[i]; break;
+                case QVector::Type::I64: q_vec_i64_data_mut(*out)[j] = q_vec_i64_data(dv)[i]; break;
+                case QVector::Type::DATE: q_vec_date_data_mut(*out)[j] = q_vec_date_data(dv)[i]; break;
+                case QVector::Type::BOOL: q_vec_bool_put(*out, j, q_vec_bool_at(dv, i)); break;
+                case QVector::Type::STR: {
+                    const std::string_view s = q_vec_str_at(dv, i);
+                    if (!s.empty()) std::memcpy(out->values + pos, s.data(), s.size());
+                    pos += static_cast<int32_t>(s.size());
+                    out->offsets[j + 1] = pos;
+                    break;
+                }
             }
+            if (q_vec_is_null_at(dv, i)) nulls[b].push_back(j);
+            j++;
         }
-        if (q_vec_is_null_at(dv, i)) q_vec_mark_null(*out, j);
-        j++;
+    };
+    if (dv.type == QVector::Type::BOOL) {
+        for (size_t b = 0; b < nb; b++) {
+            const size_t lo = b * static_cast<size_t>(q_par_block);
+            copy(lo, nb == 1 ? n : std::min(n, lo + static_cast<size_t>(q_par_block)), b);
+        }
+    } else {
+        q_par_run(plan, [&](long long lo, long long hi, long long b) { copy(static_cast<size_t>(lo), static_cast<size_t>(hi), static_cast<size_t>(b)); });
+    }
+    for (const std::vector<size_t>& block : nulls) {
+        for (size_t j : block) q_vec_mark_null(*out, j);
     }
     return qv_vector_from(out);
 }

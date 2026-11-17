@@ -129,7 +129,7 @@ Filesystem operations (listing, creating and removing directories and files) go 
 
 `now()` (epoch seconds), `clock()` (monotonic seconds) and `sleep(seconds)` exist. There is no way to show a timestamp as a date, read a date, or present a duration.
 
-Timestamps stay floats: seconds since the Unix epoch, UTC. Durations for clocks are float seconds too. The dedicated `date` type, period arithmetic, and the rewrite of this module around them are specified in `specs/dates_v0_1_spec.md` (supersedes the earlier "no date type yet" choice here).
+Timestamps stay floats: seconds since the Unix epoch, UTC. Durations for clocks are float seconds too. The dedicated `date` type, period arithmetic, and the rewrite of this module around them are specified in `specs/implemented/dates_v0_1_spec.md` (supersedes the earlier "no date type yet" choice here).
 
 ### 5.2 Proposal
 

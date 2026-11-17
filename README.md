@@ -995,7 +995,7 @@ which binds `name`.
 |---|---|
 | `io` | `io::open(path, mode = 'r', binary = false)`, `io::read(f, n)`, `io::write(f, s)`, `io::close(f)`, `io::seek(f, offset, whence = 0)` (all return results), `io::exists(path)`, and `io::seek_set()`/`seek_cur()`/`seek_end()` |
 | `fmt` | `fmt::show_list`, `fmt::show_vec`, `fmt::show_dict`, `fmt::table` (a table or a dict of columns), `fmt::head`, `fmt::tail`, `fmt::full` |
-| `sys` | `args()` (arguments after `--`), `program()`, `env` / `env_or` / `set_env` / `unset_env` / `environ()`, `exit(code = 0)`, `cwd()` / `chdir(path)`, `platform()` / `arch()` / `pid()` / `cpu_count()`, `eprint(x)` |
+| `sys` | `args()` (arguments after `--`), `program()`, `env` / `env_or` / `set_env` / `unset_env` / `environ()`, `exit(code = 0)`, `cwd()` / `chdir(path)`, `platform()` / `arch()` / `pid()` / `cpu_count()` / `threads()`, `eprint(x)` |
 | `time` | `now()`, `clock()`, `sleep(seconds)`, `since(start)`, `minutes(n)` and the other duration units, `duration(seconds)`, `format` / `iso` / `parse` / `parse_iso`, `parts` / `make` / `today` |
 | `random` | `seed(n)`, `uniform(lo = 0, hi = 1)`, `normal(mean = 0, sd = 1)`, `randint(lo, hi)`, `choice(xs)`, `shuffle(xs)`, `sample(xs, k)`, `weighted(xs, weights)`, `uniform_vec` / `normal_vec` / `randint_vec` |
 | `csv` | `csv::read_file(path, columns = dict {})`, `csv::parse_text(text, columns = dict {})` (tables, typed by where they go), `csv::write_file(t, path)`, `csv::format_text(t)` |
@@ -1047,7 +1047,7 @@ Then run **Extensions: Install from VSIX...** and pick the file it prints.
 | Command | Does |
 |---|---|
 | `quark run <file> [-- args...]` | compile and run; arguments after `--` go to the program |
-| `quark repl` | interactive session. Each input is compiled and run; values survive to the next input. See [REPL v0.1](specs/repl_v0_1_spec.md) |
+| `quark repl` | interactive session. Each input is compiled and run; values survive to the next input. See [REPL v0.1](specs/implemented/repl_v0_1_spec.md) |
 | `quark build <file> [-o out]` | compile to an executable |
 | `quark <file>.qrk` | shorthand for `quark run` |
 | `quark check <file>` | parse, load and analyze; report diagnostics only |
@@ -1065,9 +1065,13 @@ Then run **Extensions: Install from VSIX...** and pick the file it prints.
 | `--lib-path <dir>` | search `<dir>` for `extern link` libraries and add it to the rpath (repeatable) |
 | `--include-path <dir>` | add a C++ include directory (repeatable) |
 | `--link-arg <arg>` | pass an argument to the linker (repeatable) |
+| `--threads <n>` | (`run`) run the program's parallel query steps on `n` threads; `--threads 1` runs everything on one. The output is the same for every count |
 
 `QUARK_LIB_PATH` and `QUARK_INCLUDE_PATH` (path lists) work like the two path
-flags. Errors fail the command with a non-zero exit code; warnings are shown
+flags. A built program reads `QUARK_THREADS` at startup (`--threads` sets it,
+and wins over a value already in the environment); without it, a program uses
+the logical CPUs it may use, after its CPU affinity and its container's CPU
+quota. A value that isn't a whole number from 1 to 4096 is an error. Errors fail the command with a non-zero exit code; warnings are shown
 and don't. An `INV-*` diagnostic is a compiler bug.
 
 ## Project layout
@@ -1094,10 +1098,16 @@ and don't. An `INV-*` diagnostic is a compiler bug.
 - Tables v0.3 ([specs/tables_v0_3_spec.md](specs/tables_v0_3_spec.md)):
 the language on one thread is in (aggregates in `filter` and `mutate`, missing
 values in verbs, `contains`, `nrow`, the `count` step, two-argument `min`/`max`
-typing), and so are row-safe calls in a verb and random draws in a verb that
-don't depend on the order rows run in. Still to come: running a query on more
-than one thread with the same output for every thread count.
-- Tables still later: the column-wise table literal, joins, `summary(t)`,
+typing), and so are row-safe calls in a verb, random draws in a verb that
+don't depend on the order rows run in, and a thread pool that runs a query's
+row loops, most of the table engine and the vec operations on every CPU, with
+the same output for every thread count. Still to come: the CSV reader and the
+grouped aggregates of many small groups on the pool, `--checked` comparing a
+parallel step with one thread, and the measurements.
+- Joins (semi, anti, inner and left), a sort for vecs, and a CSV reader that
+needs less memory: [specs/data_work_v0_1_spec.md](specs/data_work_v0_1_spec.md),
+a proposal.
+- Tables still later: the column-wise table literal, `summary(t)`,
 queries on tables without a row struct, and compile-time schema inference for CSV
 files ([specs/untyped_tables_v0_1_spec.md](specs/untyped_tables_v0_1_spec.md), a proposal;
 [specs/tables_v0_1_spec.md](specs/tables_v0_1_spec.md) §9,
@@ -1172,7 +1182,7 @@ measured.
 still planned or proposed in `specs/` ([tables v0.1](specs/tables_v0_1_spec.md),
 [tables v0.2](specs/tables_v0_2_spec.md),
 [tables v0.3](specs/tables_v0_3_spec.md),
-[FFI v0.1](specs/ffi_v0_1_spec.md), [REPL v0.1](specs/repl_v0_1_spec.md) and
+[FFI v0.1](specs/ffi_v0_1_spec.md), [REPL v0.1](specs/implemented/repl_v0_1_spec.md) and
 [stdlib expansion v0.1](specs/stdlib_expansion_v0_1_spec.md) (partly implemented)).
 
 If a doc disagrees with the compiler, the compiler is right; please report

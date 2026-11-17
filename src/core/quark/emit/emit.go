@@ -161,6 +161,7 @@ func ProgramOptions(p *lower.Program, opt Options) string {
 	w.raw("}\n\n")
 	w.raw("int main(int argc, char** argv) {\n")
 	w.ind++
+	w.line("q_par_init();")
 	w.line("q_gc_init();")
 	w.line("q_set_args(argc, argv);")
 	w.line("q_protect_and_run(quark__entry);")
@@ -331,6 +332,21 @@ func (w *printer) stmt(s lower.Stmt) {
 		w.block(s.Body)
 		w.ind--
 		w.line("}")
+	case *lower.ParFor:
+		lo, hi, blk := tempName(s.Lo), tempName(s.Hi), tempName(s.Blk)
+		w.line("q_par_run(%s, [&](long long %s, long long %s, long long %s) {", w.expr(s.Plan), lo, hi, blk)
+		w.ind++
+		w.line("(void)%s;", blk)
+		w.block(s.Pre)
+		i := tempName(s.Idx)
+		w.line("for (long long %s = %s; %s < %s; %s++) {", i, lo, i, hi, i)
+		w.ind++
+		w.block(s.Body)
+		w.ind--
+		w.line("}")
+		w.block(s.Post)
+		w.ind--
+		w.line("});")
 	case *lower.Break:
 		w.line("break;")
 	case *lower.Continue:

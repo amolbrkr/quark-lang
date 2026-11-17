@@ -27,6 +27,7 @@
 #include "core/diagnostics.hpp"
 #include "core/numcmp.hpp"
 #include "core/stack.hpp"
+#include "core/par.hpp"
 #include "core/process.hpp"
 #include "core/format.hpp"
 #include "core/checked.hpp"

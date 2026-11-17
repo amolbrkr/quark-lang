@@ -32,6 +32,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -101,57 +102,94 @@ inline QTable* make_table(const QStructDef* def, QVector* const* cols) {
     return t;
 }
 
-// take gathers rows idx[0..n) of src into a new column.
+// take gathers rows idx[0..n) of src into a new column, a block of output
+// rows at a time on the thread pool (core/par.hpp): each block writes its
+// own rows, and its own bytes of a bool or validity bitmap (blocks are
+// multiples of 8 rows).
 inline QVector* take(const QVector& src, const int32_t* idx, int32_t n) {
     QVector* dst = nullptr;
+    const quark::par::Plan plan = q_par_plan(n);
     switch (src.type) {
         case Type::F64:
         case Type::I64: {
-            dst = q_vec_alloc(src.type, static_cast<size_t>(n));
+            dst = q_vec_alloc_raw(src.type, static_cast<size_t>(n));
             const uint64_t* s = reinterpret_cast<const uint64_t*>(src.values);
             uint64_t* d = reinterpret_cast<uint64_t*>(dst->values);
-            for (int32_t i = 0; i < n; i++) d[i] = s[idx[i]];
+            q_par_run(plan, [&](long long lo, long long hi, long long) {
+                for (long long i = lo; i < hi; i++) d[i] = s[idx[i]];
+            });
             break;
         }
         case Type::DATE: {
-            dst = q_vec_alloc(Type::DATE, static_cast<size_t>(n));
+            dst = q_vec_alloc_raw(Type::DATE, static_cast<size_t>(n));
             const int32_t* s = q_vec_date_data(src);
             int32_t* d = q_vec_date_data_mut(*dst);
-            for (int32_t i = 0; i < n; i++) d[i] = s[idx[i]];
+            q_par_run(plan, [&](long long lo, long long hi, long long) {
+                for (long long i = lo; i < hi; i++) d[i] = s[idx[i]];
+            });
             break;
         }
         case Type::BOOL: {
             dst = q_vec_alloc(Type::BOOL, static_cast<size_t>(n));
-            for (int32_t i = 0; i < n; i++) {
-                if (quark::vec::get_bit(src.values, static_cast<size_t>(idx[i]))) {
-                    quark::vec::put_bit(dst->values, static_cast<size_t>(i), true);
+            q_par_run(plan, [&](long long lo, long long hi, long long) {
+                for (long long i = lo; i < hi; i++) {
+                    if (quark::vec::get_bit(src.values, static_cast<size_t>(idx[i]))) {
+                        quark::vec::put_bit(dst->values, static_cast<size_t>(i), true);
+                    }
                 }
-            }
+            });
             break;
         }
         case Type::STR: {
-            size_t bytes = 0;
-            for (int32_t i = 0; i < n; i++) {
-                bytes += static_cast<size_t>(src.offsets[idx[i] + 1] - src.offsets[idx[i]]);
-            }
-            if (bytes > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
+            const size_t nb = static_cast<size_t>(plan.nblocks);
+            std::vector<size_t> start(nb + 1, 0);
+            q_par_run(plan, [&](long long lo, long long hi, long long b) {
+                size_t bytes = 0;
+                for (long long i = lo; i < hi; i++) bytes += static_cast<size_t>(src.offsets[idx[i] + 1] - src.offsets[idx[i]]);
+                start[static_cast<size_t>(b) + 1] = bytes;
+            });
+            for (size_t b = 0; b < nb; b++) start[b + 1] += start[b];
+            if (start[nb] > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
                 fail("str column data exceeds 2 GiB");
             }
-            dst = q_vec_alloc(Type::STR, static_cast<size_t>(n), bytes);
-            int32_t pos = 0;
-            for (int32_t i = 0; i < n; i++) {
-                const int32_t a = src.offsets[idx[i]];
-                const int32_t len = src.offsets[idx[i] + 1] - a;
-                if (len > 0) std::memcpy(dst->values + pos, src.values + a, static_cast<size_t>(len));
-                pos += len;
-                dst->offsets[i + 1] = pos;
-            }
+            dst = q_vec_alloc(Type::STR, static_cast<size_t>(n), start[nb]);
+            q_par_run(plan, [&](long long lo, long long hi, long long b) {
+                int32_t pos = static_cast<int32_t>(start[static_cast<size_t>(b)]);
+                for (long long i = lo; i < hi; i++) {
+                    const int32_t a = src.offsets[idx[i]];
+                    const int32_t len = src.offsets[idx[i] + 1] - a;
+                    if (len > 0) std::memcpy(dst->values + pos, src.values + a, static_cast<size_t>(len));
+                    pos += len;
+                    dst->offsets[i + 1] = pos;
+                }
+            });
             break;
         }
     }
     if (src.null_count > 0) {
-        for (int32_t i = 0; i < n; i++) {
-            if (is_null(src, idx[i])) set_null(*dst, i);
+        // The validity bitmap is made first, all valid, and each block
+        // clears its missing rows and counts them.
+        const size_t nb = static_cast<size_t>(plan.nblocks);
+        dst->validity_cap = quark::vec::bitmap_bytes(static_cast<size_t>(n));
+        dst->validity = quark::vec::alloc(dst->validity_cap, &dst->validity_base);
+        std::memset(dst->validity, 0xFF, dst->validity_cap);
+        std::vector<size_t> missing(nb, 0);
+        q_par_run(plan, [&](long long lo, long long hi, long long b) {
+            size_t c = 0;
+            for (long long i = lo; i < hi; i++) {
+                if (is_null(src, idx[i])) {
+                    quark::vec::put_bit(dst->validity, static_cast<size_t>(i), false);
+                    c++;
+                }
+            }
+            missing[static_cast<size_t>(b)] = c;
+        });
+        size_t total = 0;
+        for (size_t c : missing) total += c;
+        dst->null_count = total;
+        if (total == 0) {
+            dst->validity = nullptr;
+            dst->validity_cap = 0;
         }
     }
     return dst;
@@ -242,6 +280,39 @@ struct SortKey {
     bool desc;
 };
 
+// par_stable_sort is std::stable_sort of a[0, n) on the thread pool: each
+// block is stable-sorted, then runs are merged in pairs, wider each pass
+// (std::merge takes the left run's element on a tie, so it is stable too).
+// A stable sort has one result, so it is the same for every thread count.
+template <class T, class Less>
+inline void par_stable_sort(T* a, size_t n, Less less) {
+    const quark::par::Plan plan = q_par_plan(static_cast<long long>(n));
+    if (plan.nblocks <= 1) {
+        std::stable_sort(a, a + n, less);
+        return;
+    }
+    q_par_run(plan, [&](long long lo, long long hi, long long) { std::stable_sort(a + lo, a + hi, less); });
+    std::unique_ptr<T[]> tmp(new T[n]);
+    T* src = a;
+    T* dst = tmp.get();
+    for (size_t width = static_cast<size_t>(q_par_block); width < n; width *= 2) {
+        const size_t pairs = (n + 2 * width - 1) / (2 * width);
+        quark::par::Plan mp;
+        mp.nblocks = static_cast<long long>(pairs);
+        mp.n = mp.nblocks * q_par_block;
+        q_par_run(mp, [&](long long, long long, long long b) {
+            const size_t lo = static_cast<size_t>(b) * 2 * width;
+            const size_t mid = std::min(lo + width, n);
+            const size_t hi = std::min(lo + 2 * width, n);
+            std::merge(src + lo, src + mid, src + mid, src + hi, dst + lo, less);
+        });
+        std::swap(src, dst);
+    }
+    if (src != a) {
+        q_par_run(plan, [&](long long lo, long long hi, long long) { std::copy(src + lo, src + hi, a + lo); });
+    }
+}
+
 // sort_one_numeric orders one int, float or bool key. Missing rows stay last,
 // in their original order, and NaN stays after every number and before the
 // missing rows, in either direction. The numbers are a stable sort of
@@ -266,9 +337,9 @@ inline int32_t* sort_one_numeric(QTable* t, SortKey key) {
     }
     auto write = [&](auto pairs) {
         if (key.desc) {
-            std::stable_sort(pairs.begin(), pairs.end(), [](const auto& x, const auto& y) { return x.first > y.first; });
+            par_stable_sort(pairs.data(), pairs.size(), [](const auto& x, const auto& y) { return x.first > y.first; });
         } else {
-            std::stable_sort(pairs.begin(), pairs.end(), [](const auto& x, const auto& y) { return x.first < y.first; });
+            par_stable_sort(pairs.data(), pairs.size(), [](const auto& x, const auto& y) { return x.first < y.first; });
         }
         int32_t w = 0;
         for (const auto& p : pairs) perm[w++] = p.second;
@@ -346,7 +417,8 @@ inline std::vector<int32_t> str_ranks(const QVector& v) {
     }
     std::vector<int32_t> order(first.size());
     for (size_t i = 0; i < first.size(); i++) order[i] = static_cast<int32_t>(i);
-    std::sort(order.begin(), order.end(), [&](int32_t a, int32_t b) {
+    // The values are distinct, so the order has no ties.
+    par_stable_sort(order.data(), order.size(), [&](int32_t a, int32_t b) {
         return q_vec_str_at(v, static_cast<size_t>(first[static_cast<size_t>(a)])) <
                q_vec_str_at(v, static_cast<size_t>(first[static_cast<size_t>(b)]));
     });
@@ -441,7 +513,7 @@ inline int32_t* sort_perm(QTable* t, const SortKey* keys, int nkeys) {
     }
     int32_t* perm = alloc_i32(static_cast<size_t>(n));
     for (int32_t i = 0; i < n; i++) perm[i] = i;
-    std::stable_sort(perm, perm + n, [&](int32_t a, int32_t b) {
+    par_stable_sort(perm, static_cast<size_t>(n), [&](int32_t a, int32_t b) {
         for (int k = 0; k < nkeys; k++) {
             const int c = cmp_key(*cols[static_cast<size_t>(k)], a, b, keys[k].desc, ranks[static_cast<size_t>(k)]);
             if (c != 0) return c < 0;
@@ -523,12 +595,17 @@ inline Grouping group_by_vecs(int32_t nrows, const QVector* const* key_ptrs, int
     std::vector<const QVector*> keys(static_cast<size_t>(nkeys));
     for (int k = 0; k < nkeys; k++) keys[static_cast<size_t>(k)] = key_ptrs[k];
 
-    std::vector<uint64_t> row_hash(static_cast<size_t>(n));
-    for (int32_t r = 0; r < n; r++) {
-        uint64_t h = 0;
-        for (const QVector* k : keys) h = mix64(h * 31 + hash_value(*k, r));
-        row_hash[static_cast<size_t>(r)] = h;
-    }
+    // Hashing the keys runs on the thread pool; building the table of
+    // groups is one pass in row order, which numbers them by first row.
+    std::unique_ptr<uint64_t[]> row_hash(new uint64_t[static_cast<size_t>(n) > 0 ? static_cast<size_t>(n) : 1]);
+    const quark::par::Plan plan = q_par_plan(n);
+    q_par_run(plan, [&](long long lo, long long hi, long long) {
+        for (long long r = lo; r < hi; r++) {
+            uint64_t h = 0;
+            for (const QVector* k : keys) h = mix64(h * 31 + hash_value(*k, static_cast<int32_t>(r)));
+            row_hash[static_cast<size_t>(r)] = h;
+        }
+    });
 
     // Open addressing; slots hold group id + 1 (0 = empty).
     size_t cap = 16;
@@ -573,7 +650,7 @@ inline Grouping group_by_vecs(int32_t nrows, const QVector* const* key_ptrs, int
     const int32_t ng = static_cast<int32_t>(first.size());
     std::vector<int32_t> order(static_cast<size_t>(ng));
     for (int32_t g = 0; g < ng; g++) order[static_cast<size_t>(g)] = g;
-    std::stable_sort(order.begin(), order.end(), [&](int32_t x, int32_t y) {
+    par_stable_sort(order.data(), order.size(), [&](int32_t x, int32_t y) {
         for (const QVector* k : keys) {
             const int c = compare_rows(*k, first[static_cast<size_t>(x)], first[static_cast<size_t>(y)], false);
             if (c != 0) return c < 0;
@@ -589,7 +666,9 @@ inline Grouping group_by_vecs(int32_t nrows, const QVector* const* key_ptrs, int
         rank[static_cast<size_t>(order[static_cast<size_t>(i)])] = i;
         out.first_row[i] = first[static_cast<size_t>(order[static_cast<size_t>(i)])];
     }
-    for (int32_t r = 0; r < n; r++) group_of_row[r] = rank[static_cast<size_t>(group_of_row[r])];
+    q_par_run(plan, [&](long long lo, long long hi, long long) {
+        for (long long r = lo; r < hi; r++) group_of_row[r] = rank[static_cast<size_t>(group_of_row[r])];
+    });
     out.group_of_row = group_of_row;
     return out;
 }
@@ -674,27 +753,36 @@ inline GroupValues gather_f64(const QVector& col, const Grouping& g) {
 
 // agg_sum: int and bool columns give an int (bools count as 0/1), float
 // columns a float, summed pairwise (core/sum.hpp). A group with no values
-// sums to 0. Int overflow is fatal.
+// sums to 0. An int sum is exact (128-bit), so it is an error only when a
+// group's total doesn't fit in an int, as for the vec sum.
 inline QVector* agg_sum(const QVector& col, const Grouping& g) {
     const size_t ng = static_cast<size_t>(g.ngroups);
     switch (col.type) {
         case Type::I64: {
             QVector* out = q_vec_alloc(Type::I64, ng);
             int64_t* d = q_vec_i64_data_mut(*out);
+            if (is_whole_table(g)) {
+                size_t n = 0;
+                d[0] = q_sum_fits(q_vec_i64_present_sum(col, &n));
+                return out;
+            }
             const int64_t* x = q_vec_i64_data(col);
+            std::vector<__int128> acc(ng, 0);
             for (int32_t r = 0; r < g.nrows; r++) {
                 if (is_null(col, r)) continue;
-                int64_t& acc = d[group_of(g, r)];
-                if (__builtin_add_overflow(acc, x[r], &acc)) {
-                    q_runtime_reportf("runtime error: integer overflow in 'sum'\n");
-                    q_exit(1);
-                }
+                acc[static_cast<size_t>(group_of(g, r))] += x[r];
             }
+            for (size_t i = 0; i < ng; i++) d[i] = q_sum_fits(acc[i]);
             return out;
         }
         case Type::BOOL: {
             QVector* out = q_vec_alloc(Type::I64, ng);
             int64_t* d = q_vec_i64_data_mut(*out);
+            if (is_whole_table(g)) {
+                size_t n = 0;
+                d[0] = static_cast<int64_t>(q_vec_bool_present_trues(col, &n));
+                return out;
+            }
             for (int32_t r = 0; r < g.nrows; r++) {
                 if (!is_null(col, r) && q_vec_bool_at(col, static_cast<size_t>(r))) d[group_of(g, r)]++;
             }
@@ -708,7 +796,7 @@ inline QVector* agg_sum(const QVector& col, const Grouping& g) {
                 return out;
             }
             const GroupValues gv = gather_f64(col, g);
-            for (size_t i = 0; i < ng; i++) d[i] = q_pairwise_sum(gv.of(i), gv.count(i));
+            for (size_t i = 0; i < ng; i++) d[i] = q_pairwise_sum_par(gv.of(i), gv.count(i));
             return out;
         }
         case Type::STR: break;
@@ -738,7 +826,7 @@ inline QVector* agg_mean(const QVector& col, const Grouping& g) {
         for (size_t i = 0; i < ng; i++) {
             const size_t n = gv.count(i);
             if (n == 0) set_null(*out, static_cast<int32_t>(i));
-            else d[i] = q_pairwise_sum(gv.of(i), n) / static_cast<double>(n);
+            else d[i] = q_pairwise_sum_par(gv.of(i), n) / static_cast<double>(n);
         }
         return out;
     }
@@ -778,6 +866,64 @@ inline QVector* finish_extremum(const QVector& col, const Grouping& g, const std
 // agg_extremum_whole is the dense loop for a summarize with no group_by
 // (tables v0.2 §4.1): the best value lives in a register, and a tie keeps
 // the first. A group_of lookup per row is the slow path this replaces.
+// best_in_blocks reduces rows [0, nrows) a block of the thread pool at a
+// time: block(lo, hi, &best) finds a block's best (false when it has none),
+// and the blocks are combined in order, a later one winning only when
+// beats(best, its) holds, so a tie keeps the first row, as one loop does.
+template <class T, class Block, class Beats>
+inline bool best_in_blocks(int32_t nrows, Block block, Beats beats, T* out) {
+    const quark::par::Plan plan = q_par_plan(nrows);
+    const size_t nb = static_cast<size_t>(plan.nblocks);
+    std::vector<T> part(nb);
+    std::vector<char> found(nb, 0);
+    q_par_run(plan, [&](long long lo, long long hi, long long b) {
+        T best{};
+        if (block(static_cast<int32_t>(lo), static_cast<int32_t>(hi), &best)) {
+            part[static_cast<size_t>(b)] = best;
+            found[static_cast<size_t>(b)] = 1;
+        }
+    });
+    bool any = false;
+    T best{};
+    for (size_t b = 0; b < nb; b++) {
+        if (!found[b]) continue;
+        if (!any || beats(best, part[b])) best = part[b];
+        any = true;
+    }
+    *out = best;
+    return any;
+}
+
+// extremum_of finds the best present value of a fixed-width column: with no
+// missing values, the branch-free loop of min(v) / max(v) (q_vec_extremum),
+// with the same result.
+template <class T>
+inline bool extremum_of(const QVector& col, const T* x, int32_t nrows, bool want_max, T* out) {
+    auto beats = [want_max](T best, T y) { return want_max ? y > best : y < best; };
+    if (col.null_count == 0) {
+        return best_in_blocks<T>(nrows, [&](int32_t lo, int32_t hi, T* best) {
+            if (hi <= lo) return false;
+            T b = x[lo];
+            for (int32_t r = lo + 1; r < hi; r++) b = want_max ? (x[r] > b ? x[r] : b) : (x[r] < b ? x[r] : b);
+            *best = b;
+            return true;
+        }, beats, out);
+    }
+    return best_in_blocks<T>(nrows, [&](int32_t lo, int32_t hi, T* best) {
+        bool any = false;
+        T b{};
+        for (int32_t r = lo; r < hi; r++) {
+            if (is_null(col, r)) continue;
+            if (!any || beats(b, x[r])) {
+                b = x[r];
+                any = true;
+            }
+        }
+        *best = b;
+        return any;
+    }, beats, out);
+}
+
 inline QVector* agg_extremum_whole(const QVector& col, int32_t nrows, bool want_max) {
     auto missing = [&](QVector* out) {
         set_null(*out, 0);
@@ -785,76 +931,50 @@ inline QVector* agg_extremum_whole(const QVector& col, int32_t nrows, bool want_
     };
     switch (col.type) {
         case Type::I64: {
-            const int64_t* x = q_vec_i64_data(col);
             QVector* out = q_vec_alloc(Type::I64, 1);
-            if (col.null_count == 0) {
-                // No missing values: the branch-free loop of min(v) / max(v)
-                // (q_vec_extremum), with the same result.
-                if (nrows == 0) return missing(out);
-                int64_t best = x[0];
-                for (int32_t r = 1; r < nrows; r++) best = want_max ? (x[r] > best ? x[r] : best) : (x[r] < best ? x[r] : best);
-                q_vec_i64_data_mut(*out)[0] = best;
-                return out;
-            }
-            bool any = false;
             int64_t best = 0;
-            for (int32_t r = 0; r < nrows; r++) {
-                if (is_null(col, r)) continue;
-                if (!any || (want_max ? x[r] > best : x[r] < best)) {
-                    best = x[r];
-                    any = true;
-                }
-            }
-            if (!any) return missing(out);
+            if (!extremum_of<int64_t>(col, q_vec_i64_data(col), nrows, want_max, &best)) return missing(out);
             q_vec_i64_data_mut(*out)[0] = best;
             return out;
         }
         case Type::DATE: {
-            const int32_t* x = q_vec_date_data(col);
-            if (col.null_count == 0) {
-                QVector* out = q_vec_alloc(Type::DATE, 1);
-                if (nrows == 0) return missing(out);
-                int32_t best = x[0];
-                for (int32_t r = 1; r < nrows; r++) best = want_max ? (x[r] > best ? x[r] : best) : (x[r] < best ? x[r] : best);
-                q_vec_date_data_mut(*out)[0] = best;
-                return out;
-            }
-            bool any = false;
-            int32_t best = 0;
-            for (int32_t r = 0; r < nrows; r++) {
-                if (is_null(col, r)) continue;
-                if (!any || (want_max ? x[r] > best : x[r] < best)) {
-                    best = x[r];
-                    any = true;
-                }
-            }
             QVector* out = q_vec_alloc(Type::DATE, 1);
-            if (!any) return missing(out);
+            int32_t best = 0;
+            if (!extremum_of<int32_t>(col, q_vec_date_data(col), nrows, want_max, &best)) return missing(out);
             q_vec_date_data_mut(*out)[0] = best;
             return out;
         }
         case Type::F64: {
             const double* x = q_vec_f64_data(col);
+            auto beats = [want_max](double best, double y) { return want_max ? y > best : y < best; };
+            double best = 0;
+            bool any;
             if (col.null_count == 0) {
                 // A NaN never compares less or greater, so after the first
                 // non-NaN value it never wins (as in q_vec_extremum).
-                int32_t first = 0;
-                while (first < nrows && std::isnan(x[first])) first++;
-                QVector* out = q_vec_alloc(Type::F64, 1);
-                if (first == nrows) return missing(out);
-                double best = x[first];
-                for (int32_t r = first + 1; r < nrows; r++) best = want_max ? (x[r] > best ? x[r] : best) : (x[r] < best ? x[r] : best);
-                q_vec_f64_data_mut(*out)[0] = best;
-                return out;
-            }
-            bool any = false;
-            double best = 0;
-            for (int32_t r = 0; r < nrows; r++) {
-                if (is_null(col, r) || std::isnan(x[r])) continue;
-                if (!any || (want_max ? x[r] > best : x[r] < best)) {
-                    best = x[r];
-                    any = true;
-                }
+                any = best_in_blocks<double>(nrows, [&](int32_t lo, int32_t hi, double* out) {
+                    int32_t first = lo;
+                    while (first < hi && std::isnan(x[first])) first++;
+                    if (first == hi) return false;
+                    double b = x[first];
+                    for (int32_t r = first + 1; r < hi; r++) b = want_max ? (x[r] > b ? x[r] : b) : (x[r] < b ? x[r] : b);
+                    *out = b;
+                    return true;
+                }, beats, &best);
+            } else {
+                any = best_in_blocks<double>(nrows, [&](int32_t lo, int32_t hi, double* out) {
+                    bool found = false;
+                    double b = 0;
+                    for (int32_t r = lo; r < hi; r++) {
+                        if (is_null(col, r) || std::isnan(x[r])) continue;
+                        if (!found || beats(b, x[r])) {
+                            b = x[r];
+                            found = true;
+                        }
+                    }
+                    *out = b;
+                    return found;
+                }, beats, &best);
             }
             QVector* out = q_vec_alloc(Type::F64, 1);
             if (!any) return missing(out);
@@ -862,34 +982,44 @@ inline QVector* agg_extremum_whole(const QVector& col, int32_t nrows, bool want_
             return out;
         }
         case Type::BOOL: {
-            bool any = false;
+            auto beats = [want_max](bool best, bool x) { return want_max ? x && !best : !x && best; };
             bool best = false;
-            for (int32_t r = 0; r < nrows; r++) {
-                if (is_null(col, r)) continue;
-                const bool x = q_vec_bool_at(col, static_cast<size_t>(r));
-                if (!any || (want_max ? x && !best : !x && best)) {
-                    best = x;
-                    any = true;
+            const bool any = best_in_blocks<bool>(nrows, [&](int32_t lo, int32_t hi, bool* out) {
+                bool found = false;
+                bool b = false;
+                for (int32_t r = lo; r < hi; r++) {
+                    if (is_null(col, r)) continue;
+                    const bool x = q_vec_bool_at(col, static_cast<size_t>(r));
+                    if (!found || beats(b, x)) {
+                        b = x;
+                        found = true;
+                    }
                 }
-            }
+                *out = b;
+                return found;
+            }, beats, &best);
             QVector* out = q_vec_alloc(Type::BOOL, 1);
             if (!any) return missing(out);
             if (best) quark::vec::put_bit(out->values, 0, true);
             return out;
         }
         case Type::STR: {
-            int32_t best = -1;
-            for (int32_t r = 0; r < nrows; r++) {
-                if (is_null(col, r)) continue;
-                if (best < 0) {
-                    best = r;
-                    continue;
-                }
+            auto beats = [&](int32_t best, int32_t r) {
                 const std::string_view xs = q_vec_str_at(col, static_cast<size_t>(r));
                 const std::string_view ys = q_vec_str_at(col, static_cast<size_t>(best));
-                if (want_max ? ys < xs : xs < ys) best = r;
-            }
-            if (best < 0) {
+                return want_max ? ys < xs : xs < ys;
+            };
+            int32_t best = -1;
+            const bool any = best_in_blocks<int32_t>(nrows, [&](int32_t lo, int32_t hi, int32_t* out) {
+                int32_t b = -1;
+                for (int32_t r = lo; r < hi; r++) {
+                    if (is_null(col, r)) continue;
+                    if (b < 0 || beats(b, r)) b = r;
+                }
+                *out = b;
+                return b >= 0;
+            }, beats, &best);
+            if (!any) {
                 QVector* out = q_vec_alloc(Type::STR, 1);
                 return missing(out);
             }

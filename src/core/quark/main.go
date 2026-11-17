@@ -74,9 +74,11 @@ func printUsage() {
 	fmt.Println("  --lib-path <dir>       Search <dir> for extern link libraries (repeatable)")
 	fmt.Println("  --include-path <dir>   Add <dir> to the C++ include path (repeatable)")
 	fmt.Println("  --link-arg <arg>       Pass <arg> to the linker as-is (repeatable)")
+	fmt.Println("  --threads <n>          (run) Run the program's parallel steps on n threads; 1 runs everything on one")
 	fmt.Println()
 	fmt.Println("Environment:")
 	fmt.Println("  QUARK_LIB_PATH, QUARK_INCLUDE_PATH   Like --lib-path / --include-path; path lists")
+	fmt.Println("  QUARK_THREADS                        The thread count a program uses (default: the CPUs it may use)")
 	fmt.Println()
 	fmt.Println("Examples:")
 	fmt.Println("  quark run test.qrk                # Compile and run")
@@ -333,10 +335,17 @@ func cmdRun(args []string) int {
 	}
 
 	var flags buildFlags
+	var threads string
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	flags.register(fs)
-	file, ok := parseCommand(fs, "quark run <file.qrk> [--debug] [--checked] [--lto] [--no-pch] [--lib-path dir] [--include-path dir] [--link-arg arg] [-- program args...]", args)
+	fs.StringVar(&threads, "threads", "", "")
+	const usage = "quark run <file.qrk> [--debug] [--checked] [--threads n] [--lto] [--no-pch] [--lib-path dir] [--include-path dir] [--link-arg arg] [-- program args...]"
+	file, ok := parseCommand(fs, usage, args)
 	if !ok {
+		return 1
+	}
+	if threads != "" && !validThreads(threads) {
+		fmt.Fprintf(os.Stderr, "--threads needs a whole number of threads from 1 to %d, got '%s'\nUsage: %s\n", maxThreads, threads, usage)
 		return 1
 	}
 
@@ -378,6 +387,11 @@ func cmdRun(args []string) int {
 		exeFile = abs
 	}
 	runCmd := exec.Command(exeFile, programArgs...)
+	if threads != "" {
+		// The program reads its thread count at startup (runtime/.../core/
+		// threads.hpp); --threads wins over the environment's.
+		runCmd.Env = append(os.Environ(), "QUARK_THREADS="+threads)
+	}
 	runCmd.Stdout = os.Stdout
 	runCmd.Stderr = os.Stderr
 	runCmd.Stdin = os.Stdin
@@ -390,6 +404,26 @@ func cmdRun(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// maxThreads is the largest thread count a program accepts
+// (q_par_max_threads, runtime/.../core/threads.hpp).
+const maxThreads = 4096
+
+// validThreads reports whether s is a thread count a program accepts, with
+// the program's rule: digits only, 1 to maxThreads.
+func validThreads(s string) bool {
+	n := 0
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+		n = n*10 + int(c-'0')
+		if n > maxThreads {
+			return false
+		}
+	}
+	return n >= 1
 }
 
 // compileProgram writes u's C++ to cppFile, then compiles it (object file in

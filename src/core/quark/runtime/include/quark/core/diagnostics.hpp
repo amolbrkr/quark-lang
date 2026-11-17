@@ -36,15 +36,52 @@ struct QSourceLocGuard {
     QSourceLocGuard& operator=(const QSourceLocGuard&) = delete;
 };
 
+// QErrorCapture holds the error text of a thread running a block of a
+// parallel loop (core/par.hpp, specs/tables_v0_3_spec.md §8.5). While a
+// thread's q_error_capture is set, an error is recorded there instead of
+// printed, and q_exit ends the block (it throws QBlockExit) instead of the
+// program: the thread that started the loop reports the error of the lowest
+// failing block, as one thread would. flush_stdout is set by an error whose
+// report flushes stdout first (a stack overflow).
+struct QErrorCapture {
+    char text[4096];
+    size_t len = 0;
+    int code = 1;
+    bool flush_stdout = false;
+};
+
+inline thread_local QErrorCapture* q_error_capture = nullptr;
+
+// QBlockExit ends a block whose row failed; code is the exit status the
+// program ends with.
+struct QBlockExit {
+    int code;
+};
+
+inline void q_capture_text(QErrorCapture& c, const char* text) {
+    const size_t room = sizeof(c.text) - 1 - c.len;
+    size_t n = std::strlen(text);
+    if (n > room) n = room;
+    std::memcpy(c.text + c.len, text, n);
+    c.len += n;
+    c.text[c.len] = '\0';
+}
+
 inline void q_report_message(const char* code, const char* message) {
     const QSourceLoc& loc = *q_runtime_loc;
+    char line[2560];
     if (loc.line > 0 && loc.col > 0) {
-        std::fprintf(stderr, "error[%s] (runtime): %s at %s:%d:%d\n", code, message, loc.file, loc.line, loc.col);
+        std::snprintf(line, sizeof line, "error[%s] (runtime): %s at %s:%d:%d\n", code, message, loc.file, loc.line, loc.col);
     } else if (loc.line > 0) {
-        std::fprintf(stderr, "error[%s] (runtime): %s at %s:%d\n", code, message, loc.file, loc.line);
+        std::snprintf(line, sizeof line, "error[%s] (runtime): %s at %s:%d\n", code, message, loc.file, loc.line);
     } else {
-        std::fprintf(stderr, "error[%s] (runtime): %s\n", code, message);
+        std::snprintf(line, sizeof line, "error[%s] (runtime): %s\n", code, message);
     }
+    if (QErrorCapture* c = q_error_capture) {
+        q_capture_text(*c, line);
+        return;
+    }
+    std::fputs(line, stderr);
 }
 
 inline void q_format_report(const char* code, const char* fmt, va_list args) {
@@ -94,6 +131,10 @@ inline void (*q_exit_hook)(int) = nullptr;
 #endif
 
 [[noreturn]] inline void q_exit(int code) {
+    if (QErrorCapture* c = q_error_capture) {
+        c->code = code;
+        throw QBlockExit{code};
+    }
     if (q_exit_hook != nullptr) {
         // The REPL host (Windows) recovers from the failed input in this
         // process: a verb's random-draw context must not outlive it.

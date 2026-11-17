@@ -108,7 +108,7 @@ type Analyzer struct {
 	// (analyzer_missing.go).
 	rowMissing map[*ast.TreeNode]*RowMissing
 
-	// REPL session (specs/repl_v0_1_spec.md). session is set when the tree's
+	// REPL session (specs/implemented/repl_v0_1_spec.md). session is set when the tree's
 	// children are input blocks. sessionUses lists the session variables a
 	// lambda reads; they are not captures, so the function stays a plain C++
 	// function and reads the host table. curBlock is the input being analyzed.

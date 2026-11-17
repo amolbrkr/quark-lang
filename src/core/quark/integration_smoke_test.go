@@ -1602,10 +1602,10 @@ int main() {
     d = q_dict_set(d, qv_string("a key well beyond the small string buffer"), qv_int(1));
     CHECK("dict_long_key", d.data.dict_val->entries.begin()->first.data());
 
-	/* --- resource registry: slot buffer must be scanned (payloads live only there) --- */
+	/* --- resource registry: slot storage must be scanned (payloads live only there) --- */
     QResourceHandle* rh = q_resource_create(QRES_KIND_NONE, q_malloc(16), 0);
     CHECK("resource_handle", rh);
-    CHECK("resource_slots", q_resource_registry().slots.data());
+    CHECK("resource_slots", &q_resource_registry().slots[rh->slot]);
 
 	/* --- vectors: object + Arrow-layout buffers (64-byte aligned) --- */
     #define CHECK_ALIGNED(label, ptr) do {                                \

@@ -323,7 +323,7 @@ func (b *lockedBuffer) String() string {
 // TestRepl_FunctionMadeListStaysUntyped requires an empty list made inside a
 // function of an earlier input to keep holding any value: the function is
 // compiled, so a later write can't type what it makes, and a typed read of
-// such a list is checked (specs/repl_v0_1_spec.md §3.5). A top-level empty
+// such a list is checked (specs/implemented/repl_v0_1_spec.md §3.5). A top-level empty
 // list still takes its type from a later input's first write.
 func TestRepl_FunctionMadeListStaysUntyped(t *testing.T) {
 	out, errText := runRepl(t, t.TempDir(), []string{

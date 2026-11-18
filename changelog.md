@@ -10,6 +10,7 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 
 ## Contents
 
+- [2026-11-18: Programs build on Windows again](#2026-11-18-programs-build-on-windows-again)
 - [2026-11-17: Dates and REPL specs moved; data work and untyped tables proposals](#2026-11-17-dates-and-repl-specs-moved-data-work-and-untyped-tables-proposals)
 - [2026-11-17: Tables v0.3, a thread pool for queries, the table engine and vecs](#2026-11-17-tables-v03-a-thread-pool-for-queries-the-table-engine-and-vecs)
 - [2026-11-17: Tables v0.3, random draws in verbs](#2026-11-17-tables-v03-random-draws-in-verbs)
@@ -61,6 +62,18 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 - [2026-04-02: Structs v0.1](#2026-04-02-structs-v01)
 - [2026-03-28: Vector soundness, `std/fmt` on `extern`, build output](#2026-03-28-vector-soundness-stdfmt-on-extern-build-output)
 
+## 2026-11-18: Programs build on Windows again
+
+### Fixed
+
+- On Windows, every program failed to compile since the thread pool (`277beb3`), with clang errors in the runtime's `types/date.hpp` (`too few arguments provided to function-like macro invocation` at `std::numeric_limits<int32_t>::min()`). Turning on the collector's thread support made `gc.h` include `<windows.h>`, whose `min` and `max` macros break `std::min`, `std::max` and `std::numeric_limits<T>::min()`/`max()` in every runtime header after it. `gc.h` no longer includes `windows.h`.
+
+### Internal
+
+- `core/gc.hpp` defines `GC_DONT_INCLUDE_WINDOWS_H` on Windows before including `gc.h`, which then uses its own declarations of the Win32 thread functions instead of windows.h's. The runtime includes no windows.h at all, as before the thread pool: it declares the few Win32 functions it calls itself (`core/threads.hpp`, `core/par.hpp`).
+
+---
+
 ## 2026-11-17: Dates and REPL specs moved; data work and untyped tables proposals
 
 ### Internal
@@ -72,7 +85,7 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 
 ## 2026-11-17: Tables v0.3, a thread pool for queries, the table engine and vecs
 
-Commits: `277beb3`, and changes not committed yet (the mask filter's loops, the benchmark driver)
+Commits: `277beb3`, `812c96a`
 
 `specs/tables_v0_3_spec.md` §8, phase 4, first part: a program has a thread pool, and a query's row loops, most of the table engine and the vec operations run on it. The output is the same for every thread count (D53): the same rows in the same order, the same float bits, the same random draws, and the same error. The CSV reader, the grouped aggregates of many small groups and `distinct` still run on one thread.
 

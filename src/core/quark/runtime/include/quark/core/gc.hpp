@@ -30,6 +30,14 @@
     #ifndef GC_NO_THREAD_REDIRECTS
         #define GC_NO_THREAD_REDIRECTS
     #endif
+    // With GC_THREADS on Windows, gc.h would include windows.h, whose min
+    // and max macros break std::min, std::numeric_limits<T>::max() and the
+    // like in every later header. The runtime declares the few Win32
+    // functions it calls itself (core/threads.hpp, core/par.hpp), and gc.h
+    // has declarations of its own for when windows.h is absent.
+    #if defined(_WIN32) && !defined(GC_DONT_INCLUDE_WINDOWS_H)
+        #define GC_DONT_INCLUDE_WINDOWS_H
+    #endif
     #include <gc.h>
     #include <gc/gc_allocator.h>
 

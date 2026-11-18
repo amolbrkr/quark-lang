@@ -46,6 +46,7 @@
 #include "types/resource.hpp"
 #include "types/struct.hpp"
 #include "types/table.hpp"
+#include "core/parcheck.hpp"
 
 // Core helpers depending on type definitions
 #include "core/truthy.hpp"

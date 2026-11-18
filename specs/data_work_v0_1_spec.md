@@ -1,7 +1,7 @@
 # Quark Data Work Improvements v0.1 Spec
 
-Status: Proposal. Nothing is implemented. The parts: sorting a vec (§3), reading CSV within memory (§4), joins (§5), calling an imported function by its bare name (§6), backtick names for columns and fields (§7), TSV and other separators (§8), JSON (§9), what Excel support must answer (§10, waiting for research), and a benchmark suite that shows where Quark stands against the tools it competes with, on a laptop-sized machine (§11-§17). The suite replaces the one described in `src/benchmarks/README.md`. §6-§9 have open questions (§22).
-Last Updated: 2026-11-17
+Status: Proposal. Nothing is implemented. The parts: sorting a vec, with the table engine's numeric sort on a parallel radix kernel (§3), reading CSV within memory and on the thread pool (§4), joins (§5), calling an imported function by its bare name (§6), backtick names for columns and fields (§7), TSV and other separators (§8), JSON (§9), what Excel support must answer (§10, waiting for research), and a benchmark suite that shows where Quark stands against the tools it competes with, on a laptop-sized machine (§11-§17). The suite replaces the one described in `src/benchmarks/README.md`. §6-§9 have open questions (§22).
+Last Updated: 2026-11-18 (the parallel CSV reader and the radix sort moved here from tables v0.3, DW27)
 Related: `src/benchmarks/README.md` and `src/benchmarks/RESULTS.md` (the current suite), `specs/tables_v0_3_spec.md` (aggregates in verbs, `contains`, threads), `specs/implemented/modules_v0_2_spec.md` (imports and name lookup, for §6), `specs/untyped_tables_v0_1_spec.md` (queries on tables read without a row struct, for §7), `stdlib.md` (vecs, `std/csv`, `std/blas`), `architecture.md` §15 (performance findings), and the DuckDB Labs database-like operations benchmark (db-benchmark), whose method §11 follows.
 
 ## Contents
@@ -74,6 +74,7 @@ This spec adds what Quark is missing for that work, and replaces the suite:
 | DW24 | **`::` stays the canonical way to name what an imported file defines, and `.` stays for fields and methods**, so `csv.read_file` stays an error. A file may also call a member by its bare name (`read_file(p)`); how the name is bound, and what happens when it clashes, is §6 (decided 2026-11-17; §6's design is open). |
 | DW25 | **TSV and JSON are in this spec (§8, §9). Excel waits** until the user has researched how best to read and write it in C++ (§10; decided 2026-11-17). |
 | DW26 | **Bare names (§6) and backtick names (§7) are in this spec** as data work changes, although both change the syntax. Keyword arguments stay with the other syntax changes (DW22) (decided 2026-11-17). |
+| DW27 | **The CSV reader on the thread pool (§4.2) and the radix kernel as the table engine's numeric sort (§3.2) are part of this spec**, moved from tables v0.3's phase 4, which is complete without them (`specs/tables_v0_3_spec.md` §8.1). Until they land, the CSV reader runs on one thread and the engine sorts with its stable merge sort on the thread pool (decided 2026-11-18). |
 
 ## 3. Sorting a vec
 
@@ -99,7 +100,7 @@ print(v.order_desc())   // [0, 3, 2, 1]
 - `bool`: a count.
 - `str`: a stable sort of (offset, length) views by byte order; the algorithm (MSD radix, or a merge sort with a memcmp compare) is chosen by measurement.
 - The table engine's sort by one key, including the current "one numeric key without missing values" fast path, calls the same kernel, so `t | e -> sort(e.x)` and `t.x.sort()` agree by construction.
-- Threads: `v.sort()` and `v.order()` run on one thread in v0.1. The radix sort parallelizes without changing its output: each block of keys counts its digits, prefix sums give every block its offsets, and the scatter keeps input order (`specs/tables_v0_3_spec.md` D53). The table engine's sort moves to this kernel only once the kernel runs on the thread pool, so a table sort that runs on several threads never goes back to one.
+- Threads: `v.sort()` and `v.order()` run on one thread in v0.1. The radix sort parallelizes without changing its output: each block of keys counts its digits, prefix sums give every block its offsets, and the scatter keeps input order (`specs/tables_v0_3_spec.md` D53). The table engine's sort moves to this kernel only once the kernel runs on the thread pool, so a table sort that runs on several threads never goes back to one (DW27). Today it is a stable merge sort on the pool: a one-key `sort` of 1M floats takes 174 ms on one thread and 55 ms on six (Polars 15 ms, data.table 52 ms at their defaults; `RESULTS.md`).
 
 ### 3.3 Performance target
 
@@ -118,7 +119,7 @@ On one thread, 10M values: `float` and `int` within 1.5 times NumPy's `np.sort` 
 - **Final buffers.** Each column is built in the buffer the table keeps, with no builder to copy from. An untyped read knows the row count from its first pass and allocates each buffer once. A typed read estimates the row count from the file size and the first block's bytes per row, doubles a buffer when the estimate is short, and trims it at the end. A `str` column's text grows the same way.
 - **Unchanged:** what is accepted and inferred, the error messages and their line numbers, the UTF-8 and NUL checks, `columns` mappings, and the 2 GiB limit on one `str` column's text.
 - **`csv::parse_text`**, whose text is already in memory, uses the same final buffers.
-- **Threads.** The reader parses on the thread pool, as `specs/tables_v0_3_spec.md` §8.1 plans for it (it runs on one thread today): it reads as many blocks as there are threads, splits them at line ends outside quotes (it knows whether each block starts inside a quoted field from the one before), and parses the parts on the thread pool, writing each part's rows at offsets known from a count of its rows. On one thread it is one block at a time. The output and the errors (the first problem in line order) are the same for every thread count.
+- **Threads** (DW27; the reader runs on one thread today). The reader parses on the thread pool: it reads as many blocks as there are threads, splits them at line ends outside quotes (it knows whether each block starts inside a quoted field from the one before), and parses the parts on the thread pool, writing each part's rows at offsets known from a count of its rows. On one thread it is one block at a time. It decides whether to split by the file's size, with a threshold measured when it is implemented (the pool's own thresholds don't fit a reader, whose unit is bytes). The output is the same for every thread count (`specs/tables_v0_3_spec.md` D53): rows in file order, and the problem reported is the first in file order, with the total count of problems.
 
 ### 4.3 Targets
 
@@ -653,7 +654,7 @@ All three call a BLAS `dgemm`; this measures what `std/blas` adds around it (a f
 | FL3: rows whose `k4` is in a list of 1,000 values | `contains` in verbs (`specs/tables_v0_3_spec.md` D48) |
 | `median(v2)` by key, the largest two `v2` per group (db-benchmark q6, q8) | A quantile kernel; top-n per group |
 | Word count | Building a table from a list, and v0.3's `count` step |
-| The 8-thread headline (DW12) | The rest of `specs/tables_v0_3_spec.md` §8: the CSV reader, `distinct` and the grouped aggregates of many small groups still run on one thread |
+| The 8-thread headline (DW12) | The CSV reader on the thread pool (§4.2): reading is a question of its own, and every task loads its table with it |
 
 ## 17. What the 100M preset will show
 
@@ -661,11 +662,11 @@ These are expected from today's code and are to be confirmed by the first `100m`
 
 - **Until §4 is done, Quark can't load `G` at `100m` on a 16 GB laptop**: about 15 GB at the reader's peak, so RD1, RD2 and every task that loads `G` would be out of memory.
 - **A `str` column holds at most 2 GiB of text** (32-bit offsets; past that, `vec[str] data exceeds 2 GiB` is a runtime error). `k3` at `100m` is 1.2 GB and `L` about 1.8 GB, so both fit, `L` with little room.
-- **What still runs on one thread.** Query row loops, most of the table engine and the vec operations run on the thread pool (`specs/tables_v0_3_spec.md` §8); the CSV reader, `distinct`, the grouped aggregates of many small groups and joins v0.1 (DW23) don't yet, and the 8-thread setting shows what that costs.
+- **What still runs on one thread.** Query row loops, the table engine and the vec operations run on the thread pool (`specs/tables_v0_3_spec.md` §8); the CSV reader (§4.2) and joins v0.1 (DW23) don't yet, and the 8-thread setting shows what that costs.
 
 ## 18. Changes to other docs
 
-When each part is implemented: `stdlib.md` lists `sort`, `sort_desc`, `order` and `order_desc` under the vec methods (§3); `architecture.md` describes the CSV reader's blocks and buffers (§4); joins go into `semantics.md` §9.5 (the verbs and the joined row), `grammar.md` §10.5 (the `right | b` argument), `architecture.md` (the engine's hash join) and the editor grammar's verb names, and `specs/tables_v0_1_spec.md` §9 stops listing them as planned (§5); `specs/tables_v0_3_spec.md` §8.1 gets the radix kernel as the engine's single-key sort once it is parallel (§3.2), the streamed reader's parallel parse (§4.2), and joins once they are parallel (§5.5); `src/benchmarks/README.md` is rewritten for the tasks, presets, variants, method and parity rule here; `src/benchmarks/RESULTS.md` is measured again at both presets; `architecture.md` §15 takes its performance findings from the new results.
+When each part is implemented: `stdlib.md` lists `sort`, `sort_desc`, `order` and `order_desc` under the vec methods (§3); `architecture.md` describes the CSV reader's blocks and buffers (§4); joins go into `semantics.md` §9.5 (the verbs and the joined row), `grammar.md` §10.5 (the `right | b` argument), `architecture.md` (the engine's hash join) and the editor grammar's verb names, and `specs/tables_v0_1_spec.md` §9 stops listing them as planned (§5); `semantics.md` (Threads, §9.5) and `architecture.md` §2.6 list the radix kernel as the engine's single-key sort once it is parallel (§3.2), the reader's parallel parse (§4.2), and joins once they are parallel (§5.5); `src/benchmarks/README.md` is rewritten for the tasks, presets, variants, method and parity rule here; `src/benchmarks/RESULTS.md` is measured again at both presets; `architecture.md` §15 takes its performance findings from the new results.
 
 For §6-§9:
 - **Bare names (§6)**: `specs/implemented/modules_v0_2_spec.md` (the `incl` form, rules 12 and 14, its diagnostics), `grammar.md` (`incl`), `semantics.md` §10, `README.md` (the language tour), `error_codes.md` if a code is added, and the Robustness Bar's rule 6 in CLAUDE.md.
@@ -678,6 +679,7 @@ For §6-§9:
 
 - **Vec sort and order**: every element type; missing values, NaN, `-0.0` and `0.0`, ties (stability), empty and all-missing vecs, a vec of unknown element type, and both directions. The vec sort, the table sort and the list sort agree on the same values (differential); `t.x.sort()` equals `(t | e -> sort(e.x)).x`; `v.sort()` equals `v` read at `v.order()`. A wrong argument count is a compile-time error.
 - **CSV memory**: a generated file of 10M rows, typed and untyped, read within DW3's bound (checked as `integration_gc_test.go` checks heap size and peak resident memory). The existing CSV tests pass unchanged, including rows that cross a block boundary inside a quoted field, a row longer than a block, and a file of exactly one block.
+- **CSV on the thread pool**: the same table and the same error at 1, 2, 3, 7 and 16 threads (`integration_parallel_test.go`), on files under, at and over the split threshold; problems in several parts report the first in file order and the right total.
 - **Joins**: each of the four joins on duplicate keys on both sides, missing and NaN keys on either side, `-0.0` against `0.0`, several keys, an empty table on either side, and keys with different names; the row order of §5.3; the result stored into a named struct by shape. Rejected at compile time (`TestSemanticsSafety_Rejected`): a condition other than `and`-joined equalities, a key of the wrong type, an unknown column on either side, the same row name for both sides, a missing `| b`, an unparenthesized query on the right, a clashing column, a right side of unknown row type or of type `any`, a right side that isn't a table, a right side that reads the query's row, and a join after `group_by`. A right side from an imported file, from an `extern fn` returning `tbl[R]`, and from a function's default-valued parameter. A result past the row limit is a runtime error.
 - **Bare names**: every case of §6.3. A bound function, `extern fn`, struct (in an annotation and in a literal) and constant. A bound name as a pipe target, as a function value, called with default arguments, and in a typed read (`t: tbl[R] = unwrap(read_file(p))`). Messages show the canonical name. A binding made in an imported file isn't reachable from its importer. The REPL rejects a later definition of a bound name. Binding a module, a member of a same-file module, or an unknown name is an error.
 - **Backtick names**: each place of §7.2, with a space, punctuation, non-ASCII text and a keyword. Rejected (`TestSemanticsSafety_Rejected`): a backtick name as a variable, parameter, function, struct, module or alias; as a value on its own in a verb; empty; with a control character, a backtick or `__`. Shown in backticks in types, in the column lists of errors and in struct printing. A typed CSV read whose fields match headers with spaces. A struct with backtick fields defined in an imported file, read through an untyped (`any`) value, and passed to an `extern fn`.
@@ -687,15 +689,15 @@ For §6-§9:
 
 ## 20. Plan
 
-1. The CSV reader (§4): the `100m` preset depends on it.
-2. The vec sort and order (§3), with the table engine's single-key sort moved to its kernel.
+1. The CSV reader (§4), streamed and on the thread pool: the `100m` preset depends on it.
+2. The vec sort and order (§3), with the table engine's single-key sort moved to its kernel once the kernel is parallel.
 3. The data generator for `G`, `G-NA` and `L` at `tiny`, `10m` and `100m`.
 4. The driver: one process per task and variant, first run reported separately, memory polling and the out-of-memory result, CPU pinning, ties.
 5. The questions of §14, per tool.
 6. Joins (§5), and their questions (§14.9).
 7. A run at both presets, both variants and both thread settings; `RESULTS.md` and `architecture.md` §15 from it.
 
-The window questions need tables v0.3's aggregates in `mutate`, which are implemented. FL3 and the 8-thread headline wait for v0.3 (§16).
+The window questions need tables v0.3's aggregates in `mutate`, which are implemented. FL3 waits for `contains` and the 8-thread headline for the parallel CSV reader (§16).
 
 §6-§9 don't depend on the suite. Their order, once their open questions (§22) are answered:
 1. Backtick names (§7): queries on untyped tables need them, and so do JSON's flattened columns if §9.2's option a is chosen.

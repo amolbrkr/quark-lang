@@ -14,7 +14,9 @@ import (
 
 // TestTableEngine compiles the C++ tests of the table engine and CSV reader
 // (src/testfiles/table/*_test.cpp) against the runtime headers, with -O2 so
-// the timings they print are meaningful, and runs them.
+// the timings they print are meaningful, and runs them at the default
+// thread count and at 1 and 16 threads: the engine gives the same results
+// at every count (specs/tables_v0_3_spec.md §8.4).
 func TestTableEngine(t *testing.T) {
 	if _, err := exec.LookPath("clang++"); err != nil {
 		t.Skip("skipping: clang++ not found in PATH")
@@ -62,13 +64,19 @@ func TestTableEngine(t *testing.T) {
 			if err := cmd.Run(); err != nil {
 				t.Fatalf("compile %s: %v\n%s", filepath.Base(src), err, compileOut.String())
 			}
-			var out bytes.Buffer
-			run := exec.Command(bin, tmp)
-			run.Stdout, run.Stderr = &out, &out
-			err := run.Run()
-			t.Logf("%s", strings.TrimSpace(out.String()))
-			if err != nil || !strings.Contains(out.String(), " 0 failed") {
-				t.Fatalf("%s reported failures (%v):\n%s", name, err, out.String())
+			for _, threads := range []string{"", "1", "16"} {
+				var out bytes.Buffer
+				run := exec.Command(bin, tmp)
+				run.Env = os.Environ()
+				if threads != "" {
+					run.Env = append(run.Env, "QUARK_THREADS="+threads)
+				}
+				run.Stdout, run.Stderr = &out, &out
+				err := run.Run()
+				t.Logf("QUARK_THREADS=%s: %s", threads, strings.TrimSpace(out.String()))
+				if err != nil || !strings.Contains(out.String(), " 0 failed") {
+					t.Fatalf("%s reported failures at QUARK_THREADS=%q (%v):\n%s", name, threads, err, out.String())
+				}
 			}
 		})
 	}

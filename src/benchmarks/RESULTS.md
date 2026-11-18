@@ -1,6 +1,6 @@
 # Benchmark results
 
-Measured on 2026-11-17 at commit `277beb3` (tables v0.3, the thread pool) plus that day's uncommitted changes (the pool's garbage-collector and wake-up fixes, the mask filter's loops), with the `default` preset (`README.md` describes every benchmark and the rules). Two runs: every library pinned to one thread, and every library at its default thread count. To measure again: `python3 bench.py run` (one thread per library) and `python3 bench.py run --threads 0` (library defaults); replace this file's tables with the new reports when the numbers change materially.
+Measured on 2026-11-17 at commit `277beb3` (tables v0.3, the thread pool) plus that day's uncommitted changes (the pool's garbage-collector and wake-up fixes, the mask filter's loops), with the `default` preset (`README.md` describes every benchmark and the rules). Two runs: every library pinned to one thread, and every library at its default thread count. `groupby`, `query` and `sortkeys` were measured again on 2026-11-18 (results/2026-11-18_220624_default_t1 and _221018_default_t0), every language at both settings on the same machine, after grouping, the grouped aggregates and `distinct` moved to the thread pool; their rows and the sentences about them are from those runs, everything else from 2026-11-17. To measure again: `python3 bench.py run` (one thread per library) and `python3 bench.py run --threads 0` (library defaults); replace this file's tables with the new reports when the numbers change materially.
 
 ## Contents
 
@@ -16,9 +16,9 @@ Measured on 2026-11-17 at commit `277beb3` (tables v0.3, the thread pool) plus t
 
 ## Headlines
 
-- **On one thread, a table query is as fast as the best data frame libraries.** The five-step `query` (filter, mutate, group by two keys, four aggregates, sort) on 1M rows takes 132 ms with Quark's `tbl`, against 140 ms for data.table, 141 ms for Polars and 191 ms for pandas; `groupby` takes 54 ms (Polars 54 ms, pandas 60 ms, data.table 61 ms). A `mutate` compiles its whole expression into one loop, so `expr` (eight operations on 10M rows) takes 35 ms, the fastest of every tool (Polars 93 ms, NumPy 112 ms), and `arith` 15 ms (Polars 24 ms).
-- **With threads, Quark's row loops and column work scale; its grouping and CSV reading don't yet.** At library defaults (6 threads here, the CPUs the container's quota allows), `expr` takes 12 ms (Polars 94 ms), `reduce` 8.0 ms (Polars 10 ms), `filter` 30 ms (Polars 17 ms) and a one-key `sort` 55 ms (Polars 15 ms, data.table 52 ms). A `query` takes 95 ms and `groupby` 40 ms, about twice what Polars (48 and 19 ms) and data.table (67 and 18 ms) take, because Quark's grouped aggregates and the building of its groups table still run on one thread; `readcsv` takes 465 ms against 110-117 ms, because the CSV reader does.
-- **Some table operations are still slow on one thread**: sorting by a string key and a float (`sortkeys` 779 ms, 2.9 times data.table), sorting one float column (174 ms, 6.7 times NumPy, 2.2 times Polars), reading CSV (451 ms, 2.0 times pandas) and string cleaning in a table (519 ms, 2.7 times pandas). The details are [below](#tables).
+- **On one thread, a table query is faster than the best data frame libraries.** The five-step `query` (filter, mutate, group by two keys, four aggregates, sort) on 1M rows takes 106 ms with Quark's `tbl`, against 145 ms for data.table, 146 ms for Polars and 195 ms for pandas; `groupby` takes 38 ms (Polars 53 ms, pandas 60 ms, data.table 64 ms). A `mutate` compiles its whole expression into one loop, so `expr` (eight operations on 10M rows) takes 35 ms, the fastest of every tool (Polars 93 ms, NumPy 112 ms), and `arith` 15 ms (Polars 24 ms).
+- **With threads, Quark's row loops, grouping and column work scale; its CSV reading doesn't yet.** At library defaults (6 threads here, the CPUs the container's quota allows), `expr` takes 12 ms (Polars 94 ms), `reduce` 8.0 ms (Polars 10 ms), `filter` 30 ms (Polars 17 ms) and a one-key `sort` 55 ms (Polars 15 ms, data.table 52 ms). `groupby` takes 11 ms (Polars 18 ms, data.table 19 ms) and a `query` 47 ms, level with Polars (49 ms; their ranges overlap) and ahead of data.table (65 ms). `readcsv` takes 465 ms against 110-117 ms, because the CSV reader runs on one thread.
+- **Some table operations are still slow on one thread**: sorting by a string key and a float (`sortkeys` 765 ms, 3.0 times data.table), sorting one float column (174 ms, 6.7 times NumPy, 2.2 times Polars), reading CSV (451 ms, 2.0 times pandas) and string cleaning in a table (519 ms, 2.7 times pandas). The details are [below](#tables).
 - **Plain compiled code is where Quark wins most.** Recursive `fib` runs 25 times faster than CPython 3.11 and 150 times faster than R. The scalar Mandelbrot loop (14 ms) beats NumPy's vectorized version (102 ms) by 7 times and pure Python by 72 times. Logic that can't be vectorized (recursion, early exits, state carried from row to row) is a strong case.
 - **`std/blas` puts Quark on par with NumPy and R for BLAS-shaped work** on one thread: `gemv` is as fast as NumPy, `dot`, `gemm` and `ols` within about 20% of it. With OpenBLAS's default threads, its pool makes Quark's large `vec` allocations slow and erratic ([below](#openblas-threads-and-the-gc)).
 - **`vec` arithmetic and reductions are as fast as NumPy on one thread** (reductions 0.85 times NumPy's time, `2.5*a + b` 0.93 times, the eight-operation expression 1.1 times) and faster with threads (`reduce` 8.0 ms, `arith` 22 ms, the mask filter 31 ms against NumPy's 177 ms).
@@ -67,12 +67,12 @@ The fastest implementation in each language, and how many times slower Quark's b
 | [zscore](README.md#zscore) | 50.9 ms (Quark vec+blas) | 43.9 ms (Polars) | 207 ms (R vector) | 1.16 | 0.25 |
 | [filter](README.md#filter) | 48.3 ms (Quark tbl) | 25.9 ms (Polars) | 259 ms (R data.table) | 1.86 | 0.19 |
 | [sort](README.md#sort) | 174 ms (Quark tbl) | 26.0 ms (NumPy) | 151 ms (R vector) | 6.69 | 1.15 |
-| [groupby](README.md#groupby) | 54.1 ms (Quark tbl) | 53.7 ms (Polars) | 61.1 ms (R data.table) | 1.01 | 0.88 |
+| [groupby](README.md#groupby) | 38.3 ms (Quark tbl) | 53.4 ms (Polars) | 64.2 ms (R data.table) | 0.72 | 0.60 |
 | [join](README.md#join) | 283 ms (Quark list) | 133 ms (Polars) | 84.8 ms (R vector) | 2.12 | 3.34 |
 | [wordcount](README.md#wordcount) | 265 ms (Quark list) | 113 ms (Polars) | 206 ms (R data.table) | 2.35 | 1.29 |
 | [strings](README.md#strings) | 512 ms (Quark list) | 189 ms (pandas) | 3.16 s (R vector) | 2.71 | 0.16 |
-| [query](README.md#query) | 132 ms (Quark tbl) | 141 ms (Polars) | 140 ms (R data.table) | 0.93 | 0.94 |
-| [sortkeys](README.md#sortkeys) | 779 ms (Quark tbl) | 364 ms (pandas) | 266 ms (R data.table) | 2.14 | 2.93 |
+| [query](README.md#query) | 106 ms (Quark tbl) | 146 ms (Polars) | 145 ms (R data.table) | 0.72 | 0.73 |
+| [sortkeys](README.md#sortkeys) | 765 ms (Quark tbl) | 362 ms (pandas) | 256 ms (R data.table) | 2.11 | 2.98 |
 | [readcsv](README.md#readcsv) | 451 ms (Quark tbl) | 229 ms (pandas) | 301 ms (R data.table) | 1.97 | 1.50 |
 | [gemv](README.md#gemv) | 1.57 ms (Quark vec+blas) | 1.55 ms (NumPy) | 4.30 ms (R vector) | 1.02 | 0.36 |
 | [gemm](README.md#gemm) | 4.24 ms (Quark vec+blas) | 3.49 ms (NumPy) | 3.65 ms (R vector) | 1.21 | 1.16 |
@@ -93,12 +93,12 @@ Median time per implementation. **Bold** is the fastest in the row; `n/a` means 
 | zscore | 503 ms | 69.3 ms | 50.9 ms | 61.3 ms | 2.42 s | 71.9 ms | 138 ms | **43.9 ms** | n/a | 207 ms | 208 ms | 207 ms |
 | filter | 3.41 s | 151 ms | n/a | 48.3 ms | 1.06 s | 178 ms | 108 ms | **25.9 ms** | n/a | 341 ms | 834 ms | 259 ms |
 | sort | 211 ms | 207 ms | n/a | 174 ms | 390 ms | **26.0 ms** | 130 ms | 79.8 ms | n/a | 151 ms | 195 ms | 180 ms |
-| groupby | 326 ms | n/a | n/a | 54.1 ms | 398 ms | 370 ms | 59.9 ms | **53.7 ms** | n/a | 189 ms | 613 ms | 61.1 ms |
+| groupby | 320 ms | n/a | n/a | **38.3 ms** | 387 ms | 377 ms | 60.0 ms | 53.4 ms | n/a | 196 ms | 618 ms | 64.2 ms |
 | join | 283 ms | n/a | n/a | planned | 341 ms | 445 ms | 303 ms | 133 ms | n/a | **84.8 ms** | 14.6 s | 375 ms |
 | wordcount | 265 ms | n/a | n/a | planned | 253 ms | 541 ms | 309 ms | **113 ms** | n/a | 282 ms | n/a | 206 ms |
 | strings | 512 ms | n/a | n/a | 519 ms | 392 ms | 1.12 s | **189 ms** | 260 ms | n/a | 3.16 s | n/a | n/a |
-| query | 502 ms | n/a | n/a | **132 ms** | 796 ms | n/a | 191 ms | 141 ms | n/a | n/a | n/a | 140 ms |
-| sortkeys | 2.45 s | n/a | n/a | 779 ms | 4.58 s | 688 ms | 364 ms | 869 ms | n/a | n/a | 7.57 s | **266 ms** |
+| query | 475 ms | n/a | n/a | **106 ms** | 742 ms | n/a | 195 ms | 146 ms | n/a | n/a | n/a | 145 ms |
+| sortkeys | 2.45 s | n/a | n/a | 765 ms | 4.61 s | 689 ms | 362 ms | 866 ms | n/a | n/a | 7.42 s | **256 ms** |
 | readcsv | n/a | n/a | n/a | 451 ms | 3.39 s | n/a | **229 ms** | 362 ms | n/a | n/a | 1.77 s | 301 ms |
 | gemv | 47.9 ms | 27.1 ms | 1.57 ms | n/a | 366 ms | **1.55 ms** | n/a | n/a | n/a | 4.30 ms | n/a | n/a |
 | gemm | 359 ms | 309 ms | 4.24 ms | n/a | 2.56 s | **3.49 ms** | n/a | n/a | n/a | 3.65 ms | n/a | n/a |
@@ -119,7 +119,7 @@ A Quark `list` of 10M bools peaks at 781 MB; Python's list of 10M references to 
 
 ## Library default threads
 
-`--threads 0`: Quark runs its query loops, table engine and `vec` operations on its thread pool (6 threads here), Polars and data.table use their own thread pools, and NumPy, R and Quark's `std/blas` use OpenBLAS's threads. Quark's CSV reader, its grouped aggregates, NumPy outside BLAS, pandas and base R stay single-threaded.
+`--threads 0`: Quark runs its query loops, table engine and `vec` operations on its thread pool (6 threads here), Polars and data.table use their own thread pools, and NumPy, R and Quark's `std/blas` use OpenBLAS's threads. Quark's CSV reader, NumPy outside BLAS, pandas and base R stay single-threaded.
 
 The fastest implementation in each language, and how many times slower Quark's best is (below 1 means Quark is faster).
 
@@ -136,12 +136,12 @@ The fastest implementation in each language, and how many times slower Quark's b
 | [zscore](README.md#zscore) | 34.3 ms (Quark vec) | 30.7 ms (Polars) | 205 ms (R data.table) | 1.12 | 0.17 |
 | [filter](README.md#filter) | 29.6 ms (Quark tbl) | 16.6 ms (Polars) | 206 ms (R data.table) | 1.79 | 0.14 |
 | [sort](README.md#sort) | 54.7 ms (Quark tbl) | 15.3 ms (Polars) | 51.5 ms (R data.table) | 3.58 | 1.06 |
-| [groupby](README.md#groupby) | 40.1 ms (Quark tbl) | 18.7 ms (Polars) | 18.2 ms (R data.table) | 2.14 | 2.20 |
+| [groupby](README.md#groupby) | 10.9 ms (Quark tbl) | 18.4 ms (Polars) | 18.8 ms (R data.table) | 0.59 | 0.58 |
 | [join](README.md#join) | 302 ms (Quark list) | 43.0 ms (Polars) | 87.7 ms (R vector) | 7.02 | 3.44 |
 | [wordcount](README.md#wordcount) | 273 ms (Quark list) | 117 ms (Polars) | 158 ms (R data.table) | 2.34 | 1.73 |
 | [strings](README.md#strings) | 243 ms (Quark tbl) | 194 ms (pandas) | 3.19 s (R vector) | 1.25 | 0.08 |
-| [query](README.md#query) | 94.7 ms (Quark tbl) | 47.6 ms (Polars) | 66.6 ms (R data.table) | 1.99 | 1.42 |
-| [sortkeys](README.md#sortkeys) | 321 ms (Quark tbl) | 192 ms (Polars) | 95.3 ms (R data.table) | 1.67 | 3.37 |
+| [query](README.md#query) | 46.5 ms (Quark tbl) | 49.1 ms (Polars) | 65.2 ms (R data.table) | 0.95 | 0.71 |
+| [sortkeys](README.md#sortkeys) | 332 ms (Quark tbl) | 193 ms (Polars) | 101 ms (R data.table) | 1.72 | 3.30 |
 | [readcsv](README.md#readcsv) | 465 ms (Quark tbl) | 110 ms (Polars) | 117 ms (R data.table) | 4.22 | 3.96 |
 | [gemv](README.md#gemv) | 1.19 ms (Quark vec+blas) | 9.93 ms (NumPy) | 4.85 ms (R vector) | 0.12 | 0.24 |
 | [gemm](README.md#gemm) | 1.23 ms (Quark vec+blas) | 1.01 ms (NumPy) | 1.02 ms (R vector) | 1.23 | 1.21 |
@@ -162,18 +162,18 @@ Median time per implementation. **Bold** is the fastest in the row; `n/a` means 
 | zscore | 498 ms | 34.3 ms | 185 ms | 36.2 ms | 2.42 s | 72.0 ms | 136 ms | **30.7 ms** | n/a | 207 ms | 206 ms | 205 ms |
 | filter | 2.73 s | 30.5 ms | n/a | 29.6 ms | 1.03 s | 177 ms | 108 ms | **16.6 ms** | n/a | 340 ms | 838 ms | 206 ms |
 | sort | 212 ms | 215 ms | n/a | 54.7 ms | 387 ms | 26.4 ms | 131 ms | **15.3 ms** | n/a | 144 ms | 198 ms | 51.5 ms |
-| groupby | 321 ms | n/a | n/a | 40.1 ms | 403 ms | 369 ms | 60.0 ms | 18.7 ms | n/a | 181 ms | 609 ms | **18.2 ms** |
+| groupby | 327 ms | n/a | n/a | **10.9 ms** | 394 ms | 370 ms | 59.7 ms | 18.4 ms | n/a | 184 ms | 625 ms | 18.8 ms |
 | join | 302 ms | n/a | n/a | planned | 350 ms | 449 ms | 309 ms | **43.0 ms** | n/a | 87.7 ms | 14.5 s | 391 ms |
 | wordcount | 273 ms | n/a | n/a | planned | 249 ms | 542 ms | 314 ms | **117 ms** | n/a | 283 ms | n/a | 158 ms |
 | strings | 532 ms | n/a | n/a | 243 ms | 399 ms | 1.15 s | **194 ms** | 258 ms | n/a | 3.19 s | n/a | n/a |
-| query | 475 ms | n/a | n/a | 94.7 ms | 774 ms | n/a | 198 ms | **47.6 ms** | n/a | n/a | n/a | 66.6 ms |
-| sortkeys | 2.44 s | n/a | n/a | 321 ms | 4.55 s | 688 ms | 369 ms | 192 ms | n/a | n/a | 7.35 s | **95.3 ms** |
+| query | 486 ms | n/a | n/a | **46.5 ms** | 768 ms | n/a | 194 ms | 49.1 ms | n/a | n/a | n/a | 65.2 ms |
+| sortkeys | 2.48 s | n/a | n/a | 332 ms | 4.61 s | 689 ms | 369 ms | 193 ms | n/a | n/a | 7.41 s | **101 ms** |
 | readcsv | n/a | n/a | n/a | 465 ms | 3.32 s | n/a | 223 ms | **110 ms** | n/a | n/a | 1.74 s | 117 ms |
 | gemv | 47.9 ms | 26.7 ms | **1.19 ms** | n/a | 364 ms | 9.93 ms | n/a | n/a | n/a | 4.85 ms | n/a | n/a |
 | gemm | 357 ms | 339 ms | 1.23 ms | n/a | 2.53 s | **1.01 ms** | n/a | n/a | n/a | 1.02 ms | n/a | n/a |
 | ols | 416 ms | 29.8 ms | 78.9 ms | n/a | 3.45 s | **17.9 ms** | n/a | n/a | n/a | 20.0 ms | n/a | n/a |
 
-Quark's gains from 1 to 6 threads: `expr` 35 → 12 ms in a table, `sort` 174 → 55 ms, `sortkeys` 779 → 321 ms, the `vec` mask filter 151 → 31 ms, `strings` in a table 519 → 243 ms, `reduce` 18 → 8.0 ms, `zscore` 69 → 34 ms with vecs, `filter` 48 → 30 ms in a table, `query` 132 → 95 ms and `groupby` 54 → 40 ms. Polars and data.table gain more on grouping (`groupby` 54 → 19 ms and 61 → 18 ms, `query` 141 → 48 ms and 140 → 67 ms) and CSV reading (362 → 110 ms and 301 → 117 ms), the parts of Quark that stay on one thread. Element-wise work on 10M rows is bound by memory bandwidth on this machine past 2-3 threads (`arith` in a table: 15 → 12.5 ms). Two Quark rows get slower: `mandelbrot` with vecs (216 → 269 ms, spread 240-346 ms), a loop of 1,000 operations on vecs of 160,000 elements, just over the size the pool splits ([below](#threads)); and `std/blas` with OpenBLAS's threads ([below](#openblas-threads-and-the-gc)).
+Quark's gains from 1 to 6 threads: `expr` 35 → 12 ms in a table, `sort` 174 → 55 ms, `sortkeys` 765 → 332 ms, the `vec` mask filter 151 → 31 ms, `strings` in a table 519 → 243 ms, `reduce` 18 → 8.0 ms, `zscore` 69 → 34 ms with vecs, `filter` 48 → 30 ms in a table, `groupby` 38 → 11 ms and `query` 106 → 47 ms. Polars and data.table gain about as much on grouping (`groupby` 53 → 18 ms and 64 → 19 ms, `query` 146 → 49 ms and 145 → 65 ms) and more on CSV reading (362 → 110 ms and 301 → 117 ms), the part of Quark that stays on one thread. Element-wise work on 10M rows is bound by memory bandwidth on this machine past 2-3 threads (`arith` in a table: 15 → 12.5 ms). Two Quark rows get slower: `mandelbrot` with vecs (216 → 269 ms, spread 240-346 ms), a loop of 1,000 operations on vecs of 160,000 elements, just over the size the pool splits ([below](#threads)); and `std/blas` with OpenBLAS's threads ([below](#openblas-threads-and-the-gc)).
 
 ## Tables against data frames
 
@@ -181,15 +181,15 @@ Quark's gains from 1 to 6 threads: `expr` 35 → 12 ms in a table, `sort` 174 �
 
 | Benchmark | Quark tbl | pandas | Polars | R data.table | R data.frame | Quark without tbl |
 |---|---|---|---|---|---|---|
-| [query](README.md#query) | **132 ms** | 191 ms | 141 ms | 140 ms | n/a | 502 ms (list) |
-| [groupby](README.md#groupby) | 54.1 ms | 59.9 ms | **53.7 ms** | 61.1 ms | 613 ms | 326 ms (list) |
+| [query](README.md#query) | **106 ms** | 195 ms | 146 ms | 145 ms | n/a | 475 ms (list) |
+| [groupby](README.md#groupby) | **38.3 ms** | 60.0 ms | 53.4 ms | 64.2 ms | 618 ms | 320 ms (list) |
 | [expr](README.md#expr) | **34.7 ms** | 168 ms | 93.4 ms | 331 ms | n/a | 124 ms (vec) |
 | [arith](README.md#arith) | **15.3 ms** | 41.5 ms | 23.8 ms | 86.6 ms | 87.2 ms | 27.2 ms (vec) |
 | [zscore](README.md#zscore) | 61.3 ms | 138 ms | **43.9 ms** | 207 ms | 208 ms | 50.9 ms (vec+blas) |
 | [reduce](README.md#reduce) | 25.2 ms | 65.0 ms | **20.8 ms** | 83.5 ms | n/a | 17.6 ms (vec) |
 | [filter](README.md#filter) | 48.3 ms | 108 ms | **25.9 ms** | 259 ms | 834 ms | 151 ms (vec) |
 | [sort](README.md#sort) | 174 ms | 130 ms | **79.8 ms** | 180 ms | 195 ms | 207 ms (vec) |
-| [sortkeys](README.md#sortkeys) | 779 ms | 364 ms | 869 ms | **266 ms** | 7.57 s | 2.45 s (list) |
+| [sortkeys](README.md#sortkeys) | 765 ms | 362 ms | 866 ms | **256 ms** | 7.42 s | 2.45 s (list) |
 | [strings](README.md#strings) | 519 ms | **189 ms** | 260 ms | n/a | n/a | 512 ms (list) |
 | [readcsv](README.md#readcsv) | 451 ms | **229 ms** | 362 ms | 301 ms | 1.77 s | n/a |
 
@@ -234,7 +234,7 @@ Diagnosed from the runtime code and isolated runs; each item names where the tim
 
 ### Tables
 
-- **Grouping runs on one thread.** `group_by` hashes the keys on the thread pool, but builds the table of groups in one pass in row order, and the aggregates of many small groups (`count`, int and bool `sum`, `mean`, `n_distinct`, per-group `min` and `max`) are one loop over the rows each. `groupby` (1,000 groups) goes from 54 ms on one thread to 40 ms on 6, where Polars and data.table reach 19 and 18 ms; `query` from 132 to 95 ms (Polars 48 ms, data.table 67 ms). Direction: per-block partial aggregates merged in block order (counts and int sums are exact, so the order doesn't matter; float sums need the per-group pairwise rule), as `specs/tables_v0_3_spec.md` §8.1 plans.
+- **Grouping by two keys, and grouping into many groups, cost more than one key into few.** The `query` groups 900K rows by a string and an int (10,000 groups): about 60 ms of its 106 ms on one thread, against about 30 ms for one string key into 1,000 groups, because each row's keys are compared through a check of each column's type. Many groups scale less: grouping 10M rows into 100,000 groups takes 0.44 s on one thread and 0.33 s on 6 (measured on its own, 2026-11-18), because merging the blocks' keys compares them by reading rows at random (`architecture.md` §15).
 - **The CSV reader runs on one thread**, at about 115 MB/s: `readcsv` (52 MB) takes 451 ms against 229 ms for pandas and 301 ms for data.table on one thread, and 465 ms against 110 ms for Polars and 117 ms for data.table with their threads. Direction: split the text at line ends outside quotes and parse the parts in parallel, with rows in file order and the first problem in file order (spec §8.1, §8.4). The reader also checks every str cell for valid UTF-8, which pandas doesn't.
 - **Sorting.** One dense float key sorts `(value, row)` pairs with a stable merge sort: 174 ms for 1M on one thread (Polars 80 ms, NumPy's SIMD sort 26 ms) and 55 ms on 6 (Polars 15 ms); a radix sort of the doubles would close most of it. A string key and a float (`sortkeys`) ranks the strings first and then sorts integers: 779 ms on one thread (data.table 266 ms, pandas 364 ms) and 321 ms on 6 (data.table 95 ms).
 - **`filter`** takes 48 ms on 10M rows on one thread (Polars 26 ms) and 30 ms on 6 (Polars 17 ms): the predicate loop is branch-free, and most of the rest is gathering the kept rows of both columns into new buffers.
@@ -256,7 +256,7 @@ Directions: allocate the buffer of a list whose element type is `int`, `float` o
 
 ### Dicts with string keys
 
-The dict-based `groupby` (326 ms) is barely faster than CPython (398 ms) and 6 times slower than the table's `group_by` (54 ms) or Polars; the dict-based `join` (283 ms) is 3.3 times slower than R's `match`, and the dict-based `query` (502 ms) 3.8 times slower than the table. A `QDict` is a node-based `std::unordered_map`; every `get` and `set` builds a new key string from the C string (a `strlen` and a copy) and hashes it again, so the usual "get, then set" costs two full lookups. CPython caches each string's hash. The table engine groups with its own open-addressing table, which is where its 6 times come from. Directions: open addressing with stored hashes, and an update-in-place operation.
+The dict-based `groupby` (320 ms) is barely faster than CPython (387 ms) and 8 times slower than the table's `group_by` (38 ms); the dict-based `join` (283 ms) is 3.3 times slower than R's `match`, and the dict-based `query` (475 ms) 4.5 times slower than the table. A `QDict` is a node-based `std::unordered_map`; every `get` and `set` builds a new key string from the C string (a `strlen` and a copy) and hashes it again, so the usual "get, then set" costs two full lookups. CPython caches each string's hash. The table engine groups with its own open-addressing tables, sized by the keys and probed with stored hashes, which is where its 8 times come from. Directions: open addressing with stored hashes, and an update-in-place operation.
 
 ### Strings
 

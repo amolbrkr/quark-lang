@@ -71,7 +71,7 @@ The v0.1 and v0.2 decisions hold except where §9 says otherwise. These are the 
 | D49 | **A table has `nrow()`, `ncol()` and `names()`.** `len(t)` stays a compile-time error, and names `t.nrow()`. |
 | D50 | **`count(keys)` is a step**: `count(c.cyl)` is `group_by(c.cyl) \| summarize(n = count())`. Keys follow D39; `count()` is one row. |
 | D51 | **Two-argument `min` and `max` are typed by their arguments**: two values of one type give that type. An `int` and a `float` stay untyped, because a wide int that wins is returned as an int (decided 2026-11-16); in a verb, they are a compile-time error that says to convert one with `to_float`. |
-| D52 | **One thread pool runs the query loops, the table engine, the CSV reader and the vec operations.** Everything else, the REPL included, stays on one thread. |
+| D52 | **One thread pool runs the query loops, the table engine and the vec operations.** Everything else, the REPL included, stays on one thread. The CSV reader joins the pool with `specs/data_work_v0_1_spec.md` §4.2 (DW27, decided 2026-11-18). |
 | D53 | **Every program prints the same output for every thread count**: the same rows in the same order, the same float bits, the same errors (§8.4). |
 | D54 | **The default thread count is the number of logical CPUs the process may use**, after its CPU affinity and its container's CPU quota. `quark run --threads N` and the `QUARK_THREADS` variable set it; `--threads 1` runs every step on one thread, as today. `quark repl` always uses one thread. |
 | D55 | **Work is split into blocks of 65,536 rows** (or vec elements), and an input of fewer than 131,072 rows runs on the calling thread. |
@@ -289,11 +289,10 @@ The prelude `min(a, b)` and `max(a, b)` are typed by their arguments everywhere 
 One runtime thread pool (D52) runs:
 
 - **Query row loops**: `filter`, `mutate`, `drop_na`, the aggregate passes (§3.7), and the per-row lookups of §7.1.
-- **The table engine**: grouping (`group_rows` hashes the keys in parallel), the aggregate kernels, `sort` (a stable parallel merge sort), `distinct`, and building output columns.
-- **The CSV reader**: the text is split at line ends outside quotes and the parts are parsed in parallel.
+- **The table engine**: grouping, the aggregate kernels, `sort` (a stable parallel merge sort), `distinct`, and building output columns. Grouping and `distinct` find each block's keys in a table of its own, then merge the blocks' keys in parts split by hash; a key's entries all land in one part, in block order, so it keeps its first row. A grouped aggregate keeps a state per group for each range of rows when the states are small, merging the ranges in row order (exact counts and int sums; a later range's best replaces an earlier one's only when strictly better), and otherwise splits the rows by ranges of groups, so each range's groups are folded over their rows in row order. A float sum, mean or `sd` gathers each group's present values in row order (a stable counting sort, by ranges or by group ranges) and sums them pairwise.
 - **Vec operations**: arithmetic, comparisons, reductions (`sum`, `mean`, `sd`, `min`, `max`, `all`, `any`), masks, `fillna`, `drop_na` and `astype`.
 
-The pool has two primitives: a loop over blocks of rows or elements, and a reduction that follows the pairwise split (§8.4). Lists, dicts, strings and all other code stay on one thread. `std/blas` keeps OpenBLAS's own threads and is not row-safe, so it never runs inside a parallel step. Vec expressions are still computed one operator at a time; compiling a vec expression into one loop (fusion) is separate work outside the tables specs (§13), and the pool's block loop is what it would run on.
+The pool has two primitives: a loop over blocks of rows or elements, and a reduction that follows the pairwise split (§8.4). Lists, dicts, strings and all other code stay on one thread, and so does the CSV reader until `specs/data_work_v0_1_spec.md` §4.2 (DW27). `std/blas` keeps OpenBLAS's own threads and is not row-safe, so it never runs inside a parallel step. Vec expressions are still computed one operator at a time; compiling a vec expression into one loop (fusion) is separate work outside the tables specs (§13), and the pool's block loop is what it would run on.
 
 ### 8.2 Thread count
 
@@ -308,7 +307,7 @@ The default is the number of logical CPUs the process may use (D54):
 
 ### 8.3 Small inputs
 
-The pool splits a loop into blocks of 65,536 rows or elements (D55). A step or vec operation with fewer than 131,072 rows or elements runs on the calling thread without waking the pool. Measured on 2026-11-16 with a test pool: waking 6 threads costs about 40 µs, a light expression over 16K rows takes 24 µs on one thread and 43 µs on six, and over 64K rows 97 µs and 47 µs. The CSV reader decides by the file's size, with a threshold measured when it is implemented. The block size and the thresholds are internal constants, retuned from measurements and recorded in `architecture.md` §15; a program can't set them, and they never change a result (§8.4).
+The pool splits a loop into blocks of 65,536 rows or elements (D55). A step or vec operation with fewer than 131,072 rows or elements runs on the calling thread without waking the pool. Measured on 2026-11-16 with a test pool: waking 6 threads costs about 40 µs, a light expression over 16K rows takes 24 µs on one thread and 43 µs on six, and over 64K rows 97 µs and 47 µs. The block size and the thresholds are internal constants, retuned from measurements and recorded in `architecture.md` §15; a program can't set them, and they never change a result (§8.4).
 
 ### 8.4 The same output for every thread count
 
@@ -318,14 +317,13 @@ Floating-point addition depends on order (`(0.1 + 0.2) + 0.3` is `0.600000000000
 |---|---|
 | `filter`, `drop_na`, vec masks | Each block keeps its rows in order; the blocks are joined in order |
 | `mutate`, vec arithmetic and comparisons | Each output row is written at its input position |
-| `sum`, `mean`, `sd` (float) | Split along the pairwise sum's halving (D13), which depends only on the number of values: threads take whole branches of it. Measured: bit-identical to one thread at every count |
+| `sum`, `mean`, `sd` (float) | Split along the pairwise sum's halving (D13), which depends only on the number of values: threads take whole branches of it. A group's values are its present values in row order. Measured: bit-identical to one thread at every count |
 | `sum` (int and bool) | Exact (128-bit), so order doesn't matter |
 | `min`, `max` | On a tie the lowest row wins, as with one thread |
 | `count`, `n_distinct` | Integer counts |
 | `group_by`, `summarize`, `count` step | Groups are in key order (D9) |
 | `distinct` | Each key keeps its lowest row (D28) |
 | `sort` | Stable, so the output is unique |
-| CSV reader | Rows in file order; the reported problem is the first in file order, with the total count of problems |
 | Random draws in verbs | §5 |
 | Runtime errors | §8.5 |
 
@@ -378,7 +376,7 @@ Language tests extend `TestTables_*` (`integration_tables_test.go`), and each fe
 - **Random**: a seeded program prints the same output at 1, 2, 3, 7 and 16 threads; two draws in one row differ; a draw in an aggregate pass and one in the row loop differ; a query between two draws outside verbs leaves the second unchanged; `seed` and `shuffle` in a verb are compile-time errors; uniform floats and ints are the same on Linux, macOS and Windows (fixed expected output).
 - **Missing values**: `== null`, `null ==`, `!= null` on columns, expressions and aggregates; `<` with `null`; `fillna` widening, a type mismatch, a fill value that would fail on present rows (not computed), and `c.a.fillna(c.b)` where both are missing; `drop_na` with and without columns, and NaN kept.
 - **Other additions**: `contains` on lists and vecs of each element type, missing and NaN entries, an impossible comparison, in a verb against an outside list and another table's column, negated with a missing value; `nrow`, `ncol`, `names`, and the `len(t)` message; two-argument `min`/`max` typing in and outside verbs.
-- **Parallel execution**: every operation of §8.1 at 1, 2, 3, 7 and 16 threads, on inputs of 131,071, 131,072 and 131,073 rows and on ones that end mid-block, gives identical output (printed values and float bits); two failing rows in different blocks report the first; CSV problems in several parts report the first and the right total; `QUARK_THREADS` of `0`, `-1` and `x` fail at startup; `--threads` wins over `QUARK_THREADS`; `sys::threads()`; a `mutate` that builds strings on many threads with collections running (the `integration_gc_test.go` pattern); a stack overflow in a row function on a worker; `--checked` catching a deliberately broken `rowsafe` glue function (`INV-PAR-001`); the CPU-quota default with a cgroup limit, where the test machine has one.
+- **Parallel execution**: every operation of §8.1 at 1, 2, 3, 7 and 16 threads, on inputs of 131,071, 131,072 and 131,073 rows and on ones that end mid-block, gives identical output (printed values and float bits); two failing rows in different blocks report the first; `QUARK_THREADS` of `0`, `-1` and `x` fail at startup; `--threads` wins over `QUARK_THREADS`; `sys::threads()`; a `mutate` that builds strings on many threads with collections running (the `integration_gc_test.go` pattern); a stack overflow in a row function on a worker; `--checked` catching a deliberately broken `rowsafe` glue function (`INV-PAR-001`); the CPU-quota default with a cgroup limit, where the test machine has one.
 - **Benchmarks**: `bench.py` passes `--threads` to Quark through `QUARK_THREADS`; the suite is rerun at 1 thread and at the default, and `RESULTS.md` and `architecture.md` §15 are updated.
 
 ## 12. Plan
@@ -388,7 +386,7 @@ Each phase lands with its tests and docs (`semantics.md` §9.5, `stdlib.md`, `gr
 1. **Language, one thread**: aggregates in `filter` and `mutate`, grouped steps, aggregates of expressions, `summarize` expressions, computed keys, `sd`, the prelude `mean` and `sd` and removing `std/stats`, the whole-table `min`/`max` loop, missing values in verbs, `contains`, `nrow`/`ncol`/`names`, the `count` step, two-argument `min`/`max` typing.
 2. **Row-safety**: the catalog flags, `extern rowsafe fn` and the standard library's bindings, the user-function check, calls computed once per step. Compile-time only, so it lands before threads, and every program that compiles under it is ready for them.
 3. **Random draws in verbs**: the loop counter, the row context, Philox, the value algorithms.
-4. **The thread pool**: thread count, `--threads`, `QUARK_THREADS`, `sys::threads()`, garbage-collector registration, the error path, the stack guard; then the query loops, the engine, the vec operations and the CSV reader, each against the §8.4 rules; then checked mode's comparison.
+4. **The thread pool**: thread count, `--threads`, `QUARK_THREADS`, `sys::threads()`, garbage-collector registration, the error path, the stack guard; then the query loops, the engine and the vec operations, each against the §8.4 rules; then checked mode's comparison. The CSV reader moved to `specs/data_work_v0_1_spec.md` §4.2 (DW27).
 5. **Measurements**: the benchmark suite at 1 thread and at the default.
 
 ## 13. Later
@@ -397,6 +395,7 @@ Specified elsewhere or left for later:
 
 - **The column-wise table literal** (D19, `specs/tables_v0_2_spec.md` §6.1): its syntax is being reconsidered, so it is not part of v0.3.
 - **Joins**: semi, anti, inner and left joins are proposed in `specs/data_work_v0_1_spec.md` §5. `contains` (§7.1) covers semi- and anti-joins on one key until then.
+- **The CSV reader on the pool, and a radix sort for numeric keys**: `specs/data_work_v0_1_spec.md` §4.2 and §3.2 (DW27). Until then the reader runs on one thread, and the engine's sort is the stable parallel merge sort of §8.1.
 - **Window functions**: `lag`, `lead`, `cumsum`, `rank`, `row_number`. They depend on row order, and a float `cumsum` across threads needs its own rule for the same output at every thread count.
 - **`median`, `quantile`** and `summary(t)` (v0.1 §6), which need a quantile kernel.
 - **Per-group `head` and `tail`** (`group_by(c.cyl) | head(2)`), under D36's rule.

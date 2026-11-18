@@ -127,11 +127,10 @@ avg = sales | s -> group_by(s.region) | summarize(m = mean(s.product))
 Each verb compiles to a typed loop over the column buffers, with no
 expression interpreter and no temporary columns. On 1M rows and one thread, a
 five-step query (filter, mutate, group by two keys, four aggregates, sort)
-takes 132 ms with Quark, against 140 ms for R's data.table, 141 ms for Polars
-and 191 ms for pandas. With each tool at its default thread count it takes
-95 ms, against 48 ms for Polars and 67 ms for data.table, whose grouping is
-parallel where Quark's still runs on one thread. The output is the same for
-every thread count. More in [Tables](#tables).
+takes 106 ms with Quark, against 145 ms for R's data.table, 146 ms for Polars
+and 195 ms for pandas. With each tool at its default thread count it takes
+47 ms, against 49 ms for Polars and 65 ms for data.table. The output is the
+same for every thread count. More in [Tables](#tables).
 
 ### Checked before it runs
 
@@ -219,7 +218,9 @@ each tool written the way its users write it. The figures below are medians
 from two runs on 2026-11-17 on Linux (an AMD EPYC 7571, 16 logical CPUs, of
 which a container quota lets a process use 6): one with every library pinned
 to one thread, and one with every library at its default thread count, where
-Quark used 6 threads. Each column is the fastest implementation in that
+Quark used 6 threads; the query, the sum and count per key, and the sort by a
+string and a float were measured again on 2026-11-18, after Quark's grouping
+moved to its thread pool. Each column is the fastest implementation in that
 language.
 
 One thread:
@@ -228,12 +229,12 @@ One thread:
 |---|---|---|---|
 | Recursive `fib(30)` | 10.5 ms | 264 ms | 1.57 s |
 | Mandelbrot on a 400 × 400 grid | 13.8 ms (loops) | 102 ms (NumPy) | 271 ms |
-| Query on 1M rows: filter, mutate, group by two keys, sort | 132 ms (`tbl`) | 141 ms (Polars) | 140 ms (data.table) |
-| Sum and count per key, 1M rows | 54 ms (`tbl`) | 54 ms (Polars) | 61 ms (data.table) |
+| Query on 1M rows: filter, mutate, group by two keys, sort | 106 ms (`tbl`) | 146 ms (Polars) | 145 ms (data.table) |
+| Sum and count per key, 1M rows | 38 ms (`tbl`) | 53 ms (Polars) | 64 ms (data.table) |
 | An 8-operation expression on 10M rows | 35 ms (`tbl`) | 93 ms (Polars) | 327 ms |
 | Matrix product, 300 × 300 | 4.2 ms (`std/blas`) | 3.5 ms (NumPy) | 3.7 ms |
 | Keep the rows where `a > 0.5`, 10M rows | 48 ms (`tbl`) | 26 ms (Polars) | 259 ms (data.table) |
-| Sort 1M rows by a string, then a float | 779 ms (`tbl`) | 364 ms (pandas) | 266 ms (data.table) |
+| Sort 1M rows by a string, then a float | 765 ms (`tbl`) | 362 ms (pandas) | 256 ms (data.table) |
 | Read a 52 MB CSV file | 451 ms (`tbl`) | 229 ms (pandas) | 301 ms (data.table) |
 | Trim, lowercase and replace in 1M strings | 512 ms (list) | 189 ms (pandas) | 3.16 s |
 
@@ -241,18 +242,19 @@ Every library at its default thread count:
 
 | Work | Quark | Python | R |
 |---|---|---|---|
-| Query on 1M rows: filter, mutate, group by two keys, sort | 95 ms (`tbl`) | 48 ms (Polars) | 67 ms (data.table) |
-| Sum and count per key, 1M rows | 40 ms (`tbl`) | 19 ms (Polars) | 18 ms (data.table) |
+| Query on 1M rows: filter, mutate, group by two keys, sort | 47 ms (`tbl`) | 49 ms (Polars) | 65 ms (data.table) |
+| Sum and count per key, 1M rows | 11 ms (`tbl`) | 18 ms (Polars) | 19 ms (data.table) |
 | An 8-operation expression on 10M rows | 12 ms (`tbl`) | 94 ms (Polars) | 328 ms |
 | Sum, min, max and mean of 10M floats | 8.0 ms (`vec`) | 10 ms (Polars) | 81 ms |
 | Keep the rows where `a > 0.5`, 10M rows | 30 ms (`tbl`) | 17 ms (Polars) | 206 ms (data.table) |
 | Sort 1M rows by one float | 55 ms (`tbl`) | 15 ms (Polars) | 52 ms (data.table) |
-| Sort 1M rows by a string, then a float | 321 ms (`tbl`) | 192 ms (Polars) | 95 ms (data.table) |
+| Sort 1M rows by a string, then a float | 332 ms (`tbl`) | 193 ms (Polars) | 101 ms (data.table) |
 | Read a 52 MB CSV file | 465 ms (`tbl`) | 110 ms (Polars) | 117 ms (data.table) |
 | Trim, lowercase and replace in 1M strings | 243 ms (`tbl`) | 194 ms (pandas) | 3.19 s |
 
 Loops and recursion are many times faster than Python and R. On one thread,
-a query and a group-by match the best data frame library, a fused column
+a query and a group-by take about 0.7 times as long as the best data frame
+library, a fused column
 expression is about 2.7 times as fast as Polars, and filtering takes about
 twice as long as Polars. The matrix product through `std/blas` is within 25%
 of NumPy, and of R, which links the same OpenBLAS. Sorting, string cleaning and reading CSV
@@ -263,10 +265,10 @@ and reading the 52 MB file about twice as long as pandas.
 With threads, Quark's row loops, sorts and column operations use every CPU,
 and the output stays the same for every thread count: the fused expression
 runs 2.8 times faster than on one thread and 7.6 times faster than Polars, a
-sort 2.4 to 3.2 times faster. Grouping and reading CSV gain little, because
-Quark's grouped aggregates and its CSV reader still run on one thread, so
-there Polars and data.table pull ahead: 1.4 to 2.2 times as fast on a query
-and a group-by, and about 4 times as fast at reading the file. How the suite
+sort 2.4 to 3.2 times faster, a group-by 3.5 times faster (1.7 times as fast
+as Polars and data.table), and the query is level with Polars. Reading CSV
+gains nothing, because Quark's CSV reader still runs on one thread, so there
+Polars and data.table are about 4 times as fast. How the suite
 measures this is in [src/benchmarks/README.md](src/benchmarks/README.md), and
 every number of both runs is in
 [src/benchmarks/RESULTS.md](src/benchmarks/RESULTS.md).

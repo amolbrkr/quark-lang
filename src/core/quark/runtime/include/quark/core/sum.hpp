@@ -111,10 +111,10 @@ inline double q_i128_to_double(__int128 v) {
 // n - 1, then the square root (specs/tables_v0_3_spec.md D40). The caller
 // passes the present values in order, so a column and a vec of those values
 // share this kernel.
-inline double q_sample_sd(const double* x, size_t n) {
+// q_sample_sd_with is q_sample_sd with the caller's buffer of n doubles for
+// the squared deviations (a loop over many groups reuses one).
+inline double q_sample_sd_with(const double* x, size_t n, double* out) {
     const double mean = q_pairwise_sum_par(x, n) / static_cast<double>(n);
-    std::unique_ptr<double[]> sq(new double[n]);
-    double* out = sq.get();
     const quark::par::Plan p = q_par_plan(static_cast<long long>(n));
     q_par_run(p, [&](long long lo, long long hi, long long) {
         for (long long i = lo; i < hi; i++) {
@@ -123,6 +123,11 @@ inline double q_sample_sd(const double* x, size_t n) {
         }
     });
     return std::sqrt(q_pairwise_sum_par(out, n) / static_cast<double>(n - 1));
+}
+
+inline double q_sample_sd(const double* x, size_t n) {
+    std::unique_ptr<double[]> sq(new double[n]);
+    return q_sample_sd_with(x, n, sq.get());
 }
 
 #endif // QUARK_CORE_SUM_HPP

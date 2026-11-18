@@ -75,6 +75,12 @@ struct Task;
 inline thread_local int depth = 0;
 inline thread_local Task* current = nullptr;
 
+// Checked mode (core/parcheck.hpp): serial > 0 while a step runs again on
+// one thread, so every loop it starts is one block; split is set when this
+// thread starts a loop of more than one block.
+inline thread_local int serial = 0;
+inline thread_local bool split = false;
+
 // Task is one parallel loop.
 struct Task {
     void (*run)(void* fn, long long lo, long long hi, long long blk) = nullptr;
@@ -424,7 +430,7 @@ inline Plan plan(long long n) {
     Plan p;
     p.n = n < 0 ? 0 : n;
     p.nblocks = 1;
-    if (p.n >= q_par_min_rows && depth == 0 && q_par_threads() > 1) p.nblocks = (p.n + q_par_block - 1) / q_par_block;
+    if (p.n >= q_par_min_rows && depth == 0 && serial == 0 && q_par_threads() > 1) p.nblocks = (p.n + q_par_block - 1) / q_par_block;
     return p;
 }
 
@@ -435,6 +441,7 @@ inline void run(const Plan& p, F& f) {
         f(0LL, p.n, 0LL);
         return;
     }
+    split = true;
     Pool& pl = pool();
     Task t;
     t.run = &trampoline<F>;

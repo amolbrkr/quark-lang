@@ -10,6 +10,7 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 
 ## Contents
 
+- [2026-11-18: Grouping on the thread pool; `--checked` compares parallel steps with one thread](#2026-11-18-grouping-on-the-thread-pool---checked-compares-parallel-steps-with-one-thread)
 - [2026-11-18: Programs build on Windows again](#2026-11-18-programs-build-on-windows-again)
 - [2026-11-17: Dates and REPL specs moved; data work and untyped tables proposals](#2026-11-17-dates-and-repl-specs-moved-data-work-and-untyped-tables-proposals)
 - [2026-11-17: Tables v0.3, a thread pool for queries, the table engine and vecs](#2026-11-17-tables-v03-a-thread-pool-for-queries-the-table-engine-and-vecs)
@@ -62,7 +63,42 @@ Bugs that are not fixed yet are in [known_issues.md](known_issues.md), not here;
 - [2026-04-02: Structs v0.1](#2026-04-02-structs-v01)
 - [2026-03-28: Vector soundness, `std/fmt` on `extern`, build output](#2026-03-28-vector-soundness-stdfmt-on-extern-build-output)
 
+## 2026-11-18: Grouping on the thread pool; `--checked` compares parallel steps with one thread
+
+Commits: `c8c0d3a` (grouping, its engine tests, the runtime half of checked mode); the compiler half of checked mode and its tests are not committed yet.
+
+`specs/tables_v0_3_spec.md` §8, the rest of phase 4: grouping, the grouped aggregates and `distinct` run on the thread pool, and `--checked` runs each parallel step again on one thread and compares (§8.7, D57). Every program prints what it printed before, at every thread count. The parallel CSV reader, and a radix sort for the engine's numeric keys, moved to `specs/data_work_v0_1_spec.md` (DW27).
+
+### Added
+
+- **`--checked` compares parallel work with one thread.** A query step, or a vec operation the compiler knows works on a vec (`v * 2.0`, `sum(v)`, `v.fillna(0.0)`, `v[mask]`), that split a loop across threads runs again with every loop on one thread, from the same random-draw state, and the two results must be the same: the same values, missing entries, order and float bits, or the same error. A difference is an internal error at the step, and the program exits with status 1:
+
+  ```
+  error[INV-PAR-001] (runtime): 'mutate' gave another result on 4 threads than on one (column 'y', a value at row 4099): a bug in Quark, or native code that breaks its rowsafe promise at main.qrk:13:14
+  ```
+
+  It means a bug in Quark, or an `extern rowsafe fn` that isn't row-safe (here, one that counts its calls). Nothing is compared on one thread or on inputs too small to split. Under `--checked`, a `rowsafe` native function a step calls runs in both runs.
+
+### Changed
+
+- **Grouping, the grouped aggregates and `distinct` run on the thread pool**: `group_by` with `summarize`, `filter` or `mutate`, the `count` step, `count`, `sum`, `mean`, `sd`, `min`, `max` and `n_distinct` per group, and `distinct`. The output is the same at every thread count: groups in key order, each keeping its first row, float sums over a group's values in row order, and the first row on a tie for `min` and `max`. They are faster on one thread as well. In the benchmark suite (2026-11-18), `groupby` takes 38 ms on one thread and 11 ms at the default thread count (it took 54 and 40 ms; Polars 53 and 18 ms, data.table 64 and 19 ms), and the five-step `query` 106 and 47 ms (132 and 95 ms; Polars 146 and 49 ms, data.table 145 and 65 ms). On 10M rows, `n_distinct` in 100 groups takes 0.73 s on one thread and 0.14 s on 6 (1.5 s either way before).
+
+### Fixed
+
+- The table engine's `distinct` and `n_distinct` have tests of their own (`src/testfiles/table/group_test.cpp`); `known_issues.md` listed them as untested.
+
+### Internal
+
+- `table/engine.hpp`: `distinct_keys` finds each block's keys in a `KeyTable` that grows with the keys (the old table had a slot per two rows, 128 MB for 10M rows) and keeps the hash's top bits in the slot, then merges the blocks' keys in parts split by hash; `group_by_vecs`, `distinct_rows` and `agg_n_distinct` use it. The aggregates are a `fold` (per-group states, merged range by range in row order when a range's states fit in 1 MB, else folded by `group_parts`, the rows split by ranges of groups) or a `gather` (each group's present values in row order). One key column is hashed and compared through a function chosen by its type (`with_keys`); several are hashed a column at a time first (`key_hashes`). Strings hash and compare short keys with fixed-size reads (`hash_bytes`, `bytes_equal`), without calls to `memcpy` or `memcmp`. The row loops are `QPAR_NOINLINE`. `core/sum.hpp` has `q_sample_sd_with`, `q_sample_sd` on the caller's buffer.
+- Checked mode: `core/parcheck.hpp` (`q_par_check`, `q_par_set_checked`), with `quark::par::serial` (every loop on one thread) and `quark::par::split` (a loop was split) in `core/par.hpp`. The analyzer lists the vec operations (`Analysis.VecOps`, `types/analyzer_vecops.go`); lowering makes them and every query step a `ParCheck` IR node (`lower/parcheck.go`, `lower.LowerOptions`), printed as `q_par_check(name, lambda)`, and the verifier requires a `ParCheck` to assign only what it declares (`INV-IR-PAR`). `head` and `tail`'s count is computed before the step's check.
+- Tests: `src/testfiles/table/group_test.cpp` checks grouping, every aggregate and `distinct` against a reference built from a stable sort, with few groups, many and one per row, on keys with missing values, NaN, `-0.0` and ties; `TestTableEngine` runs every engine test program at the default thread count and at 1 and 16 threads; `TestParallel_EngineAndVec` has grouped steps with few groups, many and one per row, and `distinct` on many keys; `TestParallel_Checked` (no difference on a correct program, the same errors, a broken `rowsafe` function caught); `TestVerify_RejectsMalformedIR` and `TestLower_SmokeCorpusVerifies` cover `ParCheck`; `TestEmit_CheckedModeComparesSteps`.
+- `src/benchmarks/RESULTS.md`: `groupby`, `query` and `sortkeys` measured again for every language at both thread settings; `architecture.md` §2.6 and §15, `README.md`, `semantics.md` and `error_codes.md` (`INV-PAR-001`, a runtime check) follow.
+
+---
+
 ## 2026-11-18: Programs build on Windows again
+
+Commits: `ef8f438`
 
 ### Fixed
 

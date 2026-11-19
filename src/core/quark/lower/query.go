@@ -73,54 +73,68 @@ func (l *lowerer) query(node *ast.TreeNode) Expr {
 	cur := l.let(&Call{Fn: "q_tbl_of", Args: []Expr{boxed(src)}, R: RepTable})
 	for _, st := range q.Steps {
 		l.setLoc(st.Node)
-		switch st.Verb {
-		case "filter":
-			cur = l.queryFilter(cur, st)
-		case "mutate":
-			cur = l.queryMutate(cur, st)
-		case "select", "deselect":
-			cur = l.queryProject(cur, st, st.Keep)
-		case "rename":
-			cols := make([]int, len(st.In.Fields))
-			for i := range cols {
-				cols[i] = i
-			}
-			cur = l.queryProject(cur, st, cols)
-		case "distinct":
-			cur = l.queryDistinct(cur, st)
-		case "drop_na":
-			cols := make([]Expr, len(st.Keep))
-			for i, c := range st.Keep {
-				cols[i] = intConst(c)
-			}
-			cur = l.let(&Call{Fn: "q_tbl_drop_na", Args: []Expr{cur, &InitList{Type: "std::initializer_list<int>", Elems: cols}}, R: RepTable})
-		case "count":
-			cur = l.queryCount(cur, st)
-		case "sort":
-			keys := make([]Expr, 0, 2*len(st.Keys))
-			for _, k := range st.Keys {
-				desc := 0
-				if k.Desc {
-					desc = 1
-				}
-				keys = append(keys, intConst(k.Col), intConst(desc))
-			}
-			cur = l.let(&Call{Fn: "q_tbl_sort", Args: []Expr{cur, &InitList{Type: "std::initializer_list<int>", Elems: keys}}, R: RepTable})
-		case "group_by":
-			// Grouping happens in the summarize that follows.
-		case "summarize":
-			cur = l.querySummarize(cur, st)
-		case "head", "tail":
-			var n Expr = intConst(6)
-			if st.Count != nil {
-				n = toNative(l.expr(st.Count), RepInt)
-			}
-			cur = l.let(&Call{Fn: "q_tbl_" + st.Verb, Args: []Expr{cur, n}, R: RepTable})
-		default:
-			l.ice("INV-QUERY", st.Node, "unknown query step '%s'", st.Verb)
+		if st.Verb == "group_by" {
+			// Grouping happens in the step that follows.
+			continue
 		}
+		// head and tail's count is an ordinary expression, computed once,
+		// outside the step's check (which may run the step again).
+		var count Expr = intConst(6)
+		if (st.Verb == "head" || st.Verb == "tail") && st.Count != nil {
+			count = toNative(l.expr(st.Count), RepInt)
+			if !isStable(count) {
+				count = l.let(count)
+			}
+		}
+		in, st := cur, st
+		cur = l.checkedStep(st.Verb, func() Expr { return l.queryStep(in, st, count) })
 	}
 	return &Box{X: cur}
+}
+
+// queryStep lowers one step of a query on table cur, and returns its result;
+// count is head's or tail's row count.
+func (l *lowerer) queryStep(cur Expr, st *types.QueryStep, count Expr) Expr {
+	switch st.Verb {
+	case "filter":
+		return l.queryFilter(cur, st)
+	case "mutate":
+		return l.queryMutate(cur, st)
+	case "select", "deselect":
+		return l.queryProject(cur, st, st.Keep)
+	case "rename":
+		cols := make([]int, len(st.In.Fields))
+		for i := range cols {
+			cols[i] = i
+		}
+		return l.queryProject(cur, st, cols)
+	case "distinct":
+		return l.queryDistinct(cur, st)
+	case "drop_na":
+		cols := make([]Expr, len(st.Keep))
+		for i, c := range st.Keep {
+			cols[i] = intConst(c)
+		}
+		return l.let(&Call{Fn: "q_tbl_drop_na", Args: []Expr{cur, &InitList{Type: "std::initializer_list<int>", Elems: cols}}, R: RepTable})
+	case "count":
+		return l.queryCount(cur, st)
+	case "sort":
+		keys := make([]Expr, 0, 2*len(st.Keys))
+		for _, k := range st.Keys {
+			desc := 0
+			if k.Desc {
+				desc = 1
+			}
+			keys = append(keys, intConst(k.Col), intConst(desc))
+		}
+		return l.let(&Call{Fn: "q_tbl_sort", Args: []Expr{cur, &InitList{Type: "std::initializer_list<int>", Elems: keys}}, R: RepTable})
+	case "summarize":
+		return l.querySummarize(cur, st)
+	case "head", "tail":
+		return l.let(&Call{Fn: "q_tbl_" + st.Verb, Args: []Expr{cur, count}, R: RepTable})
+	}
+	l.ice("INV-QUERY", st.Node, "unknown query step '%s'", st.Verb)
+	return nil
 }
 
 // include adds a runtime header quark.hpp doesn't include ("" for none) to

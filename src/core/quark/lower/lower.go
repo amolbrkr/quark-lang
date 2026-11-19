@@ -40,6 +40,8 @@ type lowerer struct {
 	names      names.Table
 	sourceName string
 	prog       *Program
+	// parChecked: steps and vec operations become ParChecks (Options).
+	parChecked bool
 
 	cur     *Block
 	tempN   int
@@ -81,9 +83,21 @@ type lowerer struct {
 	nativeHeaders map[string][]string
 }
 
+// Options are the lowering choices of a build. ParChecked (--checked) makes
+// every query step and vec operation a ParCheck (specs/tables_v0_3_spec.md
+// §8.7).
+type Options struct {
+	ParChecked bool
+}
+
 // Lower lowers an analyzed, validated tree to a Program. sourceName labels
 // runtime source locations of the main file.
 func Lower(root *ast.TreeNode, an *types.Analysis, sourceName string) (prog *Program, err error) {
+	return LowerOptions(root, an, sourceName, Options{})
+}
+
+// LowerOptions is Lower with the build's options.
+func LowerOptions(root *ast.TreeNode, an *types.Analysis, sourceName string, opt Options) (prog *Program, err error) {
 	if strings.TrimSpace(sourceName) == "" {
 		sourceName = "<unknown>"
 	}
@@ -91,7 +105,8 @@ func Lower(root *ast.TreeNode, an *types.Analysis, sourceName string) (prog *Pro
 		an:              an,
 		names:           an.Names,
 		sourceName:      sourceName,
-		prog:            &Program{},
+		prog:            &Program{ParChecked: opt.ParChecked},
+		parChecked:      opt.ParChecked,
 		fnByLambda:      map[*ast.TreeNode]*fnDecl{},
 		lambdaUserNames: map[*ast.TreeNode]string{},
 		elemDescNames:   map[string]string{},

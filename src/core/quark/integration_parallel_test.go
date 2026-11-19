@@ -58,6 +58,12 @@ type parRun struct {
 // buildPar builds source in dir (with files) and returns the executable.
 func buildPar(t *testing.T, dir, source string, files map[string]string) string {
 	t.Helper()
+	return buildParWith(t, dir, source, files)
+}
+
+// buildParWith is buildPar with extra `quark build` flags.
+func buildParWith(t *testing.T, dir, source string, files map[string]string, flags ...string) string {
+	t.Helper()
 	for name, content := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
 			t.Fatal(err)
@@ -68,7 +74,7 @@ func buildPar(t *testing.T, dir, source string, files map[string]string) string 
 		t.Fatal(err)
 	}
 	exe := filepath.Join(dir, "main")
-	cmd := exec.Command(quarkExePath, "build", program, "-o", exe)
+	cmd := exec.Command(quarkExePath, append(append([]string{"build"}, flags...), program, "-o", exe)...)
 	cmd.Dir = dir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build failed: %v\n%s", err, out)
@@ -438,6 +444,88 @@ func TestParallel_ExactIntSum(t *testing.T) {
 	if over.code != 1 || !strings.Contains(over.stderr, "integer overflow in 'sum'") {
 		t.Fatalf("a total that doesn't fit must fail: exit %d\nstderr: %s", over.code, over.stderr)
 	}
+}
+
+// parBrokenH is native code declared rowsafe that breaks the promise: its
+// result depends on a counter every call shares.
+const parBrokenH = `#pragma once
+#include <atomic>
+inline std::atomic<long long> q_broken_calls{0};
+inline int64_t q_broken(int64_t x) { return x + (q_broken_calls++ % 3 == 0 ? 1 : 0); }
+`
+
+// TestParallel_Checked: with --checked, every query step and vec operation
+// that split a loop runs again on one thread and the results are compared
+// (specs/tables_v0_3_spec.md §8.7, D57). A correct program prints what it
+// prints without --checked, and fails with the same error; native code that
+// breaks its rowsafe promise is INV-PAR-001 at the step.
+func TestParallel_Checked(t *testing.T) {
+	csv := parCSV(300000)
+	t.Run("same_output", func(t *testing.T) {
+		for _, prog := range []struct{ name, src string }{{"queries", parQueries}, {"engine", parEngine}} {
+			prog := prog
+			t.Run(prog.name, func(t *testing.T) {
+				t.Parallel()
+				dir := t.TempDir()
+				files := map[string]string{"p.csv": csv}
+				plain := runPar(t, buildPar(t, dir, prog.src, files), dir, "QUARK_THREADS=1")
+				if plain.code != 0 {
+					t.Fatalf("unchecked run failed: exit %d\nstderr: %s", plain.code, plain.stderr)
+				}
+				checked := buildParWith(t, t.TempDir(), prog.src, files, "--checked")
+				for _, n := range []int{1, 3, 7} {
+					r := runPar(t, checked, filepath.Dir(checked), fmt.Sprintf("QUARK_THREADS=%d", n))
+					if r.code != 0 || r.stdout != plain.stdout || r.stderr != "" {
+						t.Fatalf("--checked at %d threads differs from the unchecked run\n--- unchecked ---\n%s\n--- checked (exit %d) ---\n%s%s", n, plain.stdout, r.code, r.stdout, r.stderr)
+					}
+				}
+			})
+		}
+	})
+	t.Run("same_errors", func(t *testing.T) {
+		tick := "extern 'tick.hpp'\nextern rowsafe fn boom() int as 'q_rowsafe_boom'\n"
+		files := map[string]string{"tick.hpp": rowSafeTickH, "p.csv": csv}
+		for _, tc := range parErrors {
+			tc := tc
+			if tc.name == "stack_overflow_on_worker" {
+				continue // reported at once by its thread (§8.5), so nothing is compared
+			}
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				dir := t.TempDir()
+				src := "incl 'std/csv'\n" + tick + parStruct + "t: tbl[P] = unwrap(csv::read_file('p.csv'))\nprint('before')\n" + tc.body
+				exe := buildParWith(t, dir, src, files, "--checked")
+				for _, n := range []int{1, 3} {
+					r := runPar(t, exe, dir, fmt.Sprintf("QUARK_THREADS=%d", n))
+					if r.code != 1 || !strings.Contains(r.stderr, tc.want) || strings.Contains(r.stderr, "INV-PAR-001") || strings.Count(r.stderr, "error[") != 1 {
+						t.Fatalf("at %d threads, want exit 1 and one error containing %q, got exit %d\nstdout: %s\nstderr: %s", n, tc.want, r.code, r.stdout, r.stderr)
+					}
+				}
+			})
+		}
+	})
+	t.Run("broken_rowsafe", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		src := "incl 'std/csv'\nextern 'broken.hpp'\nextern rowsafe fn broken(x: int) int as 'q_broken'\n" + parStruct +
+			"t: tbl[P] = unwrap(csv::read_file('p.csv'))\nprint('before')\nm = t | e -> mutate(y = broken(e.i))\nprint(m.nrow())\n"
+		files := map[string]string{"broken.hpp": parBrokenH, "p.csv": csv}
+		exe := buildParWith(t, dir, src, files, "--checked")
+		r := runPar(t, exe, dir, "QUARK_THREADS=4")
+		if r.code != 1 || !strings.Contains(r.stderr, "error[INV-PAR-001] (runtime): 'mutate' gave another result on 4 threads than on one (column 'y', a value at row ") ||
+			!strings.Contains(r.stderr, "breaks its rowsafe promise at ") || !strings.Contains(r.stderr, "main.qrk:13:14") || !strings.HasPrefix(r.stdout, "before") {
+			t.Fatalf("want INV-PAR-001 for the mutate, got exit %d\nstdout: %s\nstderr: %s", r.code, r.stdout, r.stderr)
+		}
+		// One thread has nothing to compare; without --checked the broken
+		// function goes unnoticed.
+		if r := runPar(t, exe, dir, "QUARK_THREADS=1"); r.code != 0 || r.stdout != "before\n300000\n" {
+			t.Fatalf("one thread: exit %d\nstdout: %s\nstderr: %s", r.code, r.stdout, r.stderr)
+		}
+		plain := buildPar(t, t.TempDir(), src, files)
+		if r := runPar(t, plain, filepath.Dir(plain), "QUARK_THREADS=4"); r.code != 0 || r.stdout != "before\n300000\n" {
+			t.Fatalf("unchecked: exit %d\nstdout: %s\nstderr: %s", r.code, r.stdout, r.stderr)
+		}
+	})
 }
 
 // TestParallel_DefaultFollowsCgroupQuota: on Linux, the default thread

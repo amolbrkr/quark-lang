@@ -586,6 +586,7 @@ The reads that could give `null` where the analyzer said "element" are closed: `
 
 **Finding holes mechanically:**
 - `--checked` (`quark run`, `quark build`, `quark emit`) prints every `ProofType` and `ProofElement` unbox as `q_prove_int`, `q_prove_float` or `q_prove_bool` (`ext/api.hpp`). The tag must be exactly that scalar; an int does not widen to a float. `TestCheckedMode_SmokeAgrees` runs every `src/testfiles/smoke_*.qrk` both ways and requires the same stdout, stderr and exit code. The temporary C++ path in a clang error is not part of that comparison. A check failure or a different result is a soundness bug. A column buffer read (`VecElem`) stays raw: it is not a `QValue`, and checking its validity bit would turn a missing salary in a query into an error.
+- `--checked` also compares parallel work with one thread (`specs/tables_v0_3_spec.md` §8.7). Lowering (`lower/parcheck.go`) makes each query step, and each vec operation outside a row loop (`Analysis.VecOps`: an operator or a row-safe builtin with a vec operand, receiver or result, or a vec index), a `ParCheck`, printed as `q_par_check(name, lambda)` (`core/parcheck.hpp`). The lambda runs as usual; if it split a loop (`quark::par::split`), it runs again with every loop on the calling thread (`quark::par::serial`), from the same draw state, both runs recording their errors, and the two values (missing entries, order and float bits) or errors must be the same, else `INV-PAR-001` names the step. A vec operation's arguments are computed before the lambda, so only the operation runs twice; a step's verb expressions are row-safe (§2.6), and a `rowsafe` native function called twice is the price of the check. Nothing is compared on one thread, inside a row loop, or for a vec that only an `any` value holds.
 - `TestStoreAgreesWithBoxed` checks single expressions: `print(E)` must print what `x = E` and a typed declaration such as `n: int = E` print.
 - `TestQueryAgreesWithVec` checks a query against the vec operation on the same column: `sum(t.salary)` against `summarize(s = sum(e.salary))`, and the same for `mean`, `min`, `max`, a group, `filter` and `sort`. `summarize` calls the engine with a column index; `filter` and `mutate` are loops emitted in `lower/query.go`.
 
@@ -593,7 +594,7 @@ The reads that could give `null` where the analyzer said "element" are closed: `
 
 ## 13) Roadmap: Back End
 
-The back end is the lowering pass, IR, verifier and emitter (§1.6). Checked mode is the `--checked` flag (§12): every `ProofType` and `ProofElement` unbox is printed as a tag check.
+The back end is the lowering pass, IR, verifier and emitter (§1.6). Checked mode is the `--checked` flag (§12): every `ProofType` and `ProofElement` unbox is printed as a tag check, and every query step and vec operation is compared with a run on one thread.
 
 Tables (`specs/tables_v0_1_spec.md`) are lowered in `lower/query.go` (§1.6, Queries), with their runtime in `table/query.hpp`.
 

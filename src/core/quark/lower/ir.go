@@ -412,6 +412,19 @@ type ParFor struct {
 	Pre, Body, Post *Block
 }
 
+// ParCheck is a query step or vec operation of a --checked program
+// (specs/tables_v0_3_spec.md §8.7, runtime/.../core/parcheck.hpp): T is
+// declared as Result, computed by Body, and q_par_check runs Body again on
+// one thread when it split a loop, and compares the two results. What names
+// the step for the message. Body may run twice, so it assigns only the
+// temporaries it declares, and neither returns nor breaks out of it.
+type ParCheck struct {
+	T      *Temp
+	What   string
+	Body   *Block
+	Result Expr
+}
+
 // Break and Continue leave or restart the innermost loop.
 type Break struct{}
 type Continue struct{}
@@ -440,6 +453,7 @@ func (*While) stmt()    {}
 func (*ForRange) stmt() {}
 func (*ForIndex) stmt() {}
 func (*ParFor) stmt()   {}
+func (*ParCheck) stmt() {}
 func (*Break) stmt()    {}
 func (*Continue) stmt() {}
 func (*Return) stmt()   {}
@@ -545,6 +559,9 @@ type Program struct {
 	DefaultArgFns []DefaultArgFn
 	Funcs         []*Func
 	Main          *Block
+	// ParChecked is set for a --checked program, whose steps and vec
+	// operations are ParChecks: its main turns the comparison on.
+	ParChecked bool
 	// Session is set when the program is one REPL input. Nil for a file,
 	// which emits main.
 	Session *SessionEmit

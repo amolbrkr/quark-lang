@@ -52,7 +52,9 @@ func (u *Unit) Failed() bool {
 
 // Options is how the front end emits. Stages before emit ignore it.
 type Options struct {
-	// Checked prints every proven unbox as a tag check (architecture.md §12).
+	// Checked prints every proven unbox as a tag check (architecture.md §12),
+	// and compares each parallel step with a run on one thread
+	// (specs/tables_v0_3_spec.md §8.7).
 	Checked bool
 }
 
@@ -158,10 +160,12 @@ func Generate(tree *ast.TreeNode, an *types.Analysis, sourceName string) (string
 	return GenerateOptions(tree, an, sourceName, Options{})
 }
 
-// GenerateOptions is Generate with emit options. Checked mode changes only
-// the printing of an unbox; the IR that Verify sees is the same.
+// GenerateOptions is Generate with the build's options. Checked mode prints
+// every proven unbox as a tag check, and lowers each query step and vec
+// operation as a ParCheck, which compares a run on several threads with one
+// on one thread (specs/tables_v0_3_spec.md §8.7).
 func GenerateOptions(tree *ast.TreeNode, an *types.Analysis, sourceName string, opt Options) (string, error) {
-	prog, err := lower.Lower(tree, an, sourceName)
+	prog, err := lower.LowerOptions(tree, an, sourceName, lower.Options{ParChecked: opt.Checked})
 	if err != nil {
 		return "", err
 	}

@@ -162,6 +162,9 @@ func ProgramOptions(p *lower.Program, opt Options) string {
 	w.raw("int main(int argc, char** argv) {\n")
 	w.ind++
 	w.line("q_par_init();")
+	if p.ParChecked {
+		w.line("q_par_set_checked();")
+	}
 	w.line("q_gc_init();")
 	w.line("q_set_args(argc, argv);")
 	w.line("q_protect_and_run(quark__entry);")
@@ -345,6 +348,13 @@ func (w *printer) stmt(s lower.Stmt) {
 		w.ind--
 		w.line("}")
 		w.block(s.Post)
+		w.ind--
+		w.line("});")
+	case *lower.ParCheck:
+		w.line("%s %s = q_par_check(\"%s\", [&]() -> %s {", s.T.R, tempName(s.T), esc(s.What), s.T.R)
+		w.ind++
+		w.block(s.Body)
+		w.line("return %s;", w.expr(s.Result))
 		w.ind--
 		w.line("});")
 	case *lower.Break:

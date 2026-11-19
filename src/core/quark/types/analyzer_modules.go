@@ -76,6 +76,9 @@ type Analysis struct {
 	// RowMissing maps `x == null`, `x != null` and `x.fillna(v)` in a verb
 	// expression to what lowering needs to look at x's missing value.
 	RowMissing map[*ast.TreeNode]*RowMissing
+	// VecOps are the vec operations, by node, with their names: what
+	// --checked runs again on one thread and compares (analyzer_vecops.go).
+	VecOps map[*ast.TreeNode]string
 }
 
 // Analysis returns the analyzer outputs for root, which must be the tree
@@ -100,6 +103,7 @@ func (a *Analyzer) Analysis(root *ast.TreeNode) *Analysis {
 		ColumnRefs:       a.columnRefs,
 		AggUses:          a.aggUses,
 		RowMissing:       a.rowMissing,
+		VecOps:           a.vecOps(root),
 	}
 }
 

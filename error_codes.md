@@ -11,6 +11,7 @@ The registry of every error code the compiler and runtime emit. `QK-*` codes are
   - [Invariant validation](#invariant-validation)
   - [Lowering](#lowering)
   - [IR verification](#ir-verification)
+  - [Checked mode](#checked-mode)
 - [Planned codes](#planned-codes)
 - [Rules for new codes](#rules-for-new-codes)
 
@@ -127,7 +128,15 @@ Run on every compile after lowering (`src/core/quark/lower/verify.go`, `architec
 | `INV-IR-RETURN` | `return` is inside a function |
 | `INV-IR-CALL` | A call of a generated function passes one argument per parameter, of the parameter's type; `q_callN` gets N arguments; a function value names a generated function |
 | `INV-IR-NODE` | Every node is known; a closure is bound by a `Let`; a tag test reads a stable value; a source location is an entry of the location table |
-| `INV-IR-PAR` | A query's row loop, whose blocks may run on several threads (`ParFor`, `architecture.md` §2.6), assigns only the temporaries it declares and the shared value of a call made once per step, never a variable, and neither returns nor breaks out of the loop; its plan is a temporary |
+| `INV-IR-PAR` | A query's row loop, whose blocks may run on several threads (`ParFor`, `architecture.md` §2.6), assigns only the temporaries it declares and the shared value of a call made once per step, never a variable, and neither returns nor breaks out of the loop; its plan is a temporary. A checked step (`ParCheck`, which `--checked` may run twice) assigns only the temporaries it declares, and neither returns nor breaks out; its result is a `QValue`, a table or a raw int, float or bool |
+
+### Checked mode
+
+Raised at runtime by a program built with `--checked` (`src/core/quark/runtime/include/quark/core/parcheck.hpp`, `specs/tables_v0_3_spec.md` §8.7). Printed like a runtime error, at the step's location, and the program exits with status 1.
+
+| Code | Invariant |
+|---|---|
+| `INV-PAR-001` | A query step or vec operation that ran on several threads gives what it gives on one thread: the same value (missing entries, order and float bits included), or the same error. `'mutate' gave another result on 4 threads than on one (column 'y', a value at row 4099): a bug in Quark, or native code that breaks its rowsafe promise at main.qrk:13:14` |
 
 ## Planned codes
 

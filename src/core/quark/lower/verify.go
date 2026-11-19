@@ -68,9 +68,13 @@ type verifier struct {
 	fn     *Func
 	where  string
 	err    error
-	// parBase is the number of scopes outside the innermost ParFor (-1:
-	// not in one): what those scopes declare, its rows may not assign.
+	// parBase is the number of scopes outside the innermost ParFor or
+	// ParCheck (-1: not in one): what those scopes declare, its body may not
+	// assign. parWhat names it for messages; parLoop says it is a ParFor,
+	// whose rows may also assign a once-call's Shared value.
 	parBase int
+	parWhat string
+	parLoop bool
 }
 
 func (v *verifier) fail(code, format string, args ...interface{}) {
@@ -100,7 +104,7 @@ func (v *verifier) inScope(key interface{}) bool {
 }
 
 // declaredOutsidePar reports whether key is declared outside the innermost
-// ParFor the verifier is in.
+// ParFor or ParCheck the verifier is in.
 func (v *verifier) declaredOutsidePar(key interface{}) bool {
 	if v.parBase < 0 {
 		return false
@@ -225,8 +229,8 @@ func (v *verifier) stmt(s Stmt) {
 		if !v.inScope(s.T) {
 			v.fail("INV-IR-SCOPE", "temporary _t%d assigned outside its scope", s.T.ID)
 		}
-		if !s.T.Shared && v.declaredOutsidePar(s.T) {
-			v.fail("INV-IR-PAR", "a parallel loop assigns temporary _t%d, declared outside it", s.T.ID)
+		if !(s.T.Shared && v.parLoop) && v.declaredOutsidePar(s.T) {
+			v.fail("INV-IR-PAR", "%s assigns temporary _t%d, declared outside it", v.parWhat, s.T.ID)
 		}
 		v.expr(s.Value)
 		v.wantRep(s.Value, s.T.R, fmt.Sprintf("value assigned to _t%d", s.T.ID))
@@ -243,7 +247,7 @@ func (v *verifier) stmt(s Stmt) {
 			v.fail("INV-IR-SCOPE", "%s assigned outside its scope", symName(s.Sym))
 		}
 		if v.declaredOutsidePar(s.Sym) {
-			v.fail("INV-IR-PAR", "a parallel loop assigns %s, declared outside it", symName(s.Sym))
+			v.fail("INV-IR-PAR", "%s assigns %s, declared outside it", v.parWhat, symName(s.Sym))
 		}
 		v.expr(s.Value)
 		v.wantRep(s.Value, storageRep(s.Sym), "value assigned to "+symName(s.Sym))
@@ -320,8 +324,8 @@ func (v *verifier) stmt(s Stmt) {
 		if !loopStable(s.Plan) {
 			v.fail("INV-IR-LOOP", "a parallel loop's plan must be a temporary")
 		}
-		savedBase, savedLoops := v.parBase, v.loops
-		v.parBase, v.loops = len(v.scopes), 0
+		savedBase, savedLoops, savedWhat, savedLoop := v.parBase, v.loops, v.parWhat, v.parLoop
+		v.parBase, v.loops, v.parWhat, v.parLoop = len(v.scopes), 0, "a parallel loop", true
 		v.push()
 		v.declare(s.Lo, fmt.Sprintf("temporary _t%d", s.Lo.ID))
 		v.declare(s.Hi, fmt.Sprintf("temporary _t%d", s.Hi.ID))
@@ -333,14 +337,32 @@ func (v *verifier) stmt(s Stmt) {
 		v.pop()
 		v.block(s.Post)
 		v.pop()
-		v.parBase, v.loops = savedBase, savedLoops
+		v.parBase, v.loops, v.parWhat, v.parLoop = savedBase, savedLoops, savedWhat, savedLoop
+	case *ParCheck:
+		if s.What == "" {
+			v.fail("INV-IR-NODE", "checked step without a name")
+		}
+		savedBase, savedLoops, savedWhat, savedLoop := v.parBase, v.loops, v.parWhat, v.parLoop
+		v.parBase, v.loops, v.parWhat, v.parLoop = len(v.scopes), 0, "a checked step", false
+		v.push()
+		v.block(s.Body)
+		v.expr(s.Result)
+		v.wantRep(s.Result, s.T.R, "checked step result")
+		v.pop()
+		v.parBase, v.loops, v.parWhat, v.parLoop = savedBase, savedLoops, savedWhat, savedLoop
+		switch s.T.R {
+		case RepValue, RepTable, RepInt, RepFloat, RepBool:
+		default:
+			v.fail("INV-IR-REP", "a checked step can't compare a %s", s.T.R)
+		}
+		v.declare(s.T, fmt.Sprintf("temporary _t%d", s.T.ID))
 	case *Break, *Continue:
 		if v.loops == 0 {
 			v.fail("INV-IR-LOOP", "break or continue outside a loop")
 		}
 	case *Return:
 		if v.parBase >= 0 {
-			v.fail("INV-IR-PAR", "return inside a parallel loop")
+			v.fail("INV-IR-PAR", "return inside %s", v.parWhat)
 		}
 		if v.fn == nil {
 			v.fail("INV-IR-RETURN", "return outside a function")

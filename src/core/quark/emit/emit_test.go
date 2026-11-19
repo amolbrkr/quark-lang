@@ -128,6 +128,21 @@ func cppOptions(t *testing.T, src string, opt driver.Options) string {
 	return res.CPP
 }
 
+// TestEmit_CheckedModeComparesSteps: --checked computes each query step and
+// each vec operation through q_par_check, and main turns the comparison on
+// (specs/tables_v0_3_spec.md §8.7); a list operation is not wrapped.
+func TestEmit_CheckedModeComparesSteps(t *testing.T) {
+	src := "v = vec [1.0, 2.0]\nw = v * 2.0\nprint(sum(w))\nxs = list [1]\nxs.push(2)\nprint(xs)\n"
+	normal := cpp(t, src)
+	mustNotContain(t, normal, "q_par_check")
+	mustNotContain(t, normal, "q_par_set_checked")
+	checked := cppOptions(t, src, driver.Options{Checked: true})
+	mustContain(t, checked, `q_par_check("'*'", [&]() -> QValue {`)
+	mustContain(t, checked, `q_par_check("'sum'", [&]() -> QValue {`)
+	mustContain(t, checked, "q_par_set_checked();")
+	mustNotContain(t, checked, `q_par_check("'push'"`)
+}
+
 // TestEmit_CheckedModeProvesUnbox: --checked prints a proven unbox as
 // q_prove_* instead of a raw union field. An int widened into a float is
 // still proved as an int and then cast; the proof does not widen.

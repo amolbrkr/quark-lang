@@ -50,6 +50,14 @@ func TestLower_SmokeCorpusVerifies(t *testing.T) {
 			if cpp := emit.Program(prog); !strings.Contains(cpp, "int main(") {
 				t.Fatalf("emitted C++ has no main")
 			}
+			// --checked makes steps and vec operations ParChecks.
+			checked, err := lower.LowerOptions(u.AST, u.Analysis, path, lower.Options{ParChecked: true})
+			if err != nil {
+				t.Fatalf("lower --checked: %v", err)
+			}
+			if err := lower.Verify(checked); err != nil {
+				t.Fatalf("verify --checked: %v", err)
+			}
 		})
 	}
 }
@@ -111,6 +119,14 @@ func TestVerify_RejectsMalformedIR(t *testing.T) {
 		{"loop location outside the table", mainProgram(bindList,
 			&lower.ForIndex{Idx: tmp, Len: one, Sized: &lower.TempRef{T: lst}, Loc: &lower.LocRef{Index: 2}, Body: &lower.Block{}}), "INV-IR-NODE"},
 		{"q_call2 with one argument", mainProgram(&lower.Do{X: &lower.Call{Fn: "q_call2", Args: []lower.Expr{&lower.Const{R: lower.RepValue, Text: "qv_null()"}, &lower.Const{R: lower.RepValue, Text: "qv_null()"}}, R: lower.RepValue}}), "INV-IR-CALL"},
+		// A checked step may run twice: it assigns only what it declares.
+		{"checked step assigns a variable", mainProgram(&lower.DeclVar{Sym: x, Value: one},
+			&lower.ParCheck{T: &lower.Temp{ID: 4, R: lower.RepValue}, What: "'f'", Body: &lower.Block{Stmts: []lower.Stmt{&lower.SetVar{Sym: x, Value: one}}}, Result: val}), "INV-IR-PAR"},
+		{"checked step assigns an outer temporary", mainProgram(&lower.Let{T: tmp, Value: one},
+			&lower.ParCheck{T: &lower.Temp{ID: 4, R: lower.RepValue}, What: "'f'", Body: &lower.Block{Stmts: []lower.Stmt{&lower.SetTemp{T: tmp, Value: one}}}, Result: val}), "INV-IR-PAR"},
+		{"break out of a checked step", mainProgram(&lower.ForIndex{Idx: tmp, Len: one, Body: &lower.Block{Stmts: []lower.Stmt{
+			&lower.ParCheck{T: &lower.Temp{ID: 4, R: lower.RepValue}, What: "'f'", Body: &lower.Block{Stmts: []lower.Stmt{&lower.Break{}}}, Result: val}}}}), "INV-IR-LOOP"},
+		{"checked step of a list", mainProgram(&lower.ParCheck{T: &lower.Temp{ID: 4, R: lower.RepList}, What: "'f'", Body: &lower.Block{}, Result: &lower.Const{R: lower.RepList, Text: "nullptr"}}), "INV-IR-REP"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

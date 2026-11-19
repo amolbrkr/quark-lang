@@ -27,7 +27,6 @@
 #include <cstdio>
 #include <cstring>
 #include <string_view>
-#include <type_traits>
 
 // q_par_checked is set at startup by the main of a --checked program.
 inline bool q_par_checked = false;

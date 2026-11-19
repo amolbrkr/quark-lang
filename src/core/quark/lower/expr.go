@@ -129,8 +129,19 @@ func (l *lowerer) sequence(blocks []*Block, vals []Expr) []Expr {
 	return vals
 }
 
-// expr lowers node for its value.
+// expr lowers node for its value. A vec operation of a checked program is a
+// ParCheck (parcheck.go).
 func (l *lowerer) expr(node *ast.TreeNode) Expr {
+	e := l.exprNode(node)
+	if l.parChecked && node != nil {
+		if what, ok := l.an.VecOps[node]; ok {
+			return l.checkedVecOp(what, e)
+		}
+	}
+	return e
+}
+
+func (l *lowerer) exprNode(node *ast.TreeNode) Expr {
 	if node == nil {
 		return nullValue()
 	}

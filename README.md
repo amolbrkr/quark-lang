@@ -1089,7 +1089,7 @@ Then run **Extensions: Install from VSIX...** and pick the file it prints.
 |---|---|
 | `-o <name>` | output name (`build`) |
 | `--debug`, `-d` | print the compile and link commands and keep the generated C++ (`run` also keeps the executable next to the source) |
-| `--checked` | check the tag on every read the compiler proved (`run`, `build` and `emit`). A correct program prints the same result, a little slower; a read of the wrong tag is `expected int, got str` instead of a garbage number. See [architecture.md](architecture.md) §12 |
+| `--checked` | check the tag on every read the compiler proved (`run`, `build` and `emit`), and run every query step and vec operation that used several threads again on one thread, comparing the results. A correct program prints the same result, slower; a read of the wrong tag is `expected int, got str` instead of a garbage number, and a step that gives another result on one thread is `INV-PAR-001` (a bug in Quark, or native code that breaks its `rowsafe` promise). See [architecture.md](architecture.md) §12 |
 | `--lto` | link-time optimization |
 | `--no-pch` | don't use the cached precompiled runtime header |
 | `--lib-path <dir>` | search `<dir>` for `extern link` libraries and add it to the rpath (repeatable) |
@@ -1125,19 +1125,18 @@ and don't. An `INV-*` diagnostic is a compiler bug.
 
 **Planned:**
 
-- Tables v0.3 ([specs/tables_v0_3_spec.md](specs/tables_v0_3_spec.md)):
-the language on one thread is in (aggregates in `filter` and `mutate`, missing
-values in verbs, `contains`, `nrow`, the `count` step, two-argument `min`/`max`
-typing), and so are row-safe calls in a verb, random draws in a verb that
-don't depend on the order rows run in, and a thread pool that runs a query's
-row loops, most of the table engine and the vec operations on every CPU, with
-the same output for every thread count; the benchmark suite has been rerun at
-one thread and at library defaults. Still to come: the CSV reader and the
-grouped aggregates of many small groups on the pool, and `--checked`
-comparing a parallel step with one thread.
-- Joins (semi, anti, inner and left), a sort for vecs, and a CSV reader that
-needs less memory: [specs/data_work_v0_1_spec.md](specs/data_work_v0_1_spec.md),
-a proposal.
+- The last part of tables v0.3 ([specs/tables_v0_3_spec.md](specs/tables_v0_3_spec.md)
+§3.3): a whole-table float aggregate of an expression computed in blocks,
+without the temporary column it uses today. The rest of v0.3 is in: aggregates
+in every verb, missing values in verbs, `contains`, `nrow`, the `count` step,
+row-safe calls, random draws in a verb that don't depend on the order rows run
+in, and a thread pool that runs a query's row loops, the table engine
+(grouping and the aggregates included) and the vec operations on every CPU,
+with the same output for every thread count, which `--checked` verifies by
+running each parallel step again on one thread.
+- Joins (semi, anti, inner and left), a sort for vecs (and a radix sort for the
+table engine), and a CSV reader that needs less memory and runs on every CPU:
+[specs/data_work_v0_1_spec.md](specs/data_work_v0_1_spec.md), a proposal.
 - Tables still later: the column-wise table literal, `summary(t)`,
 queries on tables without a row struct, and compile-time schema inference for CSV
 files ([specs/untyped_tables_v0_1_spec.md](specs/untyped_tables_v0_1_spec.md), a proposal;
